@@ -202,8 +202,8 @@ no resource at all, including one issued before this binding existed.
 ## What is protected by default
 
 - Every HTTP route — every OAuth endpoint, discovery metadata, and `/mcp`
-  itself — refuses a request whose `Host` header (and, if present, `Origin`)
-  is not on an allowlist built from `KEYSTONE_MCP_BASE_URL` plus
+  itself — refuses a request whose `Host` header (and, if present and not
+  `null`, `Origin`) is not on an allowlist built from `KEYSTONE_MCP_BASE_URL` plus
   `KEYSTONE_MCP_ALLOWED_HOSTS` (`HostGuardMiddleware`,
   `src/keystone_mcp/http/host_guard.py`). Without this, a page on a hostname
   an attacker controls can rebind that hostname's DNS to `127.0.0.1` (or any

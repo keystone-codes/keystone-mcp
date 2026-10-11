@@ -137,6 +137,29 @@ def test_absent_origin_is_not_checked() -> None:
     assert response.status_code == 200
 
 
+def test_null_origin_is_treated_as_absent() -> None:
+    """A same-origin form POST from a page with `Referrer-Policy: no-referrer`
+    (the login and consent pages) carries `Origin: null`; the `Host` check
+    still applies."""
+    app = _guarded_app(("example.com:8080",))
+    with TestClient(app, base_url="http://example.com:8080") as client:
+        response = client.get(
+            "/hello",
+            headers={"Host": "example.com:8080", "Origin": "null"},
+        )
+    assert response.status_code == 200
+
+
+def test_null_origin_does_not_excuse_a_foreign_host() -> None:
+    app = _guarded_app(("example.com:8080",))
+    with TestClient(app, base_url="http://example.com:8080") as client:
+        response = client.get(
+            "/hello",
+            headers={"Host": "rebind.attacker.test:8080", "Origin": "null"},
+        )
+    assert response.status_code == 421
+
+
 def test_ipv6_loopback_entry_matches_bracketed_host_header() -> None:
     # The middleware reads the `Host` header, not the connection URL, so the
     # client's own `base_url` stays a plain one here — Starlette's TestClient
