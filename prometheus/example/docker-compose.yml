@@ -1,6 +1,10 @@
 # Prometheus sidecar for host-installed Keystone MCP (systemd on 127.0.0.1:8080).
 # Uses host networking so scrapes reach the MCP bind address on loopback.
 #
+# Keystone-MCP must accept Host 127.0.0.1:8080: set
+# KEYSTONE_MCP_ALLOWED_HOSTS=127.0.0.1:8080 unless KEYSTONE_MCP_BASE_URL is
+# itself a loopback URL.
+#
 #   docker compose -f prometheus/example/docker-compose.yml up -d
 #
 # UI (loopback only): http://127.0.0.1:9091
