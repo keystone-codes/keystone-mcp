@@ -170,6 +170,8 @@ row per rule here:
 | W1 | `production` | `KEYSTONE_MCP_BASE_URL` using `http` on a *non-public* host (for example, a private address behind a reverse proxy that terminates TLS) only warns at startup — P4 already refuses a public `http` address, so this covers the one case P4 lets through. |
 | W2/W3 | `production` | `KEYSTONE_MCP_UPSTREAM_ALLOW_INSECURE_HTTP` / `_EGRESS_ALLOW_PRIVATE` only warn at startup; they do not refuse, because a deployment whose upstreams are genuinely all-private needs them. |
 | W4 | `local` | `KEYSTONE_MCP_RBAC_MODE=enforce` with a non-empty `KEYSTONE_MCP_DEV_TOKENS` only warns — this is the intended way to test roles locally without Google. |
+| P5 | `production` | With the built-in users backend, `KEYSTONE_MCP_USERS_DB_URL` must be PostgreSQL; an empty or SQLite URL is refused. |
+| W5 | `local` | `KEYSTONE_MCP_HOST` bound to every interface (`0.0.0.0`/`::`) while `KEYSTONE_MCP_DEV_TOKENS` is set only warns — anyone who can reach the port signs in as any directory member. |
 
 Outside the profile check, `KEYSTONE_MCP_AUTH_SERVICE_URL` set without
 `_TOKEN` is always a startup error, in either profile. The built-in users
@@ -241,8 +243,10 @@ no resource at all, including one issued before this binding existed.
   needs both that flag and `KEYSTONE_MCP_UPSTREAM_EGRESS_ALLOW_PRIVATE=true`
   (`src/keystone_mcp/upstream_registry/validate.py::validate_upstream_url`).
 - Every HTML response from the login page sends `X-Frame-Options: DENY`, a
-  `Content-Security-Policy` of `default-src 'none'; frame-ancestors 'none'`,
-  `Referrer-Policy: no-referrer`, and `X-Content-Type-Options: nosniff` — the
+  `Content-Security-Policy` of `default-src 'none'; style-src 'unsafe-inline';
+  img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'`,
+  `Referrer-Policy: no-referrer`, `Cache-Control: no-store`, and
+  `X-Content-Type-Options: nosniff` — the
   page cannot be framed, cannot run injected scripts, and never leaks the
   sign-in transaction id through a `Referer` header.
 - The container image runs as a non-root user (`Dockerfile`).
@@ -252,22 +256,25 @@ no resource at all, including one issued before this binding existed.
 - The tool-call and login throttles are counted **per process**, not per
   cluster: behind a load balancer with several replicas, a single identity's
   effective budget multiplies by the replica count. See
-  [environment.md#server](environment.md#server) for the per-process
-  throttle note.
+  [environment.md#more-than-one-replica](environment.md#more-than-one-replica)
+  for the per-process throttle note.
 - There is no way to revoke every session a person holds in one action.
   Blocking them in the users directory takes effect on their **next call**
   (the directory is re-checked every time), but an access token already
   issued keeps working until it expires on its own.
-- Production sign-in is Google only, up to 0.5; a general OIDC provider is
-  on the roadmap with no date yet.
-- `HostGuardMiddleware`'s allowlist does not exempt `/metrics`: unlike
-  `/healthz`/`/readyz`, a Prometheus scraper reaching it by a pod IP (common
-  in Kubernetes) needs that IP added to `KEYSTONE_MCP_ALLOWED_HOSTS` — not
-  generally possible for an IP assigned at pod start. A scrape reaching this
-  process through a stable name (a Service, or a sidecar on `localhost`)
-  already resolves to an allowed host and needs nothing extra; a scrape
-  reaching it directly by pod IP today will need an operator decision this
-  card does not make.
+- Interactive sign-in is Google only; a general OIDC provider is planned
+  for 0.5.0. The deprecated API-key method
+  (`KEYSTONE_MCP_AUTH_SERVICE_URL`) is still accepted under `production`
+  until 0.4.1.
+- `HostGuardMiddleware` exempts only `/healthz` and `/readyz`, not
+  `/metrics` or `/internal/*`. By default the allowlist holds only
+  `KEYSTONE_MCP_BASE_URL`'s host (plus `localhost`/`127.0.0.1`/`[::1]` when
+  that host is itself loopback), so with a public `KEYSTONE_MCP_BASE_URL` a
+  scrape addressed to `127.0.0.1:8080`, a Kubernetes Service name, or a pod
+  IP is refused with `421`. Add the exact name the scraper uses to
+  `KEYSTONE_MCP_ALLOWED_HOSTS` (e.g. `127.0.0.1:8080` for a scraper on the
+  same host). A pod IP assigned at pod start cannot be listed in advance,
+  so scraping each pod by IP is not supported in 0.4.0.
 
 ## Checklist by profile
 
