@@ -221,12 +221,15 @@ it signs everyone out, nothing else.
 
 ## Running more than one replica
 
-Scale the `keystone` service and put a load balancer in front of it. Some
-state (OAuth clients, tokens, the users-directory cache) lives in Redis and
-is shared; some (the per-process rate limiter) is not, so a person's
-effective call budget multiplies by the replica count. Postgres is required
-for this (SQLite does not work with more than one replica). Details:
-[environment.md](../environment.md#rate-limits-reverse-proxies-and-replicas).
+Scale the `keystone` service and put a load balancer in front of it. OAuth
+clients, tokens, pending logins and the users-directory revision marker
+live in Redis and are shared; the rate limiters, the users-directory
+allow/deny cache and the live tool catalog are per process, so a person's
+effective call budget multiplies by the replica count. If the load
+balancer forwards a `Host` other than `mcp.example.com`, add that name to
+`KEYSTONE_MCP_ALLOWED_HOSTS`, or every request gets `421`. Postgres is
+required for this (SQLite does not work with more than one replica).
+Details: [environment.md](../environment.md#rate-limits-reverse-proxies-and-replicas).
 
 ## Before you go live
 
