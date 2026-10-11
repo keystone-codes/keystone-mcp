@@ -612,6 +612,10 @@ apply them.
 
 ### Fixed
 
+- Signing in from the login page failed with `400 Forbidden Origin`: the page
+  sends `Referrer-Policy: no-referrer`, so the browser posts the form with
+  `Origin: null`. The Host/Origin guard now treats `Origin: null` as absent;
+  the `Host` check still applies.
 - Proxied tools whose input schema lists an optional field before a
   required one are published instead of failing discovery of the whole
   upstream. A tool that cannot be published is skipped with an ERROR log;
