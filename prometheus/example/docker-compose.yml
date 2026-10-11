@@ -1,0 +1,23 @@
+# Prometheus sidecar for host-installed Keystone MCP (systemd on 127.0.0.1:8080).
+# Uses host networking so scrapes reach the MCP bind address on loopback.
+#
+#   docker compose -f prometheus/example/docker-compose.yml up -d
+#
+# UI (loopback only): http://127.0.0.1:9091
+
+services:
+  prometheus:
+    image: prom/prometheus:v3.2.1
+    container_name: keystone-mcp-prometheus-example
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - keystone-mcp-prometheus-example-data:/prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.listen-address=127.0.0.1:9091
+
+volumes:
+  keystone-mcp-prometheus-example-data:

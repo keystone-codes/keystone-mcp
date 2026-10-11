@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 560" width="1200" height="560" role="img" aria-labelledby="netTitle netDesc">
+  <title id="netTitle">Keystone-MCP is the only published port</title>
+  <desc id="netDesc">Clients on the public network reach only Keystone-MCP. Service MCP ports, the users directory, Redis, and databases sit on a private network and are not published.</desc>
+  <defs>
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#e2e8f0" stroke-opacity="0.045"/>
+    </pattern>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 1.2 L 9 5 L 0 8.8 z" fill="#94a3b8"/>
+    </marker>
+    <marker id="arrowRose" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 1.2 L 9 5 L 0 8.8 z" fill="#fb7185"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="560" fill="#020617"/>
+  <rect width="1200" height="560" fill="url(#grid)"/>
+
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">
+    <text x="48" y="40" fill="#fb7185" font-size="12" letter-spacing="2.4">NETWORK</text>
+    <text x="48" y="70" fill="#f8fafc" font-size="26">One published port</text>
+    <text x="48" y="96" fill="#94a3b8" font-size="14">Clients reach Keystone-MCP. They have no route to a service port.</text>
+
+    <!-- Public zone. Keystone-MCP is drawn later and covers the right edge. -->
+    <rect x="36" y="128" width="560" height="392" rx="18" fill="#03141a" stroke="#155e75" stroke-width="1.5"/>
+    <text x="60" y="164" fill="#67e8f9" font-size="12" letter-spacing="1.8">PUBLIC</text>
+    <text x="60" y="210" fill="#f8fafc" font-size="18">Claude Desktop</text>
+    <text x="60" y="242" fill="#f8fafc" font-size="18">Cursor</text>
+    <text x="60" y="274" fill="#f8fafc" font-size="18">Any MCP client</text>
+    <text x="60" y="470" fill="#67e8f9" font-size="13">The only address they are given</text>
+
+    <!-- Private zone -->
+    <rect x="604" y="128" width="560" height="392" rx="18" fill="#14080c" stroke="#9f1239" stroke-width="1.5" stroke-dasharray="7 5"/>
+    <text x="820" y="164" fill="#fda4af" font-size="12" letter-spacing="1.8">PRIVATE</text>
+    <text x="820" y="210" fill="#fecdd3" font-size="16">documents /mcp</text>
+    <text x="820" y="240" fill="#fecdd3" font-size="16">billing /mcp</text>
+    <text x="820" y="270" fill="#fecdd3" font-size="16">Postgres (users directory)</text>
+    <text x="820" y="300" fill="#fecdd3" font-size="16">Redis</text>
+    <text x="820" y="340" fill="#fb7185" font-size="14">databases, vendor APIs</text>
+    <text x="820" y="470" fill="#fda4af" font-size="13">no published port</text>
+
+    <!-- Door, straddling the two zones -->
+    <rect x="430" y="228" width="340" height="176" rx="16" fill="#071410" stroke="#34d399" stroke-width="1.75"/>
+    <circle cx="458" cy="268" r="5" fill="#34d399"/>
+    <text x="474" y="274" fill="#f8fafc" font-size="20">keystone-mcp</text>
+    <text x="458" y="314" fill="#a7f3d0" font-size="14">:8080 published</text>
+    <text x="458" y="342" fill="#6ee7b7" font-size="13">OAuth on this port</text>
+    <text x="458" y="376" fill="#34d399" font-size="13">then a private hop</text>
+
+    <!-- Into the door, and out to the private network -->
+    <line x1="300" y1="300" x2="422" y2="300" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <line x1="778" y1="368" x2="808" y2="368" stroke="#fb7185" stroke-width="1.5" marker-end="url(#arrowRose)"/>
+
+    <!-- A client path that stops short of the private zone -->
+    <line x1="280" y1="448" x2="500" y2="448" stroke="#fb7185" stroke-width="1.5" stroke-dasharray="5 4"/>
+    <rect x="508" y="430" width="156" height="36" rx="8" fill="#1a0c12" stroke="#9f1239"/>
+    <text x="522" y="454" fill="#fda4af" font-size="13">no client route</text>
+  </g>
+</svg>

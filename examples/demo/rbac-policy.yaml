@@ -1,0 +1,11 @@
+# Demo policy. Two roles: administrator sees everything,
+# member sees only the hello_* section.
+version: "demo-1"
+default_deny: true
+roles:
+  administrator:
+    description: "Everything, including user administration."
+    allow: ["*"]
+  member:
+    description: "Only the hello service."
+    allow: ["hello_*"]

@@ -1,0 +1,39 @@
+name: Feature request
+description: Suggest an idea for Keystone-MCP
+title: "[feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the problem and the outcome you want. Avoid customer-specific or
+        confidential deployment details.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+      description: What are you trying to accomplish?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: How might Keystone-MCP address this? Alternatives you considered?
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope hints (optional)
+      options:
+        - label: OAuth / session handling
+        - label: RBAC / policy engine
+        - label: Upstream MCP proxying
+        - label: Observability (metrics / audit)
+        - label: Documentation / examples
+        - label: Packaging / CI

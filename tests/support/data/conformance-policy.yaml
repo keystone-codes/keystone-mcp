@@ -1,0 +1,72 @@
+# Generic policy used by the RBAC conformance suite. Fictional tool names.
+version: "conformance-2.0.0"
+default_deny: true
+
+roles:
+  administrator:
+    description: "Full access."
+    allow:
+      - "*"
+
+  editor:
+    description: "Documents and reports; proposes and commits the ledger."
+    allow:
+      - documents_*
+      - reports_export
+      - reports_list
+      - reports_read
+      - reports_write
+      - ledger_commit
+      - ledger_propose
+      - ledger_read
+      - create_upload_url
+      - get_download_link
+
+  reviewer:
+    description: "Approvals and the commit half of the ledger; no daily writes."
+    allow:
+      - reports_approve_*
+      - ledger_commit
+      - ledger_propose
+      - get_download_link
+
+  viewer:
+    description: "Read-only."
+    allow:
+      - create_upload_url
+      - documents_read
+      - get_download_link
+      - ledger_read
+      - reports_list
+      - reports_read
+
+deny:
+  - documents_purge
+
+requires_human_identity:
+  - ledger_commit
+  - reports_approve_release
+
+critical_tools:
+  - ledger_*
+  - reports_approve_*
+
+reserved_allow_patterns:
+  - reports_approve_*
+
+tool_dispositions:
+  D:
+    - documents_purge
+    - ledger_commit
+    - reports_approve_release
+  R:
+    - documents_read
+    - get_download_link
+    - ledger_read
+    - reports_list
+    - reports_read
+  W:
+    - create_upload_url
+    - documents_write
+    - ledger_propose
+    - reports_*

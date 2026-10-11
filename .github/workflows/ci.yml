@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    uses: ./.github/workflows/test-gate.yml
+
+  docker-build:
+    name: Docker build smoke
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Build image
+        run: docker build -t keystone-mcp:ci .
+      - name: Smoke test image
+        run: bash scripts/smoke_image.sh keystone-mcp:ci
+
+  compose-smoke:
+    name: Compose smoke
+    runs-on: ubuntu-latest
+    needs: test
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: uv sync --locked --extra dev
+
+      - name: Write demo .env
+        run: |
+          cat > .env <<'EOT'
+          KEYSTONE_DEMO_TOKEN=ci-smoke-token
+          KEYSTONE_DEMO_ADMIN_EMAIL=admin@example.com
+          EOT
+
+      - name: Start demo stack
+        run: docker compose -f docker-compose.demo.yml up -d --build --wait --wait-timeout 180
+
+      - name: Run smoke scenario
+        run: >-
+          uv run python scripts/smoke_demo.py
+          --dev-token ci-smoke-token
+          --admin-email admin@example.com
+
+      - name: Demo stack logs
+        if: failure()
+        run: docker compose -f docker-compose.demo.yml logs --no-color
+
+      - name: Tear down demo stack
+        if: always()
+        run: docker compose -f docker-compose.demo.yml down -v

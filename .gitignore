@@ -1,0 +1,33 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+*.log
+.env
+.env.*
+!.env.example
+.DS_Store
+.idea/
+.vscode/
+.history/
+artifacts/
+skills/*.zip
+.cursor/
+internal/
+demo/
+demo/*
+# Demo compose configuration (examples/demo/) is tracked despite the
+# repository-root "demo/" ignore rules above.
+!examples/demo/
+!examples/demo/**
+internal/
+internal/**

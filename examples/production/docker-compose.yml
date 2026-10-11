@@ -1,0 +1,85 @@
+# Keystone-MCP in production: a pinned image, Redis, and a Postgres users
+# directory. TLS and the public hostname live in front of this stack (see
+# ./Caddyfile); nothing here publishes a port except Keystone-MCP's own
+# loopback port, for a reverse proxy running on the same host.
+#
+#   docker compose up -d --wait
+#
+# KEYSTONE_PG_PASSWORD and KEYSTONE_REDIS_PASSWORD are read from the shell
+# environment, or from this directory's .env file -- Compose loads .env
+# automatically to substitute "${...}" in this file. That is separate from
+# env_file below, which passes .env to the keystone container as its own
+# environment (no substitution happens there: use the same literal password
+# in KEYSTONE_MCP_REDIS_URL / KEYSTONE_MCP_USERS_DB_URL below).
+#
+# See docs/paths/production-docker.md for the full walkthrough.
+
+name: keystone-production
+
+networks:
+  keystone:
+
+volumes:
+  redis-data:
+  postgres-data:
+
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    networks:
+      - keystone
+    volumes:
+      - redis-data:/data
+    command: ["redis-server", "--requirepass", "${KEYSTONE_REDIS_PASSWORD:?Set KEYSTONE_REDIS_PASSWORD}"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${KEYSTONE_REDIS_PASSWORD:?Set KEYSTONE_REDIS_PASSWORD}", "--no-auth-warning", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    networks:
+      - keystone
+    environment:
+      POSTGRES_USER: keystone
+      POSTGRES_DB: keystone
+      POSTGRES_PASSWORD: ${KEYSTONE_PG_PASSWORD:?Set KEYSTONE_PG_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keystone -d keystone"]
+      interval: 5s
+      retries: 10
+
+  keystone:
+    # Pin the tag before you deploy; never run ":latest" in production.
+    image: ghcr.io/keystone-codes/keystone-mcp:0.4.0
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    networks:
+      - keystone
+    # A reverse proxy on this host forwards to this loopback port; nothing
+    # else needs to reach Keystone-MCP directly.
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ./rbac-policy.yaml:/etc/keystone-mcp/rbac-policy.yaml:ro
+      - ./upstreams.yaml:/etc/keystone-mcp/upstreams.yaml:ro
+    healthcheck:
+      test: ["CMD", "python", "-m", "keystone_mcp.healthcheck", "/readyz"]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 10
+
+  # Add your upstream services here, on the same network, without published
+  # ports. List them in upstreams.yaml so Keystone-MCP can reach them by
+  # service name, e.g. http://your-service:8081/mcp.

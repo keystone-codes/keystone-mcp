@@ -1,0 +1,32 @@
+# Reference Vector config for Keystone-MCP NDJSON on stderr (Docker/systemd).
+# Adjust paths and sinks for your environment.
+
+[sources.keystone_mcp]
+type = "file"
+include = ["/var/log/keystone-mcp/*.log"]
+read_from = "beginning"
+
+[transforms.keystone_parse]
+type = "remap"
+inputs = ["keystone_mcp"]
+source = '''
+. = parse_json!(string!(.message))
+'''
+
+[transforms.keystone_access]
+type = "filter"
+inputs = ["keystone_parse"]
+condition = '.stream == "access"'
+
+[transforms.keystone_audit]
+type = "filter"
+inputs = ["keystone_parse"]
+condition = '.stream == "audit"'
+
+[sinks.loki]
+type = "loki"
+inputs = ["keystone_parse"]
+endpoint = "http://loki:3100"
+encoding.codec = "json"
+labels.stream = "{{ stream }}"
+labels.level = "{{ level }}"

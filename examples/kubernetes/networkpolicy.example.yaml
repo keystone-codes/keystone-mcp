@@ -1,0 +1,39 @@
+# Example only -- not applied by kustomization.yaml (like secret.example.yaml
+# and ingress.example.yaml). Adapt podSelector.matchLabels to your own
+# upstream and apply it in the keystone namespace alongside that upstream's
+# own Deployment and Service.
+#
+# Why this exists: configmap.yaml's upstreams.yaml tells you to run your
+# service as a plain ClusterIP Service with no further exposure -- but
+# ClusterIP alone does not stop any OTHER pod in the cluster from reaching
+# it too. Your upstream trusts the X-Author-Email header Keystone-MCP sends
+# on every proxied call (see docs/connecting-services.md); without either
+# this NetworkPolicy or auth.bearer_env (ideally both -- see
+# docs/paths/kubernetes.md), any pod on the cluster network can call your
+# upstream directly and send a forged X-Author-Email, impersonating any
+# user. This policy closes the network path: only pods carrying the
+# Keystone Deployment's own label (app: keystone, see deployment.yaml) may
+# open a connection to the upstream at all.
+#
+# Requires a CNI that enforces NetworkPolicy (Calico, Cilium, etc.) --
+# some cluster network plugins silently ignore NetworkPolicy objects.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: your-service-allow-from-keystone
+  namespace: keystone
+spec:
+  # Replace with your upstream's own pod labels.
+  podSelector:
+    matchLabels:
+      app: your-service
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: keystone
+      ports:
+        - protocol: TCP
+          port: 8081

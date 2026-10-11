@@ -1,0 +1,9 @@
+# Upstream registry for the demo. Keystone reads it from
+# KEYSTONE_MCP_UPSTREAMS_PATH. The URL is plain http on the internal
+# Docker network, so the demo sets KEYSTONE_MCP_UPSTREAM_ALLOW_INSECURE_HTTP.
+schema_version: 1
+entries:
+  - name: hello
+    url: http://hello-upstream:8081/mcp
+    namespace: hello
+    enabled: true

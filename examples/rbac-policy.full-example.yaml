@@ -1,0 +1,111 @@
+# Example RBAC policy exercising every section of the v2 format.
+#
+# The tool names here are fictional. Copy this file, keep the sections you need
+# and delete the rest: every section except `version`, `default_deny` and
+# `roles` is optional, and an absent section means "empty list".
+#
+# Normative reference: docs/rbac-policy-format.md
+
+version: "2.0.0"
+
+# Must be true. A policy with default_deny: false is refused at load time.
+default_deny: true
+
+# ── roles ────────────────────────────────────────────────────────────────────
+# Role names are free-form strings and must match the role names your user
+# directory hands out. At least one role, each with a non-empty allow list.
+# Allow patterns are fnmatch globs over the client-visible published tool name.
+# A user's effective permissions are the union of their roles' allow patterns.
+roles:
+  administrator:
+    description: "Full platform access, including user administration."
+    allow:
+      - "*"
+
+  editor:
+    description: >-
+      Reads and writes documents and reports and commits the ledger. Note the
+      explicit reports_* rows: a bare `reports_*` glob would also hand this role
+      the reviewer's approval family.
+    allow:
+      - documents_*
+      - reports_export
+      - reports_list
+      - reports_read
+      - reports_write
+      - ledger_read
+      - ledger_propose
+      - ledger_commit
+      - create_upload_url
+      - get_download_link
+
+  reviewer:
+    description: >-
+      Approves what an editor proposed. Holds the approval family and the
+      commit, but not the day-to-day writes.
+    allow:
+      - reports_approve_*
+      - ledger_propose
+      - ledger_commit
+      - get_download_link
+
+  viewer:
+    description: "Read-only."
+    allow:
+      - reports_read
+      - reports_list
+      - documents_read
+      - ledger_read
+      - get_download_link
+
+# ── deny ─────────────────────────────────────────────────────────────────────
+# Global kill list. A tool matched here is denied for every role, including a
+# role whose allow list is "*". Use it to retire a tool without editing roles.
+deny:
+  - documents_purge
+
+# ── requires_human_identity ──────────────────────────────────────────────────
+# Tools that additionally require an interactive human login (auth_method
+# "google" on the verified token). A machine token with the right role is still
+# refused. Intended for irreversible confirming operations.
+requires_human_identity:
+  - ledger_commit
+  - reports_approve_release
+
+# ── critical_tools ───────────────────────────────────────────────────────────
+# Tools whose role resolution must be synchronous — the allow cache is bypassed
+# so a just-revoked role takes effect immediately. Costs one directory call per
+# invocation, so list only what matters. users_*, create_upload_url and
+# get_download_link are always critical and need not be repeated here.
+critical_tools:
+  - ledger_*
+  - reports_approve_*
+
+# ── reserved_allow_patterns ──────────────────────────────────────────────────
+# Allow globs permitted to match only reserved or work-in-progress names from
+# the catalog snapshot. Every other allow pattern must match at least one
+# active, reserved or WIP name, or startup is refused as a typo.
+reserved_allow_patterns:
+  - "reports_approve_*"
+
+# ── tool_dispositions ────────────────────────────────────────────────────────
+# Documentation only: labels used by scripts/generate_role_matrix.py. Entries
+# are tried in file order and the first matching label wins; a tool matching
+# nothing is labelled "W". Labels are free-form (R/W/D here: read, write,
+# destructive).
+tool_dispositions:
+  D:
+    - ledger_commit
+    - documents_purge
+    - reports_approve_release
+  R:
+    - reports_read
+    - reports_list
+    - documents_read
+    - ledger_read
+    - get_download_link
+  W:
+    - documents_*
+    - reports_*
+    - ledger_*
+    - create_upload_url

@@ -1,0 +1,34 @@
+# Example catalog snapshot for RBAC policy validation.
+#
+# Point KEYSTONE_MCP_RBAC_CATALOG_SNAPSHOT at a file like this when the policy
+# names tools the running router may not have discovered. All three sections
+# are optional; no snapshot file at all means all three are empty.
+#
+# Tool names are the client-visible published names (namespace prefix included).
+# Names here are fictional.
+#
+# Normative reference: docs/rbac-policy-format.md
+
+# Published and known live in the reference deployment. Merged with the
+# discovered live catalog when allow patterns are checked for reachability, so a
+# deployment that mounts only part of the catalog still loads the full policy.
+active:
+  - documents_read
+  - documents_write
+  - reports_read
+  - reports_list
+  - ledger_read
+  - ledger_propose
+  - ledger_commit
+
+# Named in policy before the upstream publishes them. Counted as known names,
+# never matched against a live call.
+reserved:
+  - documents_purge
+  - reports_export
+
+# Work in progress. Only patterns listed in the policy's
+# reserved_allow_patterns may be satisfied by these names alone.
+wip:
+  - reports_approve_run
+  - reports_approve_release

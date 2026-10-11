@@ -1,0 +1,533 @@
+"""OAuth session persistence: refresh without /login and survive provider restart."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import time
+
+import httpx
+import pytest
+import pytest_asyncio
+from asgi_lifespan import LifespanManager
+from mcp.server.auth.provider import AuthorizationCode, RefreshToken
+from mcp.shared.auth import OAuthClientInformationFull
+
+from conftest import (
+    BASE_URL,
+    VALID_TOKEN,
+    authorize_to_login,
+    make_pkce,
+    obtain_access_token,
+    refresh_access_token,
+    register_client,
+)
+from keystone_mcp.auth.identity_provider import StaticIdentityProvider
+from keystone_mcp.auth.keystone_oauth_provider import KeystoneOAuthProvider
+from keystone_mcp.auth.login_pending_store import InMemoryLoginPendingStore
+from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
+from keystone_mcp.config import Settings
+from keystone_mcp.server import build_server
+
+
+@pytest_asyncio.fixture
+async def persistence_client():
+    """ASGI client backed by a shared InMemoryOAuthStore for restart tests."""
+    settings = Settings(base_url=BASE_URL)
+    idp = StaticIdentityProvider({VALID_TOKEN})
+    store = InMemoryOAuthStore()
+    mcp, _registry, oauth, _upstreams, _policy_manager, _observability, _reconciler = build_server(
+        identity_provider=idp, settings=settings, oauth_store=store
+    )
+    app = mcp.http_app(path=settings.http_path)
+    async with LifespanManager(app):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url=BASE_URL
+        ) as client:
+            yield client, oauth, store, settings
+
+
+async def test_refresh_token_skips_login(harness):
+    """After initial OAuth, refresh grant must not require another /login POST."""
+    res = await obtain_access_token(harness.client, harness.settings.resource_url)
+    assert res["status"] == 200
+    refresh = res["body"]["refresh_token"]
+    client_id = res["client_id"]
+
+    refreshed = await refresh_access_token(
+        harness.client, client_id, refresh, harness.settings.resource_url
+    )
+    assert refreshed["status"] == 200, refreshed
+    assert refreshed["body"].get("access_token")
+    assert refreshed["body"].get("refresh_token")
+
+
+async def test_tokens_survive_provider_restart(persistence_client):
+    """A new provider instance sharing the store can load clients and refresh tokens."""
+    client, _oauth1, store, settings = persistence_client
+    res = await obtain_access_token(client, settings.resource_url)
+    assert res["status"] == 200
+    refresh = res["body"]["refresh_token"]
+    client_id = res["client_id"]
+
+    idp = StaticIdentityProvider({VALID_TOKEN})
+    pending = InMemoryLoginPendingStore()
+    oauth2 = KeystoneOAuthProvider(idp, settings, store, pending)
+    registered = await oauth2.get_client(client_id)
+    assert registered is not None
+
+    loaded = await oauth2.load_refresh_token(registered, refresh)
+    assert loaded is not None
+    assert loaded.subject == "user@example.com"
+
+    token = await oauth2.exchange_refresh_token(registered, loaded, [])
+    assert token.access_token
+    assert token.refresh_token
+
+
+async def test_pending_txn_survives_shared_store_restart(persistence_client):
+    """Pending login txn readable by a new provider sharing the login pending store."""
+    client, oauth1, store, settings = persistence_client
+    pending_store = oauth1._pending_store
+    client_id = await register_client(client)
+    _verifier, challenge = make_pkce()
+    txn = await authorize_to_login(client, client_id, challenge, settings.resource_url)
+
+    idp = StaticIdentityProvider({VALID_TOKEN})
+    oauth2 = KeystoneOAuthProvider(idp, settings, store, pending_store)
+    assert await oauth2._get_pending_txn(txn) is not None
+
+
+async def test_redis_store_roundtrip():
+    """RedisOAuthStore serializes clients and tokens (skip without Redis URL)."""
+    import os
+
+    redis_url = os.environ.get("KEYSTONE_MCP_REDIS_URL", "").strip()
+    if not redis_url:
+        return
+
+    from mcp.server.auth.provider import AccessToken, RefreshToken
+    from mcp.shared.auth import OAuthClientInformationFull
+
+    from keystone_mcp.auth.oauth_store import RedisOAuthStore
+
+    store = RedisOAuthStore(redis_url, key_prefix="km:oauth:test:")
+    try:
+        client = OAuthClientInformationFull(
+            client_id="test-client-id",
+            redirect_uris=["http://localhost/cb"],
+            token_endpoint_auth_method="none",
+            grant_types=["authorization_code", "refresh_token"],
+            response_types=["code"],
+        )
+        await store.put_client(client)
+        assert await store.get_client("test-client-id") is not None
+
+        refresh = RefreshToken(
+            token="km_rt_test",
+            client_id="test-client-id",
+            scopes=[],
+            expires_at=None,
+            subject="u@example.com",
+        )
+        await store.put_refresh_token(refresh)
+        assert await store.get_refresh_token("km_rt_test") is not None
+
+        access = AccessToken(
+            token="km_at_test",
+            client_id="test-client-id",
+            scopes=[],
+            expires_at=9999999999,
+            subject="u@example.com",
+            claims={"email": "u@example.com"},
+        )
+        await store.put_access_token(access)
+        assert await store.get_access_token("km_at_test") is not None
+    finally:
+        await store.delete_refresh_token("km_rt_test")
+        await store.delete_access_token("km_at_test")
+        await store.aclose()
+
+
+# ── Refresh-token lifetime and the auth_method marker ───────────────────────
+async def test_refresh_token_carries_the_configured_lifetime(persistence_client):
+    client, _oauth, store, settings = persistence_client
+    before = time.time()
+    res = await obtain_access_token(client, settings.resource_url)
+    assert res["status"] == 200
+
+    stored = await store.get_refresh_token(res["body"]["refresh_token"])
+    assert stored is not None
+    assert stored.expires_at is not None
+    expected = before + settings.refresh_token_ttl_seconds
+    assert abs(stored.expires_at - expected) < 30
+
+
+async def test_refresh_token_default_lifetime_is_thirty_days():
+    assert Settings().refresh_token_ttl_seconds == 30 * 24 * 3600
+
+
+async def test_auth_method_marker_ttl_equals_the_refresh_token_lifetime():
+    """The marker is keyed by refresh token, so its TTL must match that token's."""
+    settings = Settings(base_url=BASE_URL, refresh_token_ttl_seconds=1234)
+    pending = InMemoryLoginPendingStore()
+    provider = KeystoneOAuthProvider(
+        StaticIdentityProvider({VALID_TOKEN}),
+        settings,
+        InMemoryOAuthStore(),
+        pending,
+    )
+    recorded: list[tuple[str, str, str, int]] = []
+    original_put = pending.put
+
+    async def spying_put(namespace, key, payload, ttl_seconds):
+        recorded.append((namespace, key, payload, ttl_seconds))
+        await original_put(namespace, key, payload, ttl_seconds)
+
+    pending.put = spying_put  # type: ignore[method-assign]
+    await provider._put_refresh_meta("km_rt_marker", auth_method="google", resource=None)
+
+    assert recorded == [
+        (
+            "refresh_auth",
+            "km_rt_marker",
+            json.dumps({"auth_method": "google", "resource": None}),
+            1234,
+        )
+    ]
+
+
+async def test_expired_refresh_token_is_refused_and_dropped():
+    settings = Settings(base_url=BASE_URL, refresh_token_ttl_seconds=30 * 24 * 3600)
+    store = InMemoryOAuthStore()
+    provider = KeystoneOAuthProvider(
+        StaticIdentityProvider({VALID_TOKEN}),
+        settings,
+        store,
+        InMemoryLoginPendingStore(),
+    )
+    registered = OAuthClientInformationFull(
+        client_id="client-1",
+        redirect_uris=["http://localhost:9999/callback"],  # type: ignore[list-item]
+        token_endpoint_auth_method="none",
+    )
+    await store.put_refresh_token(
+        RefreshToken(
+            token="km_rt_expired",
+            client_id="client-1",
+            scopes=[],
+            expires_at=int(time.time()) - 1,
+            subject="user@example.com",
+        )
+    )
+
+    assert await provider.load_refresh_token(registered, "km_rt_expired") is None
+    assert await store.get_refresh_token("km_rt_expired") is None
+
+
+async def test_live_refresh_token_is_accepted():
+    settings = Settings(base_url=BASE_URL)
+    store = InMemoryOAuthStore()
+    provider = KeystoneOAuthProvider(
+        StaticIdentityProvider({VALID_TOKEN}),
+        settings,
+        store,
+        InMemoryLoginPendingStore(),
+    )
+    registered = OAuthClientInformationFull(
+        client_id="client-1",
+        redirect_uris=["http://localhost:9999/callback"],  # type: ignore[list-item]
+        token_endpoint_auth_method="none",
+    )
+    await store.put_refresh_token(
+        RefreshToken(
+            token="km_rt_live",
+            client_id="client-1",
+            scopes=[],
+            expires_at=int(time.time()) + 600,
+            subject="user@example.com",
+        )
+    )
+    loaded = await provider.load_refresh_token(registered, "km_rt_live")
+    assert loaded is not None
+    assert loaded.token == "km_rt_live"
+
+
+# ── Rotation ordering ───────────────────────────────────────────────────────
+async def test_rotation_persists_the_new_token_before_deleting_the_old():
+    """A crash between the two steps must not strand the session."""
+    settings = Settings(base_url=BASE_URL)
+    store = InMemoryOAuthStore()
+    provider = KeystoneOAuthProvider(
+        StaticIdentityProvider({VALID_TOKEN}),
+        settings,
+        store,
+        InMemoryLoginPendingStore(),
+    )
+    registered = OAuthClientInformationFull(
+        client_id="client-1",
+        redirect_uris=["http://localhost:9999/callback"],  # type: ignore[list-item]
+        token_endpoint_auth_method="none",
+    )
+    old = RefreshToken(
+        token="km_rt_old",
+        client_id="client-1",
+        scopes=[],
+        expires_at=int(time.time()) + 600,
+        subject="user@example.com",
+    )
+    await store.put_refresh_token(old)
+
+    calls: list[str] = []
+    original_put = store.put_refresh_token
+    original_delete = store.delete_refresh_token
+
+    async def spying_put(refresh):
+        calls.append(f"put:{refresh.token}")
+        await original_put(refresh)
+
+    async def spying_delete(token):
+        calls.append(f"delete:{token}")
+        await original_delete(token)
+
+    store.put_refresh_token = spying_put  # type: ignore[method-assign]
+    store.delete_refresh_token = spying_delete  # type: ignore[method-assign]
+
+    issued = await provider.exchange_refresh_token(registered, old, [])
+    new_token = issued.refresh_token
+    assert new_token is not None
+
+    assert calls == [f"put:{new_token}", "delete:km_rt_old"]
+    assert calls.index(f"put:{new_token}") < calls.index("delete:km_rt_old")
+
+
+async def test_crash_after_minting_leaves_a_usable_refresh_token():
+    """Simulate the interrupted rotation: the client's new token still works."""
+    settings = Settings(base_url=BASE_URL)
+    store = InMemoryOAuthStore()
+    provider = KeystoneOAuthProvider(
+        StaticIdentityProvider({VALID_TOKEN}),
+        settings,
+        store,
+        InMemoryLoginPendingStore(),
+    )
+    registered = OAuthClientInformationFull(
+        client_id="client-1",
+        redirect_uris=["http://localhost:9999/callback"],  # type: ignore[list-item]
+        token_endpoint_auth_method="none",
+    )
+    old = RefreshToken(
+        token="km_rt_old",
+        client_id="client-1",
+        scopes=[],
+        expires_at=int(time.time()) + 600,
+        subject="user@example.com",
+    )
+    await store.put_refresh_token(old)
+
+    class _Crash(RuntimeError):
+        pass
+
+    async def crashing_delete(_token):
+        raise _Crash("process died before retiring the old token")
+
+    store.delete_refresh_token = crashing_delete  # type: ignore[method-assign]
+
+    with pytest.raises(_Crash):
+        await provider.exchange_refresh_token(registered, old, [])
+
+    # Exactly one new refresh token was persisted, and the old one survives —
+    # either way the client can still refresh.
+    tokens = set(store._refresh_tokens)
+    assert "km_rt_old" in tokens
+    assert len(tokens) == 2
+
+
+# ── Concurrent refresh must not downgrade the auth_method ───────────────────
+async def test_concurrent_refresh_keeps_google_auth_method(persistence_client):
+    """Two parallel refreshes of the same token must both keep auth_method=google.
+
+    Reproduces the race: exchange_refresh_token used to consume (GETDEL) the
+    auth_method marker as its first step, so the second of two concurrent
+    requests for the same refresh token saw no marker and fell back to
+    "api_key", downgrading a Google-authenticated session.
+    """
+    client, oauth, store, settings = persistence_client
+    res = await obtain_access_token(client, settings.resource_url)
+    assert res["status"] == 200
+    refresh_token_str = res["body"]["refresh_token"]
+    client_id = res["client_id"]
+
+    # obtain_access_token logs in via the api_key form; overwrite the marker
+    # to simulate a session that authenticated through Google.
+    await oauth._put_refresh_meta(refresh_token_str, auth_method="google", resource=None)
+
+    registered = await oauth.get_client(client_id)
+    assert registered is not None
+    loaded = await oauth.load_refresh_token(registered, refresh_token_str)
+    assert loaded is not None
+
+    # InMemoryOAuthStore and InMemoryLoginPendingStore never actually suspend
+    # on I/O, so two gathered coroutines would otherwise run back-to-back
+    # instead of interleaving. Force the same interleaving a real Redis round
+    # trip produces by yielding right where the marker is read, so both
+    # requests read the marker before either of them drops it.
+    pending_store = oauth._pending_store
+    original_get = pending_store.get
+
+    async def delayed_get(namespace, key):
+        value = await original_get(namespace, key)
+        await asyncio.sleep(0)
+        return value
+
+    pending_store.get = delayed_get  # type: ignore[method-assign]
+
+    first, second = await asyncio.gather(
+        oauth.exchange_refresh_token(registered, loaded, []),
+        oauth.exchange_refresh_token(registered, loaded, []),
+    )
+
+    for issued in (first, second):
+        access = await store.get_access_token(issued.access_token)
+        assert access is not None
+        assert access.claims["auth_method"] == "google"
+
+
+async def test_old_auth_marker_gets_short_grace_ttl_after_rotation(persistence_client):
+    """After a successful rotation, the old refresh token's marker is rewritten, not deleted.
+
+    This used to assert the marker was gone immediately after rotation. That
+    is exactly what reopened the race this fix (finding #2, below) closes: a
+    second request that validated the old refresh token concurrently with the
+    one that won the rotation would read no marker at all once the first
+    request deleted it, and silently downgrade to ("api_key", None). Instead
+    the marker is rewritten with a short grace TTL, which this test checks
+    directly against the in-memory store's expiry bookkeeping.
+    """
+    client, oauth, _store, settings = persistence_client
+    res = await obtain_access_token(client, settings.resource_url)
+    assert res["status"] == 200
+    old_refresh = res["body"]["refresh_token"]
+    client_id = res["client_id"]
+
+    before = time.time()
+    refreshed = await refresh_access_token(client, client_id, old_refresh, settings.resource_url)
+    assert refreshed["status"] == 200
+
+    # Still readable right after rotation, with the same auth_method/resource
+    # a second concurrent request would need.
+    raw = await oauth._pending_store.get("refresh_auth", old_refresh)
+    assert raw is not None
+    data = json.loads(raw)
+    assert data["auth_method"] == "api_key"
+
+    # But its TTL is the short grace window, not the full refresh-token
+    # lifetime: it will not linger in Redis/memory forever.
+    entry = oauth._pending_store._entries[("refresh_auth", old_refresh)]
+    assert entry.expires_at <= before + 61
+
+
+async def test_second_refresh_keeps_auth_method_after_first_fully_completes(persistence_client):
+    """The residual race finding #2 closes: not two readers racing one write, but a
+    reader that arrives after the writer it raced has already finished.
+
+    Both requests for the same old refresh token validate it (the SDK's
+    ``load_refresh_token``) before either one rotates it away — that part of
+    the race was already closed by reading the marker without deleting it.
+    What was still open: request A can rotate the token *all the way through*
+    (including dropping the old marker) before request B, which validated the
+    same old token earlier, calls ``exchange_refresh_token``. B's own refresh
+    token is perfectly valid; it should not lose the Google-authenticated
+    session just because A finished first.
+    """
+    client, oauth, store, settings = persistence_client
+    res = await obtain_access_token(client, settings.resource_url)
+    assert res["status"] == 200
+    refresh_token_str = res["body"]["refresh_token"]
+    client_id = res["client_id"]
+
+    # Simulate a session that authenticated through Google.
+    await oauth._put_refresh_meta(
+        refresh_token_str, auth_method="google", resource=settings.resource_url
+    )
+
+    registered = await oauth.get_client(client_id)
+    assert registered is not None
+    loaded = await oauth.load_refresh_token(registered, refresh_token_str)
+    assert loaded is not None
+
+    # Request A: rotates the old token all the way through.
+    first = await oauth.exchange_refresh_token(registered, loaded, [])
+    assert first.refresh_token is not None
+
+    # Request B: had already validated `loaded` (its own load_refresh_token
+    # call, concurrent with A's) before A finished, and now presents the same
+    # now-retired old RefreshToken object.
+    second = await oauth.exchange_refresh_token(registered, loaded, [])
+
+    access = await store.get_access_token(second.access_token)
+    assert access is not None
+    assert access.claims["auth_method"] == "google"
+    assert access.resource == settings.resource_url
+
+
+# ── Client TTL: touched before the refresh token it owns is written ────────
+async def test_client_is_touched_before_refresh_token_is_written():
+    settings = Settings(base_url=BASE_URL)
+    store = InMemoryOAuthStore()
+    provider = KeystoneOAuthProvider(
+        StaticIdentityProvider({VALID_TOKEN}),
+        settings,
+        store,
+        InMemoryLoginPendingStore(),
+    )
+    client = OAuthClientInformationFull(
+        client_id="client-1",
+        redirect_uris=["http://localhost:9999/callback"],  # type: ignore[list-item]
+        token_endpoint_auth_method="none",
+    )
+    await store.put_client(client)
+
+    calls: list[str] = []
+    original_touch = store.touch_client
+    original_put_refresh = store.put_refresh_token
+
+    async def spying_touch(client_id):
+        calls.append(f"touch:{client_id}")
+        await original_touch(client_id)
+
+    async def spying_put_refresh(refresh):
+        calls.append(f"put_refresh:{refresh.token}")
+        await original_put_refresh(refresh)
+
+    store.touch_client = spying_touch  # type: ignore[method-assign]
+    store.put_refresh_token = spying_put_refresh  # type: ignore[method-assign]
+
+    auth_code = AuthorizationCode(
+        code="km_code_test",
+        scopes=[],
+        expires_at=time.time() + 600,
+        client_id="client-1",
+        code_challenge="challenge",
+        redirect_uri="http://localhost:9999/callback",
+        redirect_uri_provided_explicitly=True,
+        resource=None,
+        subject="user@example.com",
+    )
+    await provider._put_auth_code(auth_code, auth_method="api_key")
+
+    issued = await provider.exchange_authorization_code(client, auth_code)
+
+    touch_idx = calls.index("touch:client-1")
+    put_idx = next(i for i, c in enumerate(calls) if c.startswith("put_refresh:"))
+    assert touch_idx < put_idx
+
+    # Same ordering guarantee on the refresh grant.
+    calls.clear()
+    refresh = await store.get_refresh_token(issued.refresh_token)
+    assert refresh is not None
+    await provider.exchange_refresh_token(client, refresh, [])
+
+    touch_idx = calls.index("touch:client-1")
+    put_idx = next(i for i, c in enumerate(calls) if c.startswith("put_refresh:"))
+    assert touch_idx < put_idx

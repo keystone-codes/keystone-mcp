@@ -1,0 +1,149 @@
+"""Readiness probe backing ``GET /readyz``.
+
+``/healthz`` answers "is the process alive" and never fails: a process that
+cannot reach Redis or load its RBAC policy is still listening and would
+answer ``/healthz`` with 200, so a load balancer or orchestrator keeps
+sending it traffic that cannot possibly succeed. ``/readyz`` answers "can
+this replica serve work right now" by checking the dependencies without
+which every login or RBAC-gated call fails anyway.
+
+Checks run in parallel, each under its own short timeout, so one slow
+dependency does not make the others wait and a poll never blocks longer than
+``timeout_seconds``. The users directory's HTTP backend (used when forks
+point at an external directory service) is deliberately not checked here:
+that service's own availability already fails closed on every call that
+needs it (see :class:`~keystone_mcp.user_directory.http.HttpUserDirectoryBackend`),
+and treating its outage as "this Keystone replica is not ready" would pull
+every replica out of rotation at once over a problem no restart or redeploy
+of Keystone fixes.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    from redis.asyncio import Redis
+
+    from keystone_mcp.rbac.loader import RbacPolicyManager
+
+logger = logging.getLogger(__name__)
+
+CheckResult = Literal["ok", "fail", "skipped"]
+
+DEFAULT_TIMEOUT_SECONDS = 1.0
+
+_CHECK_NAMES = ("redis", "rbac_policy", "users_directory")
+
+
+@dataclass(frozen=True)
+class ReadinessReport:
+    """Outcome of one :meth:`ReadinessProbe.run` poll."""
+
+    ready: bool
+    checks: dict[str, CheckResult]
+
+
+class ReadinessProbe:
+    """Polls Redis, the active RBAC policy, and the users directory backend.
+
+    One instance is built per server process (see ``server.py``) and reused
+    for every ``/readyz`` poll, so transitions between ready and degraded are
+    logged once rather than on every poll a load balancer sends.
+    """
+
+    def __init__(
+        self,
+        *,
+        redis: Redis | None,
+        policy_manager: RbacPolicyManager | None,
+        users_backend: object | None,
+        timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+    ) -> None:
+        self._redis = redis
+        self._policy_manager = policy_manager
+        self._users_backend = users_backend
+        self._timeout_seconds = timeout_seconds
+        # None until the first poll completes, so the very first result never
+        # logs a "restored" transition it did not earn.
+        self._was_ready: bool | None = None
+
+    async def run(self) -> ReadinessReport:
+        (
+            (redis_result, redis_exc),
+            (rbac_result, rbac_exc),
+            (users_result, users_exc),
+        ) = await asyncio.gather(
+            self._check_redis(),
+            self._check_rbac_policy(),
+            self._check_users_directory(),
+        )
+        checks: dict[str, CheckResult] = {
+            "redis": redis_result,
+            "rbac_policy": rbac_result,
+            "users_directory": users_result,
+        }
+        exceptions = {"redis": redis_exc, "rbac_policy": rbac_exc, "users_directory": users_exc}
+        ready = all(value != "fail" for value in checks.values())
+        self._log_transition(ready, checks, exceptions)
+        return ReadinessReport(ready=ready, checks=checks)
+
+    async def _check_redis(self) -> tuple[CheckResult, str | None]:
+        if self._redis is None:
+            return "skipped", None
+        try:
+            await asyncio.wait_for(self._redis.ping(), timeout=self._timeout_seconds)
+        except Exception as exc:
+            return "fail", type(exc).__name__
+        return "ok", None
+
+    async def _check_rbac_policy(self) -> tuple[CheckResult, str | None]:
+        if self._policy_manager is None:
+            return "skipped", None
+        try:
+            active = self._policy_manager.active_policy
+        except Exception as exc:
+            return "fail", type(exc).__name__
+        if active is not None:
+            return "ok", None
+        # No exception here -- this is an absence, not a failure -- so the
+        # log line still names the reason rather than printing "unknown".
+        return "fail", "NoActivePolicy"
+
+    async def _check_users_directory(self) -> tuple[CheckResult, str | None]:
+        backend = self._users_backend
+        ping = getattr(backend, "ping", None)
+        if backend is None or ping is None:
+            # No backend wired (RBAC and Google login both off), or the
+            # HTTP backend (no ping method by design -- see module docstring).
+            return "skipped", None
+        try:
+            await asyncio.wait_for(ping(), timeout=self._timeout_seconds)
+        except Exception as exc:
+            return "fail", type(exc).__name__
+        return "ok", None
+
+    def _log_transition(
+        self,
+        ready: bool,
+        checks: dict[str, CheckResult],
+        exceptions: dict[str, str | None],
+    ) -> None:
+        if ready:
+            if self._was_ready is False:
+                logger.info("readiness restored")
+            self._was_ready = True
+            return
+        if self._was_ready is not False:
+            for name in _CHECK_NAMES:
+                if checks[name] != "fail":
+                    continue
+                logger.warning(
+                    "readiness degraded: %s=fail (%s)",
+                    name,
+                    exceptions[name] or "Unknown",
+                )
+        self._was_ready = False
