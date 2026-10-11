@@ -1,0 +1,111 @@
+name: Test gate
+
+on:
+  workflow_call:
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: uv sync --locked --extra dev
+
+      - name: Version consistency
+        run: uv run python scripts/check_version.py
+
+      - name: Lockfile check
+        run: uv lock --check
+
+      - name: Ruff check
+        run: uv run ruff check .
+
+      - name: Ruff format
+        run: uv run ruff format --check .
+
+  test:
+    name: Test (py${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.13"]
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      KEYSTONE_MCP_REDIS_URL: redis://localhost:6379/0
+      KEYSTONE_TEST_POSTGRES_URL: postgresql+psycopg://postgres:postgres@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install dependencies
+        run: uv sync --locked --extra dev
+
+      - name: Python version
+        run: uv run python --version
+
+      - name: RBAC middleware regression gate
+        run: >-
+          uv run pytest
+          tests/test_rbac_middleware_mounted_coverage.py
+          tests/test_rbac_middleware.py
+          -v
+
+      - name: RBAC conformance regression gate
+        env:
+          RBAC_CONFORMANCE_WRITE_REPORT: artifacts/rbac-conformance-matrix.md
+        run: >-
+          uv run pytest
+          tests/test_rbac_conformance.py
+          -v
+          --tb=short
+
+      - name: Upload RBAC conformance matrix artifact
+        if: always() && matrix.python == '3.12'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: rbac-conformance-matrix
+          path: artifacts/rbac-conformance-matrix.md
+          if-no-files-found: ignore
+
+      - name: Users directory on PostgreSQL
+        run: >-
+          uv run pytest
+          tests/test_users_migrations.py
+          tests/test_users_domain.py
+          tests/test_users_concurrency.py
+          tests/integration/test_users_admin_local_smoke.py
+          -v
+          -rs
+
+      - name: Full test suite
+        run: uv run pytest -q --reruns 2 --reruns-delay 1

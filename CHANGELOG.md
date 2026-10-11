@@ -1,0 +1,869 @@
+# Changelog
+
+All notable changes to this project are documented in this file. The format
+is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
+this project uses [Semantic Versioning](https://semver.org/).
+
+## [Unreleased]
+
+## [0.4.0] - 2026-10-11
+
+### Highlights
+
+- The users directory (people, roles, blocks) is now built into Keystone-MCP
+  itself — no separate `mcp-users` service to run or reach over HTTP.
+  SQLite for local use, PostgreSQL for production, plus a CLI to import an
+  existing external directory and to recover an administrator account.
+- A new `KEYSTONE_MCP_DEPLOYMENT_PROFILE` (`local` | `production`, now
+  defaulting to `production`) validates the whole configuration against one
+  posture at startup instead of trusting a mix of individually-safe settings
+  to add up to a safe deployment.
+- Proxied tool calls pass the upstream's answer and schema through as-is by
+  default; the 0.3.x `{state, tool, task_id, result}` envelope is now opt-in.
+- Hardening across the OAuth/login flow: a Host/Origin allowlist on every
+  HTTP route (DNS-rebinding protection), a consent screen before issuing an
+  authorization code, and a non-root container image.
+- Documentation reorganized around deployment paths (local compose, Docker
+  Compose production, Kubernetes) with `docs/README.md` as the index.
+
+### Migration
+
+Steps for an operator upgrading an existing 0.3.x deployment, in the order to
+apply them.
+
+1. **Deployment profile defaults to `production`.** An installation that
+   never set `KEYSTONE_MCP_DEPLOYMENT_PROFILE` now runs as `production`,
+   which refuses to start unless: `KEYSTONE_MCP_RBAC_MODE=enforce`;
+   `KEYSTONE_MCP_DEV_TOKENS` is empty; `api_key` sign-in (if enabled) has
+   `KEYSTONE_MCP_AUTH_SERVICE_URL`/`_TOKEN` configured;
+   `KEYSTONE_MCP_BASE_URL` is not a plain-`http` address on a publicly
+   reachable host; and, with the built-in users backend, the users database
+   is PostgreSQL, not SQLite. For a local/dev deployment, set
+   `KEYSTONE_MCP_DEPLOYMENT_PROFILE=local` before starting — it relaxes all
+   of the above and requires a loopback `KEYSTONE_MCP_BASE_URL` instead. See
+   [`docs/environment.md`](docs/environment.md#deployment-profile) for every
+   rule and its error message.
+
+2. **Add your roles to the policy file before importing people.** A role can
+   now be granted only if it is declared in the RBAC policy file
+   (`administrator` is always accepted); the shipped default policy no
+   longer includes a `member` role. If you use other role names, add them to
+   your own policy file now — before step 3, which skips any person whose
+   role is not in the policy.
+
+3. **The users directory is now built in.** `KEYSTONE_MCP_USERS_BACKEND`
+   defaults to `local`: Keystone-MCP stores people, roles and blocks itself
+   (migrations run on startup; a PostgreSQL advisory lock serializes
+   replicas) instead of calling an external directory service. If you were
+   running an external directory:
+   a. set `KEYSTONE_MCP_USERS_DB_URL` to a PostgreSQL URL (SQLite is
+      refused under the `production` profile, see step 1);
+   b. run `keystone-mcp users import --from-url <old directory URL> --policy
+      <policy file> [--dry-run]` to copy people, roles and blocks —
+      idempotent, safe to re-run; the source stays authoritative on every
+      run, so a person's local change through `users_*` since the last
+      import is overwritten again from the source, and a role the source
+      does not have is dropped; a role not in your policy is skipped and
+      logged (this is why step 2 comes first);
+   c. check `users_list` looks right;
+   d. stop the old directory service.
+   If you'd rather keep the external directory for now, set
+   `KEYSTONE_MCP_USERS_BACKEND=http` explicitly instead — and note that
+   **if `KEYSTONE_MCP_USERS_SERVICE_URL` is already set and
+   `KEYSTONE_MCP_USERS_BACKEND` is not, startup now refuses to run** rather
+   than silently switching to an empty local database (which would deny
+   every user under `enforce`); set the backend explicitly either way. See
+   [`docs/users.md`](docs/users.md#moving-from-an-external-users-directory).
+
+4. **First administrator and recovery.** `MCP_USERS_SUPERADMIN_EMAIL` (read
+   by the old external directory) is replaced by
+   `KEYSTONE_MCP_SUPERADMIN_EMAIL`, seeded idempotently into the built-in
+   directory on startup. Locked out of every administrator account:
+   `keystone-mcp users grant-admin --email <you>` (add `--create` if the
+   users database does not exist yet; without it the command refuses rather
+   than create a fresh, empty database by accident).
+
+5. **DEV tokens now require a directory entry.** Signing in with a DEV token
+   is refused unless the email is present in the users directory and not
+   blocked; the email is lower-cased first. DEV tokens are also refused
+   outright under the `production` profile regardless of RBAC mode (step 1).
+   Add anyone who used to sign in this way via `users_add` or
+   `KEYSTONE_MCP_SUPERADMIN_EMAIL`.
+
+6. **The server reads `.env` itself.** `keystone-mcp` (server and CLI) now
+   loads `.env` from the current working directory, or the file named by
+   `KEYSTONE_MCP_ENV_FILE`, before reading any setting; a value already set
+   in the process environment still wins. If an unrelated `.env` happens to
+   sit in the working directory you start the server from, it is now read —
+   move it or point `KEYSTONE_MCP_ENV_FILE` elsewhere if that is not what you
+   want.
+
+7. **`KEYSTONE_MCP_AUTH_SERVICE_URL` / `_TOKEN` are deprecated**, to be
+   removed in 0.4.1; API keys are moving into the built-in users directory.
+   No action needed yet beyond planning the move.
+
+8. **Default tool-call limit raised from 30 to 120 per 60 s.** If you relied
+   on the old, stricter limit, set `KEYSTONE_MCP_THROTTLE_MAX=30` explicitly.
+
+9. **File tools are off by default.** `create_upload_url` and
+   `get_download_link` are now published only when
+   `KEYSTONE_MCP_FILE_API_URL` is set — there is no longer a fallback to
+   `KEYSTONE_MCP_WEBHOOK_BASE_URL`. `create_upload_url` no longer accepts
+   `intended_project_id` (it was unused).
+
+10. **An unreachable upstream no longer blocks startup.** Reachable upstreams
+    are proxied normally; an unreachable one is logged and retried on every
+    refresh tick instead of refusing to start. To keep the old all-or-nothing
+    behavior, set `KEYSTONE_MCP_UPSTREAM_REQUIRE_ALL=true`.
+
+11. **Proxied answers are passed through as-is.** The `{state, tool,
+    task_id, result}` envelope and its status mapping are no longer applied
+    by default. If a client or skill expects that envelope, set
+    `KEYSTONE_MCP_PROXY_STATUS_ENVELOPE=true` to restore it.
+
+12. **Refresh tokens and registered OAuth clients now expire in Redis.**
+    Existing records written without a TTL get one the next time they are
+    read; a record nobody reads again keeps no TTL. To find and clear them by
+    hand: `redis-cli --scan --pattern 'km:oauth:rt:*'`, then `TTL <key>` for
+    each (`-1` means no TTL) — deleting one is safe, the client just signs in
+    again.
+
+13. **The container runs as a non-root user (uid/gid `10001`).** Any volume
+    mounted into it — including the users-directory data directory — must be
+    writable by that uid; `chown -R 10001:10001 <volume>` if it was created
+    while the container still ran as root.
+
+14. **Dynamic client registration can now be turned off.**
+    `KEYSTONE_MCP_OAUTH_DCR_ENABLED` defaults to `true`, so no action is
+    needed unless you want to disable `POST /register` and register OAuth
+    clients manually instead; see
+    [`docs/environment.md`](docs/environment.md#registering-a-client-manually).
+
+15. **Compose files were removed.** `docker-compose.example.yml`,
+    `docker-compose.e2e.yml` and `docker-compose.sidecars.example.yml` are
+    gone. For a quick local demo use `docker-compose.demo.yml`; for
+    production use the walkthrough under `examples/production/`.
+
+16. **`.env.example` was rewritten** as a local-profile section that starts
+    the server, a production-profile section listing what to change, and
+    every remaining setting commented out. Compare it against your own
+    `.env` — values you already set are unaffected except where this list
+    says otherwise.
+
+17. **A reverse proxy or load balancer in front of Keystone-MCP needs its own
+    hostname allowed.** Every HTTP route now refuses a request whose `Host`
+    header (and `Origin`, when present) is not on an allowlist built from
+    `KEYSTONE_MCP_BASE_URL` plus `KEYSTONE_MCP_ALLOWED_HOSTS`. If something in
+    front of Keystone-MCP forwards a different `Host` than
+    `KEYSTONE_MCP_BASE_URL` — a load balancer's own hostname, an internal DNS
+    name — add it to `KEYSTONE_MCP_ALLOWED_HOSTS` (comma-separated), or every
+    request through it now gets `421`.
+
+18. **Upstream bearer-token variables must use one reserved name prefix.**
+    An `auth.bearer_env` entry in `upstreams.yaml` must name an environment
+    variable starting with `KEYSTONE_MCP_UPSTREAM_`, and must not reuse a
+    name `config.py` already reads as a setting of its own (for example
+    `KEYSTONE_MCP_UPSTREAM_REQUIRE_ALL`). Rename an existing entry and its
+    variable to fit, e.g. `KEYSTONE_MCP_UPSTREAM_<NAMESPACE>_TOKEN`; startup
+    now refuses anything else.
+
+### Added
+
+- `docs/clients.md`: connect Claude Code, Cursor and Claude Desktop, locally
+  and over HTTPS.
+- `tests/integration/test_setup_first_run.py`: end-to-end test of a
+  brand-new deployment — `setup.sh --non-interactive --skip-install` in the
+  `local` profile, a real server process started the way the script's own
+  summary tells a new user to, `GET /healthz`, then the first administrator
+  signing in over the real OAuth connector and seeing `users_list` among its
+  published tools; a second sign-in for an email absent from the built-in
+  users directory is refused with `403`.
+- `KEYSTONE_MCP_DEPLOYMENT_PROFILE` (`local` | `production`, default
+  `production`): tells the server which posture to validate its settings
+  against. `local` requires a loopback `KEYSTONE_MCP_BASE_URL` and allows DEV
+  tokens under any `KEYSTONE_MCP_RBAC_MODE`. `production` requires
+  `KEYSTONE_MCP_RBAC_MODE=enforce`, refuses `KEYSTONE_MCP_DEV_TOKENS`
+  outright, refuses `api_key` sign-in without an external key-verification
+  service, and refuses a plain-`http` `KEYSTONE_MCP_BASE_URL` on a publicly
+  reachable host. `server.main` logs the resolved profile and a set of
+  startup warnings (`keystone_mcp.config.startup_warnings`) for
+  risky-but-not-refused configurations. See
+  [`docs/environment.md`](docs/environment.md#deployment-profile).
+- `GET /readyz` readiness endpoint: Redis ping, active RBAC policy, built-in
+  users database. `200` when every check is not `fail`, otherwise `503`.
+  Check detail is shown only to internal callers (same source-address gate as
+  `/metrics`); an external HTTP users directory
+  (`KEYSTONE_MCP_USERS_BACKEND=http`) is deliberately not checked, so an
+  unreachable external directory does not pull every replica out of rotation
+  at once. The container `HEALTHCHECK` now polls `/readyz` instead of
+  `/healthz`.
+- Release workflow refuses a tag whose version differs from
+  `pyproject.toml`, `__version__` or the latest CHANGELOG heading
+  (`scripts/check_version.py`).
+- Multi-arch images (`linux/amd64`, `linux/arm64`); release workflow starts
+  the image against Redis before publishing and creates a GitHub Release
+  from the CHANGELOG section (`scripts/extract_changelog.py`).
+- `docs/environment.md`: rate-limit presets, running behind a reverse proxy
+  (`FORWARDED_ALLOW_IPS`), and what changes with several replicas.
+- Tests that keep `config.py`, `.env.example` and `docs/environment.md` in
+  sync, and that check every relative link and heading anchor in the
+  Markdown docs.
+- Test upstream on the low-level MCP SDK (`tests/support/lowlevel_upstream.py`)
+  and proxy tests against a non-FastMCP server.
+- `keystone-mcp` (server and CLI) now read `.env` from the current working
+  directory, or from the file named by `KEYSTONE_MCP_ENV_FILE`, before any
+  setting is read; a value already set in the process environment always
+  wins over the file.
+- `KEYSTONE_MCP_OAUTH_DCR_ENABLED` (default `true`): toggle for dynamic
+  client registration (RFC 7591, `POST /register`). When `false`, the route
+  and the `registration_endpoint` metadata entry are both absent, and OAuth
+  clients are registered manually; see
+  [`docs/environment.md`](docs/environment.md#registering-a-client-manually).
+- Built-in users directory module (`keystone_mcp.users`): SQLAlchemy models,
+  Alembic migration, administrator invariants; SQLite and PostgreSQL.
+- End-to-end test: OAuth bearer token, RBAC `enforce`, denied `call_tool`.
+- `KEYSTONE_MCP_UPSTREAM_REQUIRE_ALL` (default `false`): refuse to start when
+  any configured upstream is unreachable, instead of proxying the rest.
+  Metric `keystone_mcp_upstream_available{namespace}` (1 = reachable).
+- `KEYSTONE_MCP_OAUTH_MAX_CLIENTS` (default `10000`): soft cap on the number
+  of live (non-expired) registered OAuth clients. `POST /register` past the
+  cap is refused with `invalid_client_metadata`; `0` disables the cap.
+  Tracked via a Redis sorted-set index that also picks up legacy client
+  records written before this change. New Prometheus metrics:
+  `keystone_mcp_oauth_client_registrations_total{outcome}` and the
+  `keystone_mcp_oauth_clients` gauge.
+- `KEYSTONE_MCP_OAUTH_ALLOWED_REDIRECT_HOSTS` (default empty, no
+  restriction): comma-separated bare hostnames a registered client's
+  `redirect_uri` may point to, plus an optional `scheme://host` entry for a
+  custom (non-http(s)) URI scheme. When set, `POST /register` refuses a
+  client whose `redirect_uris` include a host outside the list, or whose
+  `redirect_uris` is empty/`null` (`invalid_redirect_uri`), and both
+  `/authorize` and token exchange (`POST /token`, authorization code and
+  refresh token) refuse a client whose `redirect_uri` is not allowed —
+  including one registered before the restriction was turned on or
+  tightened, so it cannot keep refreshing its tokens forever on an allowance
+  that no longer holds. `/authorize`'s refusal stays on this server
+  (`/login/redirect-not-allowed`, a 400 page) instead of redirecting the
+  browser to the client's own (disallowed) `redirect_uri` with an error. A
+  bare host entry matches `https` for that host and `http` only for loopback
+  (`localhost`/`127.0.0.1`/`::1`); a custom scheme is matched only against
+  its own explicit `scheme://host` entry. New outcome
+  `keystone_mcp_oauth_client_registrations_total{outcome="rejected_redirect_host"}`.
+- `KEYSTONE_MCP_USERS_BACKEND` (`local` default, `http`),
+  `KEYSTONE_MCP_USERS_DB_URL`, `KEYSTONE_MCP_SUPERADMIN_EMAIL`: the users
+  directory is now built into the server by default — migrations run on
+  startup (a PostgreSQL advisory lock serializes replicas), and the
+  configured administrator is seeded idempotently.
+  `KEYSTONE_MCP_USERS_BACKEND=http` keeps the external HTTP directory for
+  forks.
+- `keystone-mcp users grant-admin --email …` — restore administrator access
+  on the server host (creates the account if missing, grants
+  `administrator`, unblocks; `--create` is required to run it against a
+  users database that does not exist yet).
+- `keystone-mcp users import --from-url … [--policy …] [--dry-run]` — copy
+  people, roles and block state from an external users directory. The
+  source is authoritative on every run, including a second one: re-running
+  restores a block or `administrator` grant/revoke the source still has,
+  even if it was changed locally through `users_*` since the last import,
+  and drops any role granted locally that the source does not have. Roles
+  not in the policy are skipped and logged. `--dry-run` reports
+  `admin_or_block_changes`, the count of existing people this would affect
+  that way.
+- Upstream registry entries accept `auth: {bearer_env: VAR}`; Keystone-MCP
+  sends `Authorization: Bearer <value of VAR>` on discovery and every
+  proxied call. Startup is refused if the variable is unset (and, see
+  Security, if its name does not fit the reserved prefix).
+- `docker-compose.demo.yml`: Keystone-MCP, Redis and a sample upstream
+  (`examples/hello-upstream/`) in one command. `docker-compose.postgres.yml`
+  overlay stores the users directory in Postgres.
+- `docs/paths/production-docker.md` and `examples/production/`: a
+  step-by-step Docker Compose path for production — a pinned image, Redis,
+  Postgres as the users directory, Google sign-in, and TLS in front — plus
+  upgrades, backups, and running more than one replica.
+- CI runs the demo compose end to end: DCR, DEV-token login, `hello_*` call,
+  `users_add`, role-filtered catalog (`scripts/smoke_demo.py`).
+- `docs/paths/local-compose.md`: run the demo and try roles in about 15
+  minutes.
+- `docs/adding-routes.md`: what a fork can replace today (sign-in check,
+  users directory, adapters, policy, schema patches) and what still needs a
+  core change.
+- Kubernetes example under `examples/kubernetes/` with readiness on
+  `/readyz`: plain `kubectl apply -k examples/kubernetes/` manifests (no
+  Helm, no templating) for a two-replica Deployment, ConfigMap (RBAC policy
+  and upstream registry), Service, and example-only Secret and Ingress
+  files. Runs non-root (uid/gid `10001`) with a read-only root filesystem.
+  Redis and Postgres are not part of the example — bring your own.
+  Walkthrough: [`docs/paths/kubernetes.md`](docs/paths/kubernetes.md).
+  Checked with `kubectl kustomize` and `kubeconform:v0.6.7 -strict`; static
+  checks in `tests/test_kubernetes_example.py`.
+- CI: dependency audit (`uv audit`) on every PR and weekly; Trivy image scan
+  (non-blocking).
+- `KEYSTONE_MCP_ALLOWED_HOSTS`: extra names the new `HostGuardMiddleware`
+  accepts on the `Host`/`Origin` headers, beyond `KEYSTONE_MCP_BASE_URL`'s
+  own host and its loopback aliases — a load balancer's hostname, an
+  internal DNS name. See Security below and
+  [`docs/environment.md`](docs/environment.md).
+
+### Changed
+
+- README rewritten as a short pitch (what Keystone-MCP is, and the
+  facade/router/authorization split), a one-command local demo, and a short
+  "Why Keystone-MCP" list; the detailed Observability block, the "Users
+  directory" and "Install" sections, and the 13-link documentation list are
+  gone from it — their content already lives in
+  `docs/observability-rbac.md`/`docs/observability-logging.md`,
+  `docs/users.md`, `docs/deploy.md` and `docs/security-model.md`.
+  `docs/README.md` is a new index of every guide grouped by role, and
+  `docs/features.md` is a new page describing every capability in depth,
+  including which ones are still planned for 0.5.0.
+  `tests/test_doc_links.py::test_docs_index_links_every_page` keeps the
+  index honest: a new page under `docs/` or `docs/paths/` without an entry
+  there now fails the test.
+- `production` refuses a SQLite users directory: when
+  `KEYSTONE_MCP_USERS_BACKEND=local` (the default), startup now refuses an
+  empty or `sqlite`-scheme `KEYSTONE_MCP_USERS_DB_URL`. SQLite is one file
+  per replica — two replicas each write their own copy and roles drift
+  apart, and the file is lost with the container unless a volume happens to
+  be mounted on it — so `production` now requires Postgres. `local` still
+  allows SQLite, and `KEYSTONE_MCP_USERS_BACKEND=http` is unaffected (the
+  external directory manages its own storage). See
+  [`docs/environment.md`](docs/environment.md#deployment-profile).
+- `KEYSTONE_MCP_DEV_TOKENS` combined with `KEYSTONE_MCP_RBAC_MODE=enforce`
+  is now a `KEYSTONE_MCP_DEPLOYMENT_PROFILE`-gated decision instead of an
+  outright refusal: `local` allows the pair (with a startup warning), while
+  `production` refuses DEV tokens under any RBAC mode. The former rule — DEV
+  tokens with `enforce` refused unless an auth service was configured — no
+  longer exists as a standalone check.
+- Upstream namespaces are validated: allowed characters, no namespace that
+  can shadow a built-in tool (`users`, `create`, `get`, …), and no namespace
+  that is another namespace plus `_suffix`. Checked at startup, in
+  `keystone-mcp upstream validate`, and for `KEYSTONE_MCP_UPSTREAMS`.
+  Collisions that still slip through within one service (e.g. after
+  `strip_prefix`) are caught at discovery time and logged as an ERROR
+  instead of silently shadowing one tool with another.
+- An unreachable upstream no longer blocks startup: reachable upstreams are
+  proxied, the unreachable one is logged with its namespace and reason and
+  retried on every refresh tick. Startup is refused only when every upstream
+  is unreachable with RBAC on, or when
+  `KEYSTONE_MCP_UPSTREAM_REQUIRE_ALL=true`.
+- With RBAC on, allow patterns that belong only to an unavailable upstream
+  namespace (`<namespace>_…`) are logged as not verified instead of refusing
+  the policy; they are checked against the live catalog when the upstream
+  comes up. An allow pattern with no owning namespace (a typo in the
+  namespace part, or one matching nothing at all) still refuses startup as
+  before. The bare `*` pattern matching nothing because the whole catalog is
+  empty (no upstreams, file tools and `users_*` all off) is now a WARNING
+  too, instead of refusing startup or failing `keystone-mcp catalog
+  validate`.
+- CI test matrix: Python 3.11, 3.12, 3.13.
+- Dependabot uses the `uv` ecosystem; GitHub Actions bumped to current major
+  versions.
+- Default `KEYSTONE_MCP_THROTTLE_MAX` raised from 30 to 120 calls per 60 s
+  per identity.
+- Bounded the number of distinct `oauth_client_id` values reported on
+  tool-call metrics: the first `KEYSTONE_MCP_METRICS_OAUTH_CLIENT_ID_LIMIT`
+  (default 50) clients seen by a process keep their own label, further
+  clients are reported as `other`, so an unbounded stream of OAuth client
+  registrations cannot create an unbounded number of Prometheus series.
+- `.env.example` rewritten as a single file with a local-profile section
+  that starts the server, a production-profile section listing what to
+  change, and commented-out optional settings for every remaining
+  `config.py` variable, including four named rate-limit presets.
+  `KEYSTONE_MCP_AUTH_SERVICE_URL` is commented out (empty) by default.
+- Proxied answers are passed through as-is by default; the `{state, tool,
+  task_id, result}` envelope and `status` mapping are opt-in via
+  `KEYSTONE_MCP_PROXY_STATUS_ENVELOPE=true`.
+- `GET /login/google` no longer redirects straight to Google; it now
+  bounces (`303`) to the consent screen at `/login?txn=…`, which is where
+  the actual redirect to Google (`POST /login/google`) is initiated from.
+- `KEYSTONE_MCP_USERS_SERVICE_URL` / `KEYSTONE_MCP_USERS_SERVICE_TOKEN` are
+  required only with `KEYSTONE_MCP_USERS_BACKEND=http`.
+- `create_upload_url` and `get_download_link` are published only when
+  `KEYSTONE_MCP_FILE_API_URL` is set, and `filename` has no default (see
+  Removed for the dropped `intended_project_id` parameter).
+- The default policy has one role, `administrator`, and a commented example
+  of a second role.
+- `users_*` tools write to the built-in directory by default; HTTP proxying
+  only with `KEYSTONE_MCP_USERS_BACKEND=http`. Tool names, arguments,
+  response shape and error codes are unchanged.
+- A role can be assigned only if it exists in the RBAC policy file
+  (`validation_error`, `unknown role: <name>`); `administrator` is reserved
+  and always accepted.
+- CI runs the users-directory tests against PostgreSQL 16, in addition to
+  SQLite: a `postgres:16-alpine` service in the `test` job, plus a dedicated
+  "Users directory on PostgreSQL" step so a silent skip there fails the
+  build. Added `tests/test_users_concurrency.py` (exactly one administrator
+  survives when the last two are revoked or blocked at the same instant)
+  and `tests/integration/test_users_admin_local_smoke.py` (full `users_*`
+  lifecycle against the built-in directory, SQLite and PostgreSQL),
+  replacing an older integration test that depended on a live external
+  users-directory service that is no longer published.
+- Diagrams show the built-in users directory and the upstream registry
+  file.
+- `setup.sh` no longer asks for an external users-directory URL or token
+  (the users directory is built in). It now asks for a deployment profile
+  first — `local` (token sign-in, SQLite, this machine only) or
+  `production` (Google sign-in, Postgres, a public host) — then only the
+  questions that profile needs, and writes `KEYSTONE_MCP_SUPERADMIN_EMAIL`
+  instead of probing a directory service over HTTP. New flags:
+  `--non-interactive` (every answer comes from a `KEYSTONE_SETUP_*`
+  environment variable instead of a prompt; exits 2 with a message naming
+  the variable when a required one is missing or invalid), `--skip-install`
+  (skip `uv sync` / `pip install`), and `--help`. Writing `.env` replaces
+  the value of an existing line in place (including a commented-out default
+  in the `.env.example` production section) instead of ever appending a
+  second line for the same variable.
+- Proxied tools publish the upstream's input schema verbatim (descriptions,
+  enums, bounds, nested objects, `$defs`), plus `outputSchema` (in
+  transparent mode only), `title` and `annotations`. Required fields are no
+  longer published as nullable. A parameter name that is not a legal Python
+  identifier (`max-results`) or is a reserved keyword (`from`) no longer
+  makes the whole tool unpublishable, since there is no Python function
+  signature built from the schema anymore.
+- `docs/deploy.md` now covers installing on a host with systemd and the
+  built-in users directory; it no longer describes an external users
+  service or Docker sidecars. Docker deployments are covered by
+  `docs/paths/production-docker.md` instead.
+- Docs: upstream services are configured with the registry file in every
+  example; plain-http flags are described for internal networks; behaviour
+  of unavailable services, built-in tools and the users directory updated.
+
+### Deprecated
+
+- `KEYSTONE_MCP_AUTH_SERVICE_URL` / `KEYSTONE_MCP_AUTH_SERVICE_TOKEN`:
+  removal planned for 0.4.1; API keys move into the built-in users
+  directory.
+
+### Removed
+
+- `docker-compose.example.yml` and `docker-compose.e2e.yml`, replaced by
+  `docker-compose.demo.yml` and `examples/production/`. Both required an
+  external `mcp-upstreams` Docker network and a hand-written `.env`; the
+  demo needs neither.
+- `docker-compose.sidecars.example.yml` (external users-directory image);
+  use the compose demo and the PostgreSQL overlay instead.
+- The `member` role from the shipped default RBAC policy; only
+  `administrator` ships now, with a commented-out example of a second role.
+- `create_upload_url`'s unused `intended_project_id` parameter.
+
+### Security
+
+- Require PyJWT ≥ 2.15.1 and lock cryptography 50.x; earlier versions have
+  published advisories affecting JWKS fetching and key handling.
+- Refresh tokens and registered OAuth clients now carry a TTL in Redis: the
+  client lives for `max(KEYSTONE_MCP_REFRESH_TOKEN_TTL, KEYSTONE_MCP_TOKEN_TTL)`
+  plus one day, renewed on every token issued under it; the refresh token's
+  TTL follows its own expiry (or `KEYSTONE_MCP_REFRESH_TOKEN_TTL` when none
+  is set). A refresh token's sign-in-method marker is now kept for a short
+  grace period (60s) after rotation instead of being deleted immediately:
+  two concurrent requests refreshing the same token both used to validate
+  it before either rotated it away, so the second request could reach
+  token exchange after the first had already rotated and deleted the
+  marker — previously that read nothing and silently fell back to
+  `api_key`, downgrading a Google-authenticated session and losing its
+  RFC 8707 resource binding.
+- Per-IP rate limit on `GET`/`POST /authorize` and `POST /token`
+  (`KEYSTONE_MCP_OAUTH_THROTTLE_IP_MAX`, default `120` per login throttle
+  window), independent from the existing `/login`/`/register` limit.
+- Login page (`/login`, `/login/google`) HTML responses now send
+  `X-Frame-Options: DENY` and a `Content-Security-Policy` (`default-src
+  'none'`, `frame-ancestors 'none'`) to prevent clickjacking via iframe
+  embedding, plus `Referrer-Policy: no-referrer` and `Cache-Control:
+  no-store`. The successful login redirect (`302`) is unaffected.
+- Container runs as non-root user `keystone` (uid/gid 10001); `curl`
+  removed from the runtime image.
+- Consent screen on `/login`: before issuing an authorization code,
+  Keystone shows which application is requesting access and the host it
+  will redirect to, and requires an explicit click. Closes the attack
+  where a client registers its own `redirect_uri` and sends a victim a link
+  straight into an already-authenticated Google session. Google sign-in now
+  starts with a button on this screen (a CSRF-checked `POST
+  /login/google`) instead of a bare link, so it cannot be triggered by a
+  direct URL or from inside an iframe. The round trip is bound to the
+  browser that started it: `/login/google/callback` refuses to proceed
+  unless the browser presents the same `km_login_csrf` cookie the consent
+  screen set, closing a residual gap where an attacker could start their
+  own `/authorize` and consent screen, submit `POST /login/google`
+  themselves, and send a victim the resulting Google authorization URL. The
+  cookie uses the `__Host-` prefix (`Secure`, `Path=/`) when
+  `KEYSTONE_MCP_BASE_URL` is `https` — which a browser only stores for an
+  exact-origin, `Secure`, `Domain`-free cookie — and keeps the unprefixed
+  name (`Path=/login`) for a plain-`http` deployment (local/demo), where the
+  prefix's `Secure` requirement would not be honest about what the browser
+  actually enforces. The cookie value is also no longer reused from an
+  incoming request — a fresh value is minted on every render of the consent
+  screen, so re-rendering the same `?txn=` (a second tab, an invalid-token
+  retry, a language switch) rotates it and a page already open elsewhere for
+  the same transaction 400s on submit until reloaded.
+- Token sign-in requires the email to exist in the users directory and not
+  be blocked, in every RBAC mode. The email is lowercased before the
+  authorization code is issued.
+- Both the per-IP and per-email login-throttle tables are now bounded
+  (periodic sweep of entries that have aged out of the window, a
+  20000-entry cap, oldest-accessed evicted first; an email key is also
+  truncated to 320 characters first). Previously a source address or email
+  seen only once — trivial to produce in bulk, especially over IPv6, or by
+  probing one login per address without ever repeating one — left a
+  permanent entry behind, growing the table without bound.
+- `GET`/`POST /authorize`: a client registered before
+  `KEYSTONE_MCP_OAUTH_ALLOWED_REDIRECT_HOSTS` existed (or before it was
+  tightened) could still trigger a browser redirect straight to its own
+  disallowed-host `redirect_uri`, because an invalid `scope` (or a few other
+  malformed fields) made the MCP SDK's own authorization handler redirect
+  there before Keystone's own check ever ran. `/authorize` now resolves
+  `client_id` and checks the client's registered redirect URIs against the
+  allowlist before the SDK handler runs at all; a disallowed client is sent
+  to `/login/redirect-not-allowed` instead, the same safe destination the
+  existing check already used.
+- `KEYSTONE_MCP_OAUTH_ALLOWED_REDIRECT_HOSTS` accepts an IPv6 literal
+  (`::1`, bracketed `[::1]`, or any other IPv6 address) as an entry — it
+  used to refuse any entry containing `:`, which caught IPv6 literals along
+  with the port/scheme mistakes that check exists for. Entries are
+  normalized to the bracket-free, compressed form (`::1`), matching what
+  the existing loopback check compares against.
+- The public/private host check recognizes a legacy decimal/hex/octal IPv4
+  literal (`134744072`, `0x08080808` — both `8.8.8.8`, what a browser or
+  `curl` actually connects to) as the address it is, instead of falling
+  through to the bare-name rule and being classified private. An
+  internal-looking DNS name (`*.svc.cluster.local`, `*.internal`) is still
+  classified public, deliberately: a suffix convention is not a trust
+  boundary, so `production` still refuses a plain-`http`
+  `KEYSTONE_MCP_BASE_URL` on one — only the error message changed, to
+  explain that a closed-cluster install needs a TLS-terminating proxy in
+  front of it too. New startup warning: `local` profile,
+  `KEYSTONE_MCP_HOST` unspecified (`0.0.0.0`/`::`) and
+  `KEYSTONE_MCP_DEV_TOKENS` set — not a refusal (the Docker demo
+  legitimately binds `0.0.0.0` inside its container), but anyone who can
+  reach the port signs in as any directory member.
+- **DNS rebinding.** Every HTTP route — every OAuth endpoint (`/register`,
+  `/authorize`, `/login`, `/token`, `/.well-known/*`) and `/mcp` itself —
+  now refuses a request whose `Host` header (and, if present, `Origin`) is
+  not on an allowlist built from `KEYSTONE_MCP_BASE_URL` (plus
+  `localhost`/`127.0.0.1`/`[::1]` when that host is loopback) and the new
+  `KEYSTONE_MCP_ALLOWED_HOSTS` (`HostGuardMiddleware`,
+  `src/keystone_mcp/http/host_guard.py`). fastmcp 3.4.4 ships its own
+  Host/Origin guard, but it defaults to off and, even enabled, cannot
+  exempt a route — which `/healthz`/`/readyz` need, since a container
+  healthcheck or a Kubernetes probe reaches them by an address
+  (`127.0.0.1`, or a pod IP assigned at pod start) that cannot be
+  enumerated ahead of time; both are exempted here instead. A disallowed
+  `Host` is refused with `421`; a disallowed `Origin` with `400`. Without
+  this, a page on an attacker-controlled hostname could rebind its DNS to
+  `127.0.0.1` after loading and drive the whole OAuth flow — register a
+  client, `/authorize`, `POST /login` with a DEV token, `/token`, call any
+  published tool — from inside a victim's own browser, past any
+  network-level isolation.
+- `UpstreamRegistry._auth_headers` (the per-namespace `Authorization:
+  Bearer …` headers set via `auth.bearer_env`) no longer appears in
+  `repr(UpstreamRegistry)`, nor transitively in `repr(SurfaceReconciler)`
+  (which holds an `UpstreamRegistry`). Logging or printing either object —
+  e.g. in a traceback — could previously leak an upstream bearer token in
+  clear text.
+- An upstream registry entry's `auth.bearer_env` must now start with the
+  reserved `KEYSTONE_MCP_UPSTREAM_` prefix, and must not name one of the
+  `KEYSTONE_MCP_UPSTREAM_*` variables `config.py` itself already reads as a
+  setting (`ALLOW_INSECURE_HTTP`, `EGRESS_ALLOW_PRIVATE`,
+  `DISCOVERY_RETRIES`, `DISCOVERY_TIMEOUT`, `REQUIRE_ALL`,
+  `TOOL_TIMEOUT_SECONDS`, `TOOL_TIMEOUTS`). Previously only the
+  variable-name *shape* was checked, so anyone editing `upstreams.yaml`
+  could write `bearer_env: KEYSTONE_MCP_GOOGLE_CLIENT_SECRET` (or any other
+  secret Keystone-MCP already holds) next to a `url` of their choosing, and
+  Keystone-MCP would send that secret to that upstream as a bearer token.
+- `setup.sh` rejects any `KEYSTONE_SETUP_*` value (interactive or
+  `--non-interactive`) that contains a newline or other control character,
+  before anything is written: the `.env` writer splices each value into its
+  line verbatim, so an embedded `\n` could otherwise inject extra
+  `KEYSTONE_MCP_*` assignments past the fields setup.sh itself means to set
+  (for example smuggling `KEYSTONE_MCP_RBAC_MODE=disabled` in through
+  `KEYSTONE_SETUP_BASE_URL`). An injection attempt exits `2` and leaves an
+  existing `.env` untouched.
+- `setup.sh` creates `.env` at mode `0600` from its very first byte (via a
+  scoped `umask 077` around the copy, or a `chmod 600` on an existing file,
+  before anything is written into it) instead of relying on a final `chmod
+  600` after the file had already been created at the process's default
+  mode (typically `0644`) with the administrator's secrets already written
+  into a group/other-readable file.
+- `setup.sh` no longer echoes `KEYSTONE_SETUP_USERS_DB_URL`'s password to
+  stderr when it does not start with `postgresql+psycopg://`; the error now
+  shows the URL with its credentials replaced by `***`.
+- `.github/workflows/ci.yml` and `release.yml` now declare a top-level
+  `permissions: contents: read`, so a job added later without its own
+  `permissions:` block no longer inherits a broader default token scope;
+  `release.yml`'s `publish` (`packages: write`) and `github-release`
+  (`contents: write`) jobs keep their own wider grants. Every third-party
+  action across all four workflow files (`actions/checkout`,
+  `astral-sh/setup-uv`, `actions/upload-artifact`, `docker/setup-qemu-action`,
+  `docker/setup-buildx-action`, `docker/build-push-action`,
+  `docker/login-action`, `docker/metadata-action`, `aquasecurity/trivy-action`)
+  is now pinned to the commit SHA of its current tag (each with a `# vX.Y.Z`
+  comment) rather than the tag itself, so a tag cannot later be moved to
+  point at different code; `.github/dependabot.yml` already tracks the
+  `github-actions` ecosystem and will open PRs that advance these pins.
+- `examples/kubernetes/`: `configmap.yaml`'s `upstreams.yaml` advised a
+  plain `ClusterIP` Service for an upstream with no further isolation,
+  which left any other pod in the cluster free to call it directly and
+  send a forged `X-Author-Email`, impersonating any user. Added
+  `networkpolicy.example.yaml` (not applied by `kustomization.yaml`, same
+  as `secret.example.yaml`/`ingress.example.yaml`) restricting an
+  upstream's ingress to Keystone's own pods, and a new section in
+  [`docs/paths/kubernetes.md`](docs/paths/kubernetes.md#protecting-an-upstream-from-pod-to-pod-spoofing)
+  covering both mitigations — `NetworkPolicy` and `auth.bearer_env` — and
+  why using both is stronger than either alone.
+
+### Fixed
+
+- Proxied tools whose input schema lists an optional field before a
+  required one are published instead of failing discovery of the whole
+  upstream. A tool that cannot be published is skipped with an ERROR log;
+  the rest of the namespace is still proxied.
+- The background catalog refresh no longer stops when an upstream is
+  unreachable; any per-upstream error keeps that upstream's previous tool
+  list, and the refresh task is restarted if it crashes. `SIGHUP` reloads
+  the policy inline when the refresh task is not running.
+- `.env.example` no longer enables external key verification out of the
+  box. `KEYSTONE_MCP_AUTH_SERVICE_URL` set without
+  `KEYSTONE_MCP_AUTH_SERVICE_TOKEN` is now refused at startup instead of
+  silently locking every api-key login out.
+- Proxied tools that answer with plain text, several content blocks, images
+  or resources reach the client unchanged instead of failing with a JSON
+  decode error.
+- Access tokens issued by refresh keep their RFC 8707 resource binding;
+  previously they were unbound, and
+  `KEYSTONE_MCP_REQUIRE_RESOURCE_INDICATOR=true` rejected them.
+- `handle_google_callback` normalizes the verified Google email the same
+  way token sign-in does (lower-cased, trimmed) before using it for the
+  domain check, the directory lookup, and the subject/claims written into
+  the issued token — defensively, in case the upstream Google OIDC client's
+  own normalization is ever relaxed.
+- `POST /register` with `redirect_uris: null` no longer raises an
+  unhandled `TypeError` and a 500 when
+  `KEYSTONE_MCP_OAUTH_ALLOWED_REDIRECT_HOSTS` is set; it is refused the
+  same way an empty `redirect_uris` list is (`invalid_redirect_uri`).
+- `RouterRegistry.add_route` is now atomic: it publishes to FastMCP
+  *before* writing to the route registry, instead of after. Previously,
+  re-publishing an already-live tool under a schema that cannot become a
+  handler signature (a parameter named `from`, or `max-results`, which is
+  not a legal Python identifier) left a "ghost tool" behind — the registry
+  entry was removed by the error handler, but the old tool stayed
+  published in FastMCP with no registry entry pointing at it, and could
+  never be found again to remove. Now a failed publish (new or update)
+  leaves the registry and FastMCP exactly as they were: the previous
+  version, if any, stays fully published in both places. The background
+  refresh no longer caches a fingerprint for a route that was skipped this
+  way (or refused by the published-name collision check), so it is retried
+  on the next tick instead of being silently treated as already up to
+  date; a skipped tool that had a working previous version keeps its old
+  fingerprint, so it is still correctly removed once the upstream really
+  does stop offering it. An RBAC allow pattern that names exactly such a
+  skipped tool is logged as "not verified" (like an unavailable-namespace
+  pattern) instead of refusing startup; see "Unpublishable tools" in
+  [`docs/rbac-policy-format.md`](docs/rbac-policy-format.md#4-validation-rules).
+- `SurfaceReconciler`'s background loop cleared the SIGHUP policy-reload
+  event before running the tick that was supposed to read it, so
+  `force_policy` was always `False`: a SIGHUP (or
+  `request_policy_reload()`) while the policy file itself was unchanged
+  never actually forced a reload. The event is now read by the tick before
+  it is cleared.
+- With `KEYSTONE_MCP_REFRESH_INTERVAL_SECONDS=0`, the startup WARNING for
+  an unreachable upstream no longer claims it is "retried on every refresh
+  tick" — there is no background refresh task in that mode, so it now says
+  the upstream "will not be retried; refresh is disabled" instead.
+- A `.env`/`KEYSTONE_MCP_ENV_FILE` line with no `=` no longer puts the raw
+  line's text into the `ConfigError` it raises, which could otherwise leak
+  a secret (for example a continuation line of a multi-line PEM block in a
+  shared file) into a log or traceback. Only a line starting with
+  `KEYSTONE_MCP_` is refused this way; any other line with no `=` is
+  instead skipped with a warning naming just the file and line number.
+- `keystone-mcp users import` no longer aborts the whole batch with exit
+  code 3 ("database is unavailable") when a single source record has an
+  invalid email, an over-255-character `full_name`, or a malformed role
+  name (previously a database error on PostgreSQL; SQLite did not even
+  enforce the column length, so the same bad record behaved differently
+  per backend). Such records are now validated before being written,
+  skipped individually with their reason printed (no source payload or
+  token), counted as `skipped_invalid=N` in the summary, and the rest of
+  the batch is still imported with exit code `0`. The same command's
+  `admin_or_block_changes` count (and its `--dry-run` warning) now also
+  catches a block being *re-applied* by a re-import (source still reports a
+  block that was lifted locally through `users_unblock`) and any role
+  granted locally through `users_grant_role` being silently dropped because
+  the source does not report it; `--help` and
+  [`docs/users.md`](docs/users.md) describe both directions. It also now
+  writes the same trimmed `full_name` it validated, instead of the raw,
+  untrimmed source value, and checks and trims `created_by` the same way
+  (capped at the column's 320 characters) instead of letting an over-length
+  value reach the database and abort the whole batch.
+- `keystone-mcp users grant-admin`/`users import` print the resolved
+  absolute path of a SQLite `KEYSTONE_MCP_USERS_DB_URL` (instead of the
+  configured relative one) in the `Users directory: …` line, and warn
+  before creating a brand-new, empty database file; `grant-admin`
+  additionally refuses to run against a database that does not exist yet
+  unless `--create` is passed, leading with a single consistent "no users
+  database at …" message instead of two contradictory ones. Running
+  `grant-admin` from a directory other than the server's working directory
+  against the default relative path previously created (and wrote the new
+  administrator into) an unrelated, empty database silently.
+- `docs/security-model.md` explains access as three separate settings
+  (users directory, sign-in secret, policy file) and the local and
+  production profiles; `docs/production-checklist.md` is aligned with the
+  same rules.
+- A denied call (`UnauthorizedError`, no verified identity) on a proxied
+  upstream tool now raises `ToolError` instead of returning an ad hoc
+  `{"state": "error", "code": "unauthorized", ...}` dict. A route published
+  in transparent mode carries the upstream's own `outputSchema`, and a
+  strict client validates `structuredContent` against it — that dict did
+  not match it, so the denial previously surfaced as a confusing schema
+  validation error instead of a plain tool-call failure.
+- `examples/production/upstreams.yaml`'s header comment no longer claims
+  `KEYSTONE_MCP_UPSTREAMS_PATH` is "already" pointed at it by `.env` — the
+  shipped `.env.example` ships that line commented out, so the comment now
+  tells the operator to set it (pointing at the explicit step in
+  `docs/paths/production-docker.md`) instead of implying it needs nothing.
+
+## [0.3.1] - 2026-10-10
+
+### Added
+
+- Structured logging: `KEYSTONE_MCP_LOG_*`, NDJSON/text formatters, HTTP access
+  middleware (no query or credentials), `request_id` correlation, default secret
+  redaction, uvicorn access log disabled. Operator guide
+  [`docs/observability-logging.md`](docs/observability-logging.md) and Vector
+  reference [`docs/examples/vector-keystone.toml`](docs/examples/vector-keystone.toml).
+
+### Changed
+
+- README **Observability** section: metrics and logging documented as
+  production-ready (contract in-repo; collectors on the deployment side).
+- Observability guides cross-link and clarify scope (metrics/audit vs app logs).
+
+## [0.3.0] - 2026-10-10
+
+### Added
+
+- **Prometheus tool-call observability** — `keystone_mcp_tool_call_attempts_total`,
+  `keystone_mcp_tool_invocations_total`, and `keystone_mcp_tool_invocation_seconds`
+  with labels for tool, namespace, `auth_method`, and `oauth_client_id`; RBAC
+  decision metrics include `operation` (`list_tools` / `call_tool`). See
+  [`docs/observability-rbac.md`](docs/observability-rbac.md).
+- Example Prometheus sidecar under `prometheus/example/` for host-installed MCP.
+- `GET /healthz` for load balancer and deploy smoke checks.
+- File-based upstream registry (`KEYSTONE_MCP_UPSTREAMS_PATH`) with URL validation
+  and `keystone-mcp upstream validate`.
+- RBAC catalog CLI: `keystone-mcp catalog validate|diff|export` (see
+  [`docs/rbac-catalog-registry.md`](docs/rbac-catalog-registry.md)).
+- Login and dynamic client registration rate limits (`KEYSTONE_MCP_LOGIN_THROTTLE_*`).
+- GitHub OSS hygiene: Dependabot, issue/PR templates, `CODEOWNERS`.
+
+### Changed
+
+- Built-in `users_*` admin tools are published only when `KEYSTONE_MCP_RBAC_MODE=enforce`.
+- Upstream MCP proxy HTTP client disables redirect following (`follow_redirects=false`).
+- Generic deploy and observability docs (no environment-specific hostnames in the repo).
+
+### Security
+
+- Startup refuses `KEYSTONE_MCP_DEV_TOKENS` with `KEYSTONE_MCP_RBAC_MODE=enforce`
+  unless auth-service introspection is configured.
+- Upstream registry URL policy: HTTPS by default, optional dev flags for HTTP and
+  private networks; rejects unsafe schemes and userinfo in URLs.
+- `/metrics` and `/internal/*` remain gated by `KEYSTONE_MCP_INTERNAL_ALLOWED_CIDRS`.
+
+### Fixed
+
+- Flaky Streamable HTTP MCP client tests: injection-based upstream e2e and CI
+  retries for intermittent transport errors.
+
+## [0.2.0]
+
+### Licensing
+
+- Licensed under the Apache License 2.0.
+
+### Migration
+
+RBAC moved from a hardcoded, customer-specific role/tool catalog to a
+policy-file-driven engine (`KEYSTONE_MCP_RBAC_POLICY_PATH`, format documented
+in [`docs/rbac-policy-format.md`](docs/rbac-policy-format.md)). A deployment
+that previously relied on the built-in customer catalog must now supply its
+own RBAC policy file and, optionally, a catalog snapshot file
+(`KEYSTONE_MCP_RBAC_CATALOG_SNAPSHOT`) declaring active/reserved/work-in-progress
+tool names. `KEYSTONE_MCP_RBAC_ENABLED` still works but is deprecated in favor
+of `KEYSTONE_MCP_RBAC_MODE` (`off` / `observe` / `enforce`).
+
+### Added
+
+- `KEYSTONE_MCP_UPSTREAM_TOOL_TIMEOUTS` — per-published-tool timeout overrides
+  for proxied upstream calls.
+- `KEYSTONE_MCP_LOGIN_DEFAULT_LANG` — configurable login-page fallback
+  language.
+- `KEYSTONE_MCP_PROXY_SCHEMA_PATCHES` — deployment-supplied JSON file patching
+  properties onto a proxied tool's `inputSchema`.
+- `KEYSTONE_MCP_RBAC_CATALOG_SNAPSHOT` — optional catalog snapshot used to
+  validate RBAC policy allow patterns against tool names the router may not
+  have discovered yet.
+- `KEYSTONE_MCP_REFRESH_TOKEN_TTL` — explicit, configurable refresh-token idle
+  lifetime.
+- `KEYSTONE_MCP_REQUIRE_RESOURCE_INDICATOR` — optional strict RFC 8707
+  resource-indicator enforcement.
+- `KEYSTONE_MCP_INTERNAL_ALLOWED_CIDRS` and
+  `KEYSTONE_MCP_INTERNAL_ENDPOINTS_ENABLED` — source-address gating for the
+  unauthenticated `/metrics` and `/internal/*` endpoints.
+
+### Removed
+
+- The hardcoded, customer-specific tool catalog, the legacy `KEYSTONE_MCP_ANALYTICS_*`
+  single-upstream configuration and the two per-tool timeout variables named after
+  specific tools (replaced by `KEYSTONE_MCP_UPSTREAM_TOOL_TIMEOUTS`). Upstreams are
+  configured exclusively through `KEYSTONE_MCP_UPSTREAMS`.
+
+### Deprecated
+
+- `KEYSTONE_MCP_RBAC_ENABLED` — use `KEYSTONE_MCP_RBAC_MODE` instead. Setting
+  it now logs a startup deprecation warning.
+
+### Changed
+
+- `setup.sh` records credentials for an existing Redis and starts a local
+  Redis container only when that option is chosen and port 6379 is free.
+- Default value of the webhook `KEYSTONE_MCP_WEBHOOK_CLIENT` /
+  `KEYSTONE_MCP_WEBHOOK_PROJECT` is now empty (previously a customer-specific
+  default); routes that use the reference webhook adapter must name both
+  explicitly.
+- Default login language is `en` (previously implicit/browser-dependent).
+
+### Security
+
+- The per-identity throttle is now enforced exactly once per tool call in
+  every RBAC mode (previously it could be bypassed or double-counted
+  depending on mode).
+- `/metrics` and `/internal/*` are gated by
+  `KEYSTONE_MCP_INTERNAL_ALLOWED_CIDRS` (source-address allowlist) instead of
+  trusting the absence of a client-supplied header.
+- Startup now refuses to run with RBAC audit enabled and no
+  `KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT` set, instead of emitting guessable
+  pseudonymized subject identifiers.
+- Refresh tokens carry a real, bounded idle lifetime
+  (`KEYSTONE_MCP_REFRESH_TOKEN_TTL`) instead of an unbounded one.
+- The `external_http` reference adapter no longer lets a client-supplied
+  header override the verified identity header.
+- Resource-indicator (RFC 8707) audience comparison is normalized
+  (case, default port, trailing slash), and strict enforcement is available
+  via `KEYSTONE_MCP_REQUIRE_RESOURCE_INDICATOR`.
+- The login-pending store requires Redis; it no longer falls back to an
+  in-memory store outside of tests.
+
+### Fixed
+
+- `users_unblock` now sends the verified actor header to the users directory,
+  matching every other `users_*` mutation.
+- The per-tool upstream timeout override is actually applied to the proxying
+  HTTP client, not just recorded.
+- A failed downstream HTTP call from an adapter now returns the standard
+  error envelope (`{"state": "error", ...}`) instead of surfacing as an
+  opaque internal tool error.
+
+## [0.1.0]
+
+Initial internal release: OAuth 2.1 authorization server and resource
+server, configurable router with adapters, deterministic `task_id`, identity
+propagation, and the first hardcoded tool catalog.

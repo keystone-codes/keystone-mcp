@@ -1,0 +1,36 @@
+# Keystone-MCP upstream registry (schema_version 1).
+# Preferred way to list upstream services.
+# Point KEYSTONE_MCP_UPSTREAMS_PATH at this file (or a copy).
+schema_version: 1
+entries:
+  - name: reports-mcp
+    url: https://reports-mcp.internal.example/mcp
+    namespace: reports
+    enabled: true
+    include_prefixes:
+      - reports_
+    strip_prefix: reports_
+    discovery_timeout_seconds: 10
+    tool_timeout_seconds: 180
+    route_mode: live
+    # Uncomment to send "Authorization: Bearer <value>" on discovery and every
+    # proxied call. Names an environment variable; the token itself is never
+    # written here. Startup refuses to run if the variable is unset or empty.
+    # auth:
+    #   bearer_env: KEYSTONE_MCP_UPSTREAM_REPORTS_TOKEN
+
+  - name: ledger-mcp
+    url: https://ledger-mcp.internal.example/mcp
+    namespace: ledger
+    enabled: true
+    tool_prefix: ledger_
+    route_mode: live
+
+  # Plain http is fine on an internal Docker or Kubernetes network that is
+  # not reachable from the internet. Set
+  # KEYSTONE_MCP_UPSTREAM_ALLOW_INSECURE_HTTP=true; the production profile
+  # logs one warning at startup.
+  # - name: docs-mcp
+  #   url: http://docs-mcp:8081/mcp
+  #   namespace: docs
+  #   enabled: true

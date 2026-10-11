@@ -1,0 +1,216 @@
+# The facade
+
+Keystone-MCP is the only MCP server the client talks to. Each backend keeps its
+own language, its own business logic, and its own storage or vendor APIs.
+Keystone-MCP authenticates the person, applies the role policy, and forwards the
+call. It does not reimplement the service.
+
+A service speaks MCP over Streamable HTTP, usually on `/mcp`, and exposes
+`/healthz` for the process health check. It reads `X-Author-Email` when it
+needs to know who is acting. That header is the verified identity. Roles are
+not in it. The service trusts the header only on a private network Keystone-MCP
+can reach, and it does not publish its MCP port on a public interface.
+
+Keystone-MCP itself exposes the same `/healthz` convention, plus `GET /readyz`:
+`/healthz` means the process is alive (liveness) and always answers `200`;
+`/readyz` means this replica can actually serve work right now (readiness) —
+it checks Redis, the active RBAC policy, and the built-in users database, and
+answers `503` while any of them is down. Detail per check is in
+[observability-logging.md](observability-logging.md#readiness).
+
+The full contract is [connecting-services.md](connecting-services.md).
+Mount options, timeouts and schema patches are
+[adding-routes.md](adding-routes.md).
+
+## Sections
+
+An upstream entry is one URL plus a namespace. The namespace is the section
+the client shows. A tool `search_widgets` in namespace `docs` is published as
+`docs_search_widgets`.
+
+List upstream services in a registry file and point
+`KEYSTONE_MCP_UPSTREAMS_PATH` at it:
+
+```yaml
+schema_version: 1
+entries:
+  - name: mysvc
+    url: http://mysvc-mcp:8081/mcp
+    namespace: mysvc
+    enabled: true
+```
+
+`http://` is fine on an internal Docker or Kubernetes network that is not
+reachable from the internet. Set `KEYSTONE_MCP_UPSTREAM_ALLOW_INSECURE_HTTP=true`;
+the production profile logs one warning at startup. Validate a file before
+rollout:
+
+```bash
+keystone-mcp upstream validate --path /etc/keystone-mcp/upstreams.yaml
+```
+
+See `examples/upstreams-registry.example.yaml`. The same entries can be given
+as a JSON array in `KEYSTONE_MCP_UPSTREAMS`; the registry file wins when both
+are set. Upstream URLs are checked for SSRF-safe egress (HTTPS by default;
+private or cleartext hosts need the explicit flags for internal networks
+documented in [environment.md](environment.md)).
+
+Prefix filters decide which of the service's tools enter that section:
+
+- `include_prefixes` keeps tools whose name on the service starts with one of the prefixes
+- `exclude_prefixes` drops tools after that, so an internal family never reaches the client
+
+One service can be mounted more than once, each time as a different section.
+`strip_prefix` removes the family prefix before the namespace is added, so
+the client sees `billing_list_invoices` rather than
+`billing_billing_list_invoices`.
+
+Hiding has two layers. The prefix filter decides what Keystone-MCP is willing to
+publish at all. The role policy decides which of those tools a given person
+sees. A tool excluded by prefix is absent for everyone. A tool denied by
+policy is absent for the roles that do not match.
+
+Start order does not matter. A service that is down at startup is logged as a
+warning and its tools appear on the next refresh
+(`KEYSTONE_MCP_REFRESH_INTERVAL_SECONDS`).
+
+## Discovery
+
+Keystone-MCP calls `list_tools()` on every enabled upstream and registers a live
+proxy route for each tool that passes the filters. You do not register proxy
+tools one by one.
+
+Upstreams are discovered in parallel, each retried on its own
+(`KEYSTONE_MCP_UPSTREAM_DISCOVERY_RETRIES`, default 3). An upstream that stays
+unreachable does not block startup or the other upstreams: it is logged with
+its namespace and reason, and retried on every refresh tick until it comes
+up. If `KEYSTONE_MCP_REFRESH_INTERVAL_SECONDS=0` (the background refresh task
+disabled), there is no refresh tick to retry it: the WARNING says so
+("will not be retried; refresh is disabled") and the upstream stays
+unreachable for the life of the process. Startup is refused only when every
+configured upstream is unreachable with RBAC on, or when
+`KEYSTONE_MCP_UPSTREAM_REQUIRE_ALL=true` and at least one upstream is
+unreachable. Each upstream's reachability is exposed as
+`keystone_mcp_upstream_available{namespace}` (1 = reachable).
+
+An RBAC allow pattern that belongs only to an upstream namespace that is
+currently unavailable does not refuse the policy either — it is logged as
+"not verified" and checked once the namespace comes up; see "Unavailable
+upstreams" in [`docs/rbac-policy-format.md`](rbac-policy-format.md#4-validation-rules).
+
+While the process runs, **live discovery** re-reads each mounted upstream on a
+timer (`KEYSTONE_MCP_REFRESH_INTERVAL_SECONDS`, default 300). A tool added,
+removed, or changed on a service is picked up without restarting Keystone-MCP.
+A failed read for one namespace keeps the previous tool list for that namespace.
+An empty list must repeat on the next tick before proxy tools are removed.
+If the refresh task itself fails, it is restarted after a delay (5 s, doubling
+up to 5 min) and the failure is logged at ERROR. `SIGHUP` reloads the policy
+inline when the task is not running.
+
+The RBAC policy file and optional catalog snapshot are re-read on the same
+timer when their bytes change, and immediately when you send `SIGHUP`
+(`kill -HUP <pid>`). A file that fails validation is rejected and the last
+good policy stays.
+
+Clients that cache `list_tools` at connect time see new tools on the next
+`list_tools` call or after reconnect; background refresh does not push
+`notifications/tools/list_changed` to every session.
+
+Proxied tools are published with the upstream's own `inputSchema` (after
+`KEYSTONE_MCP_PROXY_SCHEMA_PATCHES`), `outputSchema` (only when
+`KEYSTONE_MCP_PROXY_STATUS_ENVELOPE=false`), `title` and `annotations`.
+Keystone-MCP does not validate arguments against that schema; the upstream
+does.
+
+## Built-in tools
+
+Two groups are Keystone-MCP's own, not proxied:
+
+- `users_list`, `users_add`, `users_update`, `users_block`, `users_unblock`,
+  `users_set_roles`, `users_grant_role`, `users_revoke_role` — the users
+  directory, from the agent. Published only when
+  `KEYSTONE_MCP_RBAC_MODE=enforce`. Who may call them is the policy file. See
+  [users.md](users.md).
+- `create_upload_url` and `get_download_link` — short-lived signed URLs, so
+  a large file does not travel inside a tool-call payload. Published only
+  when `KEYSTONE_MCP_FILE_API_URL` points at your own file API.
+
+## A call, end to end
+
+1. OAuth has already turned the connection into a verified identity.
+2. The throttle counts the call, once, before the users directory is touched.
+3. RBAC, when it is on, allows or denies. The catalog filter uses the same decision.
+4. The router dispatches to a built-in tool or to the upstream proxy.
+5. The proxy forwards the call with `X-Author-Email` and the configured timeout.
+6. The upstream's answer goes back unchanged: every content block,
+   `structuredContent`, `isError`. With `KEYSTONE_MCP_PROXY_STATUS_ENVELOPE=true`
+   it is wrapped in `{state, tool, task_id, result}` and a `status` of
+   `error`, `refused` or `accepted` is mapped to an error, a rate-limit
+   error, or a pending task.
+
+`task_id` is derived from the verified identity, the tool name and the
+canonical arguments, so a retry is recognizable as the same task.
+
+## Custom routes
+
+The usual path is a whole upstream server. A custom route is for a tool
+Keystone-MCP itself should execute. Every route goes through the `Adapter`
+protocol in `src/keystone_mcp/adapters/base.py`. The built-in catalog in
+`src/keystone_mcp/catalog/builtin.py` is the pattern.
+
+The repository also ships reference adapters that are not registered until
+something calls `registry.add_route` with one of them:
+
+| Adapter | What it does |
+|---|---|
+| `webhook.WebhookAdapter` | Submit to an async webhook, then long-poll for the result. |
+| `external_http.ExternalHttpAdapter` | Call an external HTTP API. |
+| `det_internal.DetInternalAdapter` | Placeholder for a synchronous internal call. |
+| `chat_attachment.ChatAttachmentAdapter` | Signal outbound file delivery. Keystone-MCP itself is session-blind. |
+| `stub.StubAdapter` | A stand-in response until the real adapter exists. |
+
+Register with `mode="stub"` while the target is being built, then
+`registry.set_mode(name, "live")`. Transport, identity and `task_id` stay
+the same.
+
+Business logic for a domain stays in the upstream service. A custom adapter
+is for a platform primitive, not for re-hosting that domain inside Keystone-MCP.
+
+## Audit and metrics
+
+Every allow and deny, and every `users_*` mutation, can be written to the
+audit log. Subject identifiers in that log are pseudonyms. The salt
+(`KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT`) is required whenever RBAC and audit
+are both on.
+
+`GET /metrics` is optional and has no credential. It is limited by source
+address (`KEYSTONE_MCP_INTERNAL_ALLOWED_CIDRS`). Fields and example alerts:
+[observability-rbac.md](observability-rbac.md).
+
+## Limits
+
+- The throttle, the users-directory cache and the circuit breaker are
+  per-process; live discovery (the catalog of published tools) is
+  per-process too. What that means with more than one replica:
+  [environment.md](environment.md#more-than-one-replica).
+- Changing `KEYSTONE_MCP_UPSTREAMS_PATH`, `KEYSTONE_MCP_UPSTREAMS`, proxy schema
+  patches, or per-tool timeouts still requires a process restart.
+- When RBAC is enabled, startup is refused only if every configured upstream
+  is unreachable, not running with an empty live catalog; a single
+  unreachable upstream among several is a warning, not a refusal.
+- Access and refresh tokens are opaque and Redis-backed. There is no bulk
+  revocation of every session for one person.
+- Refresh tokens have an idle TTL (`KEYSTONE_MCP_REFRESH_TOKEN_TTL`): each
+  use resets the clock.
+- The policy and catalog snapshot shipped in this repository cover the
+  built-in tools only. A deployment brings its own policy for its own
+  upstream tools.
+
+## Security model
+
+- Identity comes only from validated token claims. Downstream services see it as `X-Author-Email`.
+- With RBAC `enforce`, a tool that no allow pattern of the caller's roles matches is denied and does not appear in the catalog.
+- `rbac_mode=off` means no authorization is enforced. Startup logs every administrative tool that is then reachable by any authenticated caller.
+- `/metrics` and `/internal/*` carry no credential. The introspection route is off by default.
+- The public network is given one port, Keystone-MCP's. Service MCP ports, Redis, and databases are not published. See the network diagram in the README.
+- Report a vulnerability as described in [SECURITY.md](../SECURITY.md).

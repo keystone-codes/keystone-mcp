@@ -1,0 +1,49 @@
+name: Security
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  schedule:
+    - cron: "17 5 * * 1" # weekly, Monday 05:17 UTC
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+
+      - name: uv audit
+        run: uv audit --frozen
+
+  image-scan:
+    name: Image scan
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Build image
+        run: docker build -t keystone-mcp:scan .
+
+      # aquasecurity/trivy-action v0.36.0, pinned by the SHA of the commit
+      # its tag points at (NOT the SHA of the tag object itself — v0.36.0 is
+      # an annotated tag, so `git/ref/tags/v0.36.0` returns the tag object's
+      # own SHA, a different git object from the commit it annotates;
+      # dereference it with `git/tags/<tag-object-sha>` -> object.sha to get
+      # the commit SHA pinned here).
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: keystone-mcp:scan
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          format: table
+          exit-code: "1"

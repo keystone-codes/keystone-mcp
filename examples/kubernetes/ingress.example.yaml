@@ -1,0 +1,30 @@
+# Example only -- not applied by kustomization.yaml. Adapt to your own
+# ingress controller and TLS setup; this one targets ingress-nginx with
+# cert-manager. `proxy-buffering: "off"` matters: Streamable HTTP sends
+# events as a stream, and a buffering proxy holds them back until the
+# response closes (see docs/paths/production-docker.md, step 7).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: keystone
+  namespace: keystone
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  tls:
+    - hosts:
+        - mcp.example.com
+      secretName: keystone-tls
+  rules:
+    - host: mcp.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: keystone
+                port:
+                  name: http

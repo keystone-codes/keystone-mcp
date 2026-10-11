@@ -1,0 +1,6 @@
+# Namespace for the Kubernetes example. Everything else in this directory
+# lands here through kustomization.yaml's top-level `namespace:` field.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: keystone

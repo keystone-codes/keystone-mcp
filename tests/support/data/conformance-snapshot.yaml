@@ -1,0 +1,22 @@
+# Catalog snapshot for the RBAC conformance suite. Fictional tool names.
+active:
+  - create_upload_url
+  - documents_read
+  - documents_write
+  - get_download_link
+  - ledger_commit
+  - ledger_propose
+  - ledger_read
+  - reports_export
+  - reports_list
+  - reports_read
+  - reports_write
+  - users_list
+  - users_set_roles
+
+reserved:
+  - documents_purge
+
+wip:
+  - reports_approve_release
+  - reports_approve_run

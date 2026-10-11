@@ -1,0 +1,114 @@
+# Use your managed Redis and Postgres -- this example does not run either
+# in-cluster. Point KEYSTONE_MCP_REDIS_URL and KEYSTONE_MCP_USERS_DB_URL (in
+# the Secret, see secret.example.yaml) at them.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: keystone
+  labels:
+    app: keystone
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: keystone
+  template:
+    metadata:
+      labels:
+        app: keystone
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+      containers:
+        - name: keystone
+          image: ghcr.io/keystone-codes/keystone-mcp:0.4.0
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            - secretRef:
+                name: keystone-secrets
+          env:
+            - name: KEYSTONE_MCP_DEPLOYMENT_PROFILE
+              value: "production"
+            # Edit to your own domain; must be https on a public host (see
+            # docs/environment.md#deployment-profile, rule P4).
+            - name: KEYSTONE_MCP_BASE_URL
+              value: "https://mcp.example.com"
+            - name: KEYSTONE_MCP_HOST
+              value: "0.0.0.0"
+            - name: KEYSTONE_MCP_RBAC_MODE
+              value: "enforce"
+            - name: KEYSTONE_MCP_RBAC_POLICY_PATH
+              value: "/etc/keystone-mcp/rbac-policy.yaml"
+            - name: KEYSTONE_MCP_UPSTREAMS_PATH
+              value: "/etc/keystone-mcp/upstreams.yaml"
+            - name: KEYSTONE_MCP_ENABLED_LOGIN_METHODS
+              value: "google"
+            - name: KEYSTONE_MCP_PRIMARY_LOGIN_METHOD
+              value: "google"
+            # From the Google Cloud OAuth client; see docs/google-oauth.md.
+            - name: KEYSTONE_MCP_GOOGLE_CLIENT_ID
+              value: "CHANGE_ME.apps.googleusercontent.com"
+            # Email of the first administrator; created or restored at every start.
+            - name: KEYSTONE_MCP_SUPERADMIN_EMAIL
+              value: "admin@example.com"
+            # Plain uvicorn/environment variable, no KEYSTONE_MCP_ prefix. Set
+            # to your ingress controller's pod network, so the login rate
+            # limiter sees the real client address from X-Forwarded-For
+            # instead of the ingress pod's -- see
+            # docs/environment.md#behind-a-reverse-proxy and C12's notes on
+            # replicas in docs/paths/kubernetes.md.
+            - name: FORWARDED_ALLOW_IPS
+              value: "10.0.0.0/8"
+          volumeMounts:
+            - name: config
+              mountPath: /etc/keystone-mcp
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+      volumes:
+        - name: config
+          configMap:
+            name: keystone-config
+        # readOnlyRootFilesystem needs a writable /tmp; verified against the
+        # 0.4.0 image (see docs/paths/kubernetes.md). The built-in SQLite
+        # path under /data is not exercised in this example -- production
+        # requires Postgres (KEYSTONE_MCP_USERS_DB_URL in the Secret).
+        - name: tmp
+          emptyDir: {}

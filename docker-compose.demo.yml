@@ -1,0 +1,92 @@
+# Keystone-MCP demo: three containers, one command.
+#
+#   docker compose -f docker-compose.demo.yml up -d --build --wait
+#
+# Starts Keystone-MCP, Redis, and a sample upstream service
+# (examples/hello-upstream) so you can see the product end to end: sign in,
+# an upstream service's tools behind a namespace, and roles that hide or
+# show that namespace. local profile only -- do not expose this on a public
+# interface. DEV token defaults to "demo-token"; override with
+# KEYSTONE_DEMO_TOKEN. See docs/paths/local-compose.md for the walkthrough.
+# To reset everything, including the users directory and Redis data:
+# "docker compose -f docker-compose.demo.yml down -v".
+
+name: keystone-demo
+
+networks:
+  keystone-demo:
+
+volumes:
+  redis-data:
+  keystone-data:
+
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    networks:
+      - keystone-demo
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  hello-upstream:
+    build: ./examples/hello-upstream
+    image: keystone-hello-upstream:demo
+    restart: unless-stopped
+    networks:
+      - keystone-demo
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/healthz')"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  keystone:
+    build: .
+    image: keystone-mcp:demo
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+      hello-upstream:
+        condition: service_healthy
+    networks:
+      - keystone-demo
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ./examples/demo:/etc/keystone-mcp:ro
+      - keystone-data:/data
+    environment:
+      KEYSTONE_MCP_DEPLOYMENT_PROFILE: local
+      KEYSTONE_MCP_BASE_URL: http://localhost:8080
+      KEYSTONE_MCP_HOST: 0.0.0.0
+      KEYSTONE_MCP_PORT: "8080"
+      KEYSTONE_MCP_REDIS_URL: redis://redis:6379/0
+      KEYSTONE_MCP_RBAC_MODE: enforce
+      KEYSTONE_MCP_RBAC_POLICY_PATH: /etc/keystone-mcp/rbac-policy.yaml
+      KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT: demo-salt-not-a-secret
+      KEYSTONE_MCP_UPSTREAMS_PATH: /etc/keystone-mcp/upstreams.yaml
+      KEYSTONE_MCP_UPSTREAM_ALLOW_INSECURE_HTTP: "true"
+      KEYSTONE_MCP_ENABLED_LOGIN_METHODS: api_key
+      KEYSTONE_MCP_PRIMARY_LOGIN_METHOD: api_key
+      KEYSTONE_MCP_DEV_TOKENS: ${KEYSTONE_DEMO_TOKEN:-demo-token}
+      KEYSTONE_MCP_SUPERADMIN_EMAIL: ${KEYSTONE_DEMO_ADMIN_EMAIL:-admin@example.com}
+      KEYSTONE_MCP_USERS_BACKEND: local
+      KEYSTONE_MCP_USERS_DB_URL: sqlite:////data/keystone-users.db
+      KEYSTONE_MCP_THROTTLE_MAX: "1000"
+      KEYSTONE_MCP_LOG_FORMAT: text
+    # No curl in the runtime image (F02); reuse the same python healthcheck
+    # module the Dockerfile's own HEALTHCHECK already runs, against /readyz
+    # (F03 landed before this card, so the readiness probe already exists).
+    healthcheck:
+      test: ["CMD", "python", "-m", "keystone_mcp.healthcheck", "/readyz"]
+      interval: 5s
+      timeout: 3s
+      start_period: 20s
+      retries: 12

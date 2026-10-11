@@ -1,0 +1,144 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+env:
+  IMAGE_PREFIX: ghcr.io/keystone-codes/keystone-mcp
+
+permissions:
+  contents: read
+
+jobs:
+  version-gate:
+    name: Version gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+
+      - name: Check version consistency with tag
+        run: >-
+          uv run --no-project --python 3.12 python scripts/check_version.py
+          --tag "${GITHUB_REF_NAME}"
+
+  test:
+    needs: version-gate
+    uses: ./.github/workflows/test-gate.yml
+
+  publish:
+    name: Build and publish image
+    needs: [version-gate, test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # GHCR push uses the workflow GITHUB_TOKEN (packages: write above).
+      # For forks or environments without registry access, set repository variable
+      # SKIP_GHCR_PUSH=true to build both platforms locally without pushing.
+      - name: Resolve publish mode
+        id: publish
+        run: |
+          if [ "${{ vars.SKIP_GHCR_PUSH }}" = "true" ]; then
+            echo "mode=smoke" >> "$GITHUB_OUTPUT"
+          else
+            echo "mode=push" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+
+      # Multi-platform builds cannot be loaded into the local Docker engine
+      # (`load: true` only works for a single platform), so the image that is
+      # actually started and probed below is amd64-only. The arm64 build that
+      # follows reuses this build's cache (`cache-from/to: type=gha`) and is
+      # only checked for a successful build, never run (arm64 under QEMU is
+      # too slow to run tests against; see the task card).
+      - name: Build amd64 image for smoke test
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: keystone-mcp:smoke
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test amd64 image
+        run: bash scripts/smoke_image.sh keystone-mcp:smoke
+
+      - name: Log in to GHCR
+        if: steps.publish.outputs.mode == 'push'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        if: steps.publish.outputs.mode == 'push'
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
+        with:
+          images: ${{ env.IMAGE_PREFIX }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
+
+      - name: Build and push (linux/amd64, linux/arm64)
+        if: steps.publish.outputs.mode == 'push'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          provenance: true
+          sbom: true
+
+      # SKIP_GHCR_PUSH or no registry access (e.g. a fork): still prove that
+      # the arm64 build succeeds, just without publishing anything.
+      - name: Build-only smoke (linux/amd64, linux/arm64)
+        if: steps.publish.outputs.mode == 'smoke'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: false
+          cache-from: type=gha
+          provenance: true
+          sbom: true
+
+  github-release:
+    name: Create GitHub Release
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Extract release notes from CHANGELOG
+        run: |
+          python3 scripts/extract_changelog.py "${GITHUB_REF_NAME#v}" > release-notes.md
+          echo "" >> release-notes.md
+          echo "Image: ${IMAGE_PREFIX}:${GITHUB_REF_NAME#v} (linux/amd64, linux/arm64)" >> release-notes.md
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "keystone-mcp ${GITHUB_REF_NAME#v}" \
+            --notes-file release-notes.md \
+            --verify-tag

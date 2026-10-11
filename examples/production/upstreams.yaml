@@ -1,0 +1,15 @@
+# Upstream registry for your own services. Mounted read-only at
+# /etc/keystone-mcp/upstreams.yaml by docker-compose.yml. Set
+# KEYSTONE_MCP_UPSTREAMS_PATH=/etc/keystone-mcp/upstreams.yaml in .env to
+# point Keystone-MCP at it (step 3 of docs/paths/production-docker.md; the
+# shipped .env.example ships this line commented out).
+#
+# Uncomment and adapt one entry per upstream MCP service. Run each service on
+# the "keystone" network from docker-compose.yml, with no published port, and
+# reach it here by its service name. See ../../docs/connecting-services.md.
+schema_version: 1
+entries: []
+#  - name: your-service
+#    url: http://your-service:8081/mcp
+#    namespace: your_service
+#    enabled: true

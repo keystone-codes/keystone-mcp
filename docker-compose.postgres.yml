@@ -1,0 +1,37 @@
+# Postgres overlay for the Keystone-MCP demo: swaps the users directory's
+# storage from SQLite to Postgres. The deployment profile stays "local" and
+# DEV sign-in keeps working; this overlay only proves the demo runs against
+# Postgres too. docs/paths/production-docker.md covers Postgres in production.
+#
+#   KEYSTONE_PG_PASSWORD=<password> \
+#     docker compose -f docker-compose.demo.yml -f docker-compose.postgres.yml up -d --build --wait
+#
+# Pick a password with no "@", ":", "/", or "#" characters, or it needs
+# URL-encoding in KEYSTONE_MCP_USERS_DB_URL below.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    networks:
+      - keystone-demo
+    environment:
+      POSTGRES_USER: keystone
+      POSTGRES_DB: keystone
+      POSTGRES_PASSWORD: ${KEYSTONE_PG_PASSWORD:?Set KEYSTONE_PG_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keystone -d keystone"]
+      interval: 5s
+      retries: 10
+
+  keystone:
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      KEYSTONE_MCP_USERS_DB_URL: postgresql+psycopg://keystone:${KEYSTONE_PG_PASSWORD}@postgres:5432/keystone
+
+volumes:
+  postgres-data:

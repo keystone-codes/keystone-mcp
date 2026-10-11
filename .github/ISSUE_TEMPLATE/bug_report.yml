@@ -1,0 +1,58 @@
+name: Bug report
+description: Something is broken or behaves unexpectedly
+title: "[bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. Please do **not** paste API keys,
+        OAuth client secrets, JWTs, or production URLs with credentials.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Describe the actual behavior and what you expected instead.
+      placeholder: Steps to reproduce, error messages (redact tokens), version or commit if known.
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Keystone-MCP version
+      description: Image tag, `pip show keystone-mcp`, or git commit SHA.
+      placeholder: e.g. 0.4.0 or abc1234
+    validations:
+      required: false
+
+  - type: dropdown
+    id: environment
+    attributes:
+      label: How are you running it?
+      options:
+        - Docker / compose
+        - systemd on a host
+        - Local dev (`uv run` / venv)
+        - Other
+    validations:
+      required: false
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Relevant configuration (no secrets)
+      description: RBAC mode, metrics enabled, upstream count — omit secrets and real hostnames if sensitive.
+      placeholder: KEYSTONE_MCP_RBAC_MODE=enforce, KEYSTONE_MCP_METRICS_ENABLED=true, ...
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Confirmation
+      options:
+        - label: I have removed tokens, passwords, and private URLs from this report.
+          required: true
