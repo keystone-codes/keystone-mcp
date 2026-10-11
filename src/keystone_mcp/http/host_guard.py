@@ -128,6 +128,11 @@ class HostGuardMiddleware:
             return
 
         origin_header = request.headers.get("origin")
+        # Browsers send `Origin: null` for a same-origin form POST from a page
+        # with `Referrer-Policy: no-referrer` (our login and consent pages), so
+        # it carries no information; the `Host` check above already applied.
+        if origin_header == "null":
+            origin_header = None
         if origin_header and not self._origin_allowed(origin_header):
             logger.warning("refused request: Origin %r is not allowed", origin_header)
             response = Response(status_code=400, content="Forbidden Origin")

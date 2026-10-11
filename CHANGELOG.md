@@ -6,6 +6,13 @@ this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Signing in from the login page failed with `400 Forbidden Origin`: the page
+  sends `Referrer-Policy: no-referrer`, so the browser posts the form with
+  `Origin: null`. The Host/Origin guard now treats `Origin: null` as absent;
+  the `Host` check still applies.
+
 ## [0.4.0] - 2026-10-11
 
 ### Highlights
