@@ -184,7 +184,9 @@ audit log. Subject identifiers in that log are pseudonyms. The salt
 are both on.
 
 `GET /metrics` is optional and has no credential. It is limited by source
-address (`KEYSTONE_MCP_INTERNAL_ALLOWED_CIDRS`). Fields and example alerts:
+address (`KEYSTONE_MCP_INTERNAL_ALLOWED_CIDRS`) and, like every route
+except `/healthz`/`/readyz`, by the `Host` allowlist
+(`KEYSTONE_MCP_ALLOWED_HOSTS`). Fields and example alerts:
 [observability-rbac.md](observability-rbac.md).
 
 ## Limits
@@ -212,5 +214,5 @@ address (`KEYSTONE_MCP_INTERNAL_ALLOWED_CIDRS`). Fields and example alerts:
 - With RBAC `enforce`, a tool that no allow pattern of the caller's roles matches is denied and does not appear in the catalog.
 - `rbac_mode=off` means no authorization is enforced. Startup logs every administrative tool that is then reachable by any authenticated caller.
 - `/metrics` and `/internal/*` carry no credential. The introspection route is off by default.
-- The public network is given one port, Keystone-MCP's. Service MCP ports, Redis, and databases are not published. See the network diagram in the README.
+- The public network is given one port, Keystone-MCP's. Service MCP ports, Redis, and databases are not published. See the network diagram in [security-model.md](security-model.md#trust-zones).
 - Report a vulnerability as described in [SECURITY.md](../SECURITY.md).

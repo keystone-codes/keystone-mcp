@@ -135,8 +135,9 @@ applied. List the person first, then decide.
 Keystone-MCP used to delegate to a separate users directory service. If
 `KEYSTONE_MCP_USERS_SERVICE_URL` is set and `KEYSTONE_MCP_USERS_BACKEND` is
 not, startup now refuses to run rather than silently starting against an
-empty, brand-new local database — set one of the two variables below
-explicitly to say which path you want.
+empty, brand-new local database — set `KEYSTONE_MCP_USERS_BACKEND`
+explicitly — `http` to keep the external service, `local` to move to the
+built-in directory.
 
 To move an existing deployment onto the built-in directory:
 
