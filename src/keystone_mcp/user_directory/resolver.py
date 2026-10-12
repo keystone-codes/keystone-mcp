@@ -7,9 +7,9 @@ import httpx
 from keystone_mcp.user_directory.cache import ResolutionCache
 from keystone_mcp.user_directory.circuit_breaker import CircuitBreaker
 from keystone_mcp.user_directory.errors import UserDirectoryUnavailableError
-from keystone_mcp.user_directory.models import UserResolveResult
-from keystone_mcp.user_directory.protocol import UserDirectoryBackend
+from keystone_mcp.user_directory.protocol import UserDirectory
 from keystone_mcp.user_directory.revision import RevisionReader
+from keystone_mcp.user_directory.types import UserResolveResult
 from keystone_mcp.user_directory.util import normalize_email
 
 
@@ -18,7 +18,7 @@ class CachedUserDirectoryResolver:
 
     def __init__(
         self,
-        backend: UserDirectoryBackend,
+        backend: UserDirectory,
         *,
         revision_reader: RevisionReader,
         cache: ResolutionCache,
@@ -31,7 +31,7 @@ class CachedUserDirectoryResolver:
         self._seen_revision: int | None = None
 
     @property
-    def backend(self) -> UserDirectoryBackend:
+    def backend(self) -> UserDirectory:
         """The wrapped backend, for callers that need it (e.g. readiness checks)."""
         return self._backend
 
