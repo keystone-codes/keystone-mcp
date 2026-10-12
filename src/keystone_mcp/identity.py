@@ -29,6 +29,10 @@ class VerifiedIdentity:
 
     email: str
     claims: dict[str, Any] | None = None
+    # OAuth client_id of the token, if any (e.g. a registered DCR client).
+    # Carried into the signed identity assertion (Y01); never required for
+    # identity resolution itself.
+    client_id: str | None = None
 
 
 def resolve_verified_identity() -> VerifiedIdentity | None:
@@ -44,7 +48,7 @@ def resolve_verified_identity() -> VerifiedIdentity | None:
     email = claims.get("email") or token.subject
     if not email:
         return None
-    return VerifiedIdentity(email=email, claims=claims)
+    return VerifiedIdentity(email=email, claims=claims, client_id=getattr(token, "client_id", None))
 
 
 def _canonicalize(value: Any) -> Any:

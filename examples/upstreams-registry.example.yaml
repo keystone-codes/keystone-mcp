@@ -18,6 +18,11 @@ entries:
     # written here. Startup refuses to run if the variable is unset or empty.
     # auth:
     #   bearer_env: KEYSTONE_MCP_UPSTREAM_REPORTS_TOKEN
+    #   # Uncomment to also sign X-Keystone-Identity (who is calling, their
+    #   # roles, the tool called) with a secret unique to this upstream.
+    #   # Names an environment variable holding >= 32 bytes; the secret
+    #   # itself is never written here. Must differ from bearer_env above.
+    #   identity_secret_env: KEYSTONE_MCP_UPSTREAM_REPORTS_IDENTITY_SECRET
 
   - name: ledger-mcp
     url: https://ledger-mcp.internal.example/mcp

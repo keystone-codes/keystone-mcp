@@ -18,13 +18,20 @@ MAX_REGISTRY_ENTRIES = 64
 #: "not supported" message other unknown keys get.
 _SECRET_LIKE_AUTH_KEYS = frozenset({"token", "bearer", "secret", "password"})
 
-#: ``auth.bearer_env`` must look like a shell environment variable name AND
-#: live under this reserved prefix. Without this, a registry entry could name
-#: *any* environment variable -- e.g. `bearer_env: KEYSTONE_MCP_GOOGLE_CLIENT_SECRET`
-#: with a matching ``url`` -- and Keystone would send that secret to the
-#: entry's upstream as a bearer token. Requiring the prefix means the only
-#: variables an entry can ever name are ones an operator deliberately created
-#: for this purpose.
+#: ``auth`` keys that name an environment variable (never a secret value
+#: itself) and are validated identically: an optional, independent
+#: ``KEYSTONE_MCP_UPSTREAM_*`` name. An entry may set neither, either, or
+#: both.
+_AUTH_ENV_NAME_KEYS = frozenset({"bearer_env", "identity_secret_env"})
+
+#: ``auth.bearer_env`` (and, identically, ``auth.identity_secret_env``) must
+#: look like a shell environment variable name AND live under this reserved
+#: prefix. Without this, a registry entry could name *any* environment
+#: variable -- e.g. `bearer_env: KEYSTONE_MCP_GOOGLE_CLIENT_SECRET` -- with a
+#: matching ``url`` -- and Keystone would send that secret to the entry's
+#: upstream as a bearer token, or sign identity assertions with it. Requiring
+#: the prefix means the only variables an entry can ever name are ones an
+#: operator deliberately created for this purpose.
 _BEARER_ENV_PREFIX = "KEYSTONE_MCP_UPSTREAM_"
 _BEARER_ENV_RE = re.compile(rf"^{re.escape(_BEARER_ENV_PREFIX)}[A-Z0-9_]+$")
 
@@ -184,7 +191,7 @@ def auth_field_errors(auth: Any) -> list[str]:
 
     errors: list[str] = []
     for key in auth:
-        if key == "bearer_env":
+        if key in _AUTH_ENV_NAME_KEYS:
             continue
         if key in _SECRET_LIKE_AUTH_KEYS:
             errors.append(
@@ -194,20 +201,44 @@ def auth_field_errors(auth: Any) -> list[str]:
         else:
             errors.append(f"auth.{key} is not supported")
 
+    for key in _AUTH_ENV_NAME_KEYS:
+        errors.extend(_auth_env_name_errors(auth, key))
+
     bearer_env = auth.get("bearer_env")
-    candidate = bearer_env.strip() if isinstance(bearer_env, str) else ""
-    if not candidate or not _BEARER_ENV_RE.match(candidate):
-        errors.append(
-            "auth.bearer_env must be an environment variable name starting with "
-            f"{_BEARER_ENV_PREFIX!r} (A-Z, 0-9, _ after the prefix)"
-        )
-    elif candidate in _RESERVED_BEARER_ENV_NAMES:
-        errors.append(
-            f"auth.bearer_env must not name {candidate!r}: keystone-mcp's own "
-            "configuration already reads that variable for a different purpose"
-        )
+    identity_secret_env = auth.get("identity_secret_env")
+    if (
+        isinstance(bearer_env, str)
+        and isinstance(identity_secret_env, str)
+        and bearer_env.strip()
+        and bearer_env.strip() == identity_secret_env.strip()
+    ):
+        errors.append("auth.identity_secret_env must differ from auth.bearer_env")
 
     return errors
+
+
+def _auth_env_name_errors(auth: dict[str, Any], key: str) -> list[str]:
+    """Structural errors for one optional ``auth.<key>`` environment-variable name.
+
+    ``key`` absent entirely is not an error -- both ``bearer_env`` and
+    ``identity_secret_env`` are independently optional (an entry may set
+    neither, either, or both).
+    """
+    if key not in auth:
+        return []
+    raw = auth.get(key)
+    candidate = raw.strip() if isinstance(raw, str) else ""
+    if not candidate or not _BEARER_ENV_RE.match(candidate):
+        return [
+            f"auth.{key} must be an environment variable name starting with "
+            f"{_BEARER_ENV_PREFIX!r} (A-Z, 0-9, _ after the prefix)"
+        ]
+    if candidate in _RESERVED_BEARER_ENV_NAMES:
+        return [
+            f"auth.{key} must not name {candidate!r}: keystone-mcp's own "
+            "configuration already reads that variable for a different purpose"
+        ]
+    return []
 
 
 def namespace_errors(namespaces: Sequence[str]) -> list[str]:

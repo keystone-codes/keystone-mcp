@@ -92,6 +92,56 @@ travels in clear text, same as every other header; prefer `https` whenever the
 upstream is reachable over anything less trusted than a network Keystone-MCP
 alone controls.
 
+## Who is calling: X-Keystone-Identity
+
+`X-Author-Email` is unsigned: anything on the same network can send that
+header and impersonate any user, and it carries no roles. **Deprecated since
+0.5.0** (kept until the next major version) — verify `X-Keystone-Identity`
+instead.
+
+A registry entry's optional `auth.identity_secret_env` makes Keystone-MCP
+sign a short-lived JSON Web Token on every proxied call and send it as
+`X-Keystone-Identity`. It is signed `HS256` with a secret unique to this
+upstream (the environment variable named by `auth.identity_secret_env`, read
+once at startup, never written to the registry file) — compromising one
+upstream's secret never lets it forge an assertion for another. Discovery
+(`list_tools`) never carries it: there is no human behind that call.
+
+```yaml
+entries:
+  - name: docs-mcp
+    url: https://docs-mcp.internal.example/mcp
+    namespace: docs
+    auth:
+      identity_secret_env: KEYSTONE_MCP_UPSTREAM_DOCS_IDENTITY_SECRET
+```
+
+| Claim | Meaning |
+|---|---|
+| `iss` | Keystone-MCP's own base URL, no trailing slash |
+| `aud` | this registry entry's `name` (`docs-mcp` above, not `docs`) |
+| `sub` | the calling subject: a person's verified email, lower-cased |
+| `sub_type` | `"human"` or `"service"` |
+| `email` | present only when `sub_type` is `"human"` |
+| `roles` | the roles RBAC evaluated this call against, sorted; `[]` when RBAC is off |
+| `rbac` | the RBAC mode Keystone-MCP ran this call under: `"enforce"`, `"observe"` or `"off"` |
+| `auth_method` | how the caller signed in (e.g. `"google"`, `"api_key"`), or `"unknown"` |
+| `interactive` | whether an interactive human login is bound to the call |
+| `client_id` | the caller's OAuth client id, when the token carries one |
+| `task_id` | Keystone-MCP's deterministic task id for this call |
+| `mcp_method` | `"tools/call"` |
+| `mcp_target` | the tool name on *your* side (before namespace prefixing) |
+| `iat` / `exp` | issued-at and expiry (Unix seconds); `exp` always covers at least this call's own timeout, plus a 60-second margin |
+| `jti` | a random id, for services that want to reject a replayed token |
+
+The JWT header is `{"alg": "HS256", "typ": "keystone-identity+jwt"}`. Verify
+the signature with your `auth.identity_secret_env` secret, check `aud`
+against your own entry name, and treat the whole header as untrusted
+otherwise — verification examples: see below. An entry with no
+`auth.identity_secret_env` only ever sends the unsigned, deprecated
+`X-Author-Email`; the `production` deployment profile logs a startup warning
+for each such entry.
+
 ## Tool naming
 
 Client-visible tool names are `<namespace>_<upstream tool name>` (or the name
