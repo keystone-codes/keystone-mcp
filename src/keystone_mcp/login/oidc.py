@@ -10,7 +10,7 @@ import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Literal
-from urllib.parse import urlencode, urlparse
+from urllib.parse import quote_plus, urlencode, urlparse
 
 import httpx
 import jwt
@@ -119,6 +119,69 @@ def _issuer_url_allowed(issuer: str) -> bool:
         host = (parsed.hostname or "").lower()
         return host in {"localhost", "127.0.0.1", "::1"}
     return False
+
+
+def _default_port(scheme: str) -> int | None:
+    if scheme == "https":
+        return 443
+    if scheme == "http":
+        return 80
+    return None
+
+
+def _url_origin_key(url: str) -> tuple[str, str, int] | None:
+    parsed = urlparse(url.strip())
+    scheme = parsed.scheme.lower()
+    host = (parsed.hostname or "").lower()
+    if not scheme or not host:
+        return None
+    port = parsed.port if parsed.port is not None else _default_port(scheme)
+    if port is None:
+        return None
+    return scheme, host, port
+
+
+def _validate_discovery_endpoint_origin(
+    *,
+    provider_name: str,
+    configured_issuer: str,
+    endpoint_url: str,
+    field_name: str,
+) -> None:
+    issuer_origin = _url_origin_key(configured_issuer)
+    endpoint_origin = _url_origin_key(endpoint_url)
+    if issuer_origin is None or endpoint_origin is None:
+        logger.error(
+            "login provider %s: discovery %s has invalid URL",
+            provider_name,
+            field_name,
+        )
+        raise LoginRejected("provider_unavailable", "discovery endpoint origin mismatch")
+
+    issuer_scheme, _, _ = issuer_origin
+    endpoint_scheme, _, _ = endpoint_origin
+    if issuer_scheme == "https" and endpoint_scheme != "https":
+        logger.error(
+            "login provider %s: discovery %s scheme mismatch",
+            provider_name,
+            field_name,
+        )
+        raise LoginRejected("provider_unavailable", "discovery endpoint origin mismatch")
+    if issuer_scheme == "http" and endpoint_scheme != "http":
+        logger.error(
+            "login provider %s: discovery %s scheme mismatch",
+            provider_name,
+            field_name,
+        )
+        raise LoginRejected("provider_unavailable", "discovery endpoint origin mismatch")
+
+    if issuer_origin != endpoint_origin:
+        logger.error(
+            "login provider %s: discovery %s host or port mismatch",
+            provider_name,
+            field_name,
+        )
+        raise LoginRejected("provider_unavailable", "discovery endpoint origin mismatch")
 
 
 def _new_pkce_pair() -> tuple[str, str]:
@@ -345,6 +408,18 @@ class OidcLoginProvider:
             )
             raise LoginRejected("provider_unavailable", "issuer mismatch")
 
+        for field_name, endpoint_url in (
+            ("authorization_endpoint", authorization_endpoint),
+            ("token_endpoint", token_endpoint),
+            ("jwks_uri", jwks_uri),
+        ):
+            _validate_discovery_endpoint_origin(
+                provider_name=self._config.name,
+                configured_issuer=self._config.issuer,
+                endpoint_url=endpoint_url,
+                field_name=field_name,
+            )
+
         algs_raw = payload.get("id_token_signing_alg_values_supported")
         if isinstance(algs_raw, list):
             algs = tuple(str(a) for a in algs_raw)
@@ -429,7 +504,9 @@ class OidcLoginProvider:
         headers: dict[str, str] = {}
         auth_method = self._resolve_token_auth_method(discovery)
         if auth_method == "client_secret_basic":
-            creds = f"{self._config.client_id}:{self._config.client_secret}"
+            cid = quote_plus(self._config.client_id, safe="")
+            secret = quote_plus(self._config.client_secret, safe="")
+            creds = f"{cid}:{secret}"
             token = base64.b64encode(creds.encode()).decode()
             headers["Authorization"] = f"Basic {token}"
         else:

@@ -45,6 +45,31 @@ async def test_discovery_issuer_mismatch_is_unavailable():
     assert exc.value.reason == "provider_unavailable"
 
 
+@pytest.mark.parametrize(
+    "field",
+    ["discovery_authorization_endpoint", "discovery_token_endpoint", "discovery_jwks_uri"],
+)
+async def test_discovery_endpoint_wrong_host_is_unavailable(field: str):
+    fake = FakeOidcIssuer()
+    setattr(fake.tamper, field, "https://evil.test/path")
+    provider = _provider(fake)
+    with pytest.raises(LoginRejected) as exc:
+        await provider.begin(state="s", callback_url="http://app/cb")
+    assert exc.value.reason == "provider_unavailable"
+
+
+async def test_discovery_endpoint_different_path_same_host_is_accepted():
+    fake = FakeOidcIssuer()
+    fake.tamper.discovery_authorization_endpoint = f"{fake.issuer}/custom/authorize"
+    provider = _provider(fake)
+    redirect = await provider.begin(state="st", callback_url="http://app/cb")
+    params = await fake.authorize(redirect.url)
+    identity = await provider.complete(
+        params=params, callback_url="http://app/cb", attempt=redirect.attempt
+    )
+    assert identity.email == fake.user.email
+
+
 async def test_discovery_is_cached():
     fake = FakeOidcIssuer()
     provider = _provider(fake, cache_ttl_seconds=3600.0)
@@ -240,6 +265,17 @@ async def test_token_endpoint_error_is_identity_invalid():
 async def test_basic_and_post_client_auth(auth_method: str):
     fake = FakeOidcIssuer()
     provider = _provider(fake, token_auth_method=auth_method)
+    redirect = await provider.begin(state="st", callback_url="http://app/cb")
+    params = await fake.authorize(redirect.url)
+    identity = await provider.complete(
+        params=params, callback_url="http://app/cb", attempt=redirect.attempt
+    )
+    assert identity.email == fake.user.email
+
+
+async def test_basic_client_auth_urlencodes_credentials_with_colons():
+    fake = FakeOidcIssuer(client_id="id:with:colons", client_secret="sec:ret")
+    provider = _provider(fake, token_auth_method="client_secret_basic")
     redirect = await provider.begin(state="st", callback_url="http://app/cb")
     params = await fake.authorize(redirect.url)
     identity = await provider.complete(
