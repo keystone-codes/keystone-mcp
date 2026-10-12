@@ -258,6 +258,54 @@ def test_startup_warnings_for_insecure_upstream_flags(monkeypatch, tmp_path: Pat
     assert any("UPSTREAM_EGRESS_ALLOW_PRIVATE" in w for w in warnings)
 
 
+def test_startup_warns_for_upstream_without_identity_secret(monkeypatch, tmp_path: Path):
+    """Y01 (W6): an upstream with no auth.identity_secret_env only ever proves
+
+    who is calling via the unsigned X-Author-Email header."""
+    import json
+
+    _rbac_env(monkeypatch, tmp_path)
+    _production_login_env(monkeypatch)
+    monkeypatch.setenv("KEYSTONE_MCP_DEPLOYMENT_PROFILE", "production")
+    monkeypatch.setenv(
+        "KEYSTONE_MCP_UPSTREAMS",
+        json.dumps(
+            [{"name": "docs-mcp", "url": "https://docs-mcp.example/mcp", "namespace": "docs"}]
+        ),
+    )
+    settings = load_settings()
+    warnings = startup_warnings(settings)
+    assert any(
+        "namespace=docs" in w and "identity_secret_env" in w and "X-Author-Email" in w
+        for w in warnings
+    )
+
+
+def test_startup_warning_absent_with_identity_secret_configured(monkeypatch, tmp_path: Path):
+    import json
+
+    _rbac_env(monkeypatch, tmp_path)
+    _production_login_env(monkeypatch)
+    monkeypatch.setenv("KEYSTONE_MCP_DEPLOYMENT_PROFILE", "production")
+    monkeypatch.setenv("KEYSTONE_MCP_UPSTREAM_DOCS_IDENTITY_SECRET", "x" * 40)
+    monkeypatch.setenv(
+        "KEYSTONE_MCP_UPSTREAMS",
+        json.dumps(
+            [
+                {
+                    "name": "docs-mcp",
+                    "url": "https://docs-mcp.example/mcp",
+                    "namespace": "docs",
+                    "auth": {"identity_secret_env": "KEYSTONE_MCP_UPSTREAM_DOCS_IDENTITY_SECRET"},
+                }
+            ]
+        ),
+    )
+    settings = load_settings()
+    warnings = startup_warnings(settings)
+    assert not any("identity_secret_env" in w for w in warnings)
+
+
 @pytest.mark.parametrize("dev_tokens", ["", "a-dev-token"])
 def test_local_warnings_empty_with_rbac_off(monkeypatch, dev_tokens: str):
     monkeypatch.setenv("KEYSTONE_MCP_DEPLOYMENT_PROFILE", "local")

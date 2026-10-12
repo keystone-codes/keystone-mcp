@@ -16,16 +16,20 @@ import json
 import logging
 from pathlib import Path
 
+import jwt
 import pytest
 from asgi_lifespan import LifespanManager
 from fastmcp import Client, FastMCP
 
 from keystone_mcp.config import Settings
 from keystone_mcp.identity import VerifiedIdentity
+from keystone_mcp.rbac.loader import RbacPolicyManager
 from keystone_mcp.router.engine import RouterEngine
+from keystone_mcp.router.rbac_middleware import RbacMiddleware
 from keystone_mcp.router.registry import RouterRegistry
 from keystone_mcp.router.upstream import UpstreamRegistry
 from keystone_mcp.surface.reconciler import SurfaceReconciler
+from keystone_mcp.user_directory import build_in_memory_user_directory_resolver
 from support.lowlevel_upstream import (
     ODD_NAMES_SCHEMA,
     SEARCH_SCHEMA,
@@ -404,3 +408,208 @@ async def test_bearer_token_is_never_logged(monkeypatch, caplog, patch_verified_
 
     assert "s3cr3t-value" not in caplog.text
     assert "s3cr3t-value" not in repr(settings.upstreams)
+
+
+# --- signed identity assertion (Y01) -------------------------------------------------
+
+_IDENTITY_SECRET_VALUE = "s3cr3t-identity-" + "v" * 20  # 36 bytes, well over MIN_SECRET_BYTES
+
+_IDENTITY_RBAC_POLICY = """\
+version: "test-y01-identity"
+default_deny: true
+roles:
+  member:
+    description: member
+    allow: ["hello_*"]
+"""
+
+
+async def test_identity_assertion_reaches_upstream(monkeypatch, patch_verified_identity):
+    monkeypatch.setenv("KEYSTONE_MCP_UPSTREAM_HELLO_IDENTITY_SECRET", _IDENTITY_SECRET_VALUE)
+    observed: dict = {}
+    app = build_lowlevel_upstream_app(tools=["whoami"], observed=observed)
+    async with LifespanManager(app):
+        settings = Settings(base_url="http://localhost:8080")
+        main = FastMCP("keystone-test")
+        registry = RouterRegistry(RouterEngine(settings), main)
+        upstreams = UpstreamRegistry(
+            main_mcp=main,
+            registry=registry,
+            http_client_factory=asgi_http_client_factory(app),
+            identity_issuer=settings.base_url.rstrip("/"),
+        )
+        upstreams.add_upstream(
+            "hello-upstream",
+            UPSTREAM_MCP_URL,
+            namespace="hello",
+            identity_secret_env="KEYSTONE_MCP_UPSTREAM_HELLO_IDENTITY_SECRET",
+        )
+        await upstreams.discover_all()
+
+        async def _call():
+            async with Client(main) as client:
+                return await client.call_tool_mcp("hello_whoami", {})
+
+        await _call()
+
+        token = observed["headers"].get("x-keystone-identity")
+        assert token is not None
+        decoded = jwt.decode(
+            token,
+            _IDENTITY_SECRET_VALUE,
+            algorithms=["HS256"],
+            audience="hello-upstream",
+            issuer=settings.base_url.rstrip("/"),
+        )
+        assert decoded["aud"] == "hello-upstream"
+        assert decoded["mcp_target"] == "whoami"
+        assert decoded["sub"] == "ann@example.com"
+        assert observed["headers"].get("x-author-email") == ANN.email
+
+
+async def test_identity_assertion_roles_match_rbac_decision(
+    tmp_path: Path, monkeypatch, patch_verified_identity
+):
+    # RbacMiddleware imported resolve_verified_identity by name; the autouse
+    # fixture above only patches keystone_mcp.identity's own attribute (which
+    # RouterEngine reads dynamically through a module reference), so it must
+    # be patched here too.
+    monkeypatch.setattr(
+        "keystone_mcp.router.rbac_middleware.resolve_verified_identity", lambda: ANN
+    )
+    monkeypatch.setenv("KEYSTONE_MCP_UPSTREAM_HELLO_IDENTITY_SECRET", _IDENTITY_SECRET_VALUE)
+
+    policy_path = tmp_path / "rbac-policy.yaml"
+    policy_path.write_text(_IDENTITY_RBAC_POLICY, encoding="utf-8")
+
+    observed: dict = {}
+    app = build_lowlevel_upstream_app(tools=["whoami"], observed=observed)
+    async with LifespanManager(app):
+        settings = Settings(
+            base_url="http://localhost:8080",
+            rbac_mode="enforce",
+            rbac_policy_path=str(policy_path),
+            users_service_url="http://users:8000",
+            users_service_token="token",
+            redis_url="redis://localhost:6379/0",
+        )
+        main = FastMCP("keystone-test")
+        registry = RouterRegistry(RouterEngine(settings), main)
+        upstreams = UpstreamRegistry(
+            main_mcp=main,
+            registry=registry,
+            http_client_factory=asgi_http_client_factory(app),
+            identity_issuer=settings.base_url.rstrip("/"),
+        )
+        upstreams.add_upstream(
+            "hello-upstream",
+            UPSTREAM_MCP_URL,
+            namespace="hello",
+            identity_secret_env="KEYSTONE_MCP_UPSTREAM_HELLO_IDENTITY_SECRET",
+        )
+        await upstreams.discover_all()
+
+        resolver, backend, _revision = build_in_memory_user_directory_resolver()
+        backend.seed(ANN.email, roles=("member",))
+
+        manager = RbacPolicyManager(settings)
+        main.add_middleware(RbacMiddleware(manager, resolver))
+        manager.load_initial(registry)
+
+        async def _call():
+            async with Client(main) as client:
+                return await client.call_tool_mcp("hello_whoami", {})
+
+        await _call()
+
+        token = observed["headers"]["x-keystone-identity"]
+        decoded = jwt.decode(
+            token,
+            _IDENTITY_SECRET_VALUE,
+            algorithms=["HS256"],
+            audience="hello-upstream",
+            issuer=settings.base_url.rstrip("/"),
+        )
+        assert decoded["roles"] == ["member"]
+        assert decoded["rbac"] == "enforce"
+
+
+async def test_no_identity_header_without_secret(patch_verified_identity):
+    observed: dict = {}
+    app = build_lowlevel_upstream_app(tools=["whoami"], observed=observed)
+    async with LifespanManager(app):
+        settings = Settings(base_url="http://localhost:8080")
+        main = FastMCP("keystone-test")
+        registry = RouterRegistry(RouterEngine(settings), main)
+        upstreams = UpstreamRegistry(
+            main_mcp=main,
+            registry=registry,
+            http_client_factory=asgi_http_client_factory(app),
+        )
+        upstreams.add_upstream("hello-upstream", UPSTREAM_MCP_URL, namespace="hello")
+        await upstreams.discover_all()
+
+        async def _call():
+            async with Client(main) as client:
+                return await client.call_tool_mcp("hello_whoami", {})
+
+        await _call()
+
+        assert "x-keystone-identity" not in observed["headers"]
+        assert observed["headers"].get("x-author-email") == ANN.email
+
+
+async def test_identity_secret_never_logged(monkeypatch, caplog, patch_verified_identity):
+    monkeypatch.setenv("KEYSTONE_MCP_UPSTREAM_HELLO_IDENTITY_SECRET", _IDENTITY_SECRET_VALUE)
+    monkeypatch.setenv(
+        "KEYSTONE_MCP_UPSTREAMS",
+        json.dumps(
+            [
+                {
+                    "name": "hello-upstream",
+                    "url": "https://hello.example/mcp",
+                    "namespace": "hello",
+                    "auth": {"identity_secret_env": "KEYSTONE_MCP_UPSTREAM_HELLO_IDENTITY_SECRET"},
+                }
+            ]
+        ),
+    )
+    settings = Settings(base_url="http://localhost:8080", refresh_interval_seconds=300)
+    caplog.set_level(logging.DEBUG)
+
+    app = build_lowlevel_upstream_app(tools=["whoami"])
+    async with LifespanManager(app):
+        main = FastMCP("keystone-test")
+        registry = RouterRegistry(RouterEngine(settings), main)
+        upstreams = UpstreamRegistry(
+            main_mcp=main,
+            registry=registry,
+            http_client_factory=asgi_http_client_factory(app),
+            identity_issuer=settings.base_url.rstrip("/"),
+        )
+        upstreams.add_upstream(
+            "hello-upstream",
+            UPSTREAM_MCP_URL,
+            namespace="hello",
+            identity_secret_env="KEYSTONE_MCP_UPSTREAM_HELLO_IDENTITY_SECRET",
+        )
+        await upstreams.discover_all()
+
+        async def _call():
+            async with Client(main) as client:
+                return await client.call_tool_mcp("hello_whoami", {})
+
+        await _call()
+
+        reconciler = SurfaceReconciler(
+            settings=settings,
+            registry=registry,
+            upstreams=upstreams,
+            policy_manager=None,
+            observability=None,
+        )
+        reconciler.seed_snapshots()
+        await reconciler.tick()
+
+    assert _IDENTITY_SECRET_VALUE not in caplog.text
+    assert _IDENTITY_SECRET_VALUE not in repr(settings.upstreams)
