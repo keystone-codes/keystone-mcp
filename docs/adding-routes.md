@@ -277,7 +277,7 @@ for the field and the header it produces.
   function in the core (`build_identity_provider`,
   `build_user_directory_resolver`, `UsersAdminAdapter`) rather than by
   registering a package. Planned for 0.5.0, alongside publishing
-  `keystone-mcp` on PyPI: `keystone_mcp.login_providers` and
+  `keystone-mcp-gateway` on PyPI: `keystone_mcp.login_providers` and
   `keystone_mcp.user_directories` entry points a fork's own package declares,
   plus contract tests it can run against its implementation before deploying
   it.

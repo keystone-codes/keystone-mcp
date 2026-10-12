@@ -102,3 +102,11 @@ def test_release_job_permissions_are_not_widened_by_the_top_level_block():
     jobs = doc["jobs"]
     assert jobs["publish"]["permissions"] == {"contents": "read", "packages": "write"}
     assert jobs["github-release"]["permissions"] == {"contents": "write"}
+    # wheel-smoke only installs and probes the already-built wheel: no job
+    # permissions of its own, so it inherits the restrictive top-level
+    # 'contents: read' instead of whatever the repository's default token
+    # scope happens to be.
+    assert "permissions" not in jobs["wheel-smoke"]
+    # pypi needs no repository contents beyond read and exchanges its OIDC
+    # token for a PyPI one (trusted publishing) via id-token: write.
+    assert jobs["pypi"]["permissions"] == {"contents": "read", "id-token": "write"}

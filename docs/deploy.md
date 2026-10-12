@@ -32,6 +32,30 @@ Alternatively, `./setup.sh` writes a
 profile; pass `--non-interactive` to drive it from `KEYSTONE_SETUP_*`
 variables instead (see `./setup.sh --help`).
 
+## From PyPI
+
+An alternative to the clone-and-`uv sync` layout above: install the
+released package from PyPI into its own virtual environment instead of a
+repository checkout. The distribution is named `keystone-mcp-gateway`
+(`keystone-mcp` on PyPI is an unrelated project); it still installs the
+`keystone_mcp` module and the `keystone-mcp` command.
+
+```bash
+sudo useradd --system --home-dir /opt/keystone-mcp --shell /usr/sbin/nologin keystone-mcp
+sudo mkdir -p /opt/keystone-mcp
+sudo python3 -m venv /opt/keystone-mcp/.venv
+sudo /opt/keystone-mcp/.venv/bin/pip install "keystone-mcp-gateway==<version>"
+sudo chown -R keystone-mcp:keystone-mcp /opt/keystone-mcp
+```
+
+Configure `.env` the same way as [step 2](#2-configure) below, then start it
+with `<venv>/bin/keystone-mcp serve` in place of
+`uv run python -m keystone_mcp.server` — the systemd unit in
+[step 3](#3-run-with-systemd) only needs its `ExecStart` line changed to
+`ExecStart=/opt/keystone-mcp/.venv/bin/keystone-mcp serve`. Routine updates
+([step 4](#4-routine-updates)) become `pip install --upgrade
+"keystone-mcp-gateway==<new version>"` instead of `git pull` plus `uv sync`.
+
 ## 2. Configure
 
 ```bash

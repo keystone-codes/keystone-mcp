@@ -25,6 +25,9 @@ this project uses [Semantic Versioning](https://semver.org/).
 - `notifications/tools/list_changed` is sent to open sessions and
   `subscriptions/listen` streams after a catalog change, a policy reload or
   a users-directory change.
+- Published on PyPI as `keystone-mcp-gateway` (same version as the image);
+  `keystone-mcp serve` starts the server; the package ships type information
+  (`py.typed`).
 
 ### Changed
 
@@ -48,14 +51,13 @@ this project uses [Semantic Versioning](https://semver.org/).
   codes: `validation_error` instead of `invalid_role`, `conflict` instead of
   `user_already_exists`.
 - A read-only directory publishes only `users_list`.
+- Developers: release workflow builds and checks the wheel and sdist and
+  refuses a version already on PyPI.
 
 ### Deprecated
 
 - `UserDirectoryBackend` (single `resolve_user` method) — implement
   `UserDirectory`; deprecated since 0.5.0, removed in 2.0.
-
-### Deprecated
-
 - `X-Author-Email` is unsigned and deprecated since 0.5.0 (kept until the
   next major version); verify `X-Keystone-Identity` instead.
 

@@ -132,11 +132,32 @@ image unless all three (plus the tag itself) agree
    pushing the tag; it fails with a clear message if anything is out of
    sync. Pre-release tags (`vX.Y.Z-rc1`) are not supported.
 
-Once the tag is pushed, the `release.yml` workflow (`version-gate` →
-`test` → `publish` → `github-release`) builds the image for both
-`linux/amd64` and `linux/arm64`, starts the `linux/amd64` build against Redis
-and checks it over HTTP (`scripts/smoke_image.sh`: `/healthz`, `/readyz`,
-the container `HEALTHCHECK` status, and the non-root uid) before publishing
-anything, pushes both platforms to GHCR, and creates a GitHub Release whose
-notes are the matching `CHANGELOG.md` section
-(`scripts/extract_changelog.py`).
+Once the tag is pushed, the `release.yml` workflow (`version-gate` → `test` →
+`build-dist` → `wheel-smoke` → `publish` → `pypi` → `github-release`) builds
+the image for both `linux/amd64` and `linux/arm64`, starts the
+`linux/amd64` build against Redis and checks it over HTTP
+(`scripts/smoke_image.sh`: `/healthz`, `/readyz`, the container
+`HEALTHCHECK` status, and the non-root uid) before publishing anything,
+pushes both platforms to GHCR, builds the wheel and sdist with `uv build`,
+checks them against the same version with `scripts/check_version.py
+--dist-dir` and installs the wheel into a clean virtualenv for a second
+`/healthz`/`/readyz` smoke test (`scripts/smoke_wheel.sh`), publishes the
+package to PyPI as `keystone-mcp-gateway` via trusted publishing (no API
+token in secrets; `pypa/gh-action-pypi-publish`) once the image is
+published, and creates a GitHub Release whose notes are the matching
+`CHANGELOG.md` section (`scripts/extract_changelog.py`).
+
+The first release ever needs a one-time, outside-this-repo setup: on
+pypi.org, under the organization account, "Your projects → Publishing → Add
+a new pending publisher" for PyPI project name `keystone-mcp-gateway`,
+owner `keystone-codes`, repository `keystone-mcp`, workflow `release.yml`,
+environment `pypi`; and in GitHub, Settings → Environments → create the
+`pypi` environment (optionally with required reviewers). A fork without
+that publisher configured sets the repository variable
+`SKIP_PYPI_PUBLISH=true` to skip the `pypi` job without failing the release
+(the same pattern as `SKIP_GHCR_PUSH` for the image).
+
+`release.yml` also supports a manual `workflow_dispatch` run (`dry_run`
+input, default `true`) to exercise `version-gate` and `build-dist` without a
+release tag and without publishing anything — see the workflow file for
+exactly what it skips.
