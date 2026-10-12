@@ -550,6 +550,15 @@ class UpstreamConfig:
     # (``auth.bearer_env`` in the registry entry) — never the token value
     # itself, so this dataclass's repr stays safe to log.
     bearer_env: str | None = None
+    # ``transport: stdio`` fields (Y08). ``url`` is ``""`` for a stdio entry.
+    # ``env_from`` pairs a name in the child process's environment with the
+    # name of the keystone-mcp environment variable that supplies it — never
+    # the value itself, for the same reason as ``bearer_env`` above.
+    transport: Literal["http", "stdio"] = "http"
+    command: str | None = None
+    args: tuple[str, ...] = ()
+    env_from: tuple[tuple[str, str], ...] = ()
+    cwd: str | None = None
 
     def build_tool_filter(self):
         """Return a predicate for downstream tool names (discovery filter)."""
