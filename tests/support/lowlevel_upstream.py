@@ -22,7 +22,7 @@ import json
 from collections.abc import AsyncIterator, Callable, Collection
 from typing import Any
 
-import httpx
+import httpx2
 from mcp import types
 from mcp.server.lowlevel import Server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
@@ -149,24 +149,30 @@ def build_lowlevel_upstream_app(
     if unknown:
         raise ValueError(f"unknown tool(s): {sorted(unknown)}")
 
-    server: Server = Server("hello-upstream")
+    # The low-level SDK v2 `Server` no longer takes handlers via the
+    # `@server.list_tools()` / `@server.call_tool()` decorators (removed); it
+    # takes `on_list_tools` / `on_call_tool` in its constructor instead, each
+    # called as `(ctx, params) -> result`. The old decorator-based `Server`
+    # also turned a raised exception into an error `CallToolResult`
+    # automatically; SDK v2's low-level `Server` does not (only the separate,
+    # higher-level `mcp.server.mcpserver` does), so `_on_call_tool` below does
+    # that wrapping itself to keep the `fail` tool and the bearer check
+    # behaving the same as before.
 
-    def _check_bearer() -> None:
+    def _check_bearer(ctx: Any) -> None:
         if require_bearer is None:
             return
-        request = server.request_context.request
+        request = ctx.request
         headers = {k.lower(): v for k, v in request.headers.items()} if request else {}
         if headers.get("authorization") != f"Bearer {require_bearer}":
             raise PermissionError("missing or invalid bearer token")
 
-    @server.list_tools()
-    async def _list_tools() -> list[types.Tool]:
-        _check_bearer()
-        return [_TOOL_DEFINITIONS[name] for name in _TOOL_ORDER if name in selected]
+    async def _on_list_tools(ctx: Any, _params: Any) -> types.ListToolsResult:
+        _check_bearer(ctx)
+        tools = [_TOOL_DEFINITIONS[name] for name in _TOOL_ORDER if name in selected]
+        return types.ListToolsResult(tools=tools)
 
-    @server.call_tool()
-    async def _call_tool(name: str, arguments: dict[str, Any]) -> list[types.ContentBlock]:
-        _check_bearer()
+    def _run_tool(ctx: Any, name: str, arguments: dict[str, Any]) -> list[types.ContentBlock]:
         if name == "greet":
             return [types.TextContent(type="text", text=f"Hello, {arguments['name']}!")]
 
@@ -206,7 +212,7 @@ def build_lowlevel_upstream_app(
             ]
 
         if name == "whoami":
-            request = server.request_context.request
+            request = ctx.request
             headers = {k.lower(): v for k, v in request.headers.items()} if request else {}
             if observed is not None:
                 observed["headers"] = headers
@@ -223,6 +229,23 @@ def build_lowlevel_upstream_app(
             ]
 
         raise ValueError(f"unknown tool: {name}")
+
+    async def _on_call_tool(ctx: Any, params: types.CallToolRequestParams) -> types.CallToolResult:
+        try:
+            _check_bearer(ctx)
+            content = _run_tool(ctx, params.name, params.arguments or {})
+        except Exception as exc:  # noqa: BLE001 — mirrors the old SDK's auto-wrap
+            return types.CallToolResult(
+                content=[types.TextContent(type="text", text=str(exc))],
+                is_error=True,
+            )
+        return types.CallToolResult(content=content)
+
+    server: Server = Server(
+        "hello-upstream",
+        on_list_tools=_on_list_tools,
+        on_call_tool=_on_call_tool,
+    )
 
     manager = StreamableHTTPSessionManager(app=server, stateless=True, json_response=True)
 
@@ -250,27 +273,31 @@ def build_lowlevel_upstream_app(
 
 def asgi_http_client_factory(
     app: Starlette,
-) -> Callable[[float], Callable[..., httpx.AsyncClient]]:
+) -> Callable[[float], Callable[..., httpx2.AsyncClient]]:
     """``HttpClientFactoryBuilder`` that routes every request into *app* in-process.
 
     Mirrors the shape of ``keystone_mcp.adapters.mcp_proxy._http_client_factory``:
     the returned builder is called with a resolved per-call timeout (seconds)
-    and produces the actual httpx client factory, which always uses that
+    and produces the actual http client factory, which always uses that
     timeout and ignores whatever timeout the caller passed in.
+
+    The client handed to the proxy client's HTTP transport (MCP SDK 2 era)
+    must be an ``httpx2.AsyncClient`` -- an ``httpx.AsyncClient`` rejects the
+    ``auth`` object that transport passes in with ``TypeError``.
     """
 
-    def builder(timeout_seconds: float) -> Callable[..., httpx.AsyncClient]:
+    def builder(timeout_seconds: float) -> Callable[..., httpx2.AsyncClient]:
         def factory(
             headers: dict[str, str] | None = None,
             timeout: Any = None,  # noqa: ARG001 — superseded by timeout_seconds
             auth: Any = None,
             **_kwargs: Any,
-        ) -> httpx.AsyncClient:
-            return httpx.AsyncClient(
-                transport=httpx.ASGITransport(app=app),
+        ) -> httpx2.AsyncClient:
+            return httpx2.AsyncClient(
+                transport=httpx2.ASGITransport(app=app),
                 base_url=UPSTREAM_BASE_URL,
                 headers=headers,
-                timeout=httpx.Timeout(timeout_seconds),
+                timeout=httpx2.Timeout(timeout_seconds),
                 auth=auth,
                 follow_redirects=False,
             )
