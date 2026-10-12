@@ -65,6 +65,8 @@ this project uses [Semantic Versioning](https://semver.org/).
 - Upstream namespace validation no longer reserves `create` or `get`: with
   the built-in file tools gone, `users` is the only namespace a new upstream
   cannot shadow.
+- `requires_human_identity` accepts any interactive sign-in provider, not
+  only Google. Access tokens carry an `interactive` claim.
 
 ### Deprecated
 
@@ -100,6 +102,8 @@ this project uses [Semantic Versioning](https://semver.org/).
   provider, and a custom redirect provider's callback always failed with 503.
 - A redirect provider's `begin()` rejecting or raising now returns a sign-in
   error page (400 or 503) instead of an unhandled 500.
+- Refreshing a session opened through a sign-in provider that is no longer
+  configured is refused.
 
 ### Migration
 
@@ -110,6 +114,8 @@ this project uses [Semantic Versioning](https://semver.org/).
 - If you used the file tools, expose your file service as an MCP server and
   list it in the upstream registry; remove `KEYSTONE_MCP_FILE_API_URL` from
   `.env` and the two tool names from your policy file.
+- Sessions opened before the upgrade keep working; a session whose provider
+  was removed from the configuration must sign in again.
 
 ## [0.4.0] - 2026-10-11
 

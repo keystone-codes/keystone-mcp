@@ -69,6 +69,7 @@ class RbacObservability:
         cache_hit: bool | None,
         operation: str,
         request_id: str | None,
+        login_provider: str | None = None,
     ) -> None:
         policy = self.active_policy_fields()
         family = tool_family(tool_name)
@@ -87,6 +88,7 @@ class RbacObservability:
                 operation=operation,
                 request_id=request_id,
                 critical=critical,
+                login_provider=login_provider,
             )
             self.metrics.record_decision(
                 allowed=allowed,
