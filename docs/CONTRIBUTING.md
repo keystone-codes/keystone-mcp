@@ -73,10 +73,12 @@ CI runs the suite on Python 3.11, 3.12 and 3.13.
 ## Security checks
 
 CI runs a dependency audit (`uv audit`, OSV database) on every pull request
-and weekly, and a container image scan (Trivy) on every pull request. The
-dependency audit is blocking; the image scan is informational only (it
-reports Debian base-image CVEs that may have no fix yet) and does not block
-the pull request. See [`SECURITY.md`](../SECURITY.md).
+and weekly, and a container image scan (Trivy) on every pull request and
+before every release. Both are blocking: a fixable CRITICAL or HIGH
+vulnerability fails the build. See [`SECURITY.md`](../SECURITY.md).
+
+Image scan blocks the pull request. To accept a finding temporarily, add it
+to `.trivyignore` with a reason and a review date.
 
 To run the same checks locally:
 
@@ -86,7 +88,7 @@ uv audit --frozen
 
 ```bash
 docker build -t keystone-mcp:scan .
-trivy image --severity CRITICAL,HIGH --ignore-unfixed keystone-mcp:scan
+trivy image --severity CRITICAL,HIGH --ignore-unfixed --ignorefile .trivyignore keystone-mcp:scan
 ```
 
 ## Before opening a pull request
