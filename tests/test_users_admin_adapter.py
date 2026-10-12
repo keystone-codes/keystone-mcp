@@ -322,6 +322,7 @@ def test_catalog_registers_all_users_tools(tmp_path: Path):
         "users_set_roles",
         "users_grant_role",
         "users_revoke_role",
+        "users_logout",
     }
     for name in expected:
         route = reg.get(name)
@@ -347,6 +348,7 @@ def test_policy_loader_accepts_live_users_tools_in_catalog(tmp_path: Path):
         "users_update",
         "users_block",
         "users_unblock",
+        "users_logout",
         "users_set_roles",
         "users_grant_role",
         "users_revoke_role",

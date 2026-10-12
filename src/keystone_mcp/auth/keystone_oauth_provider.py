@@ -921,7 +921,12 @@ class KeystoneOAuthProvider(OAuthProvider):
         refresh_token = f"km_rt_{secrets.token_urlsafe(32)}"
         now = int(time.time())
         expires_at = now + self._settings.token_cache_ttl_seconds
-        token_claims = {"email": email, "auth_method": auth_method, "interactive": interactive}
+        token_claims = {
+            "email": email,
+            "auth_method": auth_method,
+            "interactive": interactive,
+            "iat": now,
+        }
 
         # Renew the client's lifetime before writing the refresh token it will
         # own, so the client record never expires ahead of a token issued
@@ -1021,7 +1026,12 @@ class KeystoneOAuthProvider(OAuthProvider):
         access_token = f"km_at_{secrets.token_urlsafe(32)}"
         new_refresh = f"km_rt_{secrets.token_urlsafe(32)}"
         now = int(time.time())
-        token_claims = {"email": email, "auth_method": auth_method, "interactive": interactive}
+        token_claims = {
+            "email": email,
+            "auth_method": auth_method,
+            "interactive": interactive,
+            "iat": now,
+        }
 
         # Renew the client's lifetime before writing the new refresh token.
         await self._store.touch_client(client.client_id)

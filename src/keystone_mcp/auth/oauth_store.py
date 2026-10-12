@@ -7,11 +7,29 @@ Production uses shared Redis from the keystone stack; tests inject
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
 from mcp.server.auth.provider import AccessToken, RefreshToken
 from mcp.shared.auth import OAuthClientInformationFull
 from redis.asyncio import Redis
+
+from keystone_mcp.user_directory.util import normalize_email
+
+_SUBJECT_INDEX_MAX_MEMBERS = 256
+
+
+@dataclass(frozen=True, slots=True)
+class RevokedTokens:
+    access: int
+    refresh_tokens: tuple[str, ...]
+
+
+def _subject_key(subject: str) -> str:
+    if subject.startswith("svc:"):
+        return subject
+    return normalize_email(subject)
+
 
 # Margin added on top of the longer of the refresh-token and access-token
 # lifetimes to compute how long a registered client is kept in Redis. The
@@ -48,6 +66,10 @@ class OAuthStore(Protocol):
 
     async def delete_refresh_token(self, token: str) -> None: ...
 
+    async def revoke_subject(self, subject: str, *, now: int) -> RevokedTokens: ...
+
+    async def subject_not_before(self, subject: str) -> int | None: ...
+
     async def aclose(self) -> None: ...
 
 
@@ -64,14 +86,19 @@ class InMemoryOAuthStore:
         *,
         client_ttl_seconds: int = 31 * 86400,
         refresh_ttl_seconds: int = 30 * 86400,
+        access_ttl_seconds: int = 3600,
     ) -> None:
         self._client_ttl_seconds = client_ttl_seconds
         self._refresh_ttl_seconds = refresh_ttl_seconds
+        self._access_ttl_seconds = access_ttl_seconds
         self._clients: dict[str, OAuthClientInformationFull] = {}
         self._client_expires_at: dict[str, float] = {}
         self._access_tokens: dict[str, AccessToken] = {}
         self._refresh_tokens: dict[str, RefreshToken] = {}
         self._refresh_expires_at: dict[str, float] = {}
+        self._subject_index: dict[str, set[str]] = {}
+        self._subject_index_expires_at: dict[str, float] = {}
+        self._subject_nbf: dict[str, int] = {}
 
     async def get_client(self, client_id: str) -> OAuthClientInformationFull | None:
         client = self._clients.get(client_id)
@@ -105,6 +132,65 @@ class InMemoryOAuthStore:
             self._client_expires_at.pop(client_id, None)
         return len(self._clients)
 
+    def _touch_subject_index(self, sub: str) -> None:
+        self._subject_index_expires_at[sub] = time.time() + self._client_ttl_seconds
+
+    def _subject_index_alive(self, sub: str) -> bool:
+        expires = self._subject_index_expires_at.get(sub)
+        if expires is not None and expires < time.time():
+            self._subject_index.pop(sub, None)
+            self._subject_index_expires_at.pop(sub, None)
+            self._subject_nbf.pop(sub, None)
+            return False
+        return True
+
+    def _add_subject_member(self, sub: str, member: str) -> None:
+        if not self._subject_index_alive(sub):
+            self._subject_index.setdefault(sub, set())
+        self._subject_index.setdefault(sub, set()).add(member)
+        self._touch_subject_index(sub)
+        members = self._subject_index.get(sub, set())
+        if len(members) > _SUBJECT_INDEX_MAX_MEMBERS:
+            dead = [m for m in members if not self._member_exists(m)]
+            for m in dead:
+                members.discard(m)
+
+    def _member_exists(self, member: str) -> bool:
+        if member.startswith("at:"):
+            return member[3:] in self._access_tokens
+        if member.startswith("rt:"):
+            return member[3:] in self._refresh_tokens
+        return False
+
+    def _remove_subject_member(self, sub: str, member: str) -> None:
+        if not self._subject_index_alive(sub):
+            return
+        members = self._subject_index.get(sub)
+        if members is not None:
+            members.discard(member)
+
+    def _access_iat(self, access: AccessToken) -> int | None:
+        claims = access.claims or {}
+        iat = claims.get("iat")
+        if isinstance(iat, int):
+            return iat
+        if access.expires_at is not None:
+            return int(access.expires_at) - self._access_ttl_seconds
+        return None
+
+    def _refresh_iat(self, refresh: RefreshToken) -> int | None:
+        if refresh.expires_at is not None:
+            return int(refresh.expires_at) - self._refresh_ttl_seconds
+        return None
+
+    def _reject_if_before_nbf(self, sub: str, iat: int | None) -> bool:
+        if iat is None:
+            return False
+        if not self._subject_index_alive(sub):
+            return False
+        nbf = self._subject_nbf.get(sub)
+        return nbf is not None and iat < nbf
+
     async def get_access_token(self, token: str) -> AccessToken | None:
         access = self._access_tokens.get(token)
         if access is None:
@@ -112,13 +198,38 @@ class InMemoryOAuthStore:
         if access.expires_at is not None and access.expires_at < time.time():
             self._access_tokens.pop(token, None)
             return None
+        sub = access.subject
+        if sub:
+            norm = _subject_key(sub)
+            iat = self._access_iat(access)
+            if self._reject_if_before_nbf(norm, iat):
+                await self.delete_access_token(token)
+                return None
+            claims = dict(access.claims or {})
+            if "iat" not in claims and iat is not None:
+                claims["iat"] = iat
+                access = AccessToken(
+                    token=access.token,
+                    client_id=access.client_id,
+                    scopes=access.scopes,
+                    expires_at=access.expires_at,
+                    resource=access.resource,
+                    subject=access.subject,
+                    claims=claims,
+                )
+                self._access_tokens[token] = access
+            self._add_subject_member(norm, f"at:{token}")
         return access
 
     async def put_access_token(self, access: AccessToken) -> None:
         self._access_tokens[access.token] = access
+        if access.subject:
+            self._add_subject_member(_subject_key(access.subject), f"at:{access.token}")
 
     async def delete_access_token(self, token: str) -> None:
-        self._access_tokens.pop(token, None)
+        access = self._access_tokens.pop(token, None)
+        if access is not None and access.subject:
+            self._remove_subject_member(_subject_key(access.subject), f"at:{token}")
 
     async def get_refresh_token(self, token: str) -> RefreshToken | None:
         refresh = self._refresh_tokens.get(token)
@@ -129,6 +240,13 @@ class InMemoryOAuthStore:
             self._refresh_tokens.pop(token, None)
             self._refresh_expires_at.pop(token, None)
             return None
+        if refresh.subject:
+            norm = _subject_key(refresh.subject)
+            iat = self._refresh_iat(refresh)
+            if self._reject_if_before_nbf(norm, iat):
+                await self.delete_refresh_token(token)
+                return None
+            self._add_subject_member(norm, f"rt:{token}")
         return refresh
 
     async def put_refresh_token(self, refresh: RefreshToken) -> None:
@@ -138,10 +256,40 @@ class InMemoryOAuthStore:
         else:
             ttl = self._refresh_ttl_seconds
         self._refresh_expires_at[refresh.token] = time.time() + ttl
+        if refresh.subject:
+            self._add_subject_member(_subject_key(refresh.subject), f"rt:{refresh.token}")
 
     async def delete_refresh_token(self, token: str) -> None:
-        self._refresh_tokens.pop(token, None)
+        refresh = self._refresh_tokens.pop(token, None)
         self._refresh_expires_at.pop(token, None)
+        if refresh is not None and refresh.subject:
+            self._remove_subject_member(_subject_key(refresh.subject), f"rt:{token}")
+
+    async def revoke_subject(self, subject: str, *, now: int) -> RevokedTokens:
+        sub = _subject_key(subject)
+        self._subject_nbf[sub] = now
+        self._touch_subject_index(sub)
+        members = list(self._subject_index.get(sub, ()))
+        access_count = 0
+        refresh_tokens: list[str] = []
+        for member in members:
+            if member.startswith("at:"):
+                tok = member[3:]
+                self._access_tokens.pop(tok, None)
+                access_count += 1
+            elif member.startswith("rt:"):
+                tok = member[3:]
+                self._refresh_tokens.pop(tok, None)
+                self._refresh_expires_at.pop(tok, None)
+                refresh_tokens.append(tok)
+        self._subject_index.pop(sub, None)
+        return RevokedTokens(access=access_count, refresh_tokens=tuple(refresh_tokens))
+
+    async def subject_not_before(self, subject: str) -> int | None:
+        sub = _subject_key(subject)
+        if not self._subject_index_alive(sub):
+            return None
+        return self._subject_nbf.get(sub)
 
     async def aclose(self) -> None:
         return None
@@ -159,11 +307,13 @@ class RedisOAuthStore:
         owns_redis: bool = True,
         client_ttl_seconds: int = 31 * 86400,
         refresh_ttl_seconds: int = 30 * 86400,
+        access_ttl_seconds: int = 3600,
     ) -> None:
         prefix = key_prefix if key_prefix.endswith(":") else f"{key_prefix}:"
         self._prefix = prefix
         self._client_ttl_seconds = client_ttl_seconds
         self._refresh_ttl_seconds = refresh_ttl_seconds
+        self._access_ttl_seconds = access_ttl_seconds
         if redis is not None:
             self._redis = redis
             self._owns_redis = owns_redis
@@ -189,6 +339,61 @@ class RedisOAuthStore:
 
     def _refresh_key(self, token: str) -> str:
         return f"{self._prefix}rt:{token}"
+
+    def _subject_index_key(self, sub: str) -> str:
+        return f"{self._prefix}subject:{sub}"
+
+    def _subject_nbf_key(self, sub: str) -> str:
+        return f"{self._prefix}subject_nbf:{sub}"
+
+    def _access_iat(self, access: AccessToken) -> int | None:
+        claims = access.claims or {}
+        iat = claims.get("iat")
+        if isinstance(iat, int):
+            return iat
+        if access.expires_at is not None:
+            return int(access.expires_at) - self._access_ttl_seconds
+        return None
+
+    def _refresh_iat(self, refresh: RefreshToken) -> int | None:
+        if refresh.expires_at is not None:
+            # If refresh TTL was shortened after issuance, this estimate can be
+            # later than the real issue time; the token may still pass nbf until
+            # revoke_subject removes it from the index.
+            return int(refresh.expires_at) - self._refresh_ttl_seconds
+        return None
+
+    async def _subject_nbf(self, sub: str) -> int | None:
+        raw = await self._redis.get(self._subject_nbf_key(sub))
+        if raw is None:
+            return None
+        return int(raw)
+
+    async def _token_rejected_by_nbf(self, sub: str, iat: int | None) -> bool:
+        if iat is None:
+            return False
+        nbf = await self._subject_nbf(sub)
+        return nbf is not None and iat < nbf
+
+    async def _prune_subject_index(self, sub: str) -> None:
+        key = self._subject_index_key(sub)
+        if await self._redis.scard(key) <= _SUBJECT_INDEX_MAX_MEMBERS:
+            return
+        members = list(await self._redis.smembers(key))
+        if not members:
+            return
+        async with self._redis.pipeline(transaction=False) as pipe:
+            for member in members:
+                if member.startswith("at:"):
+                    pipe.exists(self._access_key(member[3:]))
+                elif member.startswith("rt:"):
+                    pipe.exists(self._refresh_key(member[3:]))
+                else:
+                    pipe.exists("__keystone_no_such_key__")
+            exists_flags = await pipe.execute()
+        dead = [m for m, ok in zip(members, exists_flags, strict=True) if not ok]
+        if dead:
+            await self._redis.srem(key, *dead)
 
     @staticmethod
     def _access_ttl(access: AccessToken) -> int | None:
@@ -245,26 +450,70 @@ class RedisOAuthStore:
         return int(count)
 
     async def get_access_token(self, token: str) -> AccessToken | None:
-        raw = await self._redis.get(self._access_key(token))
+        key = self._access_key(token)
+        raw = await self._redis.get(key)
         if raw is None:
             return None
         access = AccessToken.model_validate_json(raw)
         if access.expires_at is not None and access.expires_at < time.time():
             await self.delete_access_token(token)
             return None
+        if access.subject:
+            sub = _subject_key(access.subject)
+            iat = self._access_iat(access)
+            if await self._token_rejected_by_nbf(sub, iat):
+                await self.delete_access_token(token)
+                return None
+            claims = access.claims or {}
+            if "iat" not in claims and iat is not None:
+                claims = {**claims, "iat": iat}
+                access = AccessToken(
+                    token=access.token,
+                    client_id=access.client_id,
+                    scopes=access.scopes,
+                    expires_at=access.expires_at,
+                    resource=access.resource,
+                    subject=access.subject,
+                    claims=claims,
+                )
+                await self._redis.set(key, access.model_dump_json(), keepttl=True)
+            idx = self._subject_index_key(sub)
+            async with self._redis.pipeline(transaction=True) as pipe:
+                pipe.sadd(idx, f"at:{token}")
+                pipe.expire(idx, self._client_ttl_seconds)
+                await pipe.execute()
         return access
 
     async def put_access_token(self, access: AccessToken) -> None:
         ttl = self._access_ttl(access)
         payload = access.model_dump_json()
         key = self._access_key(access.token)
-        if ttl is None:
-            await self._redis.set(key, payload)
-        else:
-            await self._redis.set(key, payload, ex=ttl)
+        sub = access.subject
+        norm = _subject_key(sub) if sub else None
+        async with self._redis.pipeline(transaction=True) as pipe:
+            if ttl is None:
+                pipe.set(key, payload)
+            else:
+                pipe.set(key, payload, ex=ttl)
+            if norm:
+                idx = self._subject_index_key(norm)
+                pipe.sadd(idx, f"at:{access.token}")
+                pipe.expire(idx, self._client_ttl_seconds)
+            await pipe.execute()
+        if norm:
+            await self._prune_subject_index(norm)
 
     async def delete_access_token(self, token: str) -> None:
-        await self._redis.delete(self._access_key(token))
+        key = self._access_key(token)
+        raw = await self._redis.get(key)
+        if raw is None:
+            return
+        access = AccessToken.model_validate_json(raw)
+        async with self._redis.pipeline(transaction=True) as pipe:
+            pipe.delete(key)
+            if access.subject:
+                pipe.srem(self._subject_index_key(_subject_key(access.subject)), f"at:{token}")
+            await pipe.execute()
 
     async def get_refresh_token(self, token: str) -> RefreshToken | None:
         key = self._refresh_key(token)
@@ -284,6 +533,17 @@ class RedisOAuthStore:
                 await self._redis.expireat(key, int(refresh.expires_at))
             else:
                 await self._redis.expire(key, self._refresh_ttl_seconds)
+        if refresh.subject:
+            sub = _subject_key(refresh.subject)
+            iat = self._refresh_iat(refresh)
+            if await self._token_rejected_by_nbf(sub, iat):
+                await self.delete_refresh_token(token)
+                return None
+            idx = self._subject_index_key(sub)
+            async with self._redis.pipeline(transaction=True) as pipe:
+                pipe.sadd(idx, f"rt:{token}")
+                pipe.expire(idx, self._client_ttl_seconds)
+                await pipe.execute()
         return refresh
 
     async def put_refresh_token(self, refresh: RefreshToken) -> None:
@@ -292,10 +552,56 @@ class RedisOAuthStore:
         else:
             ttl = int(refresh.expires_at - time.time())
             ttl = ttl if ttl > 0 else 1
-        await self._redis.set(self._refresh_key(refresh.token), refresh.model_dump_json(), ex=ttl)
+        key = self._refresh_key(refresh.token)
+        payload = refresh.model_dump_json()
+        sub = refresh.subject
+        norm = _subject_key(sub) if sub else None
+        async with self._redis.pipeline(transaction=True) as pipe:
+            pipe.set(key, payload, ex=ttl)
+            if norm:
+                idx = self._subject_index_key(norm)
+                pipe.sadd(idx, f"rt:{refresh.token}")
+                pipe.expire(idx, self._client_ttl_seconds)
+            await pipe.execute()
+        if norm:
+            await self._prune_subject_index(norm)
 
     async def delete_refresh_token(self, token: str) -> None:
-        await self._redis.delete(self._refresh_key(token))
+        key = self._refresh_key(token)
+        raw = await self._redis.get(key)
+        if raw is None:
+            return
+        refresh = RefreshToken.model_validate_json(raw)
+        async with self._redis.pipeline(transaction=True) as pipe:
+            pipe.delete(key)
+            if refresh.subject:
+                pipe.srem(self._subject_index_key(_subject_key(refresh.subject)), f"rt:{token}")
+            await pipe.execute()
+
+    async def revoke_subject(self, subject: str, *, now: int) -> RevokedTokens:
+        sub = _subject_key(subject)
+        idx_key = self._subject_index_key(sub)
+        nbf_key = self._subject_nbf_key(sub)
+        members = await self._redis.smembers(idx_key)
+        access_count = 0
+        refresh_tokens: list[str] = []
+        async with self._redis.pipeline(transaction=True) as pipe:
+            pipe.set(nbf_key, str(now), ex=self._client_ttl_seconds)
+            for member in members:
+                if member.startswith("at:"):
+                    tok = member[3:]
+                    pipe.delete(self._access_key(tok))
+                    access_count += 1
+                elif member.startswith("rt:"):
+                    tok = member[3:]
+                    pipe.delete(self._refresh_key(tok))
+                    refresh_tokens.append(tok)
+            pipe.delete(idx_key)
+            await pipe.execute()
+        return RevokedTokens(access=access_count, refresh_tokens=tuple(refresh_tokens))
+
+    async def subject_not_before(self, subject: str) -> int | None:
+        return await self._subject_nbf(_subject_key(subject))
 
     async def aclose(self) -> None:
         if self._owns_redis:
@@ -316,6 +622,7 @@ def build_oauth_store(settings: object) -> OAuthStore:
         key_prefix=prefix,
         client_ttl_seconds=client_ttl_seconds(settings),
         refresh_ttl_seconds=getattr(settings, "refresh_token_ttl_seconds", 30 * 86400),
+        access_ttl_seconds=getattr(settings, "token_cache_ttl_seconds", 3600),
     )
 
 
@@ -340,6 +647,7 @@ def build_shared_auth_stores(settings: object) -> tuple[OAuthStore, object]:
         owns_redis=True,
         client_ttl_seconds=client_ttl_seconds(settings),
         refresh_ttl_seconds=getattr(settings, "refresh_token_ttl_seconds", 30 * 86400),
+        access_ttl_seconds=getattr(settings, "token_cache_ttl_seconds", 3600),
     )
     login_store = RedisLoginPendingStore(
         redis,

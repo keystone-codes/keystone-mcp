@@ -8,6 +8,7 @@ this project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `users_logout`; blocking a user revokes all of their tokens immediately.
 - Service accounts (`svc:<name>`) with their own roles; `service_accounts_list|add|update` tools and `keystone-mcp service-accounts` CLI (built-in directory).
 - Upstreams receive `X-Keystone-Subject` and `X-Keystone-Subject-Type`.
 - `docs/adr/`: six architecture decision records (built-in users directory,
@@ -95,6 +96,8 @@ this project uses [Semantic Versioning](https://semver.org/).
 - `requires_human_identity` accepts any interactive sign-in provider, not
   only Google. Access tokens carry an `interactive` claim.
 - Login page error texts are provider-neutral.
+- New Redis keys `km:oauth:subject:<sub>` (set) and `km:oauth:subject_nbf:<sub>`
+  under `KEYSTONE_MCP_REDIS_KEY_PREFIX`; access tokens carry `iat`.
 
 ### Deprecated
 
@@ -145,6 +148,8 @@ this project uses [Semantic Versioning](https://semver.org/).
 
 ### Migration
 
+- Tokens issued before the upgrade are indexed on first use; a block revokes
+  them in any case. If you share Redis, reserve these key patterns.
 - Google users: nothing to do now; when convenient, move the Google settings into
   a login providers file (`type: google`). The Google redirect URI stays
   `<base>/login/google/callback`.

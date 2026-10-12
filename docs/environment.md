@@ -288,6 +288,20 @@ does not grow without bound:
 Records written before this release have no TTL; one is attached the first
 time the record is read (see the Migration note in `CHANGELOG.md`).
 
+**Per-subject session index** (under `KEYSTONE_MCP_REDIS_KEY_PREFIX`, default
+`km:oauth:`):
+
+| Key pattern | Type | Meaning | TTL |
+|---|---|---|---|
+| `subject:<sub>` | SET | Members `at:<token>` and `rt:<token>` for that subject (`sub` is the normalized email) | `max(REFRESH_TOKEN_TTL, TOKEN_TTL)` plus one day, renewed when a token is added |
+| `subject_nbf:<sub>` | STRING | Unix seconds: tokens issued before this moment are invalid | Same as the subject set |
+
+Tokens issued before an upgrade are added to the subject set on first use
+(lazy migration). A block or `users_logout` still invalidates them via
+`subject_nbf` even if they were never read after the upgrade. Redis **6.0+**
+is required (`SET … KEEPTTL` during lazy migration). The demo stack uses
+Redis 7.
+
 A password is part of the URL (`redis://:password@host:6379/0`; with an ACL
 user, `redis://user:password@host:6379/0`). Reserved characters in the
 username and password are percent-encoded. `./setup.sh` writes
