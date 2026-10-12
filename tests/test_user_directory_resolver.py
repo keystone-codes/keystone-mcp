@@ -261,7 +261,9 @@ async def test_http_backend_parses_contract_response() -> None:
 
 
 def test_build_resolver_from_settings(monkeypatch) -> None:
-    monkeypatch.setenv("KEYSTONE_MCP_USERS_SERVICE_URL", "http://mcp-users:8080")
+    monkeypatch.setenv(
+        "KEYSTONE_MCP_USERS_SERVICE_URL", "http://users-directory.internal.example:8080"
+    )
     monkeypatch.setenv("KEYSTONE_MCP_USERS_SERVICE_TOKEN", "token")
     monkeypatch.setenv("KEYSTONE_MCP_USERS_CACHE_ALLOW_TTL_SECONDS", "120")
     monkeypatch.setenv("KEYSTONE_MCP_USERS_SERVICE_TIMEOUT_SECONDS", "5")

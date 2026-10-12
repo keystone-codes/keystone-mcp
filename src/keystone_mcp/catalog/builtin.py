@@ -177,7 +177,7 @@ def register_catalog(
         registry.add_route(
             tool_name,
             users_admin,
-            pattern=Pattern.M_B,
+            pattern=Pattern.SYNC,
             params=params,
             description=description,
             mode="live",
@@ -188,7 +188,7 @@ def register_catalog(
             registry.add_route(
                 tool_name,
                 users_admin,
-                pattern=Pattern.M_B,
+                pattern=Pattern.SYNC,
                 params=params,
                 description=description,
                 mode="live",
@@ -233,7 +233,7 @@ def register_catalog(
             registry.add_route(
                 tool_name,
                 service_accounts_admin,
-                pattern=Pattern.M_B,
+                pattern=Pattern.SYNC,
                 params=params,
                 description=description,
                 mode="live",

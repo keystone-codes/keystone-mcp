@@ -51,11 +51,11 @@ def _registry_with_colliding_live_routes() -> RouterRegistry:
     registry.add_route(
         "present_release",
         adapter,
-        pattern=Pattern.M_B,
+        pattern=Pattern.SYNC,
         mode="live",
         namespace="reports",
     )
-    registry.add_route(_COLLIDING_PUBLISHED, adapter, pattern=Pattern.M_B, mode="live")
+    registry.add_route(_COLLIDING_PUBLISHED, adapter, pattern=Pattern.SYNC, mode="live")
     return registry
 
 
@@ -83,7 +83,7 @@ def test_unique_live_names_pass_uniqueness():
     registry.add_route(
         "present_release",
         _StubAdapter(),
-        pattern=Pattern.M_B,
+        pattern=Pattern.SYNC,
         mode="live",
         namespace="reports",
     )
@@ -100,7 +100,7 @@ def test_namespaced_routes_publish_distinct_names():
         registry.add_route(
             route_name,
             adapter,
-            pattern=Pattern.M_B,
+            pattern=Pattern.SYNC,
             mode="live",
             namespace="documents",
         )
@@ -139,11 +139,11 @@ async def live_names_client():
     registry.add_route(
         "present_release",
         adapter,
-        pattern=Pattern.M_B,
+        pattern=Pattern.SYNC,
         mode="live",
         namespace="reports",
     )
-    registry.add_route(_COLLIDING_PUBLISHED, adapter, pattern=Pattern.M_B, mode="live")
+    registry.add_route(_COLLIDING_PUBLISHED, adapter, pattern=Pattern.SYNC, mode="live")
     app = mcp.http_app(path=settings.http_path)
     async with LifespanManager(app):
         async with httpx.AsyncClient(

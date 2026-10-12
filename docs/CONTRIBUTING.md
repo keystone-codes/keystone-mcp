@@ -97,6 +97,7 @@ trivy image --severity CRITICAL,HIGH --ignore-unfixed --ignorefile .trivyignore 
 
 ## Before opening a pull request
 
+- `tests/test_no_legacy_terms.py` rejects internal labels of the original platform; use the neutral terms it suggests.
 - Keep the test suite green: `pytest -q`.
 - `uv run pytest tests/test_doc_links.py` checks every relative link and
   heading anchor in the Markdown docs.

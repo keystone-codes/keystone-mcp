@@ -236,7 +236,9 @@ def test_production_http_backend_ignores_users_db_url(monkeypatch, tmp_path: Pat
     _production_login_env(monkeypatch)
     monkeypatch.setenv("KEYSTONE_MCP_DEPLOYMENT_PROFILE", "production")
     monkeypatch.setenv("KEYSTONE_MCP_USERS_BACKEND", "http")
-    monkeypatch.setenv("KEYSTONE_MCP_USERS_SERVICE_URL", "http://mcp-users:8000")
+    monkeypatch.setenv(
+        "KEYSTONE_MCP_USERS_SERVICE_URL", "http://users-directory.internal.example:8000"
+    )
     monkeypatch.setenv("KEYSTONE_MCP_USERS_SERVICE_TOKEN", "users-token")
     monkeypatch.setenv("KEYSTONE_MCP_USERS_DB_URL", "sqlite:///./keystone-users.db")
     monkeypatch.setenv("KEYSTONE_MCP_ENABLED_LOGIN_METHODS", "google")
@@ -438,7 +440,9 @@ def test_stage_like_production_configuration_is_accepted(monkeypatch, tmp_path: 
     monkeypatch.setenv("KEYSTONE_MCP_DEPLOYMENT_PROFILE", "production")
     monkeypatch.setenv("KEYSTONE_MCP_BASE_URL", "https://mcp-stage.keystone.codes")
     monkeypatch.setenv("KEYSTONE_MCP_USERS_BACKEND", "http")
-    monkeypatch.setenv("KEYSTONE_MCP_USERS_SERVICE_URL", "http://mcp-users:8000")
+    monkeypatch.setenv(
+        "KEYSTONE_MCP_USERS_SERVICE_URL", "http://users-directory.internal.example:8000"
+    )
     monkeypatch.setenv("KEYSTONE_MCP_USERS_SERVICE_TOKEN", "users-token")
     monkeypatch.setenv("KEYSTONE_MCP_ENABLED_LOGIN_METHODS", "google")
     monkeypatch.setenv("KEYSTONE_MCP_PRIMARY_LOGIN_METHOD", "google")

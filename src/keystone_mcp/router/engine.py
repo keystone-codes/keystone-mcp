@@ -2,7 +2,7 @@
 
 Per call: resolve the verified identity (OAuth) -> deterministic task_id -> if
 mode==stub return the canonical stub -> else build the transport context, run
-the transform, execute the adapter, return the (Model-M-shaped) result.
+the transform, execute the adapter, return the status-envelope result.
 
 Rate limiting is not done here: it belongs to
 :class:`~keystone_mcp.router.throttle_middleware.ThrottleMiddleware`, which is

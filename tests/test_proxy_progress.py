@@ -53,7 +53,7 @@ def _ctx(task_id: str = "t_test") -> RouteContext:
         task_id=task_id,
         canonical_args="{}",
         tool_name="hello_whoami",
-        pattern=Pattern.M_B,
+        pattern=Pattern.SYNC,
         settings=Settings(base_url="http://localhost:8080"),
     )
 
