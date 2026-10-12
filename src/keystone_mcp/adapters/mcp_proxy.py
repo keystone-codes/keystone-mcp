@@ -35,7 +35,8 @@ import httpx2
 import pydantic_core
 from fastmcp import Client
 from fastmcp.exceptions import ToolError
-from fastmcp.tools.base import ToolResult
+from fastmcp.server.dependencies import get_context
+from fastmcp.tools.base import InputRequiredToolResult, ToolResult
 from mcp.shared._httpx_utils import McpHttpClientFactory
 
 from keystone_mcp.identity import upstream_identity_headers
@@ -106,6 +107,7 @@ class McpProxyAdapter:
         client_factory: ClientFactory | None = None,
         http_client_factory: HttpClientFactoryBuilder | None = None,
         status_envelope: bool = False,
+        proxy_elicitation: bool = True,
         extra_headers: Mapping[str, str] | None = None,
         identity_signer: IdentityAssertionSigner | None = None,
     ) -> None:
@@ -129,6 +131,7 @@ class McpProxyAdapter:
             if self._connection._http_client_factory is None:
                 self._connection._http_client_factory = _http_client_factory
         self._status_envelope = status_envelope
+        self._proxy_elicitation = proxy_elicitation
         # e.g. the upstream's ``Authorization: Bearer ...`` (auth.bearer_env).
         # Copied once at construction time, never logged as a whole.
         self._extra_headers = dict(extra_headers or {})
@@ -208,7 +211,10 @@ class McpProxyAdapter:
         # (DownstreamCall.current's docstring explains why that matters).
         from keystone_mcp.router.upstream_call import (
             DownstreamCall,
+            attach_upstream_elicitation_callback,
             call_upstream_tool,
+            downstream_supports_form_elicitation,
+            make_elicitation_callback,
             parse_for_status_envelope,
         )
 
@@ -246,10 +252,34 @@ class McpProxyAdapter:
 
         from keystone_mcp.router.stdio_process import UpstreamProcessUnavailableError
 
+        elicitation_callback = None
+        if (
+            self._proxy_elicitation
+            and self._connection.transport == "http"
+            and downstream is not None
+            and downstream_supports_form_elicitation(downstream.session)
+        ):
+            elicitation_callback = make_elicitation_callback(
+                downstream,
+                namespace=route.namespace,
+                tool_name=tool_name,
+            )
+
+        input_responses = None
+        request_state = None
+        try:
+            fctx = get_context()
+            input_responses = fctx.input_responses
+            request_state = fctx.request_state
+        except RuntimeError:
+            pass
+
         try:
             client = self._connection.call_client(headers=headers, timeout=timeout)
         except UpstreamProcessUnavailableError:
             raise ToolError(f"upstream {route.namespace} is unavailable") from None
+        if elicitation_callback is not None:
+            attach_upstream_elicitation_callback(client, elicitation_callback)
         async with client:
             raw = await call_upstream_tool(
                 client,
@@ -259,7 +289,12 @@ class McpProxyAdapter:
                 meta=call_meta,
                 downstream=downstream,
                 log_namespace=route.namespace,
+                input_responses=input_responses,
+                request_state=request_state,
+                proxy_elicitation=self._proxy_elicitation,
             )
+            if isinstance(raw, InputRequiredToolResult):
+                return raw
             if self._status_envelope:
                 # Parsed inside the ``async with`` block: _parse_call_tool_result
                 # decodes against the upstream's output schema, cached on the

@@ -431,6 +431,7 @@ class UpstreamRegistry:
     # false (default): proxied answers pass through as-is. true: wrap them in
     # the 0.3.x {state, tool, task_id, result} envelope (KEYSTONE_MCP_PROXY_STATUS_ENVELOPE).
     status_envelope: bool = False
+    proxy_elicitation: bool = True
     # Deployment-supplied inputSchema property patches, keyed (namespace, tool).
     schema_patches: PatchTable = field(default_factory=dict)
     # Builds the HTTP client used for discovery and proxied calls; ``None``
@@ -639,6 +640,7 @@ class UpstreamRegistry:
             tool_timeout_overrides=self.tool_timeout_overrides,
             http_client_factory=self.http_client_factory,
             status_envelope=self.status_envelope,
+            proxy_elicitation=self.proxy_elicitation,
             extra_headers=self._auth_headers.get(namespace),
             identity_signer=identity_signer,
         )

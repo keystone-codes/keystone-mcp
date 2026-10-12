@@ -433,6 +433,7 @@ def build_server(
         tool_timeout_overrides=dict(settings.upstream_tool_timeouts),
         schema_patches=load_proxy_schema_patches(settings.proxy_schema_patches_path),
         status_envelope=settings.proxy_status_envelope,
+        proxy_elicitation=settings.proxy_elicitation,
         discovery_retries=settings.upstream_discovery_retries,
         refresh_enabled=settings.refresh_interval_seconds > 0,
         identity_issuer=settings.base_url.rstrip("/"),

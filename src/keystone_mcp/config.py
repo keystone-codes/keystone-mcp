@@ -1072,6 +1072,12 @@ class Settings:
     proxy_status_envelope: bool = field(
         default_factory=lambda: _env_bool("KEYSTONE_MCP_PROXY_STATUS_ENVELOPE", False)
     )
+    # true (default): HTTP upstream elicitation/create (form mode) and upstream
+    # InputRequiredResult round-trips reach the Keystone client. false: no
+    # upstream elicitation handler and no InputRequired passthrough (Y03 path).
+    proxy_elicitation: bool = field(
+        default_factory=lambda: _env_bool("KEYSTONE_MCP_PROXY_ELICITATION", True)
+    )
     upstreams_path: str = field(default_factory=lambda: _env("KEYSTONE_MCP_UPSTREAMS_PATH", ""))
     upstream_allow_insecure_http: bool = field(
         default_factory=lambda: _env_bool("KEYSTONE_MCP_UPSTREAM_ALLOW_INSECURE_HTTP", False)
