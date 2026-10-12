@@ -85,10 +85,10 @@ async def check_role_in_use(change: PolicyChange, directory: UserDirectory | Non
     list_service_accounts = getattr(directory, "list_service_accounts", None)
     if callable(list_service_accounts) and "service_accounts" in directory.capabilities:
         try:
-            service_accounts = await list_service_accounts(is_blocked=False, role=role)
+            service_accounts = await list_service_accounts(is_blocked=False)
         except (UserDirectoryError, UsersError) as exc:
             raise PolicyChangeError("service_unavailable", str(exc)) from exc
-        service_account_count = len(service_accounts)
+        service_account_count = sum(1 for account in service_accounts if role in account.roles)
 
     total = len(holders) + service_account_count
     if total:
