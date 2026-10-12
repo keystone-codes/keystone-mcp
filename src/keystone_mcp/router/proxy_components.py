@@ -134,15 +134,14 @@ class UpstreamProxyPrompt(ProxyPrompt):
             async with client:
                 _stash_proxy_request_context(client, ctx)
                 if client.protocol_version in MODERN_PROTOCOL_VERSIONS:
-                    raw = await client._await_with_session_monitoring(
-                        client.session.get_prompt(
-                            backend_name,
-                            arguments,
-                            meta=None,
-                            input_responses=ctx.input_responses if ctx else None,
-                            request_state=ctx.request_state if ctx else None,
-                            allow_input_required=True,
-                        )
+                    from keystone_mcp.router.upstream_call import call_upstream_prompt_modern
+
+                    raw = await call_upstream_prompt_modern(
+                        client,
+                        backend_name,
+                        arguments,
+                        input_responses=ctx.input_responses if ctx else None,
+                        request_state=ctx.request_state if ctx else None,
                     )
                     if isinstance(raw, mcp_types.InputRequiredResult):
                         return InputRequiredPromptResult(raw)
