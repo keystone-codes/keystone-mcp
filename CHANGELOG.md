@@ -13,6 +13,9 @@ this project uses [Semantic Versioning](https://semver.org/).
   (`docs/environment.md#removed-variables`).
 - `.trivyignore` for temporarily accepted Trivy findings; each entry needs a
   reason and a review date, checked by `tests/test_trivyignore.py`.
+- `notifications/tools/list_changed` is sent to open sessions and
+  `subscriptions/listen` streams after a catalog change, a policy reload or
+  a users-directory change.
 
 ### Changed
 

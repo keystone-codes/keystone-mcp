@@ -191,6 +191,6 @@ bare host.
 | The browser did not open | Copy the URL the client printed (Claude Code and `mcp-remote` both print "visit this URL to authorize") and open it yourself. |
 | Refused after sign-in, or "unknown user" | Your email is not yet in the users directory. Ask an administrator to add it — this applies to Google and DEV-token sign-in alike. |
 | Google sign-in fails with `redirect_uri_mismatch` | This is on the operator's side: the Google OAuth client's redirect URI does not match. See [google-oauth.md](google-oauth.md). |
-| The client shows an old or missing tool list | Reconnect (disable, then enable, the server). Keystone-MCP does not push a live tool-list update when its upstream catalog changes in the background; see [facade.md](facade.md). |
+| The client shows an old or missing tool list | Keystone-MCP sends `notifications/tools/list_changed` after a catalog change, but only a client that is connected and listening for it (the standalone SSE stream, or a `subscriptions/listen` stream on MCP 2026-07-28) receives it live; otherwise reconnect (disable, then enable, the server). See [facade.md](facade.md). |
 | `http://` to a public address is refused | Use `https://`. A `production`-profile server refuses a plain-`http` address once it is reachable publicly. |
 | `421 Misdirected Request` | The address you connected to is not the server's own name. Use exactly the host in `KEYSTONE_MCP_BASE_URL` (for the local demo, `localhost`, `127.0.0.1` or `[::1]` on the same port); an operator can allow another name with `KEYSTONE_MCP_ALLOWED_HOSTS`. |

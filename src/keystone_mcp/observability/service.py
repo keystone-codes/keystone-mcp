@@ -145,6 +145,14 @@ class RbacObservability:
 
             logging.getLogger(__name__).warning("catalog refresh metric failed", exc_info=True)
 
+    def record_list_changed(self, *, kind: str, sessions: int) -> None:
+        try:
+            self.metrics.record_list_changed(kind=kind, sessions=sessions)
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).warning("list_changed metric failed", exc_info=True)
+
     def record_upstream_available(self, *, namespace: str, available: bool) -> None:
         try:
             self.metrics.set_upstream_available(namespace=namespace, available=available)

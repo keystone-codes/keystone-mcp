@@ -14,6 +14,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+import mcp_types
 from fastmcp import FastMCP
 
 from keystone_mcp.adapters.users_admin import RoleSource
@@ -65,6 +66,10 @@ from keystone_mcp.router.tool_call_observability_middleware import (
     ToolCallObservabilityMiddleware,
 )
 from keystone_mcp.router.upstream import UpstreamRegistry, UpstreamUnavailableError
+from keystone_mcp.surface.client_sessions import (
+    ClientSessionRegistry,
+    SessionTrackingMiddleware,
+)
 from keystone_mcp.surface.reconciler import SurfaceReconciler, surface_reconciler_lifespan
 from keystone_mcp.user_directory.factory import build_user_directory_resolver
 from keystone_mcp.user_directory.protocol import UserDirectoryResolver
@@ -82,12 +87,18 @@ logger = logging.getLogger(__name__)
 
 _reconciler_holder: dict[str, SurfaceReconciler | None] = {"reconciler": None}
 _users_store_holder: dict[str, UsersStore | None] = {"store": None}
+_client_sessions_holder: dict[str, ClientSessionRegistry | None] = {"registry": None}
 
 
 @asynccontextmanager
 async def _keystone_lifespan(_server: FastMCP):
-    async with surface_reconciler_lifespan(_reconciler_holder.get("reconciler")):
-        yield {}
+    try:
+        async with surface_reconciler_lifespan(_reconciler_holder.get("reconciler")):
+            yield {}
+    finally:
+        client_sessions = _client_sessions_holder.get("registry")
+        if client_sessions is not None:
+            client_sessions.close()
 
 
 @dataclass(frozen=True, slots=True)
@@ -275,6 +286,22 @@ def build_server(
     )
     mcp = FastMCP(name="keystone-mcp", auth=oauth, lifespan=_keystone_lifespan)
 
+    # Tracks open connections (handshake era) and ``subscriptions/listen``
+    # streams (2026-07-28 era) so the surface reconciler can notify them of a
+    # catalog change, a policy reload or a users-directory change (Y05).
+    # Registered on the private low-level server (``FastMCP._mcp_server``,
+    # the same field X01 documented as closed API) so the SDK advertises
+    # ``tools.listChanged=true`` to 2026-07-28 clients -- FastMCP 4.1 does not
+    # serve ``subscriptions/listen`` on its own (test-sentinel:
+    # ``test_list_changed_is_advertised_on_both_eras``).
+    client_sessions = ClientSessionRegistry()
+    mcp._mcp_server.add_request_handler(
+        "subscriptions/listen",
+        mcp_types.SubscriptionsListenRequestParams,
+        client_sessions.listen_handler,
+    )
+    _client_sessions_holder["registry"] = client_sessions
+
     # Login page: GET renders the credential form, POST validates the api_token
     # and issues the authorization code (no code on failure).
     @mcp.custom_route("/login", methods=["GET"])
@@ -348,6 +375,11 @@ def build_server(
 
     _register_default_upstreams(upstreams, settings)
 
+    # Remembers a handshake-era connection even for a request that a later
+    # middleware throttles or RBAC denies, so added before every other
+    # middleware (test-sentinel: test_session_is_tracked_even_when_rbac_denies).
+    mcp.add_middleware(SessionTrackingMiddleware(client_sessions))
+
     # Throttling is enforced here and nowhere else, so one tool call consumes
     # exactly one slot whatever the RBAC mode. Added first, so it runs outermost
     # and a throttled identity never reaches the user directory.
@@ -418,6 +450,7 @@ def build_server(
             policy_manager=policy_manager,
             observability=rbac_observability,
             revision_reader=revision_reader,
+            client_sessions=client_sessions,
         )
     _reconciler_holder["reconciler"] = reconciler
 

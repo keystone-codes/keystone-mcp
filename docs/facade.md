@@ -112,9 +112,16 @@ timer when their bytes change, and immediately when you send `SIGHUP`
 (`kill -HUP <pid>`). A file that fails validation is rejected and the last
 good policy stays.
 
-Clients that cache `list_tools` at connect time see new tools on the next
-`list_tools` call or after reconnect; background refresh does not push
-`notifications/tools/list_changed` to every session.
+After a refresh tick that changed the tool catalog, reloaded the RBAC policy
+or saw a users-directory change, Keystone-MCP sends
+`notifications/tools/list_changed` to every open connection on that instance.
+Clients on the handshake protocol receive it on the standalone SSE stream
+(`GET` on the MCP endpoint); clients on MCP 2026-07-28 receive it on a
+`subscriptions/listen` stream they open. A client that opens neither sees the
+change on its next `tools/list`. Both the standalone `GET` stream and a
+`subscriptions/listen` stream are long-lived connections — a load balancer
+with an idle timeout should account for that (the SDK sends its own pings on
+a `subscriptions/listen` stream while it waits).
 
 Proxied tools are published with the upstream's own `inputSchema` (after
 `KEYSTONE_MCP_PROXY_SCHEMA_PATCHES`), `outputSchema` (only when
