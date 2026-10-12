@@ -4,6 +4,8 @@ Keystone lists every sign-in method in a YAML file referenced by
 `KEYSTONE_MCP_LOGIN_PROVIDERS_PATH`. A person must already exist in the users
 directory; Keystone never creates accounts from an identity provider.
 
+Why: [ADR 0007](adr/0007-login-providers.md).
+
 Each redirect provider gets its own callback URL:
 
 ```text
@@ -90,6 +92,7 @@ Additional `type` values come from packages that declare a
 `keystone_mcp.login_providers` entry point. See [plugins.md](plugins.md) and
 the [contract tests](plugins.md#contract-tests) for validating your
 implementation.
+Why: [ADR 0009](adr/0009-plugins-via-entry-points.md).
 
 ## What the sign-in page looks like
 

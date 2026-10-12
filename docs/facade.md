@@ -82,7 +82,8 @@ namespace (`scheme://<namespace>/...`, e.g. upstream `file:///handbook.md` becom
 `file://hello//handbook.md`). RBAC uses the same allow patterns as tools —
 `<namespace>_<resource.name>` for both static resources and templates (the policy
 file has no separate prompts or resources section). Two upstream resources that
-share the same `name` get one RBAC name and one policy decision.
+share the same `name` get one RBAC name and one policy decision. Why:
+[ADR 0011](adr/0011-rbac-by-name-for-prompts-and-resources.md).
 
 `resources/read` is allowed only for URIs that match a published resource or
 template; any other URI is denied in `enforce` mode.

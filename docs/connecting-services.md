@@ -298,6 +298,8 @@ the client.
 
 ## Running a stdio server
 
+Why: [ADR 0012](adr/0012-stdio-upstreams-run-unsandboxed.md).
+
 Some upstreams speak MCP over **stdio** instead of Streamable HTTP. Keystone-MCP
 starts the child process, supervises it, and proxies calls the same way as for
 HTTP — discovery, RBAC, progress, and cancellation all apply. There is no

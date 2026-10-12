@@ -36,7 +36,8 @@ Dependabot runs weekly on the `uv` ecosystem and only touches `uv.lock`
 elsewhere. Minor and patch updates land together in one grouped PR; major
 updates (other than `fastmcp` and `mcp`) get their own PR. Major upgrades of
 `fastmcp` and `mcp` are ignored by Dependabot and done as planned work (we
-currently run `fastmcp>=4.1,<5`, MCP SDK 2). To update a dependency by hand:
+currently run `fastmcp>=4.1,<5`, MCP SDK 2). Why: [ADR 0010](adr/0010-fastmcp-major-version.md).
+To update a dependency by hand:
 `uv lock --upgrade-package <name>`.
 
 ## Running the tests
