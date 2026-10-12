@@ -23,14 +23,13 @@ Indicators (RFC 8707) bind the token audience and are checked in ``verify_token`
 from __future__ import annotations
 
 import hashlib
-import html
 import json
 import logging
 import secrets
 import time
 from collections.abc import Sequence
 from dataclasses import replace
-from urllib.parse import urlencode, urlparse
+from urllib.parse import quote, urlencode, urlparse
 
 from fastmcp.server.auth import OAuthProvider
 from mcp.server.auth.provider import (
@@ -58,6 +57,7 @@ from keystone_mcp.auth.throttle import (
     wrap_asgi_with_ip_login_throttle,
 )
 from keystone_mcp.config import Settings, resources_equivalent
+from keystone_mcp.login.pages import FieldView, ProviderView, render_consent_page, render_error_page
 from keystone_mcp.login.protocol import (
     FormField,
     FormLoginProvider,
@@ -103,6 +103,9 @@ _OLD_REFRESH_MARKER_GRACE_SECONDS = 60
 # gets the broader path the prefix demands.
 _CSRF_COOKIE_NAME = "km_login_csrf"
 _CSRF_COOKIE_NAME_HOST_PREFIXED = "__Host-km_login_csrf"
+_LANG_COOKIE_NAME = "km_lang"
+_LANG_COOKIE_NAME_HOST_PREFIXED = "__Host-km_lang"
+_LANG_COOKIE_MAX_AGE_SECONDS = 365 * 24 * 60 * 60
 
 
 def _hash_csrf_cookie(value: str) -> str:
@@ -329,7 +332,7 @@ RTL_LANGS = frozenset({"he", "ar"})
 TRANSLATIONS: dict[str, dict[str, str]] = {
     "he": {
         "title": "Keystone MCP — התחברות",
-        "subtitle": "אשרו את המחבר באמצעות אסימון ה־API של keystone.",
+        "subtitle": "התחברות לחיבור לקוח לסביבת העבודה.",
         "email_label": "אימייל",
         "token_label": "אסימון API",
         "submit": "אישור",
@@ -349,10 +352,17 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "consent_redirect": "לאחר ההתחברות תועברו אל",
         "consent_unnamed": "אפליקציה ללא שם",
         "consent_warning": "המשיכו רק אם אתם יזמתם את ההתחברות הזו ומזהים את הכתובת שלמעלה.",
+        "or_api_key": "או עם מפתח API",
+        "token_help": "המפתח מונפק על ידי מנהל המערכת; הוא מוצג פעם אחת בלבד בעת ההנפקה.",
+        "error_hint_generic": "חזרו ליישום והתחילו את ההתחברות מחדש.",
+        "error_hint_request": "חזרו ליישום והתחילו את ההתחברות מחדש. הקישור תקף לעשר דקות.",
+        "error_hint_redirect_host": "כתובת החזרה של היישום לא ברשימת המורשים; פנו למנהל המערכת.",
+        "error_code_hint": "אם זה חוזר על עצמו, דווחו למנהל המערכת על הקוד:",
+        "lang_switcher_label": "שפה",
     },
     "en": {
         "title": "Keystone MCP — Sign in",
-        "subtitle": "Authorize the connector with your keystone API token.",
+        "subtitle": "Sign in to connect a client to your workspace.",
         "email_label": "Email",
         "token_label": "API token",
         "submit": "Authorize",
@@ -374,10 +384,21 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "consent_warning": (
             "Continue only if you started this connection yourself and recognise the address above."
         ),
+        "or_api_key": "or with an API key",
+        "token_help": "Your administrator issues the key; it is shown only once when created.",
+        "error_hint_generic": "Go back to the application and start sign-in again.",
+        "error_hint_request": (
+            "Go back to the application and start sign-in again. The link is valid for ten minutes."
+        ),
+        "error_hint_redirect_host": (
+            "This application's return address is not on the allowed list; contact your administrator."
+        ),
+        "error_code_hint": "If this keeps happening, tell your administrator the code:",
+        "lang_switcher_label": "Language",
     },
     "ru": {
         "title": "Keystone MCP — Вход",
-        "subtitle": "Авторизуйте коннектор с помощью вашего API-токена keystone.",
+        "subtitle": "Вход для подключения клиента к рабочему пространству.",
         "email_label": "Электронная почта",
         "token_label": "API-токен",
         "submit": "Авторизовать",
@@ -399,10 +420,21 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "consent_warning": (
             "Продолжайте, только если вы сами начали этот вход и узнаёте адрес выше."
         ),
+        "or_api_key": "или по ключу API",
+        "token_help": "Ключ выдаёт администратор; он показывается один раз при выпуске.",
+        "error_hint_generic": "Вернитесь в приложение и начните вход заново.",
+        "error_hint_request": (
+            "Вернитесь в приложение и начните вход заново. Ссылка действует десять минут."
+        ),
+        "error_hint_redirect_host": (
+            "Адрес возврата приложения не входит в разрешённые; обратитесь к администратору."
+        ),
+        "error_code_hint": "Если это повторяется, сообщите администратору код:",
+        "lang_switcher_label": "Язык",
     },
     "ar": {
         "title": "Keystone MCP — تسجيل الدخول",
-        "subtitle": "قم بتفويض الموصل باستخدام رمز API الخاص بـ keystone.",
+        "subtitle": "تسجيل الدخول لربط عميل بمساحة العمل.",
         "email_label": "البريد الإلكتروني",
         "token_label": "رمز API",
         "submit": "تفويض",
@@ -422,20 +454,39 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "consent_redirect": "بعد تسجيل الدخول سيتم تحويلك إلى",
         "consent_unnamed": "تطبيق بدون اسم",
         "consent_warning": "تابع فقط إذا بدأت هذا الاتصال بنفسك وتتعرف على العنوان أعلاه.",
+        "or_api_key": "أو بمفتاح API",
+        "token_help": "يصدر المسؤول المفتاح؛ يُعرض مرة واحدة فقط عند الإنشاء.",
+        "error_hint_generic": "ارجع إلى التطبيق وابدأ تسجيل الدخول من جديد.",
+        "error_hint_request": "ارجع إلى التطبيق وابدأ تسجيل الدخول من جديد. الرابط صالح لعشرة دقائق.",
+        "error_hint_redirect_host": "عنوان إرجاع التطبيق غير مسموح به؛ تواصل مع المسؤول.",
+        "error_code_hint": "إذا تكرر ذلك، أبلغ المسؤول بالرمز:",
+        "lang_switcher_label": "اللغة",
     },
 }
 
 
-def _pick_language(request: Request, default_lang: str = FALLBACK_LANG) -> str:
-    """Select a supported UI language from ``?lang=`` or ``Accept-Language``.
+def _lang_cookie_names(base_url: str) -> tuple[str, ...]:
+    if base_url.startswith("https://"):
+        return (_LANG_COOKIE_NAME_HOST_PREFIXED, _LANG_COOKIE_NAME)
+    return (_LANG_COOKIE_NAME, _LANG_COOKIE_NAME_HOST_PREFIXED)
 
-    Falls back to *default_lang* (the deployment's configured login language)
-    when neither the override nor the browser's preferences name a language we
-    ship translations for.
+
+def _pick_language(
+    request: Request, default_lang: str = FALLBACK_LANG, *, base_url: str = ""
+) -> str:
+    """Select a supported UI language for sign-in pages.
+
+    Priority: explicit ``?lang=``, then the ``km_lang`` choice cookie, then
+    ``Accept-Language``, then the deployment's ``KEYSTONE_MCP_LOGIN_DEFAULT_LANG``.
     """
     override = request.query_params.get("lang", "").strip().lower()
     if override in TRANSLATIONS:
         return override
+
+    for cookie_name in _lang_cookie_names(base_url):
+        cookie_lang = request.cookies.get(cookie_name, "").strip().lower()
+        if cookie_lang in TRANSLATIONS:
+            return cookie_lang
 
     header = request.headers.get("accept-language", "")
     best_lang = default_lang if default_lang in TRANSLATIONS else FALLBACK_LANG
@@ -478,30 +529,6 @@ def _consent_redirect_location(redirect_uri: str) -> str:
             return f"{host}:{parsed.port}"
         return host
     return f"{scheme}://{host}"
-
-
-def _consent_block_html(t: dict[str, str], client_name: str | None, redirect_uri: str) -> str:
-    """The consent block shown first on the login page (A13).
-
-    The application name is whatever the client supplied at registration
-    (RFC 7591 ``client_name``) — unverified, so it cannot be trusted on its
-    own. The redirect destination is the fact that actually matters here: it
-    is read from the authorization request itself, not from the client's
-    self-reported metadata, which is why it gets its own bolded line and the
-    full URL underneath.
-    """
-    name = (client_name or "").strip()
-    display_name = html.escape(name) if name else html.escape(t["consent_unnamed"])
-    location = html.escape(_consent_redirect_location(redirect_uri))
-    full_redirect = html.escape(redirect_uri)
-    return f"""
-  <div style="border:1px solid #ddd;border-radius:6px;padding:12px;margin:16px 0">
-    <h2 style="margin-top:0;font-size:1.1em">{html.escape(t["consent_title"])}</h2>
-    <p>{html.escape(t["consent_app"])}: <strong>{display_name}</strong></p>
-    <p>{html.escape(t["consent_redirect"])} <strong>{location}</strong></p>
-    <p style="font-size:0.8em;color:#555;word-break:break-all">{full_redirect}</p>
-    <p style="font-size:0.9em;color:#a60">{html.escape(t["consent_warning"])}</p>
-  </div>"""
 
 
 def _field_label(t: dict[str, str], field: FormField) -> str:
@@ -705,6 +732,92 @@ class KeystoneOAuthProvider(OAuthProvider):
         if self._settings.base_url.startswith("https://"):
             return "/"
         return "/login"
+
+    def _lang_cookie_name(self) -> str:
+        if self._settings.base_url.startswith("https://"):
+            return _LANG_COOKIE_NAME_HOST_PREFIXED
+        return _LANG_COOKIE_NAME
+
+    def _maybe_set_lang_cookie(self, response: Response, request: Request, lang: str) -> None:
+        explicit = request.query_params.get("lang", "").strip().lower()
+        if explicit not in TRANSLATIONS:
+            return
+        response.set_cookie(
+            self._lang_cookie_name(),
+            lang,
+            max_age=_LANG_COOKIE_MAX_AGE_SECONDS,
+            path="/login",
+            httponly=True,
+            samesite="lax",
+            secure=self._settings.base_url.startswith("https://"),
+        )
+
+    def _txn_query(self, txn_id: str) -> str:
+        if not txn_id:
+            return ""
+        return f"txn={quote(txn_id)}&"
+
+    def _translation(self, lang: str) -> dict[str, str]:
+        return TRANSLATIONS.get(lang, TRANSLATIONS[FALLBACK_LANG])
+
+    def _build_provider_views(self, t: dict[str, str]) -> list[ProviderView]:
+        views: list[ProviderView] = []
+        for provider in self._providers.values():
+            if provider.kind == "redirect":
+                views.append(ProviderView(provider.name, provider.kind, provider.title, ()))
+                continue
+            if provider.kind != "form":
+                continue
+            fields: list[FieldView] = []
+            for field in provider.form_fields():
+                help_key: str | None = None
+                autocomplete = "off"
+                inputmode: str | None = None
+                if field.name == "email":
+                    autocomplete = "email"
+                    inputmode = "email"
+                elif field.name == "api_token":
+                    help_key = "token_help"
+                fields.append(
+                    FieldView(
+                        field.name,
+                        field.input_type,
+                        _field_label(t, field),
+                        help_key,
+                        autocomplete,
+                        inputmode,
+                    )
+                )
+            views.append(ProviderView(provider.name, provider.kind, provider.title, tuple(fields)))
+        return views
+
+    def _error_page(
+        self, lang: str, error_key: str, *, txn_query: str = "", status_code: int = 400
+    ) -> str:
+        return render_error_page(
+            lang=lang,
+            t=self._translation(lang),
+            brand=self._settings.login_brand,
+            error_key=error_key,
+            status_code=status_code,
+            txn_query=txn_query,
+        )
+
+    def _html_error(
+        self,
+        request: Request | None,
+        lang: str,
+        error_key: str,
+        status_code: int,
+    ) -> Response:
+        txn_query = ""
+        if request is not None:
+            txn_query = self._txn_query(request.query_params.get("txn", ""))
+        content = self._error_page(error_key=error_key, lang=lang, txn_query=txn_query)
+        response = _html_response(content, status_code=status_code)
+        if request is not None:
+            self._maybe_set_lang_cookie(response, request, lang)
+        return response
 
     # ── Client management (DCR, RFC 7591) ─────────────────────────────────
     async def get_client(self, client_id: str) -> OAuthClientInformationFull | None:
@@ -1195,14 +1308,16 @@ class KeystoneOAuthProvider(OAuthProvider):
         already signed in to Google, the code goes to the attacker's
         redirect_uri" attack: see docs/security-model.md#consent-screen.
         """
-        lang = _pick_language(request, self._settings.login_default_lang)
+        lang = _pick_language(
+            request, self._settings.login_default_lang, base_url=self._settings.base_url
+        )
         txn_id = request.query_params.get("txn", "")
         pending = await self._get_pending_txn(txn_id)
         if pending is None:
-            return _html_response(self._error_page(lang, "error_request"), status_code=400)
+            return self._html_error(request, lang, "error_request", 400)
         client = await self._store.get_client(pending.client_id)
         if client is None:
-            return _html_response(self._error_page(lang, "error_request"), status_code=400)
+            return self._html_error(request, lang, "error_request", 400)
         return self._render_consent_page(request, txn_id, lang, pending, client)
 
     async def render_redirect_not_allowed(self, request: Request) -> Response:
@@ -1214,15 +1329,19 @@ class KeystoneOAuthProvider(OAuthProvider):
         was ever stashed in the pending store for this request, so there is
         nothing to look up or consume.
         """
-        lang = _pick_language(request, self._settings.login_default_lang)
-        return _html_response(self._error_page(lang, "error_redirect_host"), status_code=400)
+        lang = _pick_language(
+            request, self._settings.login_default_lang, base_url=self._settings.base_url
+        )
+        return self._html_error(request, lang, "error_redirect_host", 400)
 
     async def handle_login(self, request: Request) -> Response:
         """``POST /login``: the single configured ``form``-kind provider's credential form."""
-        lang = _pick_language(request, self._settings.login_default_lang)
+        lang = _pick_language(
+            request, self._settings.login_default_lang, base_url=self._settings.base_url
+        )
         form_provider = self._form_provider()
         if form_provider is None:
-            return _html_response(self._error_page(lang, "error_request"), status_code=400)
+            return self._html_error(request, lang, "error_request", 400)
 
         allowed_ip, retry_ip = self._login_throttle.check_ip(peer_host(request))
         if not allowed_ip:
@@ -1246,7 +1365,7 @@ class KeystoneOAuthProvider(OAuthProvider):
         # gain.
         pending = await self._get_pending_txn(txn_id)
         if pending is None:
-            return _html_response(self._error_page(lang, "error_request"), status_code=400)
+            return self._html_error(request, lang, "error_request", 400)
 
         raw_form = {
             field.name: str(form.get(field.name, "")) for field in form_provider.form_fields()
@@ -1257,7 +1376,7 @@ class KeystoneOAuthProvider(OAuthProvider):
             if exc.reason == "provider_unavailable":
                 client = await self._store.get_client(pending.client_id)
                 if client is None:
-                    return _html_response(self._error_page(lang, "error_request"), status_code=400)
+                    return self._html_error(request, lang, "error_request", 400)
                 return self._render_consent_page(
                     request,
                     txn_id,
@@ -1271,7 +1390,7 @@ class KeystoneOAuthProvider(OAuthProvider):
             self._login_throttle.record_login_failure(email)
             client = await self._store.get_client(pending.client_id)
             if client is None:
-                return _html_response(self._error_page(lang, "error_request"), status_code=400)
+                return self._html_error(request, lang, "error_request", 400)
             return self._render_consent_page(
                 request,
                 txn_id,
@@ -1291,7 +1410,7 @@ class KeystoneOAuthProvider(OAuthProvider):
             self._login_throttle.record_login_failure(email)
             client = await self._store.get_client(pending.client_id)
             if client is None:
-                return _html_response(self._error_page(lang, "error_request"), status_code=400)
+                return self._html_error(request, lang, "error_request", 400)
             return self._render_consent_page(
                 request,
                 txn_id,
@@ -1307,7 +1426,7 @@ class KeystoneOAuthProvider(OAuthProvider):
             self._login_throttle.record_login_failure(email)
             client = await self._store.get_client(pending.client_id)
             if client is None:
-                return _html_response(self._error_page(lang, "error_request"), status_code=400)
+                return self._html_error(request, lang, "error_request", 400)
             return self._render_consent_page(
                 request,
                 txn_id,
@@ -1331,7 +1450,7 @@ class KeystoneOAuthProvider(OAuthProvider):
             except UserDirectoryUnavailableError:
                 client = await self._store.get_client(pending.client_id)
                 if client is None:
-                    return _html_response(self._error_page(lang, "error_request"), status_code=400)
+                    return self._html_error(request, lang, "error_request", 400)
                 return self._render_consent_page(
                     request,
                     txn_id,
@@ -1345,7 +1464,7 @@ class KeystoneOAuthProvider(OAuthProvider):
                 self._login_throttle.record_login_failure(identity.email)
                 client = await self._store.get_client(pending.client_id)
                 if client is None:
-                    return _html_response(self._error_page(lang, "error_request"), status_code=400)
+                    return self._html_error(request, lang, "error_request", 400)
                 return self._render_consent_page(
                     request,
                     txn_id,
@@ -1382,12 +1501,12 @@ class KeystoneOAuthProvider(OAuthProvider):
         defensive 404 below only guards against a provider disabled after
         this route was registered (e.g. a future hot-reload).
         """
-        lang = _pick_language(request, self._settings.login_default_lang)
+        lang = _pick_language(
+            request, self._settings.login_default_lang, base_url=self._settings.base_url
+        )
         provider = self._providers.get(name)
         if provider is None or provider.kind != "redirect":
-            return _html_response(
-                self._error_page(lang, "error_provider_disabled"), status_code=404
-            )
+            return self._html_error(request, lang, "error_provider_disabled", 404)
 
         txn_id = request.query_params.get("txn", "").strip()
         return RedirectResponse(
@@ -1403,12 +1522,12 @@ class KeystoneOAuthProvider(OAuthProvider):
         forged form submission cannot start a redirect sign-in on the victim's
         behalf.
         """
-        lang = _pick_language(request, self._settings.login_default_lang)
+        lang = _pick_language(
+            request, self._settings.login_default_lang, base_url=self._settings.base_url
+        )
         provider = self._providers.get(name)
         if provider is None or provider.kind != "redirect":
-            return _html_response(
-                self._error_page(lang, "error_provider_disabled"), status_code=404
-            )
+            return self._html_error(request, lang, "error_provider_disabled", 404)
 
         allowed_ip, retry_ip = self._login_throttle.check_ip(peer_host(request))
         if not allowed_ip:
@@ -1419,10 +1538,10 @@ class KeystoneOAuthProvider(OAuthProvider):
         csrf_field = str(form.get("csrf", ""))
         csrf_cookie = request.cookies.get(self._csrf_cookie_name(), "")
         if not csrf_field or not csrf_cookie or not secrets.compare_digest(csrf_field, csrf_cookie):
-            return _html_response(self._error_page(lang, "error_request"), status_code=400)
+            return self._html_error(request, lang, "error_request", 400)
 
         if await self._get_pending_txn(txn_id) is None:
-            return _html_response(self._error_page(lang, "error_request"), status_code=400)
+            return self._html_error(request, lang, "error_request", 400)
 
         state = secrets.token_urlsafe(24)
         # Binds this round trip to the browser that started it (finding #1,
@@ -1436,10 +1555,8 @@ class KeystoneOAuthProvider(OAuthProvider):
         except LoginRejected as exc:
             logger.info("login rejected by provider %s: %s", name, exc.reason)
             if exc.reason == "provider_unavailable":
-                return _html_response(
-                    self._error_page(lang, "error_provider_unavailable"), status_code=503
-                )
-            return _html_response(self._error_page(lang, "error_request"), status_code=400)
+                return self._html_error(request, lang, "error_provider_unavailable", 503)
+            return self._html_error(request, lang, "error_request", 400)
         except Exception:
             # Mirrors the protocol's own rule, applied at the other end of
             # the round trip (handle_login_callback): any exception other
@@ -1448,9 +1565,7 @@ class KeystoneOAuthProvider(OAuthProvider):
             # with a traceback, shown to the user as a service outage rather
             # than a 500 with a stack trace.
             logger.exception("unexpected error from login provider %s", name)
-            return _html_response(
-                self._error_page(lang, "error_provider_unavailable"), status_code=503
-            )
+            return self._html_error(request, lang, "error_provider_unavailable", 503)
         envelope = json.dumps(
             {
                 "txn": txn_id,
@@ -1500,15 +1615,22 @@ class KeystoneOAuthProvider(OAuthProvider):
         if any(provider.kind == "redirect" for provider in self._providers.values()):
             csrf_token = secrets.token_urlsafe(32)
 
-        content = self._login_form_html(
-            txn_id,
-            lang,
-            error_key=error_key,
+        t = self._translation(lang)
+        content = render_consent_page(
+            lang=lang,
+            t=t,
+            brand=self._settings.login_brand,
             client_name=client.client_name,
             redirect_uri=str(pending.params.redirect_uri),
-            csrf_token=csrf_token,
+            redirect_location=_consent_redirect_location(str(pending.params.redirect_uri)),
+            providers=self._build_provider_views(t),
+            txn=txn_id,
+            csrf=csrf_token,
+            error_key=error_key,
+            txn_query=self._txn_query(txn_id),
         )
         response = _html_response(content, status_code=status_code)
+        self._maybe_set_lang_cookie(response, request, lang)
         if csrf_token is not None:
             response.set_cookie(
                 self._csrf_cookie_name(),
@@ -1528,23 +1650,25 @@ class KeystoneOAuthProvider(OAuthProvider):
         registers this route per provider); the ``provider is None`` branch
         below is defensive, matching ``start_login_redirect``.
         """
-        lang = _pick_language(request, self._settings.login_default_lang)
+        lang = _pick_language(
+            request, self._settings.login_default_lang, base_url=self._settings.base_url
+        )
 
         state = request.query_params.get("state", "").strip()
         if not state:
-            return _html_response(self._error_page(lang, "error_request"), status_code=400)
+            return self._html_error(request, lang, "error_request", 400)
 
         raw = await self._pending_store.consume(_NS_LOGIN_ATTEMPT, state)
         if raw is None:
-            return _html_response(self._error_page(lang, "error_request"), status_code=400)
+            return self._html_error(request, lang, "error_request", 400)
 
         attempt = _parse_login_attempt_raw(raw)
         if attempt is None or attempt.provider != name:
-            return _html_response(self._error_page(lang, "error_request"), status_code=400)
+            return self._html_error(request, lang, "error_request", 400)
 
         provider = self._providers.get(name)
         if provider is None or provider.kind != "redirect":
-            return _html_response(self._error_page(lang, "error_request"), status_code=400)
+            return self._html_error(request, lang, "error_request", 400)
 
         # Binds this callback to the browser that started the round trip
         # (finding #1, 0.4.0 A13/A17): without this, a browser that never
@@ -1562,7 +1686,7 @@ class KeystoneOAuthProvider(OAuthProvider):
             _hash_csrf_cookie(callback_csrf_cookie), attempt.csrf_hash
         ):
             logger.warning("login callback refused: csrf cookie missing or mismatched")
-            return _html_response(self._error_page(lang, "error_request"), status_code=400)
+            return self._html_error(request, lang, "error_request", 400)
 
         params = dict(request.query_params)
         try:
@@ -1572,58 +1696,40 @@ class KeystoneOAuthProvider(OAuthProvider):
         except LoginRejected as exc:
             logger.info("login rejected by provider %s: %s", name, exc.reason)
             if exc.reason == "domain_not_allowed":
-                return _html_response(
-                    self._error_page(lang, "error_provider_domain"), status_code=403
-                )
+                return self._html_error(request, lang, "error_provider_domain", 403)
             if exc.reason == "email_unverified":
-                return _html_response(
-                    self._error_page(lang, "error_provider_unverified"), status_code=403
-                )
+                return self._html_error(request, lang, "error_provider_unverified", 403)
             if exc.reason == "provider_unavailable":
-                return _html_response(
-                    self._error_page(lang, "error_provider_unavailable"), status_code=502
-                )
+                return self._html_error(request, lang, "error_provider_unavailable", 502)
             if exc.reason == "request_invalid":
                 if "error" in params:
-                    return _html_response(
-                        self._error_page(lang, "error_provider_identity"), status_code=400
-                    )
-                return _html_response(self._error_page(lang, "error_request"), status_code=400)
+                    return self._html_error(request, lang, "error_provider_identity", 400)
+                return self._html_error(request, lang, "error_request", 400)
             if exc.reason == "identity_invalid":
-                return _html_response(
-                    self._error_page(lang, "error_provider_identity"), status_code=400
-                )
-            return _html_response(
-                self._error_page(lang, "error_provider_identity"), status_code=400
-            )
+                return self._html_error(request, lang, "error_provider_identity", 400)
+            return self._html_error(request, lang, "error_provider_identity", 400)
         except Exception:
             logger.exception("unexpected error from login provider %s", name)
-            return _html_response(
-                self._error_page(lang, "error_provider_unavailable"), status_code=503
-            )
+            return self._html_error(request, lang, "error_provider_unavailable", 503)
 
         verified_identity = self._verify_identity_route(identity, name)
         if verified_identity is None:
-            return _html_response(self._error_page(lang, "error_request"), status_code=400)
+            return self._html_error(request, lang, "error_request", 400)
         identity = verified_identity
 
         if self._user_resolver is None:
             logger.error(
                 "login provider %s enabled but user directory resolver is not configured", name
             )
-            return _html_response(
-                self._error_page(lang, "error_directory_unavailable"), status_code=503
-            )
+            return self._html_error(request, lang, "error_directory_unavailable", 503)
 
         try:
             resolved = await self._user_resolver.resolve(identity.email)
         except UserDirectoryUnavailableError:
-            return _html_response(
-                self._error_page(lang, "error_directory_unavailable"), status_code=503
-            )
+            return self._html_error(request, lang, "error_directory_unavailable", 503)
 
         if not resolved.exists or resolved.is_blocked:
-            return _html_response(self._error_page(lang, "error_user_denied"), status_code=403)
+            return self._html_error(request, lang, "error_user_denied", 403)
 
         return await self._complete_login(
             attempt.txn_id, identity, lang, auth_method=name, interactive=provider.interactive
@@ -1640,7 +1746,7 @@ class KeystoneOAuthProvider(OAuthProvider):
     ) -> Response:
         pending = await self._consume_pending_txn(txn_id)
         if pending is None:
-            return _html_response(self._error_page(lang, "error_request"), status_code=400)
+            return self._html_error(None, lang, "error_request", 400)
 
         params = pending.params
         code_str = f"km_code_{secrets.token_urlsafe(24)}"
@@ -1734,86 +1840,6 @@ class KeystoneOAuthProvider(OAuthProvider):
         if not auth_method:
             return "api_key", None, False
         return auth_method, None, auth_method == "google"
-
-    def _login_form_html(
-        self,
-        txn_id: str,
-        lang: str,
-        error_key: str | None = None,
-        *,
-        client_name: str | None = None,
-        redirect_uri: str = "",
-        csrf_token: str | None = None,
-    ) -> str:
-        t = TRANSLATIONS.get(lang, TRANSLATIONS[FALLBACK_LANG])
-        direction = "rtl" if lang in RTL_LANGS else "ltr"
-        err = f'<p style="color:#c00">{html.escape(t[error_key])}</p>' if error_key else ""
-        if error_key:
-            err += f'<input type="hidden" name="login_error" value="{html.escape(error_key)}">'
-        txn = html.escape(txn_id)
-
-        consent_block = _consent_block_html(t, client_name, redirect_uri)
-
-        # Rendered in provider order (factory.py: Google first, then the
-        # api_token form — the same order the page has always shown them
-        # in). At most one form-kind provider is allowed (validated at
-        # startup), so form_block is built at most once.
-        csrf_value = html.escape(csrf_token or "")
-        redirect_blocks: list[str] = []
-        form_block = ""
-        for provider in self._providers.values():
-            if provider.kind == "redirect":
-                button_text = html.escape(
-                    t["login_with"].format(provider=html.escape(provider.title))
-                )
-                redirect_blocks.append(f"""
-  <form method="post" action="/login/{provider.name}">
-    <input type="hidden" name="txn" value="{txn}">
-    <input type="hidden" name="csrf" value="{csrf_value}">
-    <button type="submit" style="display:block;width:100%;text-align:center;padding:10px;
-border:1px solid #ccc;background:none">{button_text}</button>
-  </form>""")
-            elif provider.kind == "form":
-                fields_html = "".join(
-                    f"<label>{html.escape(_field_label(t, field))}<br>"
-                    f'<input name="{html.escape(field.name)}" '
-                    f'type="{html.escape(field.input_type)}" required '
-                    f'style="width:100%"></label><br><br>\n    '
-                    for field in provider.form_fields()
-                )
-                form_block = f"""
-  <form method="post" action="/login">
-    <input type="hidden" name="txn" value="{txn}">
-    {fields_html}<button type="submit">{html.escape(t["submit"])}</button>
-  </form>"""
-
-        redirect_html = "".join(redirect_blocks)
-
-        return f"""<!doctype html>
-<html lang="{lang}" dir="{direction}"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{html.escape(t["title"])}</title></head>
-<body style="font-family:system-ui;max-width:420px;margin:64px auto">
-  <h1>Keystone MCP</h1>
-  <p>{html.escape(t["subtitle"])}</p>
-  {consent_block}
-  {err}
-  {redirect_html}
-  {form_block}
-</body></html>"""
-
-    @staticmethod
-    def _error_page(lang: str, error_key: str) -> str:
-        t = TRANSLATIONS.get(lang, TRANSLATIONS[FALLBACK_LANG])
-        direction = "rtl" if lang in RTL_LANGS else "ltr"
-        message = html.escape(t[error_key])
-        return f"""<!doctype html>
-<html lang="{lang}" dir="{direction}"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{message}</title></head>
-<body style="font-family:system-ui;max-width:420px;margin:64px auto">
-  <h1>{message}</h1>
-</body></html>"""
 
 
 def _parse_pending_txn_raw(raw: str) -> _PendingAuthorization | None:

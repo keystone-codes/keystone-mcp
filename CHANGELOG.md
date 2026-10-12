@@ -58,6 +58,7 @@ this project uses [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Sign-in, consent and error pages are rendered by one built-in template: card layout, light and dark theme, RTL for Hebrew and Arabic, mobile width, keyboard and screen-reader friendly; the redirect destination and the phishing warning are visually prominent. A language switcher (EN, RU, HE, AR) remembers the choice in a `km_lang` cookie for the whole sign-in. New `KEYSTONE_MCP_LOGIN_BRAND` sets the name shown on the pages.
 - `X-Author-Email` is sent only for people.
 - Documentation brought in line with the 0.4.0 code: the Host/Origin
   allowlist and /metrics, deployment profile rules P5 and W5, the
