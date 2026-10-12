@@ -20,6 +20,7 @@ import json
 import logging
 import os
 import socket
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
@@ -62,6 +63,51 @@ def _env(name: str, default: str) -> str:
 
 class ConfigError(ValueError):
     """Raised when platform settings are missing or inconsistent at startup."""
+
+
+@dataclass(frozen=True)
+class RemovedVariable:
+    """A ``KEYSTONE_MCP_*`` variable the code no longer reads.
+
+    Kept in :data:`REMOVED_VARIABLES` so that a stale ``.env`` is reported
+    instead of silently ignored.
+    """
+
+    removed_in: str
+    """Release that stopped reading the variable, e.g. ``"0.5.0"``."""
+
+    replacement: str
+    """One English sentence: what to set instead."""
+
+    fatal: bool
+    """``True``: startup is refused while the variable is set (non-empty)."""
+
+
+#: Variables that Keystone-MCP no longer reads. Kept so that a stale .env
+#: is reported instead of silently ignored. Plain dict on purpose: tests
+#: patch it with monkeypatch.setitem.
+REMOVED_VARIABLES: dict[str, RemovedVariable] = {
+    "KEYSTONE_MCP_RBAC_ENABLED": RemovedVariable(
+        removed_in="0.5.0",
+        replacement="Set KEYSTONE_MCP_RBAC_MODE=enforce (or observe, or off).",
+        fatal=True,
+    ),
+}
+
+
+def removed_variables_set(environ: Mapping[str, str]) -> list[tuple[str, RemovedVariable]]:
+    """Return the removed variables that are set (non-empty) in ``environ``.
+
+    A variable counts as set when it is present in ``environ`` and its value,
+    after ``strip()``, is not empty — an empty value (e.g. from a Compose file
+    using ``${X:-}``) must not trip a startup refusal. Ordered by name so the
+    reported message is deterministic.
+    """
+    found: list[tuple[str, RemovedVariable]] = []
+    for name in sorted(REMOVED_VARIABLES):
+        if name in environ and environ[name].strip():
+            found.append((name, REMOVED_VARIABLES[name]))
+    return found
 
 
 def _env_int(name: str, default: int) -> int:
@@ -383,37 +429,16 @@ def _parse_login_lang(raw: str) -> str:
     return value
 
 
-def _warn_rbac_enabled_deprecated() -> None:
-    """Warn once per resolution that the legacy boolean alias is in use."""
-    logger.warning(
-        "KEYSTONE_MCP_RBAC_ENABLED is deprecated and will be removed; "
-        "set KEYSTONE_MCP_RBAC_MODE (off | observe | enforce) instead "
-        "(RBAC_ENABLED=true is equivalent to RBAC_MODE=enforce)"
-    )
-
-
 def _resolve_rbac_mode() -> RbacMode:
     """Resolve the phased RBAC mode from the environment.
 
-    ``KEYSTONE_MCP_RBAC_MODE`` takes precedence when set. Otherwise the
-    deprecated ``KEYSTONE_MCP_RBAC_ENABLED=true`` still maps to ``enforce``;
-    setting it at all logs a deprecation warning.
+    Only ``KEYSTONE_MCP_RBAC_MODE`` is read; an unset or empty value means
+    ``off``. The legacy ``KEYSTONE_MCP_RBAC_ENABLED`` boolean alias was
+    removed in 0.5.0 (see ``REMOVED_VARIABLES``) and is not consulted here.
     """
     mode_raw = _env("KEYSTONE_MCP_RBAC_MODE", "").strip()
-    enabled_raw = os.environ.get("KEYSTONE_MCP_RBAC_ENABLED")
-    if enabled_raw is not None:
-        _warn_rbac_enabled_deprecated()
     if mode_raw:
-        mode = _parse_rbac_mode(mode_raw)
-        if enabled_raw is not None:
-            legacy_enabled = enabled_raw.lower() in ("1", "true", "yes")
-            if mode == "off" and legacy_enabled:
-                raise ConfigError(
-                    "KEYSTONE_MCP_RBAC_MODE=off conflicts with KEYSTONE_MCP_RBAC_ENABLED=true"
-                )
-        return mode
-    if _env_bool("KEYSTONE_MCP_RBAC_ENABLED", False):
-        return "enforce"
+        return _parse_rbac_mode(mode_raw)
     return "off"
 
 
@@ -1334,7 +1359,7 @@ def validate_settings(settings: Settings) -> None:
         )
 
 
-def startup_warnings(settings: Settings) -> list[str]:
+def startup_warnings(settings: Settings, *, environ: Mapping[str, str] | None = None) -> list[str]:
     """Operator-facing warnings for a configuration that starts but is risky.
 
     Pure: never logs, never raises, so it can be unit-tested without
@@ -1342,8 +1367,18 @@ def startup_warnings(settings: Settings) -> list[str]:
     (``validate_settings`` itself runs before logging is configured), and
     logs every returned line at WARNING. Later cards append to this function
     rather than growing a separate set of ad hoc ``if`` checks in ``main``.
+
+    ``environ`` defaults to ``os.environ`` and is only used to report
+    non-fatal entries of :data:`REMOVED_VARIABLES`; fatal ones already made
+    ``load_settings()`` raise before this function is reached.
     """
     warnings: list[str] = []
+    for name, removed in removed_variables_set(os.environ if environ is None else environ):
+        if not removed.fatal:
+            warnings.append(
+                f"{name} was removed in {removed.removed_in} and has no effect. "
+                f"{removed.replacement}"
+            )
     base_host = (urlparse(settings.base_url).hostname or "").lower()
     base_scheme = (urlparse(settings.base_url).scheme or "").lower()
 
@@ -1403,6 +1438,16 @@ def startup_warnings(settings: Settings) -> list[str]:
 
 
 def load_settings() -> Settings:
+    fatal = [
+        (name, removed) for name, removed in removed_variables_set(os.environ) if removed.fatal
+    ]
+    if fatal:
+        messages = [
+            f"{name} was removed in {removed.removed_in} and is no longer read. "
+            f"{removed.replacement} Remove the variable to start."
+            for name, removed in fatal
+        ]
+        raise ConfigError(" ".join(messages))
     settings = Settings()
     validate_settings(settings)
     return settings
