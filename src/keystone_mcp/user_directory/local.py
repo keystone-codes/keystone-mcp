@@ -58,7 +58,9 @@ class LocalUserDirectory:
             ) from exc
 
     async def resolve_user(self, subject: str) -> UserResolveResult:
-        lookup = subject.strip().lower() if parse_service_subject(subject) else normalize_email(subject)
+        lookup = (
+            subject.strip().lower() if parse_service_subject(subject) else normalize_email(subject)
+        )
         try:
             resolved = await self._store.resolve(lookup)
         except UsersStoreUnavailableError as exc:

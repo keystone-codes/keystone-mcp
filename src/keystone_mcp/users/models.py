@@ -105,9 +105,7 @@ class ServiceAccountRoleRow(Base):
     """A single role assignment for a service account."""
 
     __tablename__ = "keystone_service_account_role"
-    __table_args__ = (
-        UniqueConstraint("name", "role", name="uq_keystone_service_account_role"),
-    )
+    __table_args__ = (UniqueConstraint("name", "role", name="uq_keystone_service_account_role"),)
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(

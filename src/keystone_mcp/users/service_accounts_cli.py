@@ -82,9 +82,7 @@ def _cmd_list(args: argparse.Namespace) -> int:
     settings = Settings()
     store = _open_store(settings)
     try:
-        rows = asyncio.run(
-            store.list_service_accounts(is_blocked=True if args.blocked else False)
-        )
+        rows = asyncio.run(store.list_service_accounts(is_blocked=True if args.blocked else False))
     except UsersError as exc:
         print(str(exc), file=sys.stderr)
         return 3
@@ -108,7 +106,10 @@ def _cmd_update(args: argparse.Namespace) -> int:
     elif args.unblock:
         is_blocked = False
     if args.description is None and roles is None and is_blocked is None:
-        print("at least one of --description, --role, --block or --unblock is required", file=sys.stderr)
+        print(
+            "at least one of --description, --role, --block or --unblock is required",
+            file=sys.stderr,
+        )
         return 1
     try:
         mutation = asyncio.run(
