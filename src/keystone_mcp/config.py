@@ -36,12 +36,14 @@ RbacMode = Literal["off", "observe", "enforce"]
 LogFormat = Literal["json", "text"]
 UsersBackend = Literal["local", "http"]
 DeploymentProfile = Literal["local", "production"]
+PolicyToolsMode = Literal["full", "read-only", "off"]
 _VALID_LOG_FORMATS = frozenset({"json", "text"})
 _VALID_LOG_LEVELS = frozenset({"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"})
 _VALID_LOGIN_METHODS = frozenset({"google", "api_key"})
 _VALID_RBAC_MODES = frozenset({"off", "observe", "enforce"})
 _VALID_USERS_BACKENDS = frozenset({"local", "http"})
 _VALID_DEPLOYMENT_PROFILES = frozenset({"local", "production"})
+_VALID_POLICY_TOOLS_MODES = frozenset({"full", "read-only", "off"})
 
 # Languages the login page ships translations for. Kept here (rather than
 # imported from the auth layer) so settings validation stays free of an import
@@ -242,6 +244,15 @@ def _parse_users_backend(
         raise ConfigError(
             f"{field_name} must be one of {sorted(_VALID_USERS_BACKENDS)}; got {raw!r}"
         )
+    return value  # type: ignore[return-value]
+
+
+def _parse_policy_tools(
+    raw: str, *, field_name: str = "KEYSTONE_MCP_POLICY_TOOLS"
+) -> PolicyToolsMode:
+    value = raw.strip().lower()
+    if value not in _VALID_POLICY_TOOLS_MODES:
+        raise ConfigError(f"{field_name} must be one of: full, read-only, off")
     return value  # type: ignore[return-value]
 
 
@@ -938,6 +949,13 @@ class Settings:
     rbac_audit_subject_salt: str = field(
         default_factory=lambda: _env("KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT", "")
     )
+    # Whether the policy_* tools (V02) may change the policy file through this
+    # process: "full" reads and writes, "read-only" reads and validates only
+    # (for a replica with no write access to a shared policy volume), "off"
+    # publishes no policy_* tools at all.
+    policy_tools: PolicyToolsMode = field(
+        default_factory=lambda: _parse_policy_tools(_env("KEYSTONE_MCP_POLICY_TOOLS", "full"))
+    )
     # RFC 8707: refuse an access token that names no resource at all. Default
     # false, because a client that predates resource indicators would otherwise
     # stop working; true is the stricter posture for a deployment whose clients
@@ -1479,6 +1497,27 @@ def startup_warnings(settings: Settings, *, environ: Mapping[str, str] | None = 
                 "something else restricts reachability (e.g. a container's "
                 "own port mapping); bind KEYSTONE_MCP_HOST to loopback "
                 "otherwise.".format(settings.host)
+            )
+
+    # W7: a deployment that wants policy_* tools to write the policy file
+    # (KEYSTONE_MCP_POLICY_TOOLS=full, the default) but mounted it read-only
+    # (e.g. the ":ro" examples) is not refused at startup -- read-only tools
+    # still work -- but every mutating policy_* call will refuse with
+    # policy_readonly until the operator remounts read-write or switches this
+    # replica to KEYSTONE_MCP_POLICY_TOOLS=read-only.
+    if (
+        settings.rbac_enforcing
+        and settings.policy_tools == "full"
+        and settings.rbac_policy_path.strip()
+    ):
+        policy_path = Path(settings.rbac_policy_path)
+        if policy_path.is_file() and not (
+            os.access(policy_path, os.W_OK) and os.access(policy_path.parent, os.W_OK)
+        ):
+            warnings.append(
+                f"policy file {settings.rbac_policy_path} is not writable: "
+                "policy_* mutation tools will refuse with policy_readonly "
+                "(mount it read-write or set KEYSTONE_MCP_POLICY_TOOLS=read-only)"
             )
 
     return warnings

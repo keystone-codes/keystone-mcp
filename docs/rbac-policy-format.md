@@ -294,6 +294,20 @@ from the catalog is simply denied by `default_deny`.
 - Startup is different: a failure there is fatal (`PolicyLoadError`).
 - Requests in flight see either the old or the new policy, never a mix.
 
+**Tool writes.** A later release's administration tools (`policy_*`) change
+this same file from inside the process, through
+`keystone_mcp.rbac.policy_store.PolicyStore` (gated by
+`KEYSTONE_MCP_POLICY_TOOLS`, see [environment.md](environment.md)). A write is
+atomic (`.tmp` in the same directory, `fsync`, `os.replace`), keeps exactly one
+backup generation (`<policy>.bak`, overwritten on every write), and reloads the
+new file in place through the same `RbacPolicyManager.reload` — and therefore
+the same structural and live-catalog gate — a hot-reload runs. Hand-written
+YAML comments are never preserved across a tool write (the writer is plain
+PyYAML, not `ruamel.yaml`): the file as it looked immediately before the write
+survives in `.bak`. Other replicas sharing the same file on a common volume
+pick the change up on their own next background tick, exactly as they would
+pick up a hand edit.
+
 ## 6. Migrating from v1
 
 v1 kept part of the policy in Python. Every one of those constants is now a

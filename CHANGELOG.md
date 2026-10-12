@@ -33,6 +33,10 @@ this project uses [Semantic Versioning](https://semver.org/).
 - Published on PyPI as `keystone-mcp-gateway` (same version as the image);
   `keystone-mcp serve` starts the server; the package ships type information
   (`py.typed`).
+- `PolicyStore`: the RBAC policy file can be changed from inside the process
+  with the same validation as a hot-reload, an atomic write, one backup
+  (`<policy>.bak`), an in-place reload and an `rbac_policy_mutation` audit
+  event. `KEYSTONE_MCP_POLICY_TOOLS` (`full` | `read-only` | `off`).
 
 ### Changed
 

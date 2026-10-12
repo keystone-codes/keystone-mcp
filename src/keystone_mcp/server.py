@@ -61,6 +61,7 @@ from keystone_mcp.rbac.catalog import (
 )
 from keystone_mcp.rbac.loader import PolicyLoadError, RbacPolicyManager
 from keystone_mcp.rbac.policy import PolicyContractError
+from keystone_mcp.rbac.policy_store import PolicyStore
 from keystone_mcp.router.engine import RouterEngine
 from keystone_mcp.router.proxy_schema import load_proxy_schema_patches
 from keystone_mcp.router.rbac_middleware import RbacMiddleware
@@ -97,6 +98,10 @@ _reconciler_holder: dict[str, SurfaceReconciler | None] = {"reconciler": None}
 _users_store_holder: dict[str, UsersStore | None] = {"store": None}
 _login_providers_holder: dict[str, list[LoginProvider] | None] = {"providers": None}
 _client_sessions_holder: dict[str, ClientSessionRegistry | None] = {"registry": None}
+#: The PolicyStore built by the most recent build_server() call, for whatever
+#: wants to reach it outside the return tuple (a later card's policy_* tool
+#: adapter, a CLI). None whenever RBAC does not enforce or POLICY_TOOLS=off.
+_policy_store_holder: dict[str, PolicyStore | None] = {"store": None}
 
 
 @asynccontextmanager
@@ -428,6 +433,24 @@ def build_server(
     )
     upstreams.observability = rbac_observability
 
+    # Core of changing the RBAC policy through the agent instead of a server
+    # login: lets a later release's policy_* tools read and change the policy
+    # file with the same validation a hot-reload runs. Built whenever RBAC
+    # actually enforces (nothing to administer otherwise) and policy_tools !=
+    # "off" (an operator who wants no policy_* tools at all skips this too).
+    policy_store: PolicyStore | None = (
+        PolicyStore(
+            settings=settings,
+            policy_manager=policy_manager,
+            registry=registry,
+            observability=rbac_observability,
+            directory=directory,
+        )
+        if policy_manager is not None and settings.rbac_enforcing and settings.policy_tools != "off"
+        else None
+    )
+    _policy_store_holder["store"] = policy_store
+
     if settings.internal_endpoints_enabled:
 
         @mcp.custom_route(LIVE_PUBLISHED_NAMES_PATH, methods=["GET"])
@@ -448,6 +471,7 @@ def build_server(
             observability=rbac_observability,
             directory=directory,
             role_source=policy_role_source(policy_manager),
+            policy_store=policy_store,
         )
         _warn_if_admin_tools_are_unguarded(registry, settings)
 

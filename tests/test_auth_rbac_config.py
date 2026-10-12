@@ -114,6 +114,24 @@ def test_invalid_rbac_mode_rejected(monkeypatch):
         load_settings()
 
 
+def test_policy_tools_defaults_to_full():
+    assert Settings().policy_tools == "full"
+
+
+@pytest.mark.parametrize("value", ["full", "read-only", "off"])
+def test_policy_tools_accepts_its_three_values(monkeypatch, value: str):
+    monkeypatch.setenv("KEYSTONE_MCP_POLICY_TOOLS", value)
+    assert load_settings().policy_tools == value
+
+
+def test_policy_tools_rejects_unknown_value(monkeypatch):
+    monkeypatch.setenv("KEYSTONE_MCP_POLICY_TOOLS", "read-write")
+    with pytest.raises(
+        ConfigError, match=r"KEYSTONE_MCP_POLICY_TOOLS must be one of: full, read-only, off"
+    ):
+        load_settings()
+
+
 def test_primary_login_method_must_be_enabled(monkeypatch):
     monkeypatch.setenv("KEYSTONE_MCP_PRIMARY_LOGIN_METHOD", "google")
     monkeypatch.setenv("KEYSTONE_MCP_ENABLED_LOGIN_METHODS", "api_key")
