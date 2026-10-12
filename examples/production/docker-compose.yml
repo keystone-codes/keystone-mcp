@@ -71,7 +71,7 @@ services:
     ports:
       - "127.0.0.1:8080:8080"
     volumes:
-      - ./rbac-policy.yaml:/etc/keystone-mcp/rbac-policy.yaml:ro
+      - ./policy:/etc/keystone-mcp/policy
       - ./upstreams.yaml:/etc/keystone-mcp/upstreams.yaml:ro
     healthcheck:
       test: ["CMD", "python", "-m", "keystone_mcp.healthcheck", "/readyz"]

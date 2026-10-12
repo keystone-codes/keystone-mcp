@@ -83,6 +83,9 @@ one, is not part of this check — see [observability-logging.md](../observabili
   starting at once do not race each other.
 - The RBAC policy file is re-read on its own refresh interval per pod — a
   policy change reaches every pod within that interval, not instantly.
+- Policy tools are read-only with a ConfigMap mount; set
+  `KEYSTONE_MCP_POLICY_TOOLS=read-only` (or `off`) or mount the policy from
+  a writable PVC if agents should mutate it. See [policy-admin.md](../policy-admin.md).
 - Behind an ingress controller, set `FORWARDED_ALLOW_IPS` (a plain
   uvicorn/environment variable, no `KEYSTONE_MCP_` prefix) to your ingress
   controller's pod network, or the login rate limiter sees the ingress pod's

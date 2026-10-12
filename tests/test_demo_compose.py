@@ -20,7 +20,7 @@ from keystone_mcp.upstream_registry.policy import UpstreamSecurityPolicy
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEMO_COMPOSE = REPO_ROOT / "docker-compose.demo.yml"
 POSTGRES_OVERLAY = REPO_ROOT / "docker-compose.postgres.yml"
-DEMO_POLICY = REPO_ROOT / "examples" / "demo" / "rbac-policy.yaml"
+DEMO_POLICY = REPO_ROOT / "examples" / "demo" / "policy" / "rbac-policy.yaml"
 DEMO_REGISTRY = REPO_ROOT / "examples" / "demo" / "upstreams.yaml"
 PRODUCTION_COMPOSE = REPO_ROOT / "examples" / "production" / "docker-compose.yml"
 
@@ -117,6 +117,24 @@ def test_demo_mounts_hello_stdio():
     demo = _load(DEMO_COMPOSE)
     volumes = demo["services"]["keystone"]["volumes"]
     assert "./examples/hello-stdio:/opt/hello-stdio:ro" in volumes
+
+
+def test_demo_mounts_policy_writable():
+    demo = _load(DEMO_COMPOSE)
+    env = demo["services"]["keystone"]["environment"]
+    volumes = demo["services"]["keystone"]["volumes"]
+
+    assert env["KEYSTONE_MCP_RBAC_POLICY_PATH"] == "/etc/keystone-mcp/policy/rbac-policy.yaml"
+    assert "./examples/demo/policy:/etc/keystone-mcp/policy" in volumes
+    assert "./examples/demo/upstreams.yaml:/etc/keystone-mcp/upstreams.yaml:ro" in volumes
+
+
+def test_production_mounts_policy_writable():
+    production = _load(PRODUCTION_COMPOSE)
+    volumes = production["services"]["keystone"]["volumes"]
+
+    assert "./policy:/etc/keystone-mcp/policy" in volumes
+    assert "./upstreams.yaml:/etc/keystone-mcp/upstreams.yaml:ro" in volumes
 
 
 def test_demo_services_have_healthchecks():

@@ -3,7 +3,8 @@
 Normative specification of the keystone-mcp RBAC policy file, the optional
 catalog snapshot file, and the environment variables that select them. This
 document is the contract a downstream deployment repository implements when it
-ships its own policy as an overlay.
+ships its own policy as an overlay. The file can also be changed through the
+`policy_*` tools — see [policy-admin.md](policy-admin.md).
 
 The platform hardcodes no role name and no tool name, with one exception named
 in [Core critical built-ins](#core-critical-built-ins).

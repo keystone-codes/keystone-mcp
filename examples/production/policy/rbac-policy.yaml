@@ -1,6 +1,6 @@
 # Starting-point RBAC policy for a production deployment. Copy of
-# config/rbac-policy.yaml in the repository, mounted read-only at
-# /etc/keystone-mcp/rbac-policy.yaml by docker-compose.yml.
+# config/rbac-policy.yaml in the repository, mounted read-write at
+# /etc/keystone-mcp/policy/rbac-policy.yaml by docker-compose.yml.
 #
 # Replace the roles and allow patterns with your own; role names are
 # free-form. A role can only be assigned to a person if its name is in this
