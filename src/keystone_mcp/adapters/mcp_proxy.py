@@ -123,7 +123,11 @@ class McpProxyAdapter:
         self._tool_timeout_seconds = tool_timeout_seconds
         self._tool_timeout_overrides = dict(tool_timeout_overrides or {})
         self._client_factory = client_factory
-        self._http_client_factory = http_client_factory or _http_client_factory
+        if http_client_factory is not None:
+            self._http_client_factory = http_client_factory
+        elif isinstance(self._connection, HttpUpstreamConnection):
+            if self._connection._http_client_factory is None:
+                self._connection._http_client_factory = _http_client_factory
         self._status_envelope = status_envelope
         # e.g. the upstream's ``Authorization: Bearer ...`` (auth.bearer_env).
         # Copied once at construction time, never logged as a whole.
@@ -157,6 +161,23 @@ class McpProxyAdapter:
         conn = self._connection
         if isinstance(conn, HttpUpstreamConnection):
             conn._client_factory = factory
+
+    @property
+    def _http_client_factory(self) -> HttpClientFactoryBuilder | None:
+        from keystone_mcp.router.upstream_connection import HttpUpstreamConnection
+
+        conn = self._connection
+        if isinstance(conn, HttpUpstreamConnection):
+            return conn._http_client_factory
+        return None
+
+    @_http_client_factory.setter
+    def _http_client_factory(self, factory: HttpClientFactoryBuilder | None) -> None:
+        from keystone_mcp.router.upstream_connection import HttpUpstreamConnection
+
+        conn = self._connection
+        if isinstance(conn, HttpUpstreamConnection):
+            conn._http_client_factory = factory
 
     @property
     def status_envelope(self) -> bool:
