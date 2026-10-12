@@ -16,9 +16,10 @@ restart or re-login is needed on the server side.
 
 Role names come from the deployment's RBAC policy file
 (`KEYSTONE_MCP_RBAC_POLICY_PATH`; see `docs/rbac-policy-format.md` and
-`config/rbac-policy.yaml`). That file is written once, before anyone uses the
-server. Do not invent a role name while adding a person. The directory and
-the policy must use the same strings.
+`config/rbac-policy.yaml`). Roles are declared in that file; change them with
+the `keystone-policy-admin` skill (the `policy_*` tools), not here. Do not
+invent a role name while adding a person — read the current roles with
+`policy_read` or ask. The directory and the policy must use the same strings.
 
 The role this skill grants for full access, including these tools, is
 `administrator`. A person may hold several roles at once. Their effective

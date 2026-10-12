@@ -43,9 +43,11 @@ find there, not just the file name.
 - [People and roles](users.md)
 - [The `UserDirectory` protocol — writing your own directory](user-directory.md)
 - [Policy file format](rbac-policy-format.md)
+- [Change the policy from the agent](policy-admin.md)
 - [Check a policy offline](rbac-catalog-registry.md)
 - [Generated role matrix](rbac-role-matrix-per-tool.md)
 - [Agent skill for user administration](../skills/keystone-user-admin/SKILL.md)
+- [Agent skill for policy administration](../skills/keystone-policy-admin/SKILL.md)
 
 ## Project
 

@@ -69,9 +69,9 @@ Then connect a client and sign in:
 - **Any sign-in method.** Google, DEV tokens for local testing, and a
   deprecated API-key method — all three behind one `LoginProvider` interface.
 - **Onboarding and access through the agent.** An administrator adds people,
-  changes roles, and manages access by asking the agent — the `users_*`
-  tools, the `keystone-user-admin` skill, or `setup.sh --non-interactive`;
-  roles and allow patterns are changed through the `policy_*` tools.
+  changes roles, and manages access by asking the agent — [two agent
+  skills](docs/README.md#i-manage-who-has-access) (`users_*` and `policy_*`
+  tools), or `setup.sh --non-interactive`.
 - **Services in any language or SDK.** Each one is a plain MCP server
   behind a transparent proxy; it keeps its own stack and storage.
 - **One policy file, reloaded live.** Access rules live in a single file;

@@ -44,6 +44,24 @@ _MUTATION_TOOLS = frozenset(
     }
 )
 
+#: Stable ``code`` values :class:`PolicyAdminAdapter` may return (V02 contract).
+POLICY_ADMIN_ERROR_CODES: frozenset[str] = frozenset(
+    {
+        "forbidden",
+        "nothing_to_rollback",
+        "policy_conflict",
+        "policy_invalid",
+        "policy_invariant",
+        "policy_readonly",
+        "role_in_use",
+        "role_not_found",
+        "self_lockout_forbidden",
+        "service_unavailable",
+        "unmatched_pattern",
+        "validation_error",
+    }
+)
+
 
 class PolicyAdminAdapter:
     """Dispatches ``policy_*`` tool calls to a ``PolicyStore``."""
