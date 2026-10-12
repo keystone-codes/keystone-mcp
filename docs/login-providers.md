@@ -83,3 +83,10 @@ valid redirect URI as above. For local Keycloak on loopback HTTP, use
 
 These variables remain readable until the next major version but log a deprecation
 warning at startup.
+
+## What the sign-in page looks like
+
+Keystone renders consent, credential, and error screens with one built-in HTML
+template (no external assets). See
+[`tests/data/login-pages/consent-en.html`](../tests/data/login-pages/consent-en.html)
+for a static example of the consent layout with redirect and API-key sign-in.

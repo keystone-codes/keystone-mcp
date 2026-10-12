@@ -207,3 +207,17 @@ async def obtain_access_token(
         "body": r.json() if r.content else {},
         "client_id": client_id,
     }
+
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption(
+        "--snapshot-update",
+        action="store_true",
+        default=False,
+        help="Rewrite HTML snapshots under tests/data/login-pages/",
+    )
+
+
+@pytest.fixture
+def snapshot_update(request: pytest.FixtureRequest) -> bool:
+    return bool(request.config.getoption("--snapshot-update"))

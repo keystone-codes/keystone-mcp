@@ -496,6 +496,18 @@ def _parse_login_lang(raw: str) -> str:
     return value
 
 
+def _parse_login_brand(raw: str) -> str:
+    """Validate the name shown on built-in sign-in pages."""
+    if "\n" in raw or "\r" in raw:
+        raise ConfigError("KEYSTONE_MCP_LOGIN_BRAND must not contain a newline")
+    value = raw.strip()
+    if not value:
+        return "Keystone-MCP"
+    if len(value) > 64:
+        raise ConfigError("KEYSTONE_MCP_LOGIN_BRAND must be at most 64 characters")
+    return value
+
+
 def _resolve_rbac_mode() -> RbacMode:
     """Resolve the phased RBAC mode from the environment.
 
@@ -874,6 +886,9 @@ class Settings:
     # Login-page language used when the browser asks for nothing we translate.
     login_default_lang: str = field(
         default_factory=lambda: _parse_login_lang(_env("KEYSTONE_MCP_LOGIN_DEFAULT_LANG", "en"))
+    )
+    login_brand: str = field(
+        default_factory=lambda: _parse_login_brand(_env("KEYSTONE_MCP_LOGIN_BRAND", "Keystone-MCP"))
     )
 
     # Google OIDC (required when google login is enabled).
