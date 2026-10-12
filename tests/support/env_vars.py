@@ -34,20 +34,54 @@ ENV_EXAMPLE_VARIABLE_PATTERN = re.compile(
     re.MULTILINE,
 )
 
-# Matches the first column of a Markdown table row in docs/environment.md,
+# Matches the first column of a Markdown table row in docs/environment.md
+# (or any docs/contrib/*.md page, same shape),
 # e.g. "| `KEYSTONE_MCP_BASE_URL` | `http://localhost:8080` | ... |".
 DOCS_VARIABLE_PATTERN = re.compile(
     r"^\|\s*`(KEYSTONE_MCP_[A-Z0-9_]+)`\s*\|",
     re.MULTILINE,
 )
 
+#: ``src/keystone_mcp/contrib/`` — reference code for forks. Its settings use
+#: the ``KEYSTONE_MCP_CONTRIB_*`` prefix, are documented in ``docs/contrib/``
+#: (not ``docs/environment.md``) and are not listed in ``.env.example``; see
+#: ``contrib_variables()`` / ``contrib_doc_variables()`` below.
+CONTRIB_ROOT = SRC_ROOT / "contrib"
+
 
 def code_variables(root: Path = SRC_ROOT) -> set[str]:
-    """Every ``KEYSTONE_MCP_*`` name read by the code under ``root``."""
+    """Every ``KEYSTONE_MCP_*`` name read by the code under ``root``.
+
+    Excludes ``keystone_mcp.contrib`` by default: contrib variables are a
+    separate namespace, checked by ``contrib_variables()`` instead. Pass an
+    explicit ``root`` to opt back in.
+    """
     names: set[str] = set()
     for path in root.rglob("*.py"):
+        if root == SRC_ROOT and CONTRIB_ROOT in path.parents:
+            continue
         text = path.read_text(encoding="utf-8")
         names.update(CODE_VARIABLE_PATTERN.findall(text))
+    return names
+
+
+def contrib_variables() -> set[str]:
+    """Every ``KEYSTONE_MCP_*`` name read by the code under ``contrib/``."""
+    names: set[str] = set()
+    for path in CONTRIB_ROOT.rglob("*.py"):
+        text = path.read_text(encoding="utf-8")
+        names.update(CODE_VARIABLE_PATTERN.findall(text))
+    return names
+
+
+def contrib_doc_variables(root: Path | None = None) -> set[str]:
+    """Every ``KEYSTONE_MCP_*`` name in the first column of a table in any
+    ``docs/contrib/*.md`` page."""
+    docs_root = root if root is not None else REPO_ROOT / "docs" / "contrib"
+    names: set[str] = set()
+    for path in docs_root.glob("*.md"):
+        text = path.read_text(encoding="utf-8")
+        names.update(DOCS_VARIABLE_PATTERN.findall(text))
     return names
 
 

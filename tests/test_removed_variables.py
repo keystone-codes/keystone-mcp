@@ -101,6 +101,31 @@ def test_file_api_url_is_refused_with_hint(monkeypatch):
     assert "upstream MCP server" in message
 
 
+def test_webhook_variables_give_startup_warnings(monkeypatch):
+    """The five webhook/long-poll variables moved to contrib (Z04): none of
+    them refuses startup, each gives its own warning."""
+    from keystone_mcp.config import startup_warnings
+
+    names = (
+        "KEYSTONE_MCP_WEBHOOK_BASE_URL",
+        "KEYSTONE_MCP_WEBHOOK_CLIENT",
+        "KEYSTONE_MCP_WEBHOOK_PROJECT",
+        "KEYSTONE_MCP_WEBHOOK_API_TOKEN",
+        "KEYSTONE_MCP_LONG_POLL",
+    )
+    environ = {name: "x" for name in names}
+    for name, value in environ.items():
+        monkeypatch.setenv(name, value)
+
+    settings = load_settings()
+    warnings = startup_warnings(settings, environ=environ)
+
+    assert len(warnings) == len(names)
+    joined = "\n".join(warnings)
+    for name in names:
+        assert name in joined
+
+
 def test_removed_fatal_variable_in_env_file_is_refused_at_startup(tmp_path, monkeypatch):
     """A stale `.env` is caught the same way a stale shell environment is.
 

@@ -145,16 +145,13 @@ instance — see `src/keystone_mcp/catalog/builtin.py` for the routes the
 platform registers by default: the `users_*` admin tools (only when
 `KEYSTONE_MCP_RBAC_MODE=enforce`).
 
-`src/keystone_mcp/adapters/` also ships several **reference adapters that are
-not registered by default** — useful as a starting point for a deployment that
-needs a built-in route beyond upstream proxying, but inert until something
-calls `registry.add_route` with one of them as `target`:
-
-| Adapter | Purpose |
-|---|---|
-| `webhook.WebhookAdapter` | Submit to an async webhook endpoint, then long-poll a task-result endpoint for completion. |
-| `external_http.ExternalHttpAdapter` | Call an arbitrary external HTTP API, with the transform selecting the method (GET/POST) and payload. |
-| `stub.StubAdapter` | Canonical stub response by pattern — the default target for a route registered before its real adapter exists. |
+`src/keystone_mcp/adapters/` ships `stub.StubAdapter` — canonical stub
+response by pattern, the default target for a route registered before its
+real adapter exists. Reference adapters for forks (`WebhookAdapter`,
+`ExternalHttpAdapter`) live in `keystone_mcp.contrib.adapters`: see
+[contrib/adapters.md](contrib/adapters.md). Neither is registered by default
+or covered by `docs/compatibility.md`; a fork that wants one registers a
+route with it as `target`.
 
 To use one, register a route with `mode="stub"` while the target is being
 built, and flip it with `registry.set_mode(name, "live")` once ready — nothing

@@ -65,6 +65,10 @@ this project uses [Semantic Versioning](https://semver.org/).
 - Upstream namespace validation no longer reserves `create` or `get`: with
   the built-in file tools gone, `users` is the only namespace a new upstream
   cannot shadow.
+- `WebhookAdapter` and `ExternalHttpAdapter` moved to
+  `keystone_mcp.contrib.adapters`. The webhook adapter reads
+  `KEYSTONE_MCP_CONTRIB_WEBHOOK_*` when it is constructed; it has no default
+  base URL.
 
 ### Deprecated
 
@@ -82,6 +86,9 @@ this project uses [Semantic Versioning](https://semver.org/).
   API adapters (`keystone_mcp.adapters.upload_url`, `keystone_mcp.adapters.file_ref`,
   `keystone_mcp.storage`) and `KEYSTONE_MCP_FILE_API_URL` (startup is refused
   while it is set). File transfer is an upstream service like any other.
+- `KEYSTONE_MCP_WEBHOOK_BASE_URL`, `KEYSTONE_MCP_WEBHOOK_CLIENT`,
+  `KEYSTONE_MCP_WEBHOOK_PROJECT`, `KEYSTONE_MCP_WEBHOOK_API_TOKEN`,
+  `KEYSTONE_MCP_LONG_POLL`.
 
 ### Security
 
@@ -110,6 +117,10 @@ this project uses [Semantic Versioning](https://semver.org/).
 - If you used the file tools, expose your file service as an MCP server and
   list it in the upstream registry; remove `KEYSTONE_MCP_FILE_API_URL` from
   `.env` and the two tool names from your policy file.
+- Forks that register webhook routes: import from `keystone_mcp.contrib.adapters`
+  and rename the variables to `KEYSTONE_MCP_CONTRIB_WEBHOOK_BASE_URL`,
+  `_CLIENT`, `_PROJECT`, `_API_TOKEN`, `_LONG_POLL_SECONDS`, or pass
+  `WebhookSettings` to the constructor.
 
 ## [0.4.0] - 2026-10-11
 

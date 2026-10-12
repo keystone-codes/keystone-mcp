@@ -221,15 +221,17 @@ def test_relative_links_resolve(rel_path: str) -> None:
 
 
 def _docs_index_pages() -> list[str]:
-    """Every ``docs/*.md`` and ``docs/paths/*.md`` file, except the index itself.
+    """Every ``docs/*.md``, ``docs/paths/*.md`` and ``docs/contrib/*.md`` file,
+    except the index itself.
 
     This is the set ``docs/README.md`` is required to link: a new page
-    dropped into either directory without an entry there fails
+    dropped into any of these directories without an entry there fails
     ``test_docs_index_links_every_page`` instead of going unnoticed.
     """
     base = REPO_ROOT / "docs"
     found = [p for p in base.glob("*.md") if p.name != "README.md"]
     found.extend((base / "paths").glob("*.md"))
+    found.extend((base / "contrib").glob("*.md"))
     return sorted(p.relative_to(REPO_ROOT).as_posix() for p in found)
 
 

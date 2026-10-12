@@ -12,9 +12,9 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from keystone_mcp.adapters.external_http import ExternalHttpAdapter
-from keystone_mcp.adapters.webhook import WebhookAdapter
 from keystone_mcp.config import Settings
+from keystone_mcp.contrib.adapters.external_http import ExternalHttpAdapter
+from keystone_mcp.contrib.adapters.webhook import WebhookAdapter, WebhookSettings
 from keystone_mcp.identity import VerifiedIdentity
 from keystone_mcp.router.engine import RouterEngine
 from keystone_mcp.router.registry import RouterRegistry
@@ -22,11 +22,10 @@ from keystone_mcp.router.registry import RouterRegistry
 ID = VerifiedIdentity(email="u@example.com")
 BASE = "http://localhost:8000"
 
-SETTINGS = Settings(
-    base_url="http://localhost:8080",
-    webhook_client_id="acme",
-    webhook_project_id="demo-project",
-    long_poll_seconds=0,
+SETTINGS = Settings(base_url="http://localhost:8080")
+
+WEBHOOK_SETTINGS = WebhookSettings(
+    base_url=BASE, client="acme", project="demo-project", long_poll_seconds=0
 )
 
 
@@ -72,7 +71,9 @@ ADAPTER_CASES = [
         id="external_http",
     ),
     pytest.param(
-        lambda handler: WebhookAdapter(client_factory=_factory(handler), poll_interval=0.0),
+        lambda handler: WebhookAdapter(
+            WEBHOOK_SETTINGS, client_factory=_factory(handler), poll_interval=0.0
+        ),
         "submit_task",
         {"x": "1"},
         id="webhook",
