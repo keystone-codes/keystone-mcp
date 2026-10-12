@@ -10,7 +10,11 @@ from pathlib import Path
 import pytest
 
 from keystone_mcp.config import load_settings
-from keystone_mcp.upstream_registry.load import load_upstream_registry_file, parse_upstream_entry
+from keystone_mcp.upstream_registry.load import (
+    load_upstream_registry_file,
+    parse_upstream_entries,
+    parse_upstream_entry,
+)
 from keystone_mcp.upstream_registry.policy import UpstreamSecurityPolicy
 from keystone_mcp.upstream_registry.validate import (
     ValidationError,
@@ -541,10 +545,175 @@ def test_json_upstreams_support_identity_secret_env(monkeypatch):
     assert upstreams[0].identity_secret_env == "KEYSTONE_MCP_UPSTREAM_DOCS_IDENTITY_SECRET"
 
 
+def test_identity_secret_env_must_be_unique_across_entries(
+    tmp_path: Path, monkeypatch, permissive_policy
+):
+    """Two upstreams declaring the same ``auth.identity_secret_env`` would let
+
+    whichever one is compromised forge an assertion with the other's ``aud``.
+    """
+    monkeypatch.setenv("KEYSTONE_MCP_UPSTREAM_SHARED_IDENTITY_SECRET", "x" * 40)
+    document = {
+        "schema_version": 1,
+        "entries": [
+            {
+                "name": "docs-mcp",
+                "url": "https://docs-mcp.example/mcp",
+                "namespace": "docs",
+                "auth": {"identity_secret_env": "KEYSTONE_MCP_UPSTREAM_SHARED_IDENTITY_SECRET"},
+            },
+            {
+                "name": "notes-mcp",
+                "url": "https://notes-mcp.example/mcp",
+                "namespace": "notes",
+                "auth": {"identity_secret_env": "KEYSTONE_MCP_UPSTREAM_SHARED_IDENTITY_SECRET"},
+            },
+        ],
+    }
+    with pytest.raises(ValidationError) as exc:
+        assert_valid_upstream_registry(document, policy=permissive_policy)
+    assert any(
+        "entries[1].auth.identity_secret_env reuses the signing secret" in m
+        for m in exc.value.messages
+    )
+
+    with pytest.raises(ValueError, match="reuses the signing secret"):
+        load_upstream_registry_file(
+            _write_registry_json(tmp_path, document), policy=permissive_policy
+        )
+
+    # Also exercised directly: KEYSTONE_MCP_UPSTREAMS (JSON env var) parses
+    # entries via parse_upstream_entries without going through
+    # assert_valid_upstream_registry at all (config._parse_upstreams_json).
+    with pytest.raises(ValueError, match="reuses the signing secret"):
+        parse_upstream_entries(document["entries"], policy=permissive_policy)
+
+
+def test_bearer_env_must_not_reuse_foreign_identity_secret_env(
+    tmp_path: Path, monkeypatch, permissive_policy
+):
+    monkeypatch.setenv("KEYSTONE_MCP_UPSTREAM_DOCS_IDENTITY_SECRET", "x" * 40)
+    monkeypatch.setenv("KEYSTONE_MCP_UPSTREAM_NOTES_TOKEN_UNUSED", "y" * 40)
+    document = {
+        "schema_version": 1,
+        "entries": [
+            {
+                "name": "docs-mcp",
+                "url": "https://docs-mcp.example/mcp",
+                "namespace": "docs",
+                "auth": {"identity_secret_env": "KEYSTONE_MCP_UPSTREAM_DOCS_IDENTITY_SECRET"},
+            },
+            {
+                "name": "notes-mcp",
+                "url": "https://notes-mcp.example/mcp",
+                "namespace": "notes",
+                # Same variable as docs-mcp's signing secret: notes-mcp would
+                # receive it verbatim as its own Authorization: Bearer value.
+                "auth": {"bearer_env": "KEYSTONE_MCP_UPSTREAM_DOCS_IDENTITY_SECRET"},
+            },
+        ],
+    }
+    with pytest.raises(ValidationError) as exc:
+        assert_valid_upstream_registry(document, policy=permissive_policy)
+    assert any(
+        "entries[1].auth.bearer_env must not name the identity signing secret" in m
+        for m in exc.value.messages
+    )
+
+    with pytest.raises(ValueError, match="auth.bearer_env must not name the identity signing"):
+        load_upstream_registry_file(
+            _write_registry_json(tmp_path, document), policy=permissive_policy
+        )
+
+    with pytest.raises(ValueError, match="auth.bearer_env must not name the identity signing"):
+        parse_upstream_entries(document["entries"], policy=permissive_policy)
+
+
+def test_stdio_env_must_not_reuse_foreign_identity_secret_env(
+    tmp_path: Path, monkeypatch, permissive_policy
+):
+    monkeypatch.setenv("KEYSTONE_MCP_UPSTREAM_DOCS_IDENTITY_SECRET", "x" * 40)
+    document = {
+        "schema_version": 1,
+        "entries": [
+            {
+                "name": "docs-mcp",
+                "url": "https://docs-mcp.example/mcp",
+                "namespace": "docs",
+                "auth": {"identity_secret_env": "KEYSTONE_MCP_UPSTREAM_DOCS_IDENTITY_SECRET"},
+            },
+            {
+                "name": "notes",
+                "namespace": "notes",
+                "transport": "stdio",
+                "command": "python",
+                # notes's child process would receive docs-mcp's signing
+                # secret verbatim as its own NOTES_TOKEN.
+                "env": {"NOTES_TOKEN": "KEYSTONE_MCP_UPSTREAM_DOCS_IDENTITY_SECRET"},
+            },
+        ],
+    }
+    with pytest.raises(ValidationError) as exc:
+        assert_valid_upstream_registry(document, policy=permissive_policy)
+    assert any(
+        "entries[1].env.NOTES_TOKEN must not name the identity signing secret" in m
+        for m in exc.value.messages
+    )
+
+    with pytest.raises(ValueError, match="env.NOTES_TOKEN must not name the identity signing"):
+        load_upstream_registry_file(
+            _write_registry_json(tmp_path, document), policy=permissive_policy
+        )
+
+    with pytest.raises(ValueError, match="env.NOTES_TOKEN must not name the identity signing"):
+        parse_upstream_entries(
+            document["entries"], policy=permissive_policy, check_environment=False
+        )
+
+
+def test_stdio_entry_may_name_its_own_identity_secret_in_env(monkeypatch, permissive_policy):
+    """The one allowed exception: a stdio process reading its own signing
+
+    secret through ``env`` (e.g. to verify inbound assertions itself), not a
+    foreign one.
+    """
+    monkeypatch.setenv("KEYSTONE_MCP_UPSTREAM_NOTES_IDENTITY_SECRET", "x" * 40)
+    document = {
+        "schema_version": 1,
+        "entries": [
+            {
+                "name": "notes",
+                "namespace": "notes",
+                "transport": "stdio",
+                "command": "python",
+                "env": {"NOTES_IDENTITY_SECRET": "KEYSTONE_MCP_UPSTREAM_NOTES_IDENTITY_SECRET"},
+                "auth": {"identity_secret_env": "KEYSTONE_MCP_UPSTREAM_NOTES_IDENTITY_SECRET"},
+            },
+        ],
+    }
+    assert_valid_upstream_registry(document, policy=permissive_policy)
+
+    cfg = parse_upstream_entry(
+        document["entries"][0], policy=permissive_policy, check_environment=False
+    )
+    assert cfg.identity_secret_env == "KEYSTONE_MCP_UPSTREAM_NOTES_IDENTITY_SECRET"
+    assert cfg.env_from == (
+        ("NOTES_IDENTITY_SECRET", "KEYSTONE_MCP_UPSTREAM_NOTES_IDENTITY_SECRET"),
+    )
+
+
+def _write_registry_json(tmp_path: Path, document: dict) -> Path:
+    path = tmp_path / "upstreams.json"
+    path.write_text(json.dumps(document), encoding="utf-8")
+    return path
+
+
 # --- transport: stdio (Y08) --------------------------------------------------------
 
 
 def test_stdio_entry_is_accepted(permissive_policy):
+    # Also covers the Y01/Y08 merge point: a stdio entry with
+    # auth.identity_secret_env is accepted like any other.
     document = {
         "schema_version": 1,
         "entries": [
@@ -556,6 +725,7 @@ def test_stdio_entry_is_accepted(permissive_policy):
                 "args": ["server.py", "--root", "/srv/notes"],
                 "env": {"NOTES_API_TOKEN": "KEYSTONE_MCP_UPSTREAM_NOTES_TOKEN"},
                 "cwd": "/opt/notes-mcp",
+                "auth": {"identity_secret_env": "KEYSTONE_MCP_UPSTREAM_NOTES_IDENTITY_SECRET"},
             }
         ],
     }
@@ -571,6 +741,7 @@ def test_stdio_entry_is_accepted(permissive_policy):
     assert cfg.args == ("server.py", "--root", "/srv/notes")
     assert cfg.env_from == (("NOTES_API_TOKEN", "KEYSTONE_MCP_UPSTREAM_NOTES_TOKEN"),)
     assert cfg.cwd == "/opt/notes-mcp"
+    assert cfg.identity_secret_env == "KEYSTONE_MCP_UPSTREAM_NOTES_IDENTITY_SECRET"
 
 
 def test_check_environment_false_skips_runtime_checks(tmp_path: Path, permissive_policy):

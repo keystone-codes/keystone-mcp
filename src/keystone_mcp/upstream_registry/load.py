@@ -18,6 +18,7 @@ from keystone_mcp.upstream_registry.validate import (
     assert_valid_upstream_registry,
     auth_field_errors,
     env_field_errors,
+    identity_secret_reuse_errors,
     namespace_errors,
     validate_upstream_url,
 )
@@ -53,7 +54,7 @@ def read_registry_document(path: Path) -> dict[str, Any]:
 
 
 def _parse_auth(
-    item: dict[str, Any], *, name: str, check_environment: bool = True
+    item: dict[str, Any], *, name: str, transport: str, check_environment: bool = True
 ) -> tuple[str | None, str | None]:
     """Validate and resolve an entry's optional ``auth.bearer_env`` and
     ``auth.identity_secret_env``.
@@ -69,6 +70,12 @@ def _parse_auth(
     :func:`keystone_mcp.upstream_registry.validate.validate_upstream_registry`)
     runs with the real process environment, so the check here is what makes
     Keystone refuse to start.
+
+    ``auth.bearer_env`` with ``transport: stdio`` is rejected outright,
+    before its environment variable is looked at: there are no HTTP headers
+    to carry a bearer token to a child process, so checking whether the
+    named variable happens to be set would only produce a confusing "which
+    is not set" error instead of the real problem.
     """
     auth = item.get("auth")
     errors = auth_field_errors(auth)
@@ -80,6 +87,10 @@ def _parse_auth(
     bearer_env: str | None = None
     if "bearer_env" in auth:
         bearer_env = str(auth["bearer_env"]).strip()
+        if transport == "stdio":
+            raise ValueError(
+                f"upstream {name!r}: auth.bearer_env is not supported with transport: stdio"
+            )
         if check_environment and not os.environ.get(bearer_env, "").strip():
             raise ValueError(
                 f"upstream {name!r}: auth.bearer_env names {bearer_env}, which is not set or empty"
@@ -146,17 +157,15 @@ def parse_upstream_entry(
         raise ValueError(f"upstream {name!r}: transport must be 'http' or 'stdio'")
 
     bearer_env, identity_secret_env = _parse_auth(
-        item, name=name, check_environment=check_environment
+        item, name=name, transport=transport, check_environment=check_environment
     )
 
     if transport == "stdio":
         url = ""
         if item.get("url"):
             raise ValueError(f"upstream {name!r}: url is not allowed with transport: stdio")
-        if bearer_env is not None:
-            raise ValueError(
-                f"upstream {name!r}: auth.bearer_env is not supported with transport: stdio"
-            )
+        # auth.bearer_env with transport: stdio is already rejected by
+        # _parse_auth above, before it checks the named variable.
 
         command_raw = item.get("command")
         command = command_raw.strip() if isinstance(command_raw, str) else ""
@@ -264,6 +273,10 @@ def parse_upstream_entries(
     policy: UpstreamSecurityPolicy,
     check_environment: bool = True,
 ) -> tuple[UpstreamConfig, ...]:
+    reuse_errors = identity_secret_reuse_errors(entries)
+    if reuse_errors:
+        raise ValueError(reuse_errors[0])
+
     upstreams: list[UpstreamConfig] = []
     seen_names: set[str] = set()
     seen_namespaces: set[str] = set()

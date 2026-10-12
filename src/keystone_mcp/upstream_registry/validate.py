@@ -301,6 +301,91 @@ def env_field_errors(env: Any) -> list[str]:
     return errors
 
 
+def identity_secret_reuse_errors(entries: Sequence[Any]) -> list[str]:
+    """Structural errors when a signing secret named by one entry's
+    ``auth.identity_secret_env`` is reachable from any other entry.
+
+    Every name that appears as some entry's ``auth.identity_secret_env``
+    must occur exactly once in the whole registry -- as that entry's
+    ``auth.identity_secret_env``, as any entry's ``auth.bearer_env``, or as
+    any ``transport: stdio`` entry's ``env`` value. Without this, two
+    entries could point at the same environment variable through different
+    fields (one's ``auth.bearer_env`` naming another's
+    ``auth.identity_secret_env``, or a stdio entry's ``env`` naming a
+    foreign upstream's signing secret) and the upstream holding that value
+    could forge an ``X-Keystone-Identity`` assertion with someone else's
+    ``aud`` (D5) -- exactly what "one secret per upstream" exists to
+    prevent.
+
+    The one exception: a stdio entry's own ``env`` naming its own
+    ``identity_secret_env`` is not reuse -- that process needs the secret
+    itself to verify inbound assertions (D8), not to impersonate anyone.
+
+    Operates on raw entry dicts (as loaded from YAML/JSON, before
+    :func:`~keystone_mcp.upstream_registry.load.parse_upstream_entry`), so
+    this one implementation serves both
+    :func:`validate_upstream_registry` (structural check, messages
+    collected rather than raised) and
+    :func:`keystone_mcp.upstream_registry.load.parse_upstream_entries`
+    (load time, raises on the first message). Messages are already prefixed
+    with ``entries[i].``, unlike the other ``*_errors`` helpers in this
+    module, since they always name a specific entry index.
+    """
+    identity_uses: dict[str, list[int]] = {}
+    bearer_uses: dict[str, list[int]] = {}
+    env_uses: dict[str, list[tuple[int, str]]] = {}
+    entry_names: dict[int, str] = {}
+
+    for index, item in enumerate(entries):
+        if not isinstance(item, dict):
+            continue
+        entry_names[index] = str(item.get("name", "")).strip() or f"entries[{index}]"
+
+        auth = item.get("auth")
+        if isinstance(auth, dict):
+            identity_secret_env = auth.get("identity_secret_env")
+            if isinstance(identity_secret_env, str) and identity_secret_env.strip():
+                identity_uses.setdefault(identity_secret_env.strip(), []).append(index)
+            bearer_env = auth.get("bearer_env")
+            if isinstance(bearer_env, str) and bearer_env.strip():
+                bearer_uses.setdefault(bearer_env.strip(), []).append(index)
+
+        mapping = _normalize_env_shorthand(item.get("env")) if item.get("env") is not None else None
+        if mapping:
+            for child, value in mapping.items():
+                if isinstance(value, str) and value.strip():
+                    env_uses.setdefault(value.strip(), []).append((index, str(child)))
+
+    errors: list[str] = []
+    for secret_name, owners in identity_uses.items():
+        owner_index = owners[0]
+        owner_name = entry_names[owner_index]
+
+        for index in owners[1:]:
+            errors.append(
+                f"entries[{index}].auth.identity_secret_env reuses the signing secret of "
+                f"upstream {owner_name!r} (entries[{owner_index}].auth.identity_secret_env); "
+                f"give upstream {entry_names[index]!r} its own signing secret"
+            )
+
+        for index in bearer_uses.get(secret_name, []):
+            errors.append(
+                f"entries[{index}].auth.bearer_env must not name the identity signing "
+                f"secret of upstream {owner_name!r} (entries[{owner_index}]"
+                f".auth.identity_secret_env)"
+            )
+
+        for index, child in env_uses.get(secret_name, []):
+            if index == owner_index:
+                continue  # a stdio entry's own secret, needed to verify its own assertions
+            errors.append(
+                f"entries[{index}].env.{child} must not name the identity signing secret "
+                f"of upstream {owner_name!r} (entries[{owner_index}].auth.identity_secret_env)"
+            )
+
+    return errors
+
+
 def transport_field_errors(item: dict[str, Any]) -> tuple[str, list[str]]:
     """Validate the ``transport`` field and the fields it gates.
 
@@ -484,6 +569,7 @@ def validate_upstream_registry(
             errors.append(f"{prefix}.enabled must be a boolean")
 
     errors.extend(namespace_errors(all_namespaces))
+    errors.extend(identity_secret_reuse_errors(entries))
 
     return errors
 
