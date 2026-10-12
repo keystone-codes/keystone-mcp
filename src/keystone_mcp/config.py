@@ -105,6 +105,47 @@ REMOVED_VARIABLES: dict[str, RemovedVariable] = {
         ),
         fatal=True,
     ),
+    "KEYSTONE_MCP_WEBHOOK_BASE_URL": RemovedVariable(
+        removed_in="0.5.0",
+        replacement=(
+            "The webhook adapter moved to keystone_mcp.contrib.adapters and reads "
+            "KEYSTONE_MCP_CONTRIB_WEBHOOK_* instead; see docs/contrib/adapters.md."
+        ),
+        fatal=False,
+    ),
+    "KEYSTONE_MCP_WEBHOOK_CLIENT": RemovedVariable(
+        removed_in="0.5.0",
+        replacement=(
+            "The webhook adapter moved to keystone_mcp.contrib.adapters and reads "
+            "KEYSTONE_MCP_CONTRIB_WEBHOOK_* instead; see docs/contrib/adapters.md."
+        ),
+        fatal=False,
+    ),
+    "KEYSTONE_MCP_WEBHOOK_PROJECT": RemovedVariable(
+        removed_in="0.5.0",
+        replacement=(
+            "The webhook adapter moved to keystone_mcp.contrib.adapters and reads "
+            "KEYSTONE_MCP_CONTRIB_WEBHOOK_* instead; see docs/contrib/adapters.md."
+        ),
+        fatal=False,
+    ),
+    "KEYSTONE_MCP_WEBHOOK_API_TOKEN": RemovedVariable(
+        removed_in="0.5.0",
+        replacement=(
+            "The webhook adapter moved to keystone_mcp.contrib.adapters and reads "
+            "KEYSTONE_MCP_CONTRIB_WEBHOOK_* instead; see docs/contrib/adapters.md."
+        ),
+        fatal=False,
+    ),
+    "KEYSTONE_MCP_LONG_POLL": RemovedVariable(
+        removed_in="0.5.0",
+        replacement=(
+            "The webhook adapter moved to keystone_mcp.contrib.adapters and reads "
+            "KEYSTONE_MCP_CONTRIB_WEBHOOK_LONG_POLL_SECONDS instead; see "
+            "docs/contrib/adapters.md."
+        ),
+        fatal=False,
+    ),
 }
 
 
@@ -954,25 +995,6 @@ class Settings:
     oauth_throttle_ip_max: int = field(
         default_factory=lambda: _env_int("KEYSTONE_MCP_OAUTH_THROTTLE_IP_MAX", 120)
     )
-
-    # ── Webhook adapter target ────────────────────────────────────────────
-    # Base URL the reference webhook adapter submits to
-    # (POST /api/v1/webhooks/{client}/{project}).
-    webhook_base_url: str = field(
-        default_factory=lambda: _env("KEYSTONE_MCP_WEBHOOK_BASE_URL", "http://localhost:8000")
-    )
-    # Webhook route segments (POST /api/v1/webhooks/{client}/{project}). No
-    # default: a deployment that registers webhook routes must name its own.
-    webhook_client_id: str = field(default_factory=lambda: _env("KEYSTONE_MCP_WEBHOOK_CLIENT", ""))
-    webhook_project_id: str = field(
-        default_factory=lambda: _env("KEYSTONE_MCP_WEBHOOK_PROJECT", "")
-    )
-    # Optional token sent as Authorization to the webhook.
-    webhook_api_token: str = field(
-        default_factory=lambda: _env("KEYSTONE_MCP_WEBHOOK_API_TOKEN", "")
-    )
-    # Long-poll hint for GET /tasks/{id}/result (server-side ~30-50s).
-    long_poll_seconds: int = field(default_factory=lambda: _env_int("KEYSTONE_MCP_LONG_POLL", 40))
 
     # ── Upstream MCP proxy ────────────────────────────────────────────────
     upstream_discovery_retries: int = field(

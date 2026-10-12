@@ -10,9 +10,9 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from keystone_mcp.adapters.external_http import ExternalHttpAdapter
 from keystone_mcp.adapters.stub import StubAdapter
 from keystone_mcp.config import Settings
+from keystone_mcp.contrib.adapters.external_http import ExternalHttpAdapter
 from keystone_mcp.identity import AUTHOR_EMAIL_HEADER, VerifiedIdentity
 from keystone_mcp.router.engine import RouterEngine, UnauthorizedError
 from keystone_mcp.router.registry import Param, RouterRegistry
