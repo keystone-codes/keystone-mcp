@@ -13,6 +13,9 @@ this project uses [Semantic Versioning](https://semver.org/).
   (`docs/environment.md#removed-variables`).
 - `.trivyignore` for temporarily accepted Trivy findings; each entry needs a
   reason and a review date, checked by `tests/test_trivyignore.py`.
+- Signed identity assertion for upstreams: registry `auth.identity_secret_env`;
+  header `X-Keystone-Identity` (JWT HS256, audience = registry entry name)
+  with subject, roles used by RBAC, auth method, OAuth client and task id.
 
 ### Changed
 
@@ -29,6 +32,11 @@ this project uses [Semantic Versioning](https://semver.org/).
 - Idle HTTP sessions of the handshake protocol now close after 30 minutes
   (FastMCP default); clients reconnect transparently.
 - Developers: the test suite runs without reruns; `pytest-rerunfailures` removed.
+
+### Deprecated
+
+- `X-Author-Email` is unsigned and deprecated since 0.5.0 (kept until the
+  next major version); verify `X-Keystone-Identity` instead.
 
 ### Removed
 

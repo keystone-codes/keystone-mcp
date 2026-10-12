@@ -413,7 +413,7 @@ Who is created first, and how later people are added, is [users.md](users.md).
 | `KEYSTONE_MCP_UPSTREAMS_PATH` | `""` | Path to a YAML or JSON upstream registry (`schema_version: 1`, `entries: [...]`). When non-empty and the file exists, this wins over `KEYSTONE_MCP_UPSTREAMS`. |
 | `KEYSTONE_MCP_UPSTREAM_ALLOW_INSECURE_HTTP` | `false` | Allow `http://` upstream URLs. Needed for services on an internal network; the production profile logs a warning. |
 | `KEYSTONE_MCP_UPSTREAM_EGRESS_ALLOW_PRIVATE` | `false` | Allow upstream hosts treated as private: `localhost`, `*.localhost`, `*.local` (including `*.svc.cluster.local`), `*.internal`, and loopback, link-local, private or reserved IP literals (a non-canonical IP literal such as `2130706433` is refused outright). Both this and `KEYSTONE_MCP_UPSTREAM_ALLOW_INSECURE_HTTP` must be `true` for such hosts. |
-| `KEYSTONE_MCP_UPSTREAMS` | `""` | Fallback: the registry entries as one JSON array, used when no registry file is loaded (`KEYSTONE_MCP_UPSTREAMS_PATH` wins when both are set). Fields: `name`, `url`, `namespace`, `enabled`, `include_prefixes`, `exclude_prefixes`, `strip_prefix`, `tool_prefix`, `discovery_timeout_seconds`, `tool_timeout_seconds`, `route_mode`, `auth` (`{"bearer_env": "VAR_NAME"}`, see below). |
+| `KEYSTONE_MCP_UPSTREAMS` | `""` | Fallback: the registry entries as one JSON array, used when no registry file is loaded (`KEYSTONE_MCP_UPSTREAMS_PATH` wins when both are set). Fields: `name`, `url`, `namespace`, `enabled`, `include_prefixes`, `exclude_prefixes`, `strip_prefix`, `tool_prefix`, `discovery_timeout_seconds`, `tool_timeout_seconds`, `route_mode`, `auth` (`{"bearer_env": "VAR_NAME", "identity_secret_env": "VAR_NAME"}`, see below). |
 | `KEYSTONE_MCP_UPSTREAM_DISCOVERY_RETRIES` | `3` | Retries per upstream at startup; upstreams are discovered in parallel. |
 | `KEYSTONE_MCP_UPSTREAM_DISCOVERY_TIMEOUT` | `10.0` | Per-attempt discovery timeout, seconds. |
 | `KEYSTONE_MCP_UPSTREAM_REQUIRE_ALL` | `false` | Refuse to start when any configured upstream is unreachable at startup. By default an unreachable upstream is logged and retried on every refresh tick -- unless `KEYSTONE_MCP_REFRESH_INTERVAL_SECONDS=0`, in which case it is logged but never retried (there is no background task to retry it). |
@@ -434,6 +434,22 @@ above (`ALLOW_INSECURE_HTTP`, `EGRESS_ALLOW_PRIVATE`, `DISCOVERY_RETRIES`,
 `TOOL_TIMEOUTS`); registry validation refuses any other name, so an entry can
 never be pointed at an unrelated secret such as
 `KEYSTONE_MCP_GOOGLE_CLIENT_SECRET`.
+
+A registry entry's `auth.identity_secret_env` names a second, independent
+environment variable: the HS256 secret Keystone-MCP signs the
+`X-Keystone-Identity` assertion with for calls to that upstream (see
+[connecting-services.md](connecting-services.md)). Same name rule as
+`auth.bearer_env` above (must start with `KEYSTONE_MCP_UPSTREAM_`, must not
+name one of Keystone's own `KEYSTONE_MCP_UPSTREAM_*` settings, and must not be
+the same variable as that entry's `auth.bearer_env`); recommended shape
+`KEYSTONE_MCP_UPSTREAM_<NAMESPACE>_IDENTITY_SECRET`. Keystone-MCP refuses to
+start if the named variable is unset, empty, or shorter than 32 bytes (UTF-8)
+— generate one with `openssl rand -base64 48`. An entry with no
+`auth.identity_secret_env` only ever gets the unsigned, deprecated
+`X-Author-Email` header (the `production` profile logs a warning per such
+entry). Rotation is a Keystone-MCP restart with the new value: during the
+rotation window, have the upstream service accept both the old and the new
+secret so a call signed just before the restart still verifies.
 
 How a service is mounted, filtered and discovered is [facade.md](facade.md).
 
