@@ -16,7 +16,7 @@ from keystone_mcp.user_directory import (
 )
 from keystone_mcp.user_directory.cache import ResolutionCache
 from keystone_mcp.user_directory.circuit_breaker import CircuitBreaker
-from keystone_mcp.user_directory.http import HttpUserDirectoryBackend
+from keystone_mcp.user_directory.http import HttpUserDirectory
 from keystone_mcp.user_directory.memory import InMemoryUserDirectoryBackend
 from keystone_mcp.user_directory.models import UserResolveResult
 from keystone_mcp.user_directory.resolver import CachedUserDirectoryResolver
@@ -126,7 +126,7 @@ async def test_fail_closed_on_timeout() -> None:
         base_url="http://users.test",
         headers={"Authorization": "Bearer token"},
     )
-    backend = HttpUserDirectoryBackend(
+    backend = HttpUserDirectory(
         base_url="http://users.test",
         service_token="token",
         timeout_seconds=1.0,
@@ -246,7 +246,7 @@ async def test_http_backend_parses_contract_response() -> None:
         base_url="http://users.test",
         headers={"Authorization": "Bearer secret"},
     )
-    backend = HttpUserDirectoryBackend(
+    backend = HttpUserDirectory(
         base_url="http://users.test",
         service_token="secret",
         timeout_seconds=2.0,
@@ -370,7 +370,7 @@ async def test_http_backend_maps_error_status_to_unavailable(status_code: int) -
         base_url="http://users.test",
         headers={"Authorization": "Bearer secret"},
     )
-    backend = HttpUserDirectoryBackend(
+    backend = HttpUserDirectory(
         base_url="http://users.test",
         service_token="secret",
         timeout_seconds=2.0,
@@ -394,7 +394,7 @@ async def test_http_backend_maps_invalid_json_to_unavailable() -> None:
         base_url="http://users.test",
         headers={"Authorization": "Bearer secret"},
     )
-    backend = HttpUserDirectoryBackend(
+    backend = HttpUserDirectory(
         base_url="http://users.test",
         service_token="secret",
         timeout_seconds=2.0,
@@ -418,7 +418,7 @@ async def test_http_backend_maps_invalid_payload_shape_to_unavailable() -> None:
         base_url="http://users.test",
         headers={"Authorization": "Bearer secret"},
     )
-    backend = HttpUserDirectoryBackend(
+    backend = HttpUserDirectory(
         base_url="http://users.test",
         service_token="secret",
         timeout_seconds=2.0,

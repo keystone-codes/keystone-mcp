@@ -13,6 +13,9 @@ this project uses [Semantic Versioning](https://semver.org/).
   (`docs/environment.md#removed-variables`).
 - `.trivyignore` for temporarily accepted Trivy findings; each entry needs a
   reason and a review date, checked by `tests/test_trivyignore.py`.
+- `UserDirectory` protocol (`keystone_mcp.user_directory`): one interface for
+  reading and administering people; `users_*` tools work over any
+  implementation. See `docs/user-directory.md`.
 
 ### Changed
 
@@ -32,6 +35,15 @@ this project uses [Semantic Versioning](https://semver.org/).
 - Developers: sign-in goes through the `LoginProvider` protocol
   (`keystone_mcp.login`); Google and API-key sign-in are its first two
   implementations. No user-visible change.
+- With `KEYSTONE_MCP_USERS_BACKEND=http`, `users_*` errors use the documented
+  codes: `validation_error` instead of `invalid_role`, `conflict` instead of
+  `user_already_exists`.
+- A read-only directory publishes only `users_list`.
+
+### Deprecated
+
+- `UserDirectoryBackend` (single `resolve_user` method) — implement
+  `UserDirectory`; deprecated since 0.5.0, removed in 2.0.
 
 ### Removed
 

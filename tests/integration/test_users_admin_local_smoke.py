@@ -20,6 +20,7 @@ from keystone_mcp.config import Settings
 from keystone_mcp.identity import VerifiedIdentity
 from keystone_mcp.router.engine import RouterEngine
 from keystone_mcp.router.registry import RouterRegistry
+from keystone_mcp.user_directory.local import LocalUserDirectory
 from keystone_mcp.user_directory.revision import InMemoryRevisionReader
 from keystone_mcp.users.revision import InProcessRevisionWriter
 from keystone_mcp.users.store import UsersStore
@@ -44,7 +45,9 @@ def _build_stack(
     store = UsersStore(users_engine, revision=InProcessRevisionWriter(revision.bump))
     engine = RouterEngine(settings)
     registry = RouterRegistry(engine)
-    register_catalog(registry, settings, users_store=store, role_source=_role_source)
+    register_catalog(
+        registry, settings, directory=LocalUserDirectory(store), role_source=_role_source
+    )
     return engine, registry, store, revision
 
 
