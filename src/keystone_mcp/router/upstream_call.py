@@ -104,6 +104,32 @@ def attach_upstream_elicitation_callback(
     client._session_kwargs["elicitation_callback"] = callback
 
 
+async def call_upstream_prompt_modern(
+    client: "Client",
+    name: str,
+    arguments: dict[str, Any],
+    *,
+    input_responses: types.InputResponses | None = None,
+    request_state: str | None = None,
+) -> types.GetPromptResult | types.InputRequiredResult:
+    """``prompts/get`` on a modern upstream without forwarding client ``_meta``.
+
+    ``meta=None`` keeps the Keystone client's request metadata off the upstream
+    call; ``allow_input_required=True`` lets guard-round answers flow from the
+    downstream client on MCP 2026-07-28.
+    """
+    return await client._await_with_session_monitoring(
+        client.session.get_prompt(
+            name,
+            arguments,
+            meta=None,
+            input_responses=input_responses,
+            request_state=request_state,
+            allow_input_required=True,
+        )
+    )
+
+
 def make_elicitation_callback(
     downstream: DownstreamCall,
     *,
