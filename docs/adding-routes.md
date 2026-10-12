@@ -155,8 +155,6 @@ calls `registry.add_route` with one of them as `target`:
 |---|---|
 | `webhook.WebhookAdapter` | Submit to an async webhook endpoint, then long-poll a task-result endpoint for completion. |
 | `external_http.ExternalHttpAdapter` | Call an arbitrary external HTTP API, with the transform selecting the method (GET/POST) and payload. |
-| `det_internal.DetInternalAdapter` | Placeholder for a synchronous internal deterministic-call API; returns a canonical stub until wired to a real target. |
-| `chat_attachment.ChatAttachmentAdapter` | Signal outbound file delivery correlated by an external session watcher; keystone-mcp itself is session-blind. |
 | `stub.StubAdapter` | Canonical stub response by pattern — the default target for a route registered before its real adapter exists. |
 
 To use one, register a route with `mode="stub"` while the target is being
