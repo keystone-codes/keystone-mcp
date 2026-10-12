@@ -48,8 +48,11 @@ account, are in [users.md](users.md).
   roles without wiring up Google. A holder signs in as *any* email that
   exists in the directory, so it is accepted only under the `local` profile
   (below); `production` refuses a non-empty value outright.
-- **API key through an external service** (`KEYSTONE_MCP_AUTH_SERVICE_URL`) —
-  deprecated, moving into the users directory in 0.4.1.
+- **API key (built-in directory)** — a `ksk_<key_id>_<secret>` string hashed
+  at rest; the secret is shown only when the key is issued. People may enter
+  it on the sign-in form; service accounts send it as `Authorization: Bearer
+  <key>`. Human OAuth Bearer tokens are not accepted as API keys. Revocation
+  is immediate via the directory revision, not a Redis token index.
 
 ### What they may call: the policy file
 

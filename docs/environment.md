@@ -16,8 +16,9 @@ is created by `KEYSTONE_MCP_SUPERADMIN_EMAIL`. See [users.md](users.md).
 `local` is your machine: `KEYSTONE_MCP_BASE_URL` must be a loopback address,
 and DEV tokens (`KEYSTONE_MCP_DEV_TOKENS`) are allowed under any
 `KEYSTONE_MCP_RBAC_MODE`. `production` (the default) is a public host: RBAC
-must be `enforce`, DEV tokens are refused outright, and API-key sign-in needs
-an external key-verification service.
+must be `enforce`, DEV tokens are refused outright, and API-key sign-in for
+people needs the built-in users directory (Postgres) unless only machines
+sign in.
 
 An unset `KEYSTONE_MCP_DEPLOYMENT_PROFILE` resolves to `production`, so an
 existing deployment that never set this variable is validated as
@@ -28,7 +29,7 @@ existing deployment that never set this variable is validated as
 | L1 | `local` | `KEYSTONE_MCP_BASE_URL` host is not loopback (`localhost`, `*.localhost`, or a loopback IP). | Point `KEYSTONE_MCP_BASE_URL` at a loopback address, or switch to `production`. |
 | P1 | `production` | `KEYSTONE_MCP_DEV_TOKENS` is non-empty. | Clear `KEYSTONE_MCP_DEV_TOKENS`, or switch to `local`. |
 | P2 | `production` | `KEYSTONE_MCP_RBAC_MODE` is not `enforce`. | Set `KEYSTONE_MCP_RBAC_MODE=enforce`, or switch to `local`. |
-| P3 | `production` | `api_key` is in `KEYSTONE_MCP_ENABLED_LOGIN_METHODS` (the default, when the variable is empty) but `KEYSTONE_MCP_AUTH_SERVICE_URL`/`_TOKEN` are not both set. | Configure `KEYSTONE_MCP_AUTH_SERVICE_URL` and `KEYSTONE_MCP_AUTH_SERVICE_TOKEN`, or remove `api_key` from `KEYSTONE_MCP_ENABLED_LOGIN_METHODS`. |
+| P3 | `production` | `api_key` is enabled while `KEYSTONE_MCP_USERS_BACKEND=http`, or while an interactive provider (Google/OIDC) is also configured. | Use `KEYSTONE_MCP_USERS_BACKEND=local` with Postgres for API keys, or remove `api_key` / use only machine Bearer keys. |
 | P4 | `production` | `KEYSTONE_MCP_BASE_URL` uses `http` and its host is publicly reachable — including a legacy decimal/hex IPv4 literal (`http://134744072/` is `http://8.8.8.8/`) and an internal-looking name such as `*.svc.cluster.local`/`*.internal` (a DNS suffix is not a trust boundary, so these are not treated as private). | Terminate TLS and use `https` (a TLS-terminating proxy or sidecar in front, for a closed-cluster install too), or point `KEYSTONE_MCP_BASE_URL` at a private host. |
 | P5 | `production` | `KEYSTONE_MCP_USERS_BACKEND=local` (the default) and `KEYSTONE_MCP_USERS_DB_URL` is empty or a `sqlite` URL. | Point `KEYSTONE_MCP_USERS_DB_URL` at Postgres (`postgresql+psycopg://user:password@host:5432/db`), or switch to `local`. |
 
@@ -300,9 +301,7 @@ Why: [ADR 0004](adr/0004-redis-is-required.md).
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `KEYSTONE_MCP_AUTH_SERVICE_URL` | `""` | Deprecated, removed in 0.4.1. When set, api-key login validates against this introspection service instead of `DEV_TOKENS`. Both must be set together; URL without token is refused at startup. |
-| `KEYSTONE_MCP_AUTH_SERVICE_TOKEN` | `""` | Deprecated, removed in 0.4.1. Both must be set together; URL without token is refused at startup. |
-| `KEYSTONE_MCP_DEV_TOKENS` | `""` | Comma-separated api-keys accepted directly when no auth service is configured. |
+| `KEYSTONE_MCP_DEV_TOKENS` | `""` | Local profile only; comma-separated DEV tokens for the sign-in page. In production issue API keys from the users directory instead. |
 | `KEYSTONE_MCP_LOGIN_PROVIDERS_PATH` | `""` | Path to a YAML file listing sign-in providers (Google, Okta, any OIDC issuer, API key). When set, it replaces the legacy variables below. See [login-providers.md](login-providers.md). |
 | `KEYSTONE_MCP_PRIMARY_LOGIN_METHOD` | `api_key` | Deprecated since 0.5.0 (kept until the next major version); see [login-providers.md](login-providers.md). Login method shown first; must be in `ENABLED_LOGIN_METHODS`. |
 | `KEYSTONE_MCP_ENABLED_LOGIN_METHODS` | `api_key` | Deprecated since 0.5.0 (kept until the next major version); see [login-providers.md](login-providers.md). Comma-separated set of login methods offered when no providers file is configured. |
@@ -524,6 +523,8 @@ Keystone-MCP refuses to start, or logs a warning, when one of these is still set
 - `KEYSTONE_MCP_WEBHOOK_PROJECT` — removed in 0.5.0. A warning is logged while it is set. Use `KEYSTONE_MCP_CONTRIB_WEBHOOK_*`, see [contrib/adapters.md](contrib/adapters.md).
 - `KEYSTONE_MCP_WEBHOOK_API_TOKEN` — removed in 0.5.0. A warning is logged while it is set. Use `KEYSTONE_MCP_CONTRIB_WEBHOOK_*`, see [contrib/adapters.md](contrib/adapters.md).
 - `KEYSTONE_MCP_LONG_POLL` — removed in 0.5.0. A warning is logged while it is set. Use `KEYSTONE_MCP_CONTRIB_WEBHOOK_*`, see [contrib/adapters.md](contrib/adapters.md).
+- `KEYSTONE_MCP_AUTH_SERVICE_URL` — removed in 0.5.0. API keys are issued and checked by the users directory; see [users.md](users.md). Startup is refused while it is set.
+- `KEYSTONE_MCP_AUTH_SERVICE_TOKEN` — removed in 0.5.0. API keys are issued and checked by the users directory; see [users.md](users.md). Startup is refused while it is set.
 
 ## Docker
 
