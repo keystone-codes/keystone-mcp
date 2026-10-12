@@ -189,7 +189,7 @@ not implemented yet or deliberately never forwarded.
 | `notifications/cancelled` (client → upstream) | yes: a client cancel or a keystone-mcp timeout is forwarded to the upstream request (as `notifications/cancelled` on the handshake protocol, by closing the request stream on MCP 2026-07-28) |
 | `prompts/*` | not yet |
 | `resources/*` | not yet |
-| `elicitation/create` (upstream → user) | under evaluation |
+| `elicitation/create` (upstream → user) | yes for HTTP upstreams: form mode only, prefixed with `[namespace]`; URL mode is declined; not for stdio upstreams. On MCP 2026-07-28 the question reaches the client as an `input_required` result of the tool call; a 2026-07-28 client cannot be asked by an upstream that speaks the handshake protocol (the upstream gets `decline`) |
 | `sampling/createMessage`, `roots/list` | no, by design: needs its own trust model |
 | `notifications/message` (upstream logs) | no: upstream logs stay with the upstream |
 | `completion/complete` | no |
@@ -197,6 +197,13 @@ not implemented yet or deliberately never forwarded.
 
 Same rows apply to **stdio upstreams**, except `elicitation/create` (upstream →
 user), which is not forwarded for stdio either.
+
+Upstream elicitation text is written by the service; the human sees the
+service namespace in the question prefix. Time spent answering counts against
+the tool-call timeout (on MCP 2026-07-28 each guard round is a separate call).
+With more than one Keystone replica, a repeat call after a question must hit
+the same instance — `request_state` is sealed with a process-local key unless
+you configure shared state elsewhere.
 
 ## Custom routes
 

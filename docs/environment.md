@@ -441,6 +441,7 @@ Who is created first, and how later people are added, is [users.md](users.md).
 | `KEYSTONE_MCP_UPSTREAM_TOOL_TIMEOUTS` | `""` | JSON object of per-published-tool timeout overrides in seconds. |
 | `KEYSTONE_MCP_PROXY_SCHEMA_PATCHES` | `""` | Path to a JSON file patching properties onto a proxied tool's `inputSchema`. See `src/keystone_mcp/router/proxy_schema.py`. |
 | `KEYSTONE_MCP_PROXY_STATUS_ENVELOPE` | `false` | `true` wraps proxied answers in `{state, tool, task_id, result}` and maps a `status` field of `error`/`refused`/`accepted` to an error, a rate-limit error, or a pending task (0.3.x behaviour). At `false` (default), the upstream's response — every content block, `structuredContent`, `isError` — is passed back to the client unchanged. |
+| `KEYSTONE_MCP_PROXY_ELICITATION` | `true` | When `true` (default), HTTP upstreams may ask the connected MCP client form-mode elicitation questions (prefixed with `[namespace]`); URL-mode asks are declined. Stdio upstreams and discovery sessions never receive an elicitation handler. `false` disables forwarding entirely (the upstream sees no client elicitation capability). |
 
 A registry entry's `auth.bearer_env` names an environment variable holding a
 bearer token; Keystone-MCP sends it to that upstream as `Authorization: Bearer
