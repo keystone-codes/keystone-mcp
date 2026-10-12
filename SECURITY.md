@@ -14,9 +14,8 @@ follow up with next steps as we investigate.
 
 | Version | Supported |
 |---|---|
-| latest `0.3.x` (currently `0.3.1`) | yes |
-| `0.2.x` and older patch releases | no |
-| `0.1.x` | no |
+| `0.4.x` (currently `0.4.0`) | yes |
+| `0.3.x` and older | no |
 
 Only the latest released minor version receives security fixes.
 

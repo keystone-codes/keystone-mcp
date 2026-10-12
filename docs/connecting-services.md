@@ -47,9 +47,10 @@ mysvc-mcp (internal, mcp-upstreams network)   /mcp, /healthz
    several content blocks, images, embedded resources, or structured JSON.
    Keystone-MCP forwards the response as-is by default; a JSON dict with a
    `status` field is not required.
-8. Required and optional parameters may come in any order in `inputSchema`;
-   Keystone-MCP builds a keyword-only call signature from it, so declaration
-   order does not matter.
+8. Required and optional parameters may come in any order in `inputSchema`,
+   and property names need not be valid Python identifiers (`max-results`,
+   `from`): Keystone-MCP publishes the schema as-is and leaves argument
+   validation to your service.
 
 ## Authenticating Keystone-MCP to your service
 

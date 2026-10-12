@@ -27,7 +27,7 @@ sudo chown -R keystone-mcp:keystone-mcp /opt/keystone-mcp
 `uv sync --locked` installs only the runtime dependencies, not the
 development tooling a contributor's checkout uses.
 
-If the repository still has `setup.sh` at its root: `./setup.sh` writes a
+Alternatively, `./setup.sh` writes a
 `.env` for this layout interactively, with a `local` or `production`
 profile; pass `--non-interactive` to drive it from `KEYSTONE_SETUP_*`
 variables instead (see `./setup.sh --help`).
@@ -35,10 +35,13 @@ variables instead (see `./setup.sh --help`).
 ## 2. Configure
 
 ```bash
-cp .env.example /opt/keystone-mcp/.env
-sudo chmod 600 /opt/keystone-mcp/.env
-$EDITOR /opt/keystone-mcp/.env
+sudo install -m 600 -o keystone-mcp -g keystone-mcp .env.example /opt/keystone-mcp/.env
+sudoedit /opt/keystone-mcp/.env
 ```
+
+The server reads `.env` from its working directory itself (in addition to
+systemd's `EnvironmentFile=`), so the file must be readable by the
+`keystone-mcp` user.
 
 Fill in section 2 of `.env` the same way as
 [step 3 of the Docker path](paths/production-docker.md#3-fill-in-env), with

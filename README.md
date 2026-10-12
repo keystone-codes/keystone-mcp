@@ -65,8 +65,9 @@ Then connect a client and sign in:
   sections, one per service.
 - **Any users directory.** Built in (SQLite for one host, Postgres for
   production), or your own directory over HTTP.
-- **Any sign-in method.** Google and DEV tokens today; a common interface
-  for your own identity provider is on the roadmap for 0.5.0.
+- **Any sign-in method.** Google, and DEV tokens for local testing (a
+  deprecated external API-key check remains until 0.4.1); a common
+  interface for your own identity provider is on the roadmap for 0.5.0.
 - **Onboarding and access through the agent.** An administrator adds
   people, changes roles, and manages access by asking the agent, with the
   `users_*` tools, the `keystone-user-admin` skill, or

@@ -24,8 +24,11 @@ deployment-side concern, not something this repository ships.
 | `KEYSTONE_MCP_METRICS_ENABLED` | `false` | Expose `GET /metrics` (no authentication) |
 | `KEYSTONE_MCP_METRICS_PATH` | `/metrics` | Metrics route when enabled |
 
-When `KEYSTONE_MCP_METRICS_ENABLED=true`, bind `/metrics` to loopback only or
-protect it with nginx/network policy. The endpoint carries no auth by design.
+When `KEYSTONE_MCP_METRICS_ENABLED=true`, `/metrics` answers only a caller
+whose source address is in `KEYSTONE_MCP_INTERNAL_ALLOWED_CIDRS` (default
+loopback) and whose request carries no `X-Forwarded-For`; like every route
+except `/healthz`/`/readyz`, it also needs an allowed `Host`
+(`KEYSTONE_MCP_ALLOWED_HOSTS`). There is no credential on it by design.
 
 Tool-call metrics label `namespace` (and `tool_family`) with the coarse prefix
 from the published tool name — the segment before the first `_`, same as RBAC
@@ -166,8 +169,8 @@ sum(rate(keystone_mcp_users_mutation_total{outcome="error"}[5m])) > 0.1
 Grep application logs for structured audit lines:
 
 ```bash
-docker logs keystone-mcp 2>&1 | grep 'rbac audit {"event":"rbac_authz_decision"'
-docker logs keystone-mcp 2>&1 | grep 'rbac audit {"event":"rbac_users_mutation"'
+docker logs keystone-mcp 2>&1 | grep 'rbac audit' | grep 'rbac_authz_decision'
+docker logs keystone-mcp 2>&1 | grep 'rbac audit' | grep 'rbac_users_mutation'
 ```
 
 Correlate `task_id` on mutations with the router's `task_id` for end-to-end tracing.
@@ -178,6 +181,11 @@ When Keystone MCP runs on the host (for example `systemd` on `127.0.0.1:8080`) w
 `KEYSTONE_MCP_METRICS_ENABLED=true`, a minimal Prometheus sidecar lives in
 `prometheus/example/`. It uses **host networking** to scrape loopback and
 listens on **`127.0.0.1:9091`** only (port `9090` is often already taken elsewhere).
+
+With a non-loopback `KEYSTONE_MCP_BASE_URL` (any production host), also set
+`KEYSTONE_MCP_ALLOWED_HOSTS=127.0.0.1:8080` on Keystone-MCP: the scrape
+arrives with `Host: 127.0.0.1:8080`, which the Host guard otherwise refuses
+with `421`.
 
 ```bash
 cd /path/to/keystone-mcp

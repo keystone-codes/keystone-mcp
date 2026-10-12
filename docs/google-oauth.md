@@ -70,6 +70,9 @@ sign in. The first administrator is covered in [users.md](users.md).
 
 To keep the API-key form as well, set the methods to `google,api_key` and
 choose which one is shown first with `KEYSTONE_MCP_PRIMARY_LOGIN_METHOD`.
+Under the `production` profile, `api_key` also needs
+`KEYSTONE_MCP_AUTH_SERVICE_URL`/`_TOKEN` (rule P3; deprecated, removed in
+0.4.1); DEV tokens work only under `local`.
 
 ## 5. Restrict the Workspace domain
 

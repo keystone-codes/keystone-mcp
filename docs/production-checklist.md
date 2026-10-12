@@ -8,11 +8,16 @@ Keystone-MCP.
 
 ## Network and URL
 
-- [ ] `KEYSTONE_MCP_BASE_URL` matches the HTTPS URL clients use (including path).
+- [ ] `KEYSTONE_MCP_BASE_URL` is the HTTPS origin clients use — scheme and
+      host only, no path (the MCP route is `KEYSTONE_MCP_HTTP_PATH`).
 - [ ] TLS terminates at a reverse proxy; upstream MCP ports are not published.
 - [ ] Upstreams reachable only on a private network; they trust `X-Author-Email` only there.
 - [ ] `FORWARDED_ALLOW_IPS` matches your reverse proxy (see
       [environment.md](environment.md#behind-a-reverse-proxy)).
+- [ ] Every name a request can arrive under besides `KEYSTONE_MCP_BASE_URL`'s
+      host — a load balancer's own hostname, the address a Prometheus
+      scraper uses for `/metrics` — is listed in
+      `KEYSTONE_MCP_ALLOWED_HOSTS` (otherwise `421`).
 
 ## Authentication
 

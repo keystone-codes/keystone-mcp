@@ -8,7 +8,12 @@ starting the full process.
 Security: the CLI only reads local files and optional HTTP URLs you pass explicitly.
 `--live-url` is enforced to `http://<loopback>/internal/live-published-names` only
 (for example `http://127.0.0.1:8080/internal/live-published-names` in CI). Other
-schemes, hosts, or paths are rejected before any fetch.
+schemes, hosts, or paths are rejected before any fetch. The live endpoint
+exists only with `KEYSTONE_MCP_INTERNAL_ENDPOINTS_ENABLED=true`, answers
+only callers in `KEYSTONE_MCP_INTERNAL_ALLOWED_CIDRS`, and — when
+`KEYSTONE_MCP_BASE_URL` is not a loopback URL — needs
+`KEYSTONE_MCP_ALLOWED_HOSTS` to include the address used here (e.g.
+`127.0.0.1:8080`), or the fetch fails with `421` (exit code `3`).
 
 ## Live name list format
 

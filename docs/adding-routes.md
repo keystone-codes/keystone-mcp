@@ -97,7 +97,7 @@ without waiting on the upstream to catch up. The file format — keyed by
 namespace, then upstream tool name, then property name — is documented in
 `src/keystone_mcp/router/proxy_schema.py` and applied by
 `McpProxyAdapter`/`UpstreamRegistry` at discovery time; a patch for a tool the
-upstream does not expose is simply never applied. Since P07, the patched
+upstream does not expose is simply never applied. The patched
 property is published to clients verbatim — the full JSON Schema fragment
 (`enum`, bounds, nested objects, not just a type), not a thinned-down
 reconstruction of it.
@@ -223,7 +223,7 @@ function yet.
 #### Users directory: `UserDirectoryBackend`
 
 `UserDirectoryBackend` (`src/keystone_mcp/user_directory/protocol.py`) is the
-other `runtime_checkable` protocol, also two methods:
+other `runtime_checkable` protocol, with two methods:
 
 ```python
 @runtime_checkable

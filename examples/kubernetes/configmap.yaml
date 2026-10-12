@@ -74,6 +74,11 @@ data:
     # reach it here by its Service DNS name. See ../../docs/connecting-services.md.
     schema_version: 1
     entries: []
+    # A plain-http URL on a *.svc.cluster.local name needs both
+    # KEYSTONE_MCP_UPSTREAM_ALLOW_INSECURE_HTTP=true and
+    # KEYSTONE_MCP_UPSTREAM_EGRESS_ALLOW_PRIVATE=true in deployment.yaml's env
+    # (".local" names count as private); otherwise startup refuses the entry.
+    # Check with: keystone-mcp upstream validate --path upstreams.yaml
     #  - name: your-service
     #    url: http://your-service.keystone.svc.cluster.local:8081/mcp
     #    namespace: your_service

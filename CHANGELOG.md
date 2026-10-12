@@ -6,12 +6,19 @@ this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Documentation brought in line with the 0.4.0 code: the Host/Origin
+  allowlist and /metrics, deployment profile rules P5 and W5, the
+  Kubernetes and Prometheus examples, client redirect hosts, host install
+  permissions, and the supported-versions table in SECURITY.md.
+
 ## [0.4.0] - 2026-10-11
 
 ### Highlights
 
 - The users directory (people, roles, blocks) is now built into Keystone-MCP
-  itself — no separate `mcp-users` service to run or reach over HTTP.
+  itself — no separate users-directory service to run or reach over HTTP.
   SQLite for local use, PostgreSQL for production, plus a CLI to import an
   existing external directory and to recover an administrator account.
 - A new `KEYSTONE_MCP_DEPLOYMENT_PROFILE` (`local` | `production`, now
@@ -124,9 +131,10 @@ apply them.
 12. **Refresh tokens and registered OAuth clients now expire in Redis.**
     Existing records written without a TTL get one the next time they are
     read; a record nobody reads again keeps no TTL. To find and clear them by
-    hand: `redis-cli --scan --pattern 'km:oauth:rt:*'`, then `TTL <key>` for
-    each (`-1` means no TTL) — deleting one is safe, the client just signs in
-    again.
+    hand: `redis-cli --scan --pattern 'km:oauth:rt:*'` and `redis-cli --scan
+    --pattern 'km:oauth:client:*'`, then `TTL <key>` for each (`-1` means no
+    TTL) — deleting one is safe: the person signs in again, and a deleted
+    client registers again (with DCR off, re-run the manual registration).
 
 13. **The container runs as a non-root user (uid/gid `10001`).** Any volume
     mounted into it — including the users-directory data directory — must be
@@ -139,16 +147,19 @@ apply them.
     clients manually instead; see
     [`docs/environment.md`](docs/environment.md#registering-a-client-manually).
 
-15. **Compose files were removed.** `docker-compose.example.yml`,
-    `docker-compose.e2e.yml` and `docker-compose.sidecars.example.yml` are
-    gone. For a quick local demo use `docker-compose.demo.yml`; for
-    production use the walkthrough under `examples/production/`.
+15. **Compose files.** This release ships only `docker-compose.demo.yml`
+    (local demo) and its `docker-compose.postgres.yml` overlay. If your
+    0.3.x deployment was started from an earlier example compose file, move
+    it to `examples/production/docker-compose.yml`; there is no separate
+    users-directory container any more.
 
-16. **`.env.example` was rewritten** as a local-profile section that starts
-    the server, a production-profile section listing what to change, and
-    every remaining setting commented out. Compare it against your own
-    `.env` — values you already set are unaffected except where this list
-    says otherwise.
+16. **`.env.example` was rewritten** as a local-profile section (it starts
+    the server once `KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT` is filled in, and
+    lets someone sign in once `KEYSTONE_MCP_DEV_TOKENS` and
+    `KEYSTONE_MCP_SUPERADMIN_EMAIL` are set; `setup.sh` fills all three), a
+    production-profile section listing what to change, and every remaining
+    setting commented out. Compare it against your own `.env` — values you
+    already set are unaffected except where this list says otherwise.
 
 17. **A reverse proxy or load balancer in front of Keystone-MCP needs its own
     hostname allowed.** Every HTTP route now refuses a request whose `Host`
@@ -157,7 +168,14 @@ apply them.
     front of Keystone-MCP forwards a different `Host` than
     `KEYSTONE_MCP_BASE_URL` — a load balancer's own hostname, an internal DNS
     name — add it to `KEYSTONE_MCP_ALLOWED_HOSTS` (comma-separated), or every
-    request through it now gets `421`.
+    request through it now gets `421`. The same applies to anything that
+    reaches Keystone-MCP by another name: a Prometheus scrape of `/metrics`
+    (e.g. `127.0.0.1:8080` on the same host, or a Kubernetes Service name)
+    and `keystone-mcp catalog validate --live-url` /
+    `python -m keystone_mcp.rbac.catalog` against
+    `/internal/live-published-names`. Only `/healthz` and `/readyz` are
+    exempt. A pod IP cannot be listed in advance, so scraping each pod by IP
+    is refused.
 
 18. **Upstream bearer-token variables must use one reserved name prefix.**
     An `auth.bearer_env` entry in `upstreams.yaml` must name an environment
@@ -260,8 +278,9 @@ apply them.
   on the server host (creates the account if missing, grants
   `administrator`, unblocks; `--create` is required to run it against a
   users database that does not exist yet).
-- `keystone-mcp users import --from-url … [--policy …] [--dry-run]` — copy
-  people, roles and block state from an external users directory. The
+- `keystone-mcp users import --from-url … [--token …] [--policy …]
+  [--dry-run]` (the source token is prompted for when `--token` is omitted)
+  — copy people, roles and block state from an external users directory. The
   source is authoritative on every run, including a second one: re-running
   restores a block or `administrator` grant/revoke the source still has,
   even if it was changed locally through `users_*` since the last import,
@@ -436,12 +455,10 @@ apply them.
 
 ### Removed
 
-- `docker-compose.example.yml` and `docker-compose.e2e.yml`, replaced by
-  `docker-compose.demo.yml` and `examples/production/`. Both required an
-  external `mcp-upstreams` Docker network and a hand-written `.env`; the
-  demo needs neither.
-- `docker-compose.sidecars.example.yml` (external users-directory image);
-  use the compose demo and the PostgreSQL overlay instead.
+- The 0.3.x example compose files (external-network example, end-to-end
+  file, users-directory sidecar file), replaced by
+  `docker-compose.demo.yml`, `docker-compose.postgres.yml` and
+  `examples/production/`.
 - The `member` role from the shipped default RBAC policy; only
   `administrator` ships now, with a commented-out example of a second role.
 - `create_upload_url`'s unused `intended_project_id` parameter.
@@ -496,7 +513,10 @@ apply them.
   retry, a language switch) rotates it and a page already open elsewhere for
   the same transaction 400s on submit until reloaded.
 - Token sign-in requires the email to exist in the users directory and not
-  be blocked, in every RBAC mode. The email is lowercased before the
+  be blocked whenever a directory is consulted — RBAC `observe`/`enforce`,
+  Google enabled, or DEV tokens configured. Only a `local`-profile
+  deployment with RBAC `off`, Google off and the deprecated external
+  API-key service skips the lookup. The email is lowercased before the
   authorization code is issued.
 - Both the per-IP and per-email login-throttle tables are now bounded
   (periodic sweep of entries that have aged out of the window, a
@@ -595,9 +615,10 @@ apply them.
   `astral-sh/setup-uv`, `actions/upload-artifact`, `docker/setup-qemu-action`,
   `docker/setup-buildx-action`, `docker/build-push-action`,
   `docker/login-action`, `docker/metadata-action`, `aquasecurity/trivy-action`)
-  is now pinned to the commit SHA of its current tag (each with a `# vX.Y.Z`
-  comment) rather than the tag itself, so a tag cannot later be moved to
-  point at different code; `.github/dependabot.yml` already tracks the
+  is now pinned to the commit SHA of its current tag (each with a `# v…`
+  comment naming the tag it was pinned from) rather than the tag itself, so
+  a tag cannot later be moved to point at different code;
+  `.github/dependabot.yml` already tracks the
   `github-actions` ecosystem and will open PRs that advance these pins.
 - `examples/kubernetes/`: `configmap.yaml`'s `upstreams.yaml` advised a
   plain `ClusterIP` Service for an upstream with no further isolation,
