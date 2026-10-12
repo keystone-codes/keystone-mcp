@@ -48,9 +48,8 @@ built-in `users_*` tools — `users_add`, `users_grant_role`,
 [`keystone-user-admin`](../skills/keystone-user-admin/SKILL.md) skill. The
 first administrator, and every later one from a fresh deployment, can come
 from `setup.sh --non-interactive` reading `KEYSTONE_SETUP_*` variables —
-see [deploy.md](deploy.md). In 0.4.0 the *access policy itself* (which
-role may call which tools) is still a file an operator edits by hand;
-the agent manages people and roles, not the policy file. Full reference:
+see [deploy.md](deploy.md). The policy, too: the `policy_*` tools change
+roles and allow patterns with the same validation as a hot-reload. Full reference:
 [users.md](users.md).
 
 ## Services in any language or SDK

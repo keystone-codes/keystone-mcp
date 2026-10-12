@@ -7,6 +7,15 @@ Policy version: `2.0.0`.
 
 | Tool | Disp. | administrator |
 |------|-------|---|
+| `policy_allow_add` | W | allow |
+| `policy_allow_remove` | W | allow |
+| `policy_catalog` | R | allow |
+| `policy_list_set` | W | allow |
+| `policy_read` | R | allow |
+| `policy_role_delete` | D | allow |
+| `policy_role_set` | W | allow |
+| `policy_rollback` | W | allow |
+| `policy_validate` | R | allow |
 | `users_add` | W | allow |
 | `users_block` | D | allow |
 | `users_grant_role` | W | allow |

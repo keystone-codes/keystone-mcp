@@ -14,7 +14,13 @@ from collections.abc import Iterable, Sequence
 from fnmatch import fnmatch
 
 #: Always critical: registered by the core catalog, never customer tools.
-CORE_CRITICAL_PATTERNS: tuple[str, ...] = ("users_*", "service_accounts_*", "api_keys_*")
+#: policy_* is included so revoking an administrator role takes effect immediately.
+CORE_CRITICAL_PATTERNS: tuple[str, ...] = (
+    "users_*",
+    "service_accounts_*",
+    "api_keys_*",
+    "policy_*",
+)
 
 
 def is_critical_tool(tool_name: str, policy_patterns: Iterable[str] = ()) -> bool:
