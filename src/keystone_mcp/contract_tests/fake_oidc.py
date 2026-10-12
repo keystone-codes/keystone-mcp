@@ -8,7 +8,7 @@ import secrets
 import time
 from dataclasses import dataclass, field
 from typing import Any
-from urllib.parse import parse_qs, urlencode, urlparse
+from urllib.parse import parse_qs, unquote_plus, urlencode, urlparse
 
 import httpx
 import jwt
@@ -42,6 +42,9 @@ class FakeTamper:
     token_endpoint_status: int | None = None
     discovery_status: int | None = None
     discovery_issuer: str | None = None
+    discovery_authorization_endpoint: str | None = None
+    discovery_token_endpoint: str | None = None
+    discovery_jwks_uri: str | None = None
     rotate_key: bool = False
 
     def reset(self) -> None:
@@ -54,6 +57,9 @@ class FakeTamper:
         self.token_endpoint_status = None
         self.discovery_status = None
         self.discovery_issuer = None
+        self.discovery_authorization_endpoint = None
+        self.discovery_token_endpoint = None
+        self.discovery_jwks_uri = None
         self.rotate_key = False
 
 
@@ -165,12 +171,17 @@ class FakeOidcIssuer:
         if self.tamper.discovery_status is not None:
             return JSONResponse({"error": "unavailable"}, status_code=self.tamper.discovery_status)
         issuer = self.tamper.discovery_issuer or self.issuer
+        authorization_endpoint = (
+            self.tamper.discovery_authorization_endpoint or f"{self.issuer}/authorize"
+        )
+        token_endpoint = self.tamper.discovery_token_endpoint or f"{self.issuer}/token"
+        jwks_uri = self.tamper.discovery_jwks_uri or f"{self.issuer}/jwks"
         return JSONResponse(
             {
                 "issuer": issuer,
-                "authorization_endpoint": f"{self.issuer}/authorize",
-                "token_endpoint": f"{self.issuer}/token",
-                "jwks_uri": f"{self.issuer}/jwks",
+                "authorization_endpoint": authorization_endpoint,
+                "token_endpoint": token_endpoint,
+                "jwks_uri": jwks_uri,
                 "id_token_signing_alg_values_supported": [self.alg],
                 "token_endpoint_auth_methods_supported": [
                     "client_secret_basic",
@@ -212,15 +223,12 @@ class FakeOidcIssuer:
                 decoded = base64.b64decode(auth.split(" ", 1)[1]).decode()
             except (ValueError, IndexError):
                 return False
-            if decoded == f"{self.client_id}:{self.client_secret}":
-                return True
-            # urlencoded form in basic auth
-
             parts = decoded.split(":", 1)
-            if len(parts) == 2:
-                cid, secret = parts
-                return cid == self.client_id and secret == self.client_secret
-            return False
+            if len(parts) != 2:
+                return False
+            cid = unquote_plus(parts[0])
+            secret = unquote_plus(parts[1])
+            return cid == self.client_id and secret == self.client_secret
         cid = form.get("client_id", "")
         secret = form.get("client_secret", "")
         return cid == self.client_id and secret == self.client_secret
