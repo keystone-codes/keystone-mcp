@@ -93,6 +93,13 @@ configured upstream is unreachable with RBAC on, or when
 unreachable. Each upstream's reachability is exposed as
 `keystone_mcp_upstream_available{namespace}` (1 = reachable).
 
+**Stdio upstreams** (`transport: stdio` in the registry) are discovered the same
+way: at process start, before the HTTP server loop, Keystone-MCP may spawn a
+short-lived child only to run `list_tools`, then tear it down so bootstrap does
+not leak processes across event loops. After startup, the lifespan hook starts
+one persistent supervised process per stdio entry; the reconciler reuses that
+process on each refresh tick instead of starting a new one.
+
 An RBAC allow pattern that belongs only to an upstream namespace that is
 currently unavailable does not refuse the policy either — it is logged as
 "not verified" and checked once the namespace comes up; see "Unavailable
@@ -187,6 +194,9 @@ not implemented yet or deliberately never forwarded.
 | `notifications/message` (upstream logs) | no: upstream logs stay with the upstream |
 | `completion/complete` | no |
 | MCP tasks (`tasks/*`) | no |
+
+Same rows apply to **stdio upstreams**, except `elicitation/create` (upstream →
+user), which is not forwarded for stdio either.
 
 ## Custom routes
 

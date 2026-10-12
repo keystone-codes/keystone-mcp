@@ -97,10 +97,12 @@ def test_demo_registry_validates(monkeypatch):
     monkeypatch.setenv("KEYSTONE_MCP_UPSTREAM_HELLO_IDENTITY_SECRET", "x" * 32)
 
     permissive = UpstreamSecurityPolicy(allow_insecure_http=True, egress_allow_private=False)
-    upstreams = load_upstream_registry_file(DEMO_REGISTRY, policy=permissive)
+    upstreams = load_upstream_registry_file(
+        DEMO_REGISTRY, policy=permissive, check_environment=False
+    )
 
-    assert len(upstreams) == 1
-    assert upstreams[0].namespace == "hello"
+    assert len(upstreams) == 2
+    assert {u.namespace for u in upstreams} == {"hello", "notes"}
 
     strict = UpstreamSecurityPolicy(allow_insecure_http=False, egress_allow_private=False)
     try:
@@ -109,6 +111,12 @@ def test_demo_registry_validates(monkeypatch):
         pass
     else:
         raise AssertionError("loading the demo registry without ALLOW_INSECURE_HTTP should fail")
+
+
+def test_demo_mounts_hello_stdio():
+    demo = _load(DEMO_COMPOSE)
+    volumes = demo["services"]["keystone"]["volumes"]
+    assert "./examples/hello-stdio:/opt/hello-stdio:ro" in volumes
 
 
 def test_demo_services_have_healthchecks():

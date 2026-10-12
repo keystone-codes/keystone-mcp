@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import json
 import sys
-
-import pytest
+from pathlib import Path
 
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
-from keystone_mcp.config import ConfigError, Settings, load_settings
+from keystone_mcp.config import Settings, load_settings
 from keystone_mcp.server import build_server
 
 
@@ -76,29 +75,25 @@ def test_build_server_registers_json_upstreams(monkeypatch):
     assert "reports" in upstreams._sub_servers
 
 
-def test_build_server_refuses_stdio_upstream(monkeypatch):
-    """The registry and the process supervisor (Y08) already accept
-
-    ``transport: stdio`` entries, but nothing wires a supervised process to
-    the proxy yet (that is the next card). ``build_server`` must refuse
-    clearly instead of mounting it as a dead HTTP sub-server with
-    ``url=""``.
-    """
+def test_build_server_mounts_stdio_upstream(monkeypatch):
+    server_script = str(Path(__file__).resolve().parent / "support" / "stdio_upstream.py")
     payload = [
         {
             "name": "notes",
             "namespace": "notes",
             "transport": "stdio",
             "command": sys.executable,
+            "args": [server_script],
         }
     ]
     monkeypatch.setenv("KEYSTONE_MCP_UPSTREAMS", json.dumps(payload))
-    with pytest.raises(ConfigError, match="not wired to the proxy"):
-        build_server(
-            settings=Settings(),
-            register_builtin_catalog=False,
-            oauth_store=InMemoryOAuthStore(),
-        )
+    _mcp, _registry, _oauth, upstreams, *_rest = build_server(
+        settings=Settings(),
+        register_builtin_catalog=False,
+        oauth_store=InMemoryOAuthStore(),
+    )
+    assert "notes" in upstreams._sub_servers
+    assert upstreams._connections["notes"].transport == "stdio"
 
 
 def test_dev_tokens_come_from_settings(monkeypatch):

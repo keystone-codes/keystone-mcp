@@ -18,12 +18,14 @@ Tools:
   supervisor's stderr-to-log bridge.
 - ``crash`` — exits the process immediately (``os._exit``), before a response
   is written, to exercise restart-on-crash.
-- ``count``, ``slow`` — placeholders for Y09 (progress and cancellation over
-  stdio); here they just do the plain thing, with no progress reporting.
+- ``meta`` — returns JSON of the request ``_meta`` dict (for identity assertion).
+- ``count`` — counts to ``n`` with progress notifications when a token is set.
+- ``slow`` — sleeps; on cancel writes ``slow-cancelled`` to stderr.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 from typing import Any
@@ -67,9 +69,14 @@ _TOOL_DEFINITIONS: dict[str, types.Tool] = {
         description="Exit the process immediately, before answering.",
         inputSchema=_EMPTY_SCHEMA,
     ),
+    "meta": types.Tool(
+        name="meta",
+        description="Echo the call request _meta as JSON.",
+        inputSchema=_EMPTY_SCHEMA,
+    ),
     "count": types.Tool(
         name="count",
-        description="Count up to n (placeholder for Y09; no progress reporting here).",
+        description="Count up to n, reporting progress along the way.",
         inputSchema={
             "type": "object",
             "properties": {"n": {"type": "integer", "default": 3}},
@@ -77,22 +84,37 @@ _TOOL_DEFINITIONS: dict[str, types.Tool] = {
     ),
     "slow": types.Tool(
         name="slow",
-        description="Sleep for the given number of seconds, then answer.",
+        description="Sleep for a long time; used to exercise cancellation.",
         inputSchema={
             "type": "object",
-            "properties": {"seconds": {"type": "number", "default": 1}},
+            "properties": {"seconds": {"type": "number", "default": 30}},
         },
     ),
 }
 
-_TOOL_ORDER: tuple[str, ...] = ("pid", "env", "greet", "stderr", "crash", "count", "slow")
+_TOOL_ORDER: tuple[str, ...] = (
+    "pid",
+    "env",
+    "greet",
+    "stderr",
+    "crash",
+    "meta",
+    "count",
+    "slow",
+)
 
 
 async def _on_list_tools(_ctx: Any, _params: Any) -> types.ListToolsResult:
     return types.ListToolsResult(tools=[_TOOL_DEFINITIONS[name] for name in _TOOL_ORDER])
 
 
-async def _run_tool(name: str, arguments: dict[str, Any]) -> list[types.ContentBlock]:
+async def _run_tool(
+    ctx: Any,
+    name: str,
+    arguments: dict[str, Any],
+    *,
+    call_meta: Any = None,
+) -> list[types.ContentBlock]:
     if name == "pid":
         return [types.TextContent(type="text", text=str(os.getpid()))]
 
@@ -108,27 +130,57 @@ async def _run_tool(name: str, arguments: dict[str, Any]) -> list[types.ContentB
         return [types.TextContent(type="text", text="ok")]
 
     if name == "crash":
-        # No response is ever written: the process is gone before the
-        # low-level SDK can serialize one.
         sys.stderr.flush()
         sys.stdout.flush()
         os._exit(3)
 
+    if name == "meta":
+        payload: dict[str, Any] = {}
+        if call_meta is not None:
+            if hasattr(call_meta, "model_dump"):
+                payload = call_meta.model_dump(by_alias=True)
+            elif isinstance(call_meta, dict):
+                payload = call_meta
+        return [types.TextContent(type="text", text=json.dumps(payload))]
+
     if name == "count":
         n = int(arguments.get("n", 3))
+        token = None
+        for source in (call_meta, ctx.meta):
+            if source is None:
+                continue
+            if isinstance(source, dict):
+                token = source.get("progressToken") or source.get("progress_token")
+            else:
+                token = getattr(source, "progress_token", None) or getattr(
+                    source, "progressToken", None
+                )
+            if token is not None:
+                break
+        if token is not None:
+            for i in range(1, n + 1):
+                await ctx.session.report_progress(i, n, f"step {i}")
         return [types.TextContent(type="text", text=f"counted to {n}")]
 
     if name == "slow":
-        seconds = float(arguments.get("seconds", 1))
-        await anyio.sleep(seconds)
-        return [types.TextContent(type="text", text=f"slept {seconds}s")]
+        try:
+            await anyio.sleep(float(arguments.get("seconds", 30)))
+        except anyio.get_cancelled_exc_class():
+            print("slow-cancelled", file=sys.stderr, flush=True)
+            raise
+        return [types.TextContent(type="text", text="slow done")]
 
     raise ValueError(f"unknown tool: {name}")
 
 
-async def _on_call_tool(_ctx: Any, params: types.CallToolRequestParams) -> types.CallToolResult:
+async def _on_call_tool(ctx: Any, params: types.CallToolRequestParams) -> types.CallToolResult:
     try:
-        content = await _run_tool(params.name, params.arguments or {})
+        content = await _run_tool(
+            ctx,
+            params.name,
+            params.arguments or {},
+            call_meta=getattr(params, "meta", None) or getattr(params, "_meta", None),
+        )
     except Exception as exc:  # noqa: BLE001 — turn any failure into an error result
         return types.CallToolResult(
             content=[types.TextContent(type="text", text=str(exc))],

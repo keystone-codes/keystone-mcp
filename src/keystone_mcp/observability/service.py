@@ -170,6 +170,16 @@ class RbacObservability:
 
             logging.getLogger(__name__).warning("upstream available metric failed", exc_info=True)
 
+    def record_upstream_process_restart(self, *, namespace: str) -> None:
+        try:
+            self.metrics.record_upstream_process_restart(namespace=namespace)
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "upstream process restart metric failed", exc_info=True
+            )
+
     def record_users_mutation(
         self,
         *,

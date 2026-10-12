@@ -15,3 +15,10 @@ entries:
       # -upstream's own setting) to the same value on hello-upstream, both
       # from the KEYSTONE_DEMO_HELLO_SECRET override.
       identity_secret_env: KEYSTONE_MCP_UPSTREAM_HELLO_IDENTITY_SECRET
+  - name: notes
+    namespace: notes
+    transport: stdio
+    command: python
+    args: ["/opt/hello-stdio/server.py"]
+    cwd: /opt/hello-stdio
+    enabled: true

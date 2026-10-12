@@ -34,17 +34,21 @@ from typing import TYPE_CHECKING, Any, Callable
 import httpx2
 import pydantic_core
 from fastmcp import Client
-from fastmcp.client.transports import StreamableHttpTransport
 from fastmcp.exceptions import ToolError
 from fastmcp.tools.base import ToolResult
 from mcp.shared._httpx_utils import McpHttpClientFactory
 
 from keystone_mcp.identity import upstream_identity_headers
-from keystone_mcp.identity_assertion import IDENTITY_HEADER, IdentityAssertionSigner
+from keystone_mcp.identity_assertion import (
+    IDENTITY_HEADER,
+    IDENTITY_META_KEY,
+    IdentityAssertionSigner,
+)
 
 if TYPE_CHECKING:
     from keystone_mcp.router.context import RouteContext
     from keystone_mcp.router.route import Route
+    from keystone_mcp.router.upstream_connection import UpstreamConnection
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +99,7 @@ class McpProxyAdapter:
 
     def __init__(
         self,
-        url: str,
+        connection_or_url: "UpstreamConnection | str",
         *,
         tool_timeout_seconds: float = 180.0,
         tool_timeout_overrides: dict[str, float] | None = None,
@@ -105,7 +109,17 @@ class McpProxyAdapter:
         extra_headers: Mapping[str, str] | None = None,
         identity_signer: IdentityAssertionSigner | None = None,
     ) -> None:
-        self._url = url.rstrip("/")
+        from keystone_mcp.router.upstream_connection import HttpUpstreamConnection
+
+        if isinstance(connection_or_url, str):
+            self._connection: UpstreamConnection = HttpUpstreamConnection(
+                "",
+                connection_or_url,
+                http_client_factory=http_client_factory,
+                client_factory=client_factory,
+            )
+        else:
+            self._connection = connection_or_url
         self._tool_timeout_seconds = tool_timeout_seconds
         self._tool_timeout_overrides = dict(tool_timeout_overrides or {})
         self._client_factory = client_factory
@@ -117,6 +131,32 @@ class McpProxyAdapter:
         # Signs X-Keystone-Identity (Y01); None means this upstream has no
         # auth.identity_secret_env and gets only the unsigned X-Author-Email.
         self._identity_signer = identity_signer
+
+    @classmethod
+    def for_url(
+        cls,
+        url: str,
+        **kwargs: Any,
+    ) -> McpProxyAdapter:
+        """Build an HTTP-only adapter (tests and legacy call sites)."""
+        return cls(url, **kwargs)
+
+    @property
+    def _client_factory(self) -> ClientFactory | None:
+        from keystone_mcp.router.upstream_connection import HttpUpstreamConnection
+
+        conn = self._connection
+        if isinstance(conn, HttpUpstreamConnection):
+            return conn._client_factory
+        return None
+
+    @_client_factory.setter
+    def _client_factory(self, factory: ClientFactory | None) -> None:
+        from keystone_mcp.router.upstream_connection import HttpUpstreamConnection
+
+        conn = self._connection
+        if isinstance(conn, HttpUpstreamConnection):
+            conn._client_factory = factory
 
     @property
     def status_envelope(self) -> bool:
@@ -165,9 +205,10 @@ class McpProxyAdapter:
         # not be able to override the verified identity header. The signed
         # assertion is built after extra_headers too, for the same reason —
         # neither can be overridden by a static header from the registry.
+        call_meta: dict[str, Any] | None = None
         headers = {**self._extra_headers}
         if self._identity_signer is not None:
-            headers[IDENTITY_HEADER] = self._identity_signer.sign(
+            token = self._identity_signer.sign(
                 identity=ctx.verified_identity,
                 task_id=ctx.task_id,
                 mcp_method="tools/call",
@@ -175,25 +216,26 @@ class McpProxyAdapter:
                 timeout_seconds=timeout,
                 rbac_mode=ctx.settings.rbac_mode,
             )
-        headers.update(upstream_identity_headers(ctx.verified_identity))
+            if self._connection.transport == "stdio":
+                call_meta = {IDENTITY_META_KEY: token}
+            else:
+                headers[IDENTITY_HEADER] = token
+        if self._connection.transport == "http":
+            headers.update(upstream_identity_headers(ctx.verified_identity))
 
-        if self._client_factory is not None:
-            client = self._client_factory(headers=headers, timeout=timeout)
-        else:
-            client = Client(
-                StreamableHttpTransport(
-                    self._url,
-                    headers=headers,
-                    httpx_client_factory=self._http_client_factory(timeout),
-                ),
-                timeout=timeout,
-            )
+        from keystone_mcp.router.stdio_process import UpstreamProcessUnavailableError
+
+        try:
+            client = self._connection.call_client(headers=headers, timeout=timeout)
+        except UpstreamProcessUnavailableError:
+            raise ToolError(f"upstream {route.namespace} is unavailable") from None
         async with client:
             raw = await call_upstream_tool(
                 client,
                 tool_name,
                 payload,
                 timeout=timeout,
+                meta=call_meta,
                 downstream=downstream,
                 log_namespace=route.namespace,
             )
