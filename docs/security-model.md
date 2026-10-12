@@ -163,6 +163,30 @@ The proxy itself never follows a redirect an upstream sends back.
 
 Why: [ADR 0003](adr/0003-signed-identity-assertion.md).
 
+## stdio upstreams
+
+A registry entry with `transport: stdio` does not open a network port.
+Keystone-MCP **executes** `command` with `args` and optional `cwd` as a child
+process of itself. That process runs as the **same OS user** as Keystone-MCP,
+with **no sandbox**: it can read anything that user can read, spawn other
+programs, and use any environment variables you map in through the entry's
+`env` block (child name → parent variable name only — nothing else from
+Keystone-MCP's environment is copied in).
+
+Treat a stdio upstream like Keystone-MCP itself: only mount code and secrets
+you trust at that privilege level. The demo's `notes` service is an example of
+the pattern, not a security boundary.
+
+When `KEYSTONE_MCP_DEPLOYMENT_PROFILE=production`, startup logs one **WARNING**
+per enabled stdio entry:
+`upstream namespace=<ns> runs local command <basename> with keystone-mcp's own
+user and no sandbox; trust it as you trust keystone-mcp`.
+
+Identity for proxied calls uses the signed assertion in
+`params._meta["keystone-mcp/identity"]` when `auth.identity_secret_env` is set;
+unsigned `X-Author-Email` is not sent on stdio. See
+[connecting-services.md](connecting-services.md#running-a-stdio-server).
+
 ## RBAC modes
 
 | `KEYSTONE_MCP_RBAC_MODE` | Tool calls | Catalog |

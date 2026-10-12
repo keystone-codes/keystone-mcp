@@ -457,7 +457,43 @@ async def run(args: argparse.Namespace) -> int:
                     )
                     return 1
 
-                # 11. users_add for the member
+                # 11. Administrator sees notes_* from the stdio upstream
+                step = "Administrator tool list has notes_list and notes_read"
+                try:
+                    tools = await admin.list_tools()
+                    names = {t.name for t in tools}
+                    if "notes_list" not in names or "notes_read" not in names:
+                        raise SmokeError(f"tool list was: {sorted(names)}")
+                    log.ok(step)
+                except Exception as exc:  # noqa: BLE001
+                    log.fail(step, "notes_list and notes_read present", repr(exc))
+                    return 1
+
+                # 12. notes_list returns the two demo note names
+                step = "notes_list returns two note names"
+                try:
+                    result = await admin.call_tool("notes_list", {})
+                    if result.is_error:
+                        raise SmokeError(f"notes_list returned an error: {result.data}")
+                    payload: object = []
+                    if result.content:
+                        payload = json.loads(result.content[0].text)
+                    elif result.structured_content is not None:
+                        payload = result.structured_content
+                        if isinstance(payload, dict) and "result" in payload:
+                            payload = payload["result"]
+                    elif getattr(result, "data", None) is not None:
+                        payload = result.data
+                    names = set(payload) if isinstance(payload, list) else set()
+                    expected = {"alpha.txt", "beta.txt"}
+                    if names != expected:
+                        raise SmokeError(f"expected {expected}, got {names}")
+                    log.ok(step)
+                except Exception as exc:  # noqa: BLE001
+                    log.fail(step, "['alpha.txt', 'beta.txt']", repr(exc))
+                    return 1
+
+                # 13. users_add for the member
                 step = "users_add (member)"
                 try:
                     added = await admin.call_tool(
@@ -481,7 +517,7 @@ async def run(args: argparse.Namespace) -> int:
             log.fail(step, "-", repr(exc))
             return 1
 
-        # 12. Repeat steps 4-7 for the member
+        # 14. Repeat steps 4-7 for the member
         step = "Repeat DEV-token login (member)"
         try:
             member_token = await oauth_login(
@@ -492,15 +528,16 @@ async def run(args: argparse.Namespace) -> int:
             log.fail(step, "DCR, authorize, login and token exchange all succeed", repr(exc))
             return 1
 
-        # 13. Member session: hello_* only, no users_*
-        step = "Member sees only hello_*, users_* is denied"
+        # 15. Member session: hello_* only, no users_* or notes_*
+        step = "Member sees only hello_*, users_* and notes_* denied"
         try:
             async with Client(StreamableHttpTransport(transport_url, auth=member_token)) as member:
                 tools = await member.list_tools()
                 names = {t.name for t in tools}
                 has_hello = any(n.startswith("hello_") for n in names)
                 has_users = any(n.startswith("users_") for n in names)
-                if not has_hello or has_users:
+                has_notes = any(n.startswith("notes_") for n in names)
+                if not has_hello or has_users or has_notes:
                     raise SmokeError(f"tool list was: {sorted(names)}")
 
                 first_hello = next(t for t in tools if t.name.startswith("hello_"))
@@ -521,12 +558,12 @@ async def run(args: argparse.Namespace) -> int:
         except Exception as exc:  # noqa: BLE001
             log.fail(
                 step,
-                "hello_* visible and callable, users_* absent, users_list call denied",
+                "hello_* visible and callable, users_* and notes_* absent, users_list denied",
                 repr(exc),
             )
             return 1
 
-    print(f"{log.passed}/13 steps passed.")
+    print(f"{log.passed}/15 steps passed.")
     return 0
 
 
