@@ -25,12 +25,17 @@ OAuth token) straight to the upstream.
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import anyio
 from fastmcp.server.dependencies import get_context
+from fastmcp.tools.base import InputRequiredToolResult
+from mcp import types
+from mcp.client.session import ClientRequestContext, ElicitationFnT
+from mcp.server.connection import MODERN_PROTOCOL_VERSIONS
 from mcp.shared.exceptions import MCPError
 from mcp_types.jsonrpc import REQUEST_TIMEOUT
 
@@ -42,6 +47,8 @@ if TYPE_CHECKING:
     from mcp.types import ProgressToken
 
 logger = logging.getLogger(__name__)
+
+_KEYSTONE_REQUEST_STATE_VERSION = 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,6 +85,191 @@ class DownstreamCall:
         )
 
 
+def downstream_supports_form_elicitation(session: "ServerSession") -> bool:
+    """True when the Keystone client declared form-mode elicitation."""
+    return session.check_client_capability(
+        types.ClientCapabilities(
+            elicitation=types.ElicitationCapability(
+                form=types.FormElicitationCapability(),
+            )
+        )
+    )
+
+
+def attach_upstream_elicitation_callback(
+    client: "Client",
+    callback: ElicitationFnT,
+) -> None:
+    """Install the raw SDK elicitation callback before the client connects."""
+    client._session_kwargs["elicitation_callback"] = callback
+
+
+def make_elicitation_callback(
+    downstream: DownstreamCall,
+    *,
+    namespace: str,
+    tool_name: str,
+) -> ElicitationFnT:
+    """Raw MCP SDK elicitation callback for an upstream client session."""
+
+    async def _callback(
+        _context: ClientRequestContext,
+        params: types.ElicitRequestParams,
+    ) -> types.ElicitResult | types.ErrorData:
+        from keystone_mcp.observability.metrics import record_upstream_elicitation
+
+        if isinstance(params, types.ElicitRequestURLParams):
+            logger.info(
+                "upstream elicitation declined namespace=%s: url mode is not forwarded",
+                namespace,
+            )
+            record_upstream_elicitation(namespace=namespace, action="decline")
+            return types.ElicitResult(action="decline")
+
+        if getattr(downstream.session, "protocol_version", None) in MODERN_PROTOCOL_VERSIONS:
+            logger.info(
+                "upstream elicitation declined namespace=%s: a 2026-07-28 client "
+                "cannot be asked mid-call",
+                namespace,
+            )
+            record_upstream_elicitation(namespace=namespace, action="decline")
+            return types.ElicitResult(action="decline")
+
+        if not isinstance(params, types.ElicitRequestFormParams):
+            logger.info(
+                "upstream elicitation declined namespace=%s: unsupported elicitation mode",
+                namespace,
+            )
+            record_upstream_elicitation(namespace=namespace, action="decline")
+            return types.ElicitResult(action="decline")
+
+        try:
+            result = await downstream.session.elicit_form(
+                f"[{namespace}] {params.message}",
+                params.requested_schema,
+                related_request_id=downstream.request_id,
+            )
+        except Exception:  # noqa: BLE001 — client gone or back-channel closed
+            logger.info(
+                "upstream elicitation forwarded namespace=%s tool=%s action=%s",
+                namespace,
+                tool_name,
+                "cancel",
+            )
+            record_upstream_elicitation(namespace=namespace, action="cancel")
+            return types.ElicitResult(action="cancel")
+
+        action = result.action
+        logger.info(
+            "upstream elicitation forwarded namespace=%s tool=%s action=%s",
+            namespace,
+            tool_name,
+            action,
+        )
+        record_upstream_elicitation(namespace=namespace, action=action)
+        return result
+
+    return _callback
+
+
+def _encode_keystone_request_state(
+    upstream_state: str | None,
+    declined_keys: list[str],
+) -> str:
+    return json.dumps(
+        {"v": _KEYSTONE_REQUEST_STATE_VERSION, "u": upstream_state, "d": declined_keys},
+        separators=(",", ":"),
+    )
+
+
+def _decode_keystone_request_state(
+    request_state: str | None,
+) -> tuple[str | None, list[str]]:
+    if not request_state:
+        return None, []
+    try:
+        parsed = json.loads(request_state)
+    except json.JSONDecodeError:
+        return request_state, []
+    if not isinstance(parsed, dict):
+        return request_state, []
+    upstream = parsed.get("u")
+    declined = parsed.get("d")
+    if not isinstance(declined, list):
+        declined = []
+    return upstream if isinstance(upstream, str) or upstream is None else request_state, declined
+
+
+def _merge_upstream_input_responses(
+    client_responses: types.InputResponses | None,
+    declined_keys: list[str],
+) -> types.InputResponses:
+    merged: types.InputResponses = dict(client_responses or {})
+    for key in declined_keys:
+        merged[key] = types.ElicitResult(action="decline")
+    return merged
+
+
+def _record_client_elicitation_actions(
+    *,
+    namespace: str,
+    tool_name: str,
+    responses: types.InputResponses | None,
+) -> None:
+    from keystone_mcp.observability.metrics import record_upstream_elicitation
+
+    if not responses:
+        return
+    for response in responses.values():
+        if isinstance(response, types.ElicitResult):
+            action = response.action
+            logger.info(
+                "upstream elicitation forwarded namespace=%s tool=%s action=%s",
+                namespace,
+                tool_name,
+                action,
+            )
+            record_upstream_elicitation(namespace=namespace, action=action)
+
+
+def _wrap_upstream_input_required(
+    result: types.InputRequiredResult,
+    *,
+    namespace: str,
+) -> tuple[InputRequiredToolResult | None, types.InputResponses | None, str | None]:
+    """Split an upstream ask into client-visible form asks vs auto-declines.
+
+    Returns ``(tool_result, upstream_responses, upstream_state)`` when every
+    request was auto-declined and the upstream must be called again immediately.
+    Otherwise returns ``(InputRequiredToolResult, None, None)``.
+    """
+    client_requests: dict[str, types.ElicitRequest] = {}
+    declined_keys: list[str] = []
+
+    for key, request in result.input_requests.items():
+        params = request.params
+        if isinstance(params, types.ElicitRequestURLParams):
+            declined_keys.append(key)
+            continue
+        if isinstance(params, types.ElicitRequestFormParams):
+            prefixed = params.model_copy(
+                update={"message": f"[{namespace}] {params.message}"},
+            )
+            client_requests[key] = request.model_copy(update={"params": prefixed})
+            continue
+        declined_keys.append(key)
+
+    if not client_requests:
+        responses = _merge_upstream_input_responses(None, declined_keys)
+        return None, responses, result.request_state
+
+    wrapped = types.InputRequiredResult(
+        input_requests=client_requests,
+        request_state=_encode_keystone_request_state(result.request_state, declined_keys),
+    )
+    return InputRequiredToolResult(wrapped), None, None
+
+
 async def call_upstream_tool(
     client: "Client",
     name: str,
@@ -87,7 +279,10 @@ async def call_upstream_tool(
     meta: dict[str, Any] | None = None,
     downstream: DownstreamCall | None = None,
     log_namespace: str | None = None,
-) -> "mcp.types.CallToolResult":
+    input_responses: types.InputResponses | None = None,
+    request_state: str | None = None,
+    proxy_elicitation: bool = True,
+) -> "mcp.types.CallToolResult | InputRequiredToolResult":
     """Call *name* on the upstream *client* is connected to.
 
     When *downstream* carries a ``progressToken`` (the client asked for
@@ -127,7 +322,55 @@ async def call_upstream_tool(
             except Exception as exc:  # noqa: BLE001 - the client going away must not fail the call
                 logger.debug("progress forward dropped: %s", type(exc).__name__)
 
+    downstream_version = (
+        getattr(downstream.session, "protocol_version", None) if downstream is not None else None
+    )
+    modern_downstream = (
+        downstream is not None and downstream_version in MODERN_PROTOCOL_VERSIONS
+    )
+    upstream_version = getattr(client, "protocol_version", None)
+    modern_upstream = (
+        upstream_version in MODERN_PROTOCOL_VERSIONS if upstream_version is not None else False
+    )
+
     try:
+        if proxy_elicitation and modern_downstream and modern_upstream:
+            if input_responses is not None:
+                _record_client_elicitation_actions(
+                    namespace=log_namespace or "",
+                    tool_name=name,
+                    responses=input_responses,
+                )
+            upstream_state, declined_keys = _decode_keystone_request_state(request_state)
+            upstream_input_responses = _merge_upstream_input_responses(
+                input_responses,
+                declined_keys,
+            )
+            while True:
+                result = await client._await_with_session_monitoring(
+                    client.session.call_tool(
+                        name,
+                        arguments,
+                        read_timeout_seconds=timeout,
+                        progress_callback=forward,
+                        meta=meta,
+                        input_responses=upstream_input_responses or None,
+                        request_state=upstream_state,
+                        allow_input_required=True,
+                    )
+                )
+                if isinstance(result, types.InputRequiredResult):
+                    wrapped, auto_responses, auto_state = _wrap_upstream_input_required(
+                        result,
+                        namespace=log_namespace or "",
+                    )
+                    if wrapped is not None:
+                        return wrapped
+                    upstream_input_responses = auto_responses
+                    upstream_state = auto_state
+                    continue
+                return result
+
         return await client.call_tool_mcp(
             name, arguments, progress_handler=forward, timeout=timeout, meta=meta
         )

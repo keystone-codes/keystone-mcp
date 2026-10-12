@@ -8,6 +8,10 @@ this project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- HTTP upstream elicitation forwarding (`KEYSTONE_MCP_PROXY_ELICITATION`, default
+  `true`): form-mode `elicitation/create` and MCP 2026-07-28 `input_required`
+  guard rounds reach the Keystone client with a `[namespace]` message prefix;
+  URL-mode asks are declined. Metric `keystone_mcp_upstream_elicitations_total`.
 - Upstream prompts are published as `<namespace>_<name>` under the same RBAC allow patterns as tools; `notifications/prompts/list_changed` after a change.
 - `keystone-policy-admin` skill and `docs/policy-admin.md`: changing roles and allow patterns from the agent.
 - OAuth token revocation endpoint `POST /revoke` (RFC 7009); revoking a refresh token also revokes that client's access tokens for the user. CLI `keystone-mcp users block|unblock|logout`.

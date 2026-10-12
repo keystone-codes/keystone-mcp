@@ -29,6 +29,7 @@ import httpx2
 from mcp import types
 from mcp.server.lowlevel import Server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+from mcp_types.version import MODERN_PROTOCOL_VERSIONS
 from starlette.applications import Starlette
 from starlette.routing import Route
 from starlette.types import Receive, Scope, Send
@@ -101,6 +102,22 @@ SLOW_SCHEMA: dict[str, Any] = {
     },
 }
 
+ASK_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "ok": {"type": "boolean"},
+        "choice": {"type": "string", "enum": ["a", "b"], "default": "a"},
+    },
+    "required": ["ok"],
+}
+
+ASK_WEIRD_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {"x": {"type": ["string", "null"]}},
+}
+
+_EMPTY_ASK_SCHEMA: dict[str, Any] = {"type": "object", "properties": {}}
+
 _TOOL_DEFINITIONS: dict[str, types.Tool] = {
     "greet": types.Tool(
         name="greet",
@@ -141,6 +158,21 @@ _TOOL_DEFINITIONS: dict[str, types.Tool] = {
         name="slow",
         description="Sleep for a long time; used to exercise cancellation.",
         inputSchema=SLOW_SCHEMA,
+    ),
+    "ask": types.Tool(
+        name="ask",
+        description="Ask the client a form question (Y07 elicitation tests).",
+        inputSchema=_EMPTY_ASK_SCHEMA,
+    ),
+    "ask_url": types.Tool(
+        name="ask_url",
+        description="Ask the client via URL elicitation (declined by Keystone).",
+        inputSchema=_EMPTY_ASK_SCHEMA,
+    ),
+    "ask_weird": types.Tool(
+        name="ask_weird",
+        description="Ask with a schema json_schema_to_type cannot parse.",
+        inputSchema=_EMPTY_ASK_SCHEMA,
     ),
 }
 
@@ -320,9 +352,99 @@ def build_lowlevel_upstream_app(
 
         raise ValueError(f"unknown tool: {name}")
 
+    def _client_supports_elicitation(ctx: Any) -> bool:
+        return ctx.session.check_client_capability(
+            types.ClientCapabilities(
+                elicitation=types.ElicitationCapability(
+                    form=types.FormElicitationCapability(),
+                )
+            )
+        )
+
+    def _format_elicit_answer(result: types.ElicitResult) -> str:
+        content = result.content
+        if isinstance(content, dict):
+            payload = json.dumps(content, sort_keys=True)
+        elif content is None:
+            payload = ""
+        else:
+            payload = str(content)
+        return f"answer={result.action}:{payload}"
+
+    async def _ask_tool(
+        ctx: Any,
+        params: types.CallToolRequestParams,
+        *,
+        schema: dict[str, Any],
+        url_mode: bool = False,
+    ) -> types.CallToolResult | types.InputRequiredResult:
+        if not _client_supports_elicitation(ctx):
+            return types.CallToolResult(
+                content=[types.TextContent(type="text", text="no-elicitation")],
+            )
+
+        modern = ctx.protocol_version in MODERN_PROTOCOL_VERSIONS
+        if modern:
+            if params.input_responses is None:
+                if url_mode:
+                    request = types.ElicitRequest(
+                        params=types.ElicitRequestURLParams(
+                            message="Proceed?",
+                            url="https://upstream.test/confirm",
+                        )
+                    )
+                else:
+                    request = types.ElicitRequest(
+                        params=types.ElicitRequestFormParams(
+                            message="Proceed?",
+                            requested_schema=schema,
+                        )
+                    )
+                return types.InputRequiredResult(input_requests={"q": request})
+            response = params.input_responses.get("q")
+            if not isinstance(response, types.ElicitResult):
+                return types.CallToolResult(
+                    content=[types.TextContent(type="text", text="no-answer")],
+                    is_error=True,
+                )
+            return types.CallToolResult(
+                content=[types.TextContent(type="text", text=_format_elicit_answer(response))],
+            )
+
+        if url_mode:
+            result = await ctx.session.elicit_url(
+                "Proceed?",
+                "https://upstream.test/confirm",
+                related_request_id=ctx.request_id,
+            )
+        else:
+            result = await ctx.session.elicit_form(
+                "Proceed?",
+                schema,
+                related_request_id=ctx.request_id,
+            )
+        return types.CallToolResult(
+            content=[types.TextContent(type="text", text=_format_elicit_answer(result))],
+        )
+
     async def _on_call_tool(ctx: Any, params: types.CallToolRequestParams) -> types.CallToolResult:
         try:
             _check_bearer(ctx)
+            if params.name == "ask":
+                asked = await _ask_tool(ctx, params, schema=ASK_SCHEMA)
+                if isinstance(asked, types.InputRequiredResult):
+                    return asked
+                return asked
+            if params.name == "ask_url":
+                asked = await _ask_tool(ctx, params, schema=ASK_SCHEMA, url_mode=True)
+                if isinstance(asked, types.InputRequiredResult):
+                    return asked
+                return asked
+            if params.name == "ask_weird":
+                asked = await _ask_tool(ctx, params, schema=ASK_WEIRD_SCHEMA)
+                if isinstance(asked, types.InputRequiredResult):
+                    return asked
+                return asked
             content = await _run_tool(ctx, params.name, params.arguments or {})
         except Exception as exc:  # noqa: BLE001 — mirrors the old SDK's auto-wrap
             return types.CallToolResult(
