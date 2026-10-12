@@ -74,6 +74,10 @@ to fix, not to retry (`tests/test_ci_hygiene.py`).
 
 CI runs the suite on Python 3.11, 3.12 and 3.13.
 
+Changing a protocol in `keystone_mcp.login` or `keystone_mcp.user_directory`
+means changing the contract tests in the same pull request; the contract is
+frozen from 0.5.0.
+
 ## Security checks
 
 CI runs a dependency audit (`uv audit`, OSV database) on every pull request
