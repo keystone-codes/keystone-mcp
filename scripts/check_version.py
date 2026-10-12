@@ -74,6 +74,8 @@ REQUIRED_WHEEL_FILES: tuple[str, ...] = (
     "keystone_mcp/py.typed",
     "keystone_mcp/users/migrations/env.py",
     "keystone_mcp/users/migrations/versions/0001_initial.py",
+    "keystone_mcp/contract_tests/__init__.py",
+    "keystone_mcp/contract_tests/fake_oidc.py",
 )
 
 _REQUIRED_ENTRY_POINT_GROUPS: dict[str, frozenset[str]] = {
