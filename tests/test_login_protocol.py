@@ -1,22 +1,16 @@
-"""The ``LoginProvider`` protocol itself, and the two built-in implementations (X03).
-
-``keystone_mcp.login.protocol`` is a frozen public surface: it must stay
-importable with nothing but the standard library on the path, so a plugin
-author can depend on it without pulling in fastmcp, mcp, starlette or httpx.
-"""
+"""The ``LoginProvider`` protocol itself, and the two built-in implementations (X03)."""
 
 from __future__ import annotations
 
 import subprocess
 import sys
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 
-from keystone_mcp.auth.google_oidc import GoogleTokenExchangeError
 from keystone_mcp.auth.identity_provider import StaticIdentityProvider
 from keystone_mcp.login.api_key import ApiKeyLoginProvider
 from keystone_mcp.login.factory import validate_login_providers
-from keystone_mcp.login.google import GoogleLoginProvider
 from keystone_mcp.login.protocol import (
     FormField,
     FormLoginProvider,
@@ -30,7 +24,6 @@ pytestmark = pytest.mark.asyncio
 
 
 def test_protocol_module_is_framework_free():
-    """Importing ``keystone_mcp.login`` must not pull in any framework dependency."""
     code = (
         "import keystone_mcp.login, sys; "
         "bad=[m for m in sys.modules if m.split('.')[0] in "
@@ -43,7 +36,7 @@ def test_protocol_module_is_framework_free():
 
 def test_google_provider_satisfies_redirect_protocol():
     mock = build_mock_google_oidc("http://localhost/login/google/callback")
-    provider = GoogleLoginProvider(mock.client)
+    provider = mock.provider
     assert isinstance(provider, RedirectLoginProvider)
     assert provider.kind == "redirect"
     assert provider.name == "google"
@@ -61,15 +54,12 @@ def test_api_key_provider_satisfies_form_protocol():
 
 
 def test_validate_login_providers_rejects_duplicates_bad_names_and_two_forms():
-    # Duplicate names.
     with pytest.raises(ValueError, match="duplicate"):
         validate_login_providers([FakeRedirectProvider("acme"), FakeRedirectProvider("acme")])
 
-    # A name outside ^[a-z][a-z0-9_-]{0,31}$.
     with pytest.raises(ValueError, match="not valid"):
         validate_login_providers([FakeRedirectProvider("Acme")])
 
-    # More than one form-kind provider.
     from support.fake_login import FakeFormProvider
 
     with pytest.raises(ValueError, match="form"):
@@ -80,7 +70,6 @@ def test_validate_login_providers_rejects_duplicates_bad_names_and_two_forms():
             ]
         )
 
-    # Declares kind="redirect" but does not implement begin/complete.
     class _BrokenRedirect:
         @property
         def name(self) -> str:
@@ -109,29 +98,19 @@ def test_validate_login_providers_rejects_duplicates_bad_names_and_two_forms():
 
 
 def test_validate_login_providers_rejects_name_with_trailing_newline():
-    # ``$`` also matches right before a trailing newline, so a ``.match`` (as
-    # opposed to ``.fullmatch``) against ``^[a-z][a-z0-9_-]{0,31}$`` would let
-    # a name like "acme\n" slip through as "valid".
     with pytest.raises(ValueError, match="not valid"):
         validate_login_providers([FakeRedirectProvider("acme\n")])
 
 
 def test_validate_login_providers_reserves_google_and_redirect_not_allowed():
-    # "google" may only be claimed by the real GoogleLoginProvider: nothing
-    # else may ride on the interactive-human trust that name carries
-    # (rbac/human_identity.py, and _complete_login's provider-name check).
     with pytest.raises(ValueError, match="google"):
         validate_login_providers([FakeRedirectProvider("google")])
 
-    # "redirect-not-allowed" is the fixed route authorize() sends a refused
-    # redirect_uri to (server.py registers it unconditionally); a provider
-    # claiming it would collide with that route.
     with pytest.raises(ValueError, match="reserved"):
         validate_login_providers([FakeRedirectProvider("redirect-not-allowed")])
 
-    # The real Google provider is of course still allowed to use its own name.
     mock = build_mock_google_oidc("http://localhost/login/google/callback")
-    validate_login_providers([GoogleLoginProvider(mock.client)])
+    validate_login_providers([mock.provider])
 
 
 def test_validate_login_providers_rejects_unsafe_form_fields():
@@ -153,12 +132,14 @@ def test_validate_login_providers_rejects_unsafe_form_fields():
 
 
 async def test_google_begin_puts_nonce_and_verifier_into_attempt():
-    from urllib.parse import parse_qs, urlparse
+    mock = build_mock_google_oidc(
+        "http://localhost/login/google/callback", allowed_domain="example.com"
+    )
+    provider = mock.provider
 
-    mock = build_mock_google_oidc("http://localhost/login/google/callback")
-    provider = GoogleLoginProvider(mock.client, allowed_domain="example.com")
-
-    redirect = await provider.begin(state="abc123", callback_url="http://localhost/unused")
+    redirect = await provider.begin(
+        state="abc123", callback_url="http://localhost/login/google/callback"
+    )
 
     assert "nonce" in redirect.attempt
     assert "verifier" in redirect.attempt
@@ -170,41 +151,39 @@ async def test_google_begin_puts_nonce_and_verifier_into_attempt():
 
 
 async def test_google_complete_maps_errors():
-    # error=... from the provider itself -> request_invalid.
     mock = build_mock_google_oidc("http://localhost/login/google/callback")
-    provider = GoogleLoginProvider(mock.client)
+    provider = mock.provider
     with pytest.raises(LoginRejected) as exc_info:
         await provider.complete(
             params={"error": "access_denied"}, callback_url="unused", attempt={}
         )
     assert exc_info.value.reason == "request_invalid"
 
-    # Token exchange failure -> identity_invalid.
     mock2 = build_mock_google_oidc("http://localhost/login/google/callback")
-
-    async def failing_exchange(code: str, verifier: str):
-        raise GoogleTokenExchangeError("boom")
-
-    mock2.client.exchange_code = failing_exchange  # type: ignore[method-assign]
-    provider2 = GoogleLoginProvider(mock2.client)
+    provider2 = mock2.provider
+    mock2.fake.tamper.token_endpoint_status = 503
     with pytest.raises(LoginRejected) as exc_info2:
         await provider2.complete(
             params={"code": "x"},
-            callback_url="unused",
+            callback_url="http://localhost/cb",
             attempt={"nonce": "n", "verifier": "v"},
         )
     assert exc_info2.value.reason == "identity_invalid"
 
-    # Email outside the allowed domain -> domain_not_allowed.
-    mock3 = build_mock_google_oidc("http://localhost/login/google/callback")
-    provider3 = GoogleLoginProvider(mock3.client, allowed_domain="example.com")
-    nonce = "nonce-1"
-    mock3.set_pending_identity(email="alice@other.com", nonce=nonce, hd="other.com")
+    mock3 = build_mock_google_oidc(
+        "http://localhost/login/google/callback", allowed_domain="example.com"
+    )
+    provider3 = mock3.provider
+    redirect = await provider3.begin(state="s", callback_url="http://localhost/cb")
+    mock3.set_pending_identity(
+        email="alice@other.com", nonce=redirect.attempt["nonce"], hd="other.com"
+    )
+    callback = await mock3.fake.authorize(redirect.url)
     with pytest.raises(LoginRejected) as exc_info3:
         await provider3.complete(
-            params={"code": "x"},
-            callback_url="unused",
-            attempt={"nonce": nonce, "verifier": "v"},
+            params=callback,
+            callback_url="http://localhost/cb",
+            attempt=redirect.attempt,
         )
     assert exc_info3.value.reason == "domain_not_allowed"
 

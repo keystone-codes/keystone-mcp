@@ -76,12 +76,14 @@ def _google_harness(settings: Settings):
     backend.seed("alice@example.com", roles=("operator",))
     mock_google = build_mock_google_oidc(settings.google_redirect_uri)
     idp = StaticIdentityProvider({VALID_TOKEN})
+    from keystone_mcp.login.api_key import ApiKeyLoginProvider
+
     mcp, *_rest = build_server(
         identity_provider=idp,
         settings=settings,
         oauth_store=InMemoryOAuthStore(),
         user_resolver=resolver,
-        google_oidc_client=mock_google.client,
+        login_providers=[mock_google.provider, ApiKeyLoginProvider(idp)],
     )
     return mcp.http_app(path=settings.http_path)
 
