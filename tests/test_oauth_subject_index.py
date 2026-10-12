@@ -248,3 +248,115 @@ async def test_index_prunes_dead_members_over_256():
         if keys:
             await store.redis.delete(*keys)
         await store.aclose()
+
+
+@pytest.mark.asyncio
+async def test_refresh_exchange_after_revoke_subject_refuses_new_tokens():
+    from mcp.server.auth.provider import TokenError
+    from mcp.shared.auth import OAuthClientInformationFull
+
+    from conftest import BASE_URL, VALID_TOKEN
+    from keystone_mcp.auth.identity_provider import StaticIdentityProvider
+    from keystone_mcp.auth.keystone_oauth_provider import KeystoneOAuthProvider
+    from keystone_mcp.auth.login_pending_store import InMemoryLoginPendingStore
+    from keystone_mcp.config import Settings
+    from keystone_mcp.login.api_key import ApiKeyLoginProvider
+
+    settings = Settings(base_url=BASE_URL)
+    store = InMemoryOAuthStore(
+        client_ttl_seconds=5000,
+        refresh_ttl_seconds=3000,
+        access_ttl_seconds=3600,
+    )
+    pending = InMemoryLoginPendingStore()
+    idp = StaticIdentityProvider({VALID_TOKEN})
+    provider = KeystoneOAuthProvider(
+        settings,
+        store,
+        pending,
+        login_providers=[ApiKeyLoginProvider(idp)],
+    )
+    oauth_client = OAuthClientInformationFull(
+        client_id="c1",
+        redirect_uris=["http://localhost:9999/callback"],  # type: ignore[list-item]
+        token_endpoint_auth_method="none",
+    )
+    now = int(time.time())
+    old_rt = "km_rt_pre_revoke"
+    refresh = RefreshToken(
+        token=old_rt,
+        client_id="c1",
+        scopes=[],
+        expires_at=now + 3000,
+        subject="user@example.com",
+    )
+    await store.put_refresh_token(refresh)
+    await pending.put(
+        "refresh_auth",
+        old_rt,
+        '{"auth_method":"api_key","resource":null,"interactive":false}',
+        3000,
+    )
+    loaded = await provider.load_refresh_token(oauth_client, old_rt)
+    assert loaded is not None
+
+    await store.revoke_subject("user@example.com", now=now)
+
+    with pytest.raises(TokenError) as excinfo:
+        await provider.exchange_refresh_token(oauth_client, loaded, [])
+    assert excinfo.value.error == "invalid_grant"
+    assert await store.get_refresh_token(old_rt) is None
+
+
+@pytest.mark.asyncio
+async def test_auth_code_exchange_succeeds_when_code_issued_after_nbf():
+    from mcp.server.auth.provider import AuthorizationCode
+    from mcp.shared.auth import OAuthClientInformationFull
+
+    from conftest import BASE_URL, VALID_TOKEN
+    from keystone_mcp.auth.identity_provider import StaticIdentityProvider
+    from keystone_mcp.auth.keystone_oauth_provider import KeystoneOAuthProvider
+    from keystone_mcp.auth.login_pending_store import InMemoryLoginPendingStore
+    from keystone_mcp.config import Settings
+    from keystone_mcp.login.api_key import ApiKeyLoginProvider
+
+    settings = Settings(base_url=BASE_URL)
+    store = InMemoryOAuthStore(
+        client_ttl_seconds=5000,
+        refresh_ttl_seconds=3000,
+        access_ttl_seconds=3600,
+    )
+    pending = InMemoryLoginPendingStore()
+    idp = StaticIdentityProvider({VALID_TOKEN})
+    provider = KeystoneOAuthProvider(
+        settings,
+        store,
+        pending,
+        login_providers=[ApiKeyLoginProvider(idp)],
+    )
+    oauth_client = OAuthClientInformationFull(
+        client_id="c1",
+        redirect_uris=["http://localhost:9999/callback"],  # type: ignore[list-item]
+        token_endpoint_auth_method="none",
+    )
+    revoke_at = int(time.time())
+    await store.revoke_subject("user@example.com", now=revoke_at)
+
+    code_str = "km_code_after_nbf"
+    issued_at = revoke_at + 2
+    auth_code = AuthorizationCode(
+        code=code_str,
+        scopes=[],
+        expires_at=issued_at + settings.auth_code_ttl_seconds,
+        client_id="c1",
+        code_challenge="challenge",
+        redirect_uri="http://localhost:9999/callback",
+        redirect_uri_provided_explicitly=True,
+        resource=settings.resource_url,
+        subject="user@example.com",
+    )
+    await provider._put_auth_code(auth_code, auth_method="api_key", interactive=False)
+
+    token = await provider.exchange_authorization_code(oauth_client, auth_code)
+    assert token.access_token
+    assert await store.get_access_token(token.access_token) is not None

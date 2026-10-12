@@ -50,7 +50,7 @@ from starlette.responses import HTMLResponse, RedirectResponse, Response
 from starlette.routing import Route
 
 from keystone_mcp.auth.login_pending_store import LoginPendingStore
-from keystone_mcp.auth.oauth_store import OAuthStore
+from keystone_mcp.auth.oauth_store import CredentialRevokedError, OAuthStore
 from keystone_mcp.auth.throttle import (
     LoginAttemptThrottle,
     login_throttle_response,
@@ -921,6 +921,7 @@ class KeystoneOAuthProvider(OAuthProvider):
         refresh_token = f"km_rt_{secrets.token_urlsafe(32)}"
         now = int(time.time())
         expires_at = now + self._settings.token_cache_ttl_seconds
+        code_iat = int(consumed_code.expires_at) - self._settings.auth_code_ttl_seconds
         token_claims = {
             "email": email,
             "auth_method": auth_method,
@@ -932,26 +933,34 @@ class KeystoneOAuthProvider(OAuthProvider):
         # own, so the client record never expires ahead of a token issued
         # under it.
         await self._store.touch_client(client.client_id)
-        await self._store.put_access_token(
-            AccessToken(
-                token=access_token,
-                client_id=client.client_id,
-                scopes=authorization_code.scopes,
-                expires_at=expires_at,
-                resource=authorization_code.resource,
-                subject=email,
-                claims=token_claims,
-            )
+        access_record = AccessToken(
+            token=access_token,
+            client_id=client.client_id,
+            scopes=authorization_code.scopes,
+            expires_at=expires_at,
+            resource=authorization_code.resource,
+            subject=email,
+            claims=token_claims,
         )
-        await self._store.put_refresh_token(
-            RefreshToken(
-                token=refresh_token,
-                client_id=client.client_id,
-                scopes=authorization_code.scopes,
-                expires_at=now + self._settings.refresh_token_ttl_seconds,
-                subject=email,
-            )
+        refresh_record = RefreshToken(
+            token=refresh_token,
+            client_id=client.client_id,
+            scopes=authorization_code.scopes,
+            expires_at=now + self._settings.refresh_token_ttl_seconds,
+            subject=email,
         )
+        try:
+            await self._store.commit_token_pair(
+                subject=email,
+                consumed_iat=code_iat,
+                access=access_record,
+                refresh=refresh_record,
+            )
+        except CredentialRevokedError:
+            raise TokenError(
+                error="invalid_grant",
+                error_description="session was revoked",
+            ) from None
         await self._put_refresh_meta(
             refresh_token,
             auth_method=auth_method,
@@ -1035,36 +1044,40 @@ class KeystoneOAuthProvider(OAuthProvider):
 
         # Renew the client's lifetime before writing the new refresh token.
         await self._store.touch_client(client.client_id)
-        await self._store.put_access_token(
-            AccessToken(
-                token=access_token,
-                client_id=client.client_id,
-                scopes=granted,
-                expires_at=now + self._settings.token_cache_ttl_seconds,
-                resource=resource,
-                subject=email,
-                claims=token_claims,
-            )
+        access_record = AccessToken(
+            token=access_token,
+            client_id=client.client_id,
+            scopes=granted,
+            expires_at=now + self._settings.token_cache_ttl_seconds,
+            resource=resource,
+            subject=email,
+            claims=token_claims,
         )
-        # Rotation renews the lifetime, so an actively refreshing client stays
-        # connected and an idle one expires refresh_token_ttl_seconds after its
-        # last refresh.
-        await self._store.put_refresh_token(
-            RefreshToken(
-                token=new_refresh,
-                client_id=client.client_id,
-                scopes=granted,
-                expires_at=now + self._settings.refresh_token_ttl_seconds,
-                subject=email,
-            )
+        refresh_record = RefreshToken(
+            token=new_refresh,
+            client_id=client.client_id,
+            scopes=granted,
+            expires_at=now + self._settings.refresh_token_ttl_seconds,
+            subject=email,
         )
+        consumed_iat = self._store.refresh_credential_iat(refresh_token)
+        try:
+            await self._store.commit_token_pair(
+                subject=email,
+                consumed_iat=consumed_iat,
+                access=access_record,
+                refresh=refresh_record,
+                replace_refresh_token=refresh_token.token,
+            )
+        except CredentialRevokedError:
+            await self._pending_store.consume(_NS_REFRESH_AUTH, refresh_token.token)
+            raise TokenError(
+                error="invalid_grant",
+                error_description="session was revoked",
+            ) from None
         await self._put_refresh_meta(
             new_refresh, auth_method=auth_method, resource=resource, interactive=interactive
         )
-
-        # The replacement is durable; retiring the old token can no longer
-        # strand the session.
-        await self._store.delete_refresh_token(refresh_token.token)
 
         # Rewrite the old marker with a short grace TTL instead of deleting it
         # outright (finding #2). The two calls a concurrent rotation of the

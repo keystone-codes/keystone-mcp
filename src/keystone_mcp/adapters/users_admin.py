@@ -211,8 +211,34 @@ class UsersAdminAdapter:
             return result
 
         extra: dict[str, Any] = {}
-        if name == "users_block" and self._should_revoke_sessions(mutation.blocked_before):
-            extra["revoked_tokens"] = await self._revoke_sessions_for_email(str(spec["email"]))
+        if name == "users_block":
+            if self._session_revoker is None:
+                extra["revoked_tokens"] = 0
+            else:
+                try:
+                    extra["revoked_tokens"] = await self._session_revoker.revoke_subject(
+                        str(spec["email"])
+                    )
+                except RedisError:
+                    logger.warning("user blocked but sessions not revoked: token store unavailable")
+                    result = self._error(
+                        route,
+                        ctx,
+                        code="service_unavailable",
+                        message=(
+                            "user is blocked; sessions were not revoked. "
+                            "Call users_block again to retry session revocation."
+                        ),
+                    )
+                    self._record_mutation_audit(
+                        route,
+                        ctx,
+                        spec,
+                        result,
+                        before_roles=mutation.roles_before,
+                        blocked_before=mutation.blocked_before,
+                    )
+                    return result
         result = self._done(route, ctx, user=mutation.user.to_dict(), **extra)
         self._record_mutation_audit(
             route,
@@ -223,21 +249,6 @@ class UsersAdminAdapter:
             blocked_before=mutation.blocked_before,
         )
         return result
-
-    @staticmethod
-    def _should_revoke_sessions(blocked_before: bool | None) -> bool:
-        # Local directory: only when the user was not already blocked. HTTP
-        # directory returns blocked_before=None — revoke on every successful block.
-        return blocked_before is not True
-
-    async def _revoke_sessions_for_email(self, email: str) -> int | None:
-        if self._session_revoker is None:
-            return 0
-        try:
-            return await self._session_revoker.revoke_subject(email)
-        except RedisError:
-            logger.warning("user blocked but sessions not revoked: token store unavailable")
-            return None
 
     async def _execute_logout(
         self,
