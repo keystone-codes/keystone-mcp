@@ -1492,6 +1492,14 @@ def startup_warnings(settings: Settings, *, environ: Mapping[str, str] | None = 
         # at all (there are no HTTP headers to a child process), so its
         # warning must say that instead of naming a header it never gets.
         for cfg in settings.upstreams:
+            if cfg.enabled and cfg.transport == "stdio":
+                command = cfg.command or ""
+                warnings.append(
+                    f"upstream namespace={cfg.namespace} runs local command "
+                    f"{os.path.basename(command)} with keystone-mcp's own user and no "
+                    "sandbox; trust it as you trust keystone-mcp"
+                )
+        for cfg in settings.upstreams:
             if (
                 not cfg.enabled
                 or cfg.identity_secret_env is not None

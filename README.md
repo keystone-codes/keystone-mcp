@@ -99,6 +99,8 @@ Full description of every capability, and what is still ahead:
   services keep their own data and logic.
 - **No routing by request content.** A call goes to the service that owns the
   tool name; arguments are not inspected or rewritten.
+- **Not a sandbox for upstream code.** A stdio upstream runs as the same OS
+  user as Keystone-MCP with no isolation; trust it like you trust Keystone.
 
 ## Documentation
 
@@ -120,10 +122,8 @@ See [SECURITY.md](SECURITY.md).
 Keystone-MCP is released under the [Apache License 2.0](LICENSE).
 Copyright 2026 Alexey Klochkov (skynet@kofe.in).
 
-You may use, modify and distribute it, including inside a commercial product
-and as a hosted service. Keep this license and the copyright notice with the
-code, and mark the files you change. The license includes a patent grant from
-the copyright holder.
+You may use, modify and distribute it, including commercially. Keep this
+license and the copyright notice with the code, and mark the files you change.
 
 <p align="center">
   <a href="LICENSE"><img alt="License: Apache 2.0" src="https://img.shields.io/badge/license-Apache%202.0-1e3a8a"></a>

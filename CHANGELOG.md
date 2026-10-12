@@ -31,8 +31,11 @@ this project uses [Semantic Versioning](https://semver.org/).
 - Upstream registry: `transport: stdio` with `command`, `args`, `env`
   (names of keystone-mcp variables, never their values) and `cwd`; a
   supervised child process with restart backoff (1 second doubling to 60).
-  Registry and supervisor only in this release — proxying calls to the
-  process lands with the stdio wiring.
+- stdio upstreams are discovered, proxied (with progress, cancellation and
+  the identity assertion in `_meta`), supervised and restarted; `/readyz`
+  lists upstream state for internal callers; metric
+  `keystone_mcp_upstream_process_restarts_total`; the demo includes a stdio
+  upstream.
 - `notifications/tools/list_changed` is sent to open sessions and
   `subscriptions/listen` streams after a catalog change, a policy reload or
   a users-directory change.
@@ -122,6 +125,8 @@ this project uses [Semantic Versioning](https://semver.org/).
 
 ### Security
 
+- stdio upstreams run as the keystone-mcp user without a sandbox; production
+  profile warns at startup.
 - Trivy image scan now blocks pull requests and releases on fixable HIGH and
   CRITICAL findings; temporary exceptions live in `.trivyignore` with a
   reason and a review date, checked by `tests/test_trivyignore.py`.
