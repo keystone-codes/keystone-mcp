@@ -1,0 +1,397 @@
+# Public compatibility (0.5.0)
+
+From release 0.5.0 onward, the items below are the public contract of
+Keystone-MCP. Until 2.0.0 the contract may only grow: new optional settings,
+fields, tools, metrics and routes are allowed in minor releases. Deprecated
+items stay working until the next major version. Anything not listed here may
+change in any release with a note in [CHANGELOG.md](../CHANGELOG.md).
+
+Defaults, allowed values and operational detail for environment variables are
+in [environment.md](environment.md). This page names what is frozen.
+
+## Environment variables
+
+| Variable | Frozen since | Status |
+|---|---|---|
+| `KEYSTONE_MCP_ALLOWED_HOSTS` | 0.5.0 | stable |
+| `KEYSTONE_MCP_AUTH_CODE_TTL` | 0.5.0 | stable |
+| `KEYSTONE_MCP_BASE_URL` | 0.5.0 | stable |
+| `KEYSTONE_MCP_DEPLOYMENT_PROFILE` | 0.5.0 | stable |
+| `KEYSTONE_MCP_DEV_TOKENS` | 0.5.0 | stable |
+| `KEYSTONE_MCP_ENABLED_LOGIN_METHODS` | 0.5.0 | deprecated (since 0.5.0, use KEYSTONE_MCP_LOGIN_PROVIDERS_PATH) |
+| `KEYSTONE_MCP_GOOGLE_ALLOWED_DOMAIN` | 0.5.0 | deprecated (since 0.5.0, use KEYSTONE_MCP_LOGIN_PROVIDERS_PATH) |
+| `KEYSTONE_MCP_GOOGLE_CLIENT_ID` | 0.5.0 | deprecated (since 0.5.0, use KEYSTONE_MCP_LOGIN_PROVIDERS_PATH) |
+| `KEYSTONE_MCP_GOOGLE_CLIENT_SECRET` | 0.5.0 | deprecated (since 0.5.0, use KEYSTONE_MCP_LOGIN_PROVIDERS_PATH) |
+| `KEYSTONE_MCP_HOST` | 0.5.0 | stable |
+| `KEYSTONE_MCP_HTTP_PATH` | 0.5.0 | stable |
+| `KEYSTONE_MCP_IDENTITY_SIGNING_KEY` | 0.5.0 | stable |
+| `KEYSTONE_MCP_INTERNAL_ALLOWED_CIDRS` | 0.5.0 | stable |
+| `KEYSTONE_MCP_INTERNAL_ENDPOINTS_ENABLED` | 0.5.0 | stable |
+| `KEYSTONE_MCP_LOGIN_BRAND` | 0.5.0 | stable |
+| `KEYSTONE_MCP_LOGIN_DEFAULT_LANG` | 0.5.0 | stable |
+| `KEYSTONE_MCP_LOGIN_PENDING_KEY_PREFIX` | 0.5.0 | stable |
+| `KEYSTONE_MCP_LOGIN_PENDING_TXN_TTL` | 0.5.0 | stable |
+| `KEYSTONE_MCP_LOGIN_PROVIDERS_PATH` | 0.5.0 | stable |
+| `KEYSTONE_MCP_LOGIN_THROTTLE_EMAIL_MAX` | 0.5.0 | stable |
+| `KEYSTONE_MCP_LOGIN_THROTTLE_IP_MAX` | 0.5.0 | stable |
+| `KEYSTONE_MCP_LOGIN_THROTTLE_WINDOW` | 0.5.0 | stable |
+| `KEYSTONE_MCP_LOG_ACCESS_ENABLED` | 0.5.0 | stable |
+| `KEYSTONE_MCP_LOG_FORMAT` | 0.5.0 | stable |
+| `KEYSTONE_MCP_LOG_LEVEL` | 0.5.0 | stable |
+| `KEYSTONE_MCP_LOG_REDACT` | 0.5.0 | stable |
+| `KEYSTONE_MCP_LOG_REQUEST_ID_HEADER` | 0.5.0 | stable |
+| `KEYSTONE_MCP_LOG_REQUEST_ID_RESPONSE` | 0.5.0 | stable |
+| `KEYSTONE_MCP_METRICS_ENABLED` | 0.5.0 | stable |
+| `KEYSTONE_MCP_METRICS_OAUTH_CLIENT_ID_LIMIT` | 0.5.0 | stable |
+| `KEYSTONE_MCP_METRICS_PATH` | 0.5.0 | stable |
+| `KEYSTONE_MCP_METRICS_TOOL_NAME` | 0.5.0 | stable |
+| `KEYSTONE_MCP_OAUTH_ALLOWED_REDIRECT_HOSTS` | 0.5.0 | stable |
+| `KEYSTONE_MCP_OAUTH_DCR_ENABLED` | 0.5.0 | stable |
+| `KEYSTONE_MCP_OAUTH_MAX_CLIENTS` | 0.5.0 | stable |
+| `KEYSTONE_MCP_OAUTH_THROTTLE_IP_MAX` | 0.5.0 | stable |
+| `KEYSTONE_MCP_POLICY_TOOLS` | 0.5.0 | stable |
+| `KEYSTONE_MCP_PORT` | 0.5.0 | stable |
+| `KEYSTONE_MCP_PRIMARY_LOGIN_METHOD` | 0.5.0 | deprecated (since 0.5.0, use KEYSTONE_MCP_LOGIN_PROVIDERS_PATH) |
+| `KEYSTONE_MCP_PROXY_ELICITATION` | 0.5.0 | stable |
+| `KEYSTONE_MCP_PROXY_SCHEMA_PATCHES` | 0.5.0 | stable |
+| `KEYSTONE_MCP_PROXY_STATUS_ENVELOPE` | 0.5.0 | stable |
+| `KEYSTONE_MCP_RBAC_AUDIT_ENABLED` | 0.5.0 | stable |
+| `KEYSTONE_MCP_RBAC_AUDIT_LIST_TOOLS_SAMPLE_RATE` | 0.5.0 | stable |
+| `KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT` | 0.5.0 | stable |
+| `KEYSTONE_MCP_RBAC_CATALOG_SNAPSHOT` | 0.5.0 | stable |
+| `KEYSTONE_MCP_RBAC_MODE` | 0.5.0 | stable |
+| `KEYSTONE_MCP_RBAC_POLICY_PATH` | 0.5.0 | stable |
+| `KEYSTONE_MCP_REDIS_KEY_PREFIX` | 0.5.0 | stable |
+| `KEYSTONE_MCP_REDIS_URL` | 0.5.0 | stable |
+| `KEYSTONE_MCP_REFRESH_INTERVAL_SECONDS` | 0.5.0 | stable |
+| `KEYSTONE_MCP_REFRESH_TOKEN_TTL` | 0.5.0 | stable |
+| `KEYSTONE_MCP_REQUIRE_RESOURCE_INDICATOR` | 0.5.0 | stable |
+| `KEYSTONE_MCP_SUPERADMIN_EMAIL` | 0.5.0 | stable |
+| `KEYSTONE_MCP_THROTTLE_MAX` | 0.5.0 | stable |
+| `KEYSTONE_MCP_THROTTLE_WINDOW` | 0.5.0 | stable |
+| `KEYSTONE_MCP_TOKEN_TTL` | 0.5.0 | stable |
+| `KEYSTONE_MCP_UPSTREAMS` | 0.5.0 | stable |
+| `KEYSTONE_MCP_UPSTREAMS_PATH` | 0.5.0 | stable |
+| `KEYSTONE_MCP_UPSTREAM_ALLOW_INSECURE_HTTP` | 0.5.0 | stable |
+| `KEYSTONE_MCP_UPSTREAM_DISCOVERY_RETRIES` | 0.5.0 | stable |
+| `KEYSTONE_MCP_UPSTREAM_DISCOVERY_TIMEOUT` | 0.5.0 | stable |
+| `KEYSTONE_MCP_UPSTREAM_EGRESS_ALLOW_PRIVATE` | 0.5.0 | stable |
+| `KEYSTONE_MCP_UPSTREAM_REQUIRE_ALL` | 0.5.0 | stable |
+| `KEYSTONE_MCP_UPSTREAM_TOOL_TIMEOUTS` | 0.5.0 | stable |
+| `KEYSTONE_MCP_UPSTREAM_TOOL_TIMEOUT_SECONDS` | 0.5.0 | stable |
+| `KEYSTONE_MCP_USERS_BACKEND` | 0.5.0 | stable |
+| `KEYSTONE_MCP_USERS_BACKEND_CONFIG` | 0.5.0 | stable |
+| `KEYSTONE_MCP_USERS_CACHE_ALLOW_TTL_SECONDS` | 0.5.0 | stable |
+| `KEYSTONE_MCP_USERS_CACHE_DENY_TTL_SECONDS` | 0.5.0 | stable |
+| `KEYSTONE_MCP_USERS_CIRCUIT_FAILURE_THRESHOLD` | 0.5.0 | stable |
+| `KEYSTONE_MCP_USERS_CIRCUIT_RECOVERY_SECONDS` | 0.5.0 | stable |
+| `KEYSTONE_MCP_USERS_DB_URL` | 0.5.0 | stable |
+| `KEYSTONE_MCP_USERS_REDIS_REVISION_KEY` | 0.5.0 | stable |
+| `KEYSTONE_MCP_USERS_SERVICE_TIMEOUT_SECONDS` | 0.5.0 | deprecated (since 0.5.0, use KEYSTONE_MCP_USERS_BACKEND=http) |
+| `KEYSTONE_MCP_USERS_SERVICE_TOKEN` | 0.5.0 | deprecated (since 0.5.0, use KEYSTONE_MCP_USERS_BACKEND=http) |
+| `KEYSTONE_MCP_USERS_SERVICE_URL` | 0.5.0 | deprecated (since 0.5.0, use KEYSTONE_MCP_USERS_BACKEND=http) |
+
+What is frozen for each variable: its name, meaning, default, and the set of
+allowed values. Adding a new allowed value is not a breaking change.
+
+Variables named in the upstream registry (`auth.bearer_env`,
+`auth.identity_secret_env`, and the values in a stdio entry's `env` map) are
+chosen by you; their names are not part of this contract.
+`KEYSTONE_MCP_CONTRIB_*` variables belong to contrib and are not covered (see
+[contrib/README.md](contrib/README.md)). Removed variables:
+[environment.md#removed-variables](environment.md#removed-variables).
+
+## Policy file
+
+Frozen since 0.5.0. Normative format:
+[rbac-policy-format.md](rbac-policy-format.md); loader contract:
+`src/keystone_mcp/rbac/policy.py`.
+
+- `version: "2.0.0"` in shipped examples; the loader accepts policy files
+  whose `version` field is any `2.*` string.
+- Top-level keys (unknown keys are rejected): `version`, `default_deny`
+  (must be `true`), `roles` (`<name>: {description, allow: [...]}`), `deny`,
+  `requires_human_identity`, `critical_tools`, `reserved_allow_patterns`,
+  `tool_dispositions`.
+- Semantics: glob patterns (`fnmatch`); `*` matches every published tool;
+  effective allow is the union of all roles held; global `deny` overrides any
+  `allow`; anything that does not match an allow is denied when
+  `default_deny` is `true`.
+- Format versioning: a new optional top-level key is a `2.x.0` policy-format
+  change; Keystone accepts older `2.*` files. Removing or changing the meaning
+  of a key requires policy format `3.0.0` and a Keystone major release.
+
+## Upstream registry
+
+Frozen since 0.5.0. Structural validation:
+`src/keystone_mcp/upstream_registry/validate.py`; load rules:
+`src/keystone_mcp/upstream_registry/load.py`.
+
+- Document shape: `schema_version: 1`, `entries:` (YAML or JSON; the same
+  array may be supplied in `KEYSTONE_MCP_UPSTREAMS` when no registry file is
+  loaded).
+- Per-entry fields accepted by the loader and validator: `name`, `url`
+  (required for `transport: http`), `namespace` (1–64 characters
+  `A-Za-z0-9_-`, not starting or ending with `_` or `-`), `enabled`,
+  `include_prefixes`, `exclude_prefixes`, `strip_prefix`, `tool_prefix`,
+  `discovery_timeout_seconds`, `tool_timeout_seconds`, `route_mode` (`live` or
+  `stub`, default `live`), `auth` (`bearer_env`, `identity_secret_env`,
+  `identity_alg` with value `ES256`), `transport` (`http` default or `stdio`),
+  and for `stdio`: `command`, `args`, `env`, `cwd`.
+- `auth.bearer_env` and `auth.identity_secret_env` name
+  `KEYSTONE_MCP_UPSTREAM_*` variables (never secret values in the file).
+- `name` and `namespace` must be unique across entries.
+- A new optional field is not breaking. A new required field or a semantic
+  change requires `schema_version: 2` and a Keystone major release.
+
+## MCP surface
+
+### Proxied upstream tools
+
+Published names are `<namespace>_<tool>` after `strip_prefix` and `tool_prefix`
+filtering. `inputSchema` is the upstream schema (plus
+`KEYSTONE_MCP_PROXY_SCHEMA_PATCHES` when configured). Proxy responses pass the
+upstream payload through unchanged unless
+`KEYSTONE_MCP_PROXY_STATUS_ENVELOPE=true`, in which case the client sees
+`{state, tool, task_id, result}` (status envelope).
+
+### Protocol pass-through
+
+| Mechanism | Passes through |
+|---|---|
+| `tools/list`, `tools/call` | yes |
+| `notifications/progress` (upstream → client) | yes, when the client sent a `progressToken` |
+| `notifications/tools/list_changed` | yes, after catalog, policy or users-directory change |
+| `notifications/cancelled` (client → upstream) | yes (client cancel or Keystone tool timeout) |
+| `prompts/list`, `prompts/get` | yes |
+| `notifications/prompts/list_changed` | yes |
+| `resources/list`, `resources/read`, `resources/templates/list` | yes |
+| `notifications/resources/list_changed` | yes |
+| `resources/subscribe`, `notifications/resources/updated` | no |
+| `elicitation/create` (upstream → user) | yes for HTTP upstreams when `KEYSTONE_MCP_PROXY_ELICITATION=true` (form mode; URL mode declined); not for stdio |
+| `sampling/createMessage`, `roots/list` | no |
+| `notifications/message` (upstream logs) | no |
+| `completion/complete` | no |
+| MCP tasks (`tasks/*`) | no |
+
+Same rows apply to stdio upstreams except upstream→user elicitation (never
+forwarded).
+
+### Built-in tools
+
+Published only when `KEYSTONE_MCP_RBAC_MODE=enforce` unless noted.
+
+**Users directory** (`users_*`): `users_list` for every configured directory;
+`users_add`, `users_update`,
+`users_block`, `users_unblock`, `users_set_roles`, `users_grant_role`,
+`users_revoke_role`, and `users_logout` require the `admin` capability.
+Arguments and error codes
+(`user_not_found`, `conflict`, `validation_error`, `last_administrator`,
+`self_admin_mutation_forbidden`, `forbidden`, `service_timeout`,
+`service_unavailable`, `service_unconfigured`) match
+[keystone-user-admin skill](../skills/keystone-user-admin/SKILL.md).
+
+**Service accounts** (built-in directory with `service_accounts` capability):
+`service_accounts_list`, `service_accounts_add`, `service_accounts_update`.
+
+**API keys** (built-in directory with `api_keys` capability):
+`api_keys_list`, `api_keys_revoke` always; `api_keys_issue` is **not**
+published when `KEYSTONE_MCP_DEPLOYMENT_PROFILE=production` (issue keys with
+`keystone-mcp keys` on the server instead).
+
+**Policy administration** (`policy_*`): `policy_read`, `policy_catalog`,
+`policy_validate`, `policy_role_set`, `policy_role_delete`, `policy_allow_add`,
+`policy_allow_remove`, `policy_list_set`, `policy_rollback`. Published when
+`KEYSTONE_MCP_RBAC_MODE=enforce` and `KEYSTONE_MCP_POLICY_TOOLS` is not `off`;
+mutations require `full` and a writable policy file. Namespace `policy` is
+reserved in the upstream registry. Error codes:
+`validation_error`, `role_not_found`, `role_in_use`, `policy_invalid`,
+`unmatched_pattern`, `policy_invariant`, `self_lockout_forbidden`,
+`policy_readonly`, `policy_conflict`, `nothing_to_rollback`, `forbidden`,
+`service_unavailable`. See [policy-admin.md](policy-admin.md).
+
+There are no built-in file-transfer tools (removed in 0.5.0).
+
+`Pattern` on built-in routes is frozen as `SYNC` or `CONTINUATION`.
+
+## Headers sent to upstream services
+
+Frozen since 0.5.0.
+
+| Header | Meaning |
+|---|---|
+| `X-Keystone-Subject` | Verified subject (`email` for people, `svc:<name>` for service accounts), lower-case email when applicable |
+| `X-Keystone-Subject-Type` | `human` or `service` |
+| `X-Author-Email` | Verified person email (lower-case); **deprecated (since 0.5.0, use X-Keystone-Identity)**; sent only for human subjects; removed in 2.0 |
+| `Authorization: Bearer <value>` | When the registry entry sets `auth.bearer_env` and the named variable is non-empty (HTTP upstreams only) |
+| `X-Keystone-Identity` | Signed JWT (`typ: keystone-identity+jwt`). **HS256** with the secret named by `auth.identity_secret_env` (per-upstream secret, at least 32 bytes), or **ES256** with `KEYSTONE_MCP_IDENTITY_SIGNING_KEY` when `auth.identity_alg: ES256`. **Audience** (`aud`) is the registry entry `name`. **Issuer** (`iss`) is `KEYSTONE_MCP_BASE_URL` without a trailing slash. **Expiry** (`exp`) is the tool-call timeout (seconds, rounded up) plus 60 seconds. **Roles** (`roles`) are those RBAC used to allow the call. Claims include `sub`, `sub_type`, `rbac`, `auth_method`, `interactive`, `task_id`, `mcp_method`, `mcp_target`, `iat`, `jti`, and for humans `email` when present; `client_id` when the OAuth client is known. Stdio upstreams carry the same assertion in `params._meta["keystone-mcp/identity"]` instead of an HTTP header. |
+
+## HTTP routes
+
+Frozen since 0.5.0.
+
+**Host and Origin** (`HostGuardMiddleware`): every route except `/healthz` and
+`/readyz` checks `Host` and `Origin`. Allowed hosts are the host (and
+optional port) of `KEYSTONE_MCP_BASE_URL`, its loopback aliases, and
+`KEYSTONE_MCP_ALLOWED_HOSTS`. Wrong `Host` → `421`; wrong `Origin` → `400`;
+`Origin: null` is treated as absent.
+
+| Route | Method | Notes |
+|---|---|---|
+| MCP endpoint | per `KEYSTONE_MCP_HTTP_PATH` (default `/`) | Streamable HTTP MCP |
+| `/.well-known/oauth-authorization-server` | GET | OAuth metadata |
+| `/.well-known/oauth-protected-resource` | GET | Protected resource metadata (+ MCP path variant) |
+| `/.well-known/keystone-identity-jwks.json` | GET | ES256 JWKS when `KEYSTONE_MCP_IDENTITY_SIGNING_KEY` is set |
+| `/authorize` | GET | Authorization endpoint |
+| `/token` | POST | Token endpoint |
+| `/register` | POST | Dynamic client registration when `KEYSTONE_MCP_OAUTH_DCR_ENABLED=true` |
+| `/revoke` | POST | Token revocation (RFC 7009) |
+| `/login` | GET, POST | Sign-in page |
+| `/login/<provider>/callback` | GET | Redirect provider callback; Google uses `/login/google/callback` when the provider name is `google` |
+| `/healthz` | GET | Liveness: `{"status": "ok"}`, always `200` |
+| `/readyz` | GET | Readiness: `{"status": "ok"|"degraded"}`, `200` or `503` |
+| `KEYSTONE_MCP_METRICS_PATH` | GET | Prometheus when `KEYSTONE_MCP_METRICS_ENABLED=true` |
+| `/internal/live-published-names` | GET | When `KEYSTONE_MCP_INTERNAL_ENDPOINTS_ENABLED=true` |
+
+HTML copy on sign-in, consent and error pages is not part of the contract.
+
+## CLI
+
+Frozen since 0.5.0. Exit codes are part of the contract; command output text is not.
+
+| Command | Exit codes |
+|---|---|
+| `keystone-mcp catalog validate|diff|export` | `0` success; `1` validation error; `3` `--live-url` unreachable |
+| `keystone-mcp upstream validate --path <file>` | `0` ok; `1` validation or I/O error |
+| `keystone-mcp users grant-admin|import` (and `block`, `unblock`, `logout` where implemented) | per `users/cli.py` (`0` success, non-zero documented failures) |
+| `keystone-mcp keys …`, `keystone-mcp service-accounts …`, `keystone-mcp plugins list` | `0` on success, non-zero on failure |
+| `keystone-mcp serve` | runs until stopped; configuration errors refuse startup |
+| `python -m keystone_mcp.server` | same entry point as `keystone-mcp serve` |
+| `python -m keystone_mcp.healthcheck <path>` | `0` when the HTTP probe succeeds, non-zero otherwise |
+
+Flags for `catalog` (`--policy`, `--snapshot`, `--live-file`, `--live-url`,
+`--strict-unreachable`, `--tier`) and `users import` (`--email`, `--from-url`,
+`--token`, `--policy`, `--dry-run`) are frozen.
+
+## Users directory database
+
+Frozen since 0.5.0 for the built-in SQL schema (SQLite or Postgres URL in
+`KEYSTONE_MCP_USERS_DB_URL`).
+
+| Table | Purpose |
+|---|---|
+| `keystone_user` | People: `email` PK, `full_name`, `is_blocked`, `note`, `created_by`, `created_at`, `updated_at` |
+| `keystone_user_role` | `id`, `email` FK, `role`, unique `(email, role)` |
+| `keystone_service_account` | Service accounts: `name` PK, `description`, `is_blocked`, `created_by`, `created_at`, `updated_at` |
+| `keystone_service_account_role` | `id`, `name` FK, `role`, unique `(name, role)` |
+| `keystone_api_key` | Hashed API keys: `key_id`, `subject`, `secret_hash`, `label`, `created_by`, `created_at`, `expires_at`, `revoked_at`, `revoked_by` |
+| `keystone_users_alembic_version` | Alembic revision tracking |
+
+Upgrading to a new minor release runs migrations automatically at startup.
+Downgrade after a migration is not supported. Tables belonging to other
+applications in the same database are not modified.
+
+## Redis
+
+Keystone-MCP writes only under `KEYSTONE_MCP_REDIS_KEY_PREFIX` (default
+`km:oauth:`), `KEYSTONE_MCP_LOGIN_PENDING_KEY_PREFIX` (default `km:login:`),
+and the single key `KEYSTONE_MCP_USERS_REDIS_REVISION_KEY` (default
+`km:users:revision`). The layout under those prefixes is internal, but minor
+version upgrades are expected to keep existing OAuth sessions and in-flight
+login transactions valid.
+
+## Extension points
+
+Frozen since 0.5.0.
+
+| Mechanism | Contract |
+|---|---|
+| `LoginProvider` protocols (`RedirectLoginProvider`, `FormLoginProvider`) | Module `keystone_mcp.login.protocol`; adding a method with a default implementation is not breaking; a new required method or signature change requires a major release |
+| `UserDirectory` and related protocols | Module `keystone_mcp.user_directory.protocol` |
+| Entry point group `keystone_mcp.login_providers` | Built-in: `oidc`, `google`, `api_key` |
+| Entry point group `keystone_mcp.user_directories` | Built-in: `local`, `http` |
+| Pytest plugin `keystone_mcp.contract_tests` | Contract tests for providers and directories (`pytest -p keystone_mcp.contract_tests`, optional extra `contract-tests`) |
+
+## Observability
+
+Frozen since 0.5.0. Metric names and label keys (not log message text):
+
+| Metric | Labels |
+|---|---|
+| `keystone_mcp_rbac_decisions_total` | `decision`, `reason`, `tool_family`, `operation` |
+| `keystone_mcp_tool_call_attempts_total` | `tool_family`, `namespace`, `tool`, `auth_method`, `oauth_client_id` |
+| `keystone_mcp_tool_invocations_total` | above + `outcome` |
+| `keystone_mcp_tool_invocation_seconds` | above + `outcome` |
+| `keystone_mcp_rbac_directory_resolve_total` | `outcome` |
+| `keystone_mcp_rbac_directory_resolve_seconds` | (histogram) |
+| `keystone_mcp_rbac_policy_reload_total` | `success` |
+| `keystone_mcp_users_mutation_total` | `operation`, `outcome` |
+| `keystone_mcp_policy_mutation_total` | `operation`, `outcome` |
+| `keystone_mcp_catalog_refresh_total` | `outcome` |
+| `keystone_mcp_catalog_refresh_changes_total` | `direction` |
+| `keystone_mcp_list_changed_sessions_total` | `kind` |
+| `keystone_mcp_upstream_available` | `namespace` |
+| `keystone_mcp_upstream_process_restarts_total` | `namespace` |
+| `keystone_mcp_upstream_elicitations_total` | `namespace`, `action` |
+| `keystone_mcp_oauth_client_registrations_total` | `outcome` |
+| `keystone_mcp_oauth_clients` | (gauge, no labels) |
+
+Audit event types and field names (values are not frozen): `rbac_authz_decision`,
+`rbac_users_mutation`, `rbac_policy_mutation` — see
+[observability-rbac.md](observability-rbac.md) and `src/keystone_mcp/observability/audit.py`.
+NDJSON access-log field names are in
+[observability-logging.md](observability-logging.md).
+
+## Container image and distribution
+
+Frozen since 0.5.0.
+
+| Artifact | Frozen name |
+|---|---|
+| Container image | `ghcr.io/keystone-codes/keystone-mcp:<version>` |
+| Container port | `8080` |
+| Runtime user | uid/gid `10001` (`keystone`) |
+| Writable volume | `/data` with default `KEYSTONE_MCP_USERS_DB_URL=sqlite:////data/keystone-users.db` in the image |
+| Health check | `python -m keystone_mcp.healthcheck /readyz` |
+| PyPI distribution | `keystone-mcp-gateway` |
+| Python package | `keystone_mcp` |
+| Console script | `keystone-mcp` |
+
+## Not covered
+
+Python API except the protocols above (including `RouterRegistry`, `Adapter`,
+`Pattern`, `Settings`, and internal modules); all of `keystone_mcp.contrib` and
+`KEYSTONE_MCP_CONTRIB_*`; log, startup error and HTML texts; Redis key layout
+under the prefixes; files under `examples/` and `docker-compose.demo.yml`;
+behaviour of `KEYSTONE_MCP_DEPLOYMENT_PROFILE=local` beyond what
+[environment.md](environment.md) documents.
+
+## What counts as a breaking change
+
+Removing or renaming anything listed in the sections above; changing a
+default in a way that alters behaviour for an existing installation (except a
+documented security fix, then noted under `### Security` and `### Migration` in
+the changelog); adding a new required environment variable or registry field
+without a default; changing a frozen `users_*` or `policy_*` error code, a CLI
+exit code, or an HTTP status code on a frozen route; a database migration that
+needs manual operator action.
+
+## Deprecation rule
+
+From 0.5.0 onward:
+
+1. Deprecated items are listed under `### Deprecated` in [CHANGELOG.md](../CHANGELOG.md)
+   and marked `deprecated (since X.Y, use …)` in this document.
+2. They keep working and emit one startup warning (or the documented refusal
+   for removed security-sensitive variables).
+3. They remain for at least one minor release and are removed only in the next
+   major Keystone-MCP version (2.0).
+4. Removed environment variables are recorded in `REMOVED_VARIABLES` in
+   `config.py`, [environment.md#removed-variables](environment.md#removed-variables),
+   and `### Removed` in the changelog.
+
+## Supported versions
+
+Until 1.0.0, only the latest released minor version receives security fixes.
+After 1.0.0, only the latest minor release of the current major version does.
+When 2.0 is released, this section states how long 1.x receives security fixes.
