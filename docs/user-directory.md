@@ -233,4 +233,4 @@ regardless.
 
 ## Registering a directory from your own package
 
-See plugins.md.
+See [plugins.md](plugins.md).

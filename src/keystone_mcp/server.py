@@ -316,19 +316,6 @@ def build_server(
         )
 
     _login_providers_holder["providers"] = list(login_providers)
-    for _lp in login_providers:
-        if _lp.kind != "redirect":
-            continue
-        provider_type = "oidc"
-        if _lp.name == "google":
-            provider_type = "google"
-        logger.info(
-            "login provider %s (%s): callback %s/login/%s/callback",
-            _lp.name,
-            provider_type,
-            settings.base_url.rstrip("/"),
-            _lp.name,
-        )
 
     # Built before the OAuth provider (rather than alongside registry/upstream
     # wiring further down) so the provider itself can record client

@@ -411,3 +411,19 @@ class HttpUserDirectory:
             headers=self._actor_headers(actor),
         )
         return await self._mutation_response(response)
+
+
+def create_http_directory(context, options) -> HttpUserDirectory:
+    from keystone_mcp.config import Settings
+    from keystone_mcp.plugins import PluginContext
+
+    if not isinstance(context, PluginContext):
+        raise TypeError("invalid factory arguments")
+    settings = context.settings
+    if not isinstance(settings, Settings):
+        raise TypeError("context.settings must be Settings")
+    return HttpUserDirectory(
+        base_url=settings.users_service_url,
+        service_token=settings.users_service_token,
+        timeout_seconds=settings.users_service_timeout_seconds,
+    )

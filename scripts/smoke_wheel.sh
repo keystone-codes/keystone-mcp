@@ -88,7 +88,9 @@ log "Checking /readyz returns 200..."
 curl -fsS "http://${HOST}:${PORT}/readyz" >/dev/null || die "/readyz did not return 200"
 log "/readyz OK."
 
-# X09 appends a "$KEYSTONE_BIN plugins list" check here once that
-# subcommand exists.
+log "Checking plugins list includes built-in local and oidc..."
+plugins_out="$("${KEYSTONE_BIN}" plugins list 2>&1)" || die "plugins list failed"
+printf '%s\n' "${plugins_out}" | grep -q 'local' || die "plugins list missing local"
+printf '%s\n' "${plugins_out}" | grep -q 'oidc' || die "plugins list missing oidc"
 
 log "Smoke OK: ${KEYSTONE_BIN} serve"

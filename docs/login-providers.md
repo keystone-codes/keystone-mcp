@@ -83,3 +83,8 @@ valid redirect URI as above. For local Keycloak on loopback HTTP, use
 
 These variables remain readable until the next major version but log a deprecation
 warning at startup.
+
+## Custom provider types from plugins
+
+Additional `type` values come from packages that declare a
+`keystone_mcp.login_providers` entry point. See [plugins.md](plugins.md).

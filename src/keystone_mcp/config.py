@@ -19,6 +19,7 @@ import ipaddress
 import json
 import logging
 import os
+import re
 import socket
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -34,14 +35,14 @@ logger = logging.getLogger(__name__)
 LoginMethod = Literal["google", "api_key"]
 RbacMode = Literal["off", "observe", "enforce"]
 LogFormat = Literal["json", "text"]
-UsersBackend = Literal["local", "http"]
+UsersBackend = str
 DeploymentProfile = Literal["local", "production"]
 PolicyToolsMode = Literal["full", "read-only", "off"]
 _VALID_LOG_FORMATS = frozenset({"json", "text"})
 _VALID_LOG_LEVELS = frozenset({"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"})
 _VALID_LOGIN_METHODS = frozenset({"google", "api_key"})
 _VALID_RBAC_MODES = frozenset({"off", "observe", "enforce"})
-_VALID_USERS_BACKENDS = frozenset({"local", "http"})
+_USERS_BACKEND_NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 _VALID_DEPLOYMENT_PROFILES = frozenset({"local", "production"})
 _VALID_POLICY_TOOLS_MODES = frozenset({"full", "read-only", "off"})
 
@@ -242,11 +243,11 @@ def _parse_users_backend(
     raw: str, *, field_name: str = "KEYSTONE_MCP_USERS_BACKEND"
 ) -> UsersBackend:
     value = raw.strip().lower()
-    if value not in _VALID_USERS_BACKENDS:
+    if not _USERS_BACKEND_NAME_RE.fullmatch(value):
         raise ConfigError(
-            f"{field_name} must be one of {sorted(_VALID_USERS_BACKENDS)}; got {raw!r}"
+            f"{field_name} must match ^[a-z][a-z0-9_-]{{0,31}}$; got {raw!r}"
         )
-    return value  # type: ignore[return-value]
+    return value
 
 
 def _parse_policy_tools(
@@ -899,6 +900,9 @@ class Settings:
     # mentioned) apart from a deployment that explicitly opted into "local".
     users_backend_explicit: bool = field(
         default_factory=lambda: os.environ.get("KEYSTONE_MCP_USERS_BACKEND") is not None
+    )
+    users_backend_config: str = field(
+        default_factory=lambda: _env("KEYSTONE_MCP_USERS_BACKEND_CONFIG", "")
     )
     users_db_url: str = field(
         default_factory=lambda: _env("KEYSTONE_MCP_USERS_DB_URL", "sqlite:///./keystone-users.db")
@@ -1575,6 +1579,12 @@ def startup_warnings(settings: Settings, *, environ: Mapping[str, str] | None = 
     )
     env_map = os.environ if environ is None else environ
     legacy_set = any(env_map.get(name, "").strip() for name in _LEGACY_LOGIN_ENV)
+    if settings.users_backend_config.strip() and settings.users_backend in ("local", "http"):
+        warnings.append(
+            "KEYSTONE_MCP_USERS_BACKEND_CONFIG is set but has no effect for the "
+            f"built-in {settings.users_backend!r} users directory"
+        )
+
     if legacy_set:
         base_msg = (
             "KEYSTONE_MCP_GOOGLE_*, KEYSTONE_MCP_ENABLED_LOGIN_METHODS and "

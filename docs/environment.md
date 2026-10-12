@@ -410,7 +410,8 @@ The signal handler is installed when the mode is `observe` or `enforce`.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `KEYSTONE_MCP_USERS_BACKEND` | `local` | `local` (built in, default) or `http` (external directory, fork-only). |
+| `KEYSTONE_MCP_USERS_BACKEND` | `local` | `local`, `http`, or the name of an installed directory plugin. |
+| `KEYSTONE_MCP_USERS_BACKEND_CONFIG` | `""` | Optional path to a YAML file with options for a directory plugin (ignored for built-in `local` / `http`). |
 | `KEYSTONE_MCP_USERS_DB_URL` | `sqlite:///./keystone-users.db` | Database for the built-in users directory. A SQLite file path (`sqlite:///relative/path.db` or `sqlite:////absolute/path.db`), or a PostgreSQL URL using the `psycopg` driver (`postgresql+psycopg://user:pass@host:5432/db`). Migrated automatically at startup. |
 | `KEYSTONE_MCP_SUPERADMIN_EMAIL` | `""` | Created with the `administrator` role on every start, if not already present. A block set on this user is never lifted by this seeding; see [users.md](users.md). |
 | `KEYSTONE_MCP_USERS_SERVICE_URL` | `""` | Only with `KEYSTONE_MCP_USERS_BACKEND=http`. Required when Google login or RBAC is enabled. |

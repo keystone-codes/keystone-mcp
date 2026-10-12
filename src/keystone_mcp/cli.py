@@ -14,6 +14,7 @@ import yaml
 from keystone_mcp.config import Settings
 from keystone_mcp.env_file import load_env_file
 from keystone_mcp.observability.logging import configure_logging
+from keystone_mcp.plugins_cli import add_plugins_commands
 from keystone_mcp.rbac.catalog import (
     DuplicateLivePublishedNameError,
     assert_loopback_live_catalog_url,
@@ -288,6 +289,7 @@ def main(argv: list[str] | None = None) -> int:
     add_users_commands(subparsers)
     add_api_keys_commands(subparsers)
     add_service_accounts_commands(subparsers)
+    add_plugins_commands(subparsers)
 
     args = parser.parse_args(argv)
     if args.command == "catalog":
@@ -301,6 +303,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "keys":
         return args.handler(args)
     if args.command == "service-accounts":
+        return args.handler(args)
+    if args.command == "plugins":
         return args.handler(args)
     parser.error(f"unknown command: {args.command}")
     return _EXIT_VALIDATION

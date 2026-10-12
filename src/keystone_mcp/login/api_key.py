@@ -79,3 +79,21 @@ class ApiKeyLoginProvider:
         if verification.expires_at is not None and verification.expires_at <= utcnow():
             raise LoginRejected("invalid_credentials")
         return LoginIdentity(email=email, provider="api_key", interactive=False)
+
+
+def create_api_key_provider(config, context) -> ApiKeyLoginProvider:
+    from keystone_mcp.config import Settings
+    from keystone_mcp.plugins import LoginProviderConfig, PluginContext
+
+    if not isinstance(config, LoginProviderConfig) or not isinstance(context, PluginContext):
+        raise TypeError("invalid factory arguments")
+    settings = context.settings
+    if not isinstance(settings, Settings):
+        raise TypeError("context.settings must be Settings")
+    dev_set = frozenset(t for t in settings.dev_tokens.split(",") if t.strip())
+    return ApiKeyLoginProvider(
+        resolver=context.user_resolver,
+        dev_tokens=dev_set,
+        resolve_directory_keys=True,
+        enforce_directory_for_dev_tokens=bool(dev_set),
+    )
