@@ -8,6 +8,9 @@ this project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `docs/adr/`: six architecture decision records (built-in users directory,
+  roles in the policy file, signed identity assertion, Redis, dynamic client
+  registration, no file API in the core).
 - Startup refuses a removed variable that would change security behaviour
   if ignored, and warns about other removed variables
   (`docs/environment.md#removed-variables`).

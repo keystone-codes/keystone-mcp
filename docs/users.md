@@ -14,6 +14,8 @@ for production and for more than one replica. See
 Migrations run automatically on startup; on PostgreSQL, several replicas
 starting at once do this safely.
 
+Why: [ADR 0001](adr/0001-built-in-users-directory.md).
+
 ## Roles come from the policy file
 
 A role is a name in the RBAC policy file
