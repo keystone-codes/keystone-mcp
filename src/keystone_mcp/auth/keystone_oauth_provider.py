@@ -29,6 +29,7 @@ import logging
 import secrets
 import time
 from collections.abc import Sequence
+from dataclasses import replace
 from urllib.parse import urlencode, urlparse
 
 from fastmcp.server.auth import OAuthProvider
@@ -58,6 +59,7 @@ from keystone_mcp.auth.throttle import (
 )
 from keystone_mcp.config import Settings, resources_equivalent
 from keystone_mcp.login.protocol import (
+    FormField,
     FormLoginProvider,
     LoginIdentity,
     LoginProvider,
@@ -340,6 +342,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "error_google_user_denied": "המשתמש לא רשום או חסום",
         "error_google_unavailable": "שירות המשתמשים לא זמין",
         "error_redirect_host": "כתובת החזרה של האפליקציה אינה מורשית",
+        "error_provider_unavailable": "שירות ההתחברות אינו זמין כעת",
         "consent_title": "לאשר גישה?",
         "consent_app": "אפליקציה",
         "consent_redirect": "לאחר ההתחברות תועברו אל",
@@ -361,6 +364,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "error_google_user_denied": "User is not registered or is blocked",
         "error_google_unavailable": "User directory is unavailable",
         "error_redirect_host": "This application's redirect address is not allowed",
+        "error_provider_unavailable": "The sign-in service is not available right now",
         "consent_title": "Allow access?",
         "consent_app": "Application",
         "consent_redirect": "After sign-in you will be sent to",
@@ -384,6 +388,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "error_google_user_denied": "Пользователь не зарегистрирован или заблокирован",
         "error_google_unavailable": "Каталог пользователей недоступен",
         "error_redirect_host": "Адрес возврата этого приложения не разрешён",
+        "error_provider_unavailable": "Служба входа сейчас недоступна",
         "consent_title": "Разрешить доступ?",
         "consent_app": "Приложение",
         "consent_redirect": "После входа вы попадёте на",
@@ -407,6 +412,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "error_google_user_denied": "المستخدم غير مسجل أو محظور",
         "error_google_unavailable": "خدمة المستخدمين غير متاحة",
         "error_redirect_host": "عنوان إعادة التوجيه لهذا التطبيق غير مسموح به",
+        "error_provider_unavailable": "خدمة تسجيل الدخول غير متاحة الآن",
         "consent_title": "السماح بالوصول؟",
         "consent_app": "التطبيق",
         "consent_redirect": "بعد تسجيل الدخول سيتم تحويلك إلى",
@@ -492,6 +498,19 @@ def _consent_block_html(t: dict[str, str], client_name: str | None, redirect_uri
     <p style="font-size:0.8em;color:#555;word-break:break-all">{full_redirect}</p>
     <p style="font-size:0.9em;color:#a60">{html.escape(t["consent_warning"])}</p>
   </div>"""
+
+
+def _field_label(t: dict[str, str], field: FormField) -> str:
+    """The (un-escaped) label text for one form field, falling back to its name.
+
+    ``field.label_key`` names a translation key the provider chose; a
+    third-party provider's key missing from ``TRANSLATIONS`` must not 500 the
+    login page (``t`` is a plain ``dict``, so a bare ``t[field.label_key]``
+    raises ``KeyError``) -- it falls back to the field's own (validated,
+    startup-checked) name instead. The caller still ``html.escape``s whatever
+    this returns.
+    """
+    return t.get(field.label_key, field.name)
 
 
 class _PendingAuthorization:
@@ -628,6 +647,39 @@ class KeystoneOAuthProvider(OAuthProvider):
             if provider.kind == "form":
                 return provider  # type: ignore[return-value]
         return None
+
+    @staticmethod
+    def _verify_identity_route(identity: LoginIdentity, route_name: str) -> LoginIdentity | None:
+        """Confirm ``identity.provider`` matches the route it came back on, and normalize its email.
+
+        ``identity.provider`` becomes the issued token's ``auth_method``
+        claim, and RBAC's interactive-human gate
+        (``rbac/human_identity.py``) trusts ``auth_method == "google"`` as
+        proof an interactive human signed in. Without this check, a
+        third-party provider configured under some other name could simply
+        report ``provider="google"`` in the ``LoginIdentity`` it returns and
+        earn that trust for itself -- Keystone must instead derive
+        ``auth_method`` from *which route the sign-in came back on*
+        (``name`` in ``handle_login_callback``, ``form_provider.name`` in
+        ``handle_login``), and refuse the attempt outright when a provider's
+        own claim disagrees with it.
+
+        The email is normalized again here (on top of the generic providers'
+        own normalization) as defence in depth: a provider is third-party
+        code, and the users-directory lookup and the token's ``subject`` must
+        not depend on it having normalized correctly.
+
+        Returns ``None`` (logging a warning naming both provider names, but
+        never the email) when the names disagree.
+        """
+        if identity.provider != route_name:
+            logger.warning(
+                "login provider %s reported provider=%r; refusing the sign-in",
+                route_name,
+                identity.provider,
+            )
+            return None
+        return replace(identity, email=normalize_email(identity.email))
 
     def _csrf_cookie_name(self) -> str:
         """The ``km_login_csrf`` cookie's name for this deployment (finding #4).
@@ -1095,7 +1147,8 @@ class KeystoneOAuthProvider(OAuthProvider):
         }
         try:
             identity = await form_provider.verify(raw_form)
-        except LoginRejected:
+        except LoginRejected as exc:
+            logger.info("login rejected by provider %s: %s", form_provider.name, exc.reason)
             self._login_throttle.record_login_failure(email)
             client = await self._store.get_client(pending.client_id)
             if client is None:
@@ -1129,6 +1182,23 @@ class KeystoneOAuthProvider(OAuthProvider):
                 error_key="error_invalid",
                 status_code=401,
             )
+
+        verified_identity = self._verify_identity_route(identity, form_provider.name)
+        if verified_identity is None:
+            self._login_throttle.record_login_failure(email)
+            client = await self._store.get_client(pending.client_id)
+            if client is None:
+                return _html_response(self._error_page(lang, "error_request"), status_code=400)
+            return self._render_consent_page(
+                request,
+                txn_id,
+                lang,
+                pending,
+                client,
+                error_key="error_invalid",
+                status_code=401,
+            )
+        identity = verified_identity
 
         # Token-only verification is not enough: the holder of a shared
         # DEV-token (or an auth-service-issued one) could otherwise sign in
@@ -1175,7 +1245,7 @@ class KeystoneOAuthProvider(OAuthProvider):
         # a real server runs this branch too, and a token-login email is
         # accepted without ever being checked against the directory.
 
-        return await self._complete_login(txn_id, identity, lang)
+        return await self._complete_login(txn_id, identity, lang, auth_method=form_provider.name)
 
     async def start_login_redirect_get(self, request: Request, name: str) -> Response:
         """``GET /login/{name}`` no longer redirects straight to the provider (A13).
@@ -1232,7 +1302,22 @@ class KeystoneOAuthProvider(OAuthProvider):
         # leaked (it is opaque server-side state, but there is no reason to
         # carry the raw secret).
         csrf_hash = _hash_csrf_cookie(csrf_cookie)
-        redirect = await provider.begin(state=state, callback_url=self._callback_url(name))
+        try:
+            redirect = await provider.begin(state=state, callback_url=self._callback_url(name))
+        except LoginRejected as exc:
+            logger.info("login rejected by provider %s: %s", name, exc.reason)
+            return _html_response(self._error_page(lang, "error_request"), status_code=400)
+        except Exception:
+            # Mirrors the protocol's own rule, applied at the other end of
+            # the round trip (handle_login_callback): any exception other
+            # than LoginRejected means the provider itself is unavailable or
+            # buggy, not that this particular attempt is invalid -- logged
+            # with a traceback, shown to the user as a service outage rather
+            # than a 500 with a stack trace.
+            logger.exception("unexpected error from login provider %s", name)
+            return _html_response(
+                self._error_page(lang, "error_provider_unavailable"), status_code=503
+            )
         envelope = json.dumps(
             {
                 "txn": txn_id,
@@ -1352,6 +1437,7 @@ class KeystoneOAuthProvider(OAuthProvider):
                 params=params, callback_url=self._callback_url(name), attempt=attempt.attempt
             )
         except LoginRejected as exc:
+            logger.info("login rejected by provider %s: %s", name, exc.reason)
             if exc.reason == "domain_not_allowed":
                 return _html_response(
                     self._error_page(lang, "error_google_domain"), status_code=403
@@ -1371,6 +1457,11 @@ class KeystoneOAuthProvider(OAuthProvider):
         except Exception:
             logger.exception("unexpected error from login provider %s", name)
             return _html_response(self._error_page(lang, "error_google_identity"), status_code=400)
+
+        verified_identity = self._verify_identity_route(identity, name)
+        if verified_identity is None:
+            return _html_response(self._error_page(lang, "error_request"), status_code=400)
+        identity = verified_identity
 
         if self._user_resolver is None:
             logger.error(
@@ -1392,9 +1483,11 @@ class KeystoneOAuthProvider(OAuthProvider):
                 self._error_page(lang, "error_google_user_denied"), status_code=403
             )
 
-        return await self._complete_login(attempt.txn_id, identity, lang)
+        return await self._complete_login(attempt.txn_id, identity, lang, auth_method=name)
 
-    async def _complete_login(self, txn_id: str, identity: LoginIdentity, lang: str) -> Response:
+    async def _complete_login(
+        self, txn_id: str, identity: LoginIdentity, lang: str, *, auth_method: str
+    ) -> Response:
         pending = await self._consume_pending_txn(txn_id)
         if pending is None:
             return _html_response(self._error_page(lang, "error_request"), status_code=400)
@@ -1412,7 +1505,7 @@ class KeystoneOAuthProvider(OAuthProvider):
             resource=params.resource,
             subject=identity.email,
         )
-        await self._put_auth_code(auth_code, auth_method=identity.provider)
+        await self._put_auth_code(auth_code, auth_method=auth_method)
         redirect_to = construct_redirect_uri(
             str(params.redirect_uri), code=code_str, state=params.state
         )
@@ -1503,8 +1596,8 @@ class KeystoneOAuthProvider(OAuthProvider):
         form_block = ""
         for provider in self._providers.values():
             if provider.kind == "redirect":
-                button_text = (
-                    t["google_button"] if provider.name == "google" else html.escape(provider.title)
+                button_text = html.escape(
+                    t["google_button"] if provider.name == "google" else provider.title
                 )
                 redirect_blocks.append(f"""
   <form method="post" action="/login/{provider.name}">
@@ -1515,8 +1608,9 @@ border:1px solid #ccc;background:none">{button_text}</button>
   </form>""")
             elif provider.kind == "form":
                 fields_html = "".join(
-                    f"<label>{html.escape(t[field.label_key])}<br>"
-                    f'<input name="{field.name}" type="{field.input_type}" required '
+                    f"<label>{html.escape(_field_label(t, field))}<br>"
+                    f'<input name="{html.escape(field.name)}" '
+                    f'type="{html.escape(field.input_type)}" required '
                     f'style="width:100%"></label><br><br>\n    '
                     for field in provider.form_fields()
                 )

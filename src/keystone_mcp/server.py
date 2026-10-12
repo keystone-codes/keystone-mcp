@@ -103,6 +103,13 @@ async def _keystone_lifespan(_server: FastMCP):
         client_sessions = _client_sessions_holder.get("registry")
         if client_sessions is not None:
             client_sessions.close()
+        login_providers = _login_providers_holder.get("providers")
+        if login_providers:
+            for provider in login_providers:
+                try:
+                    await provider.aclose()
+                except Exception:  # noqa: BLE001 - shutdown must not be blocked by one provider
+                    logger.exception("error closing login provider %s", provider.name)
 
 
 @dataclass(frozen=True, slots=True)
@@ -253,17 +260,32 @@ def build_server(
     # KEYSTONE_MCP_DEV_TOKENS set at all — the vulnerability this closes does
     # not apply there, and auto-building a resolver for them would demand an
     # unrelated, repo-wide rewrite of every such test's login fixtures.
+    #
+    # Later finding: the gate used to key off ``settings.google_login_enabled``
+    # specifically, so a deployment that passes its own ``login_providers``
+    # (a custom redirect or form provider, not the built-in Google one) never
+    # got a resolver built for it at all — the directory check silently
+    # never ran (``handle_login`` skips it when ``user_resolver is None``),
+    # and a custom *redirect* provider's callback got a hard 503 on every
+    # sign-in instead (``handle_login_callback`` requires one). The gate is
+    # keyed off the actually-configured provider set instead: any provider
+    # other than the single built-in ``api_key`` one needs a resolver, since
+    # 0.5's directory check is this gate's reason to exist, not a property
+    # specific to Google. The one case kept exactly as before is "only the
+    # built-in api_key form, nothing else" — the 0.4.0 compatibility case
+    # above still applies unchanged there.
     dev_tokens_configured = bool({t for t in settings.dev_tokens.split(",") if t.strip()})
     local_users_directory_ready = settings.users_backend == "local" or (
         settings.users_backend == "http" and settings.users_service_url.strip()
     )
+    only_builtin_api_key_provider = (
+        len(login_providers) == 1 and login_providers[0].name == "api_key"
+    )
     directory_resolver: UserDirectoryResolver | None = user_resolver
     resolver_needed = directory_resolver is None and (
-        settings.google_login_enabled
-        or settings.rbac_enabled
-        or (
-            settings.api_key_login_enabled and dev_tokens_configured and local_users_directory_ready
-        )
+        settings.rbac_enabled
+        or (len(login_providers) > 0 and not only_builtin_api_key_provider)
+        or (only_builtin_api_key_provider and dev_tokens_configured and local_users_directory_ready)
     )
     # Built independently of whether a resolver was injected or auto-built
     # above (an embedding process, or a test, may supply its own resolver for
