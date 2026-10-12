@@ -277,7 +277,7 @@ def register_catalog(
             registry.add_route(
                 tool_name,
                 api_keys_admin,
-                pattern=Pattern.M_B,
+                pattern=Pattern.SYNC,
                 params=params,
                 description=description,
                 mode="live",
@@ -371,7 +371,7 @@ def register_catalog(
             registry.add_route(
                 tool_name,
                 policy_admin,
-                pattern=Pattern.M_B,
+                pattern=Pattern.SYNC,
                 params=params,
                 description=description,
                 mode="live",
@@ -382,7 +382,7 @@ def register_catalog(
                 registry.add_route(
                     tool_name,
                     policy_admin,
-                    pattern=Pattern.M_B,
+                    pattern=Pattern.SYNC,
                     params=params,
                     description=description,
                     mode="live",
