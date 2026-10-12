@@ -138,6 +138,12 @@ Keystone-MCP's own, not proxied:
   directory, from the agent. Published only when
   `KEYSTONE_MCP_RBAC_MODE=enforce`. Who may call them is the policy file. See
   [users.md](users.md).
+- `policy_read`, `policy_catalog`, `policy_validate`, `policy_role_set`,
+  `policy_role_delete`, `policy_allow_add`, `policy_allow_remove`,
+  `policy_list_set`, `policy_rollback` — change the RBAC policy from the agent.
+  Published only when `KEYSTONE_MCP_RBAC_MODE=enforce` and
+  `KEYSTONE_MCP_POLICY_TOOLS` is not `off`; mutation tools need `full` and a
+  writable policy file. See [rbac-policy-format.md](rbac-policy-format.md).
 
 File transfer is not built in: run a file service as an upstream MCP server
 (see [connecting-services.md](connecting-services.md)). Why: [ADR 0006](adr/0006-no-file-api-in-the-core.md).

@@ -8,6 +8,7 @@ this project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `policy_*` tools (`policy_read`, `policy_catalog`, `policy_validate`, `policy_role_set`, `policy_role_delete`, `policy_allow_add`, `policy_allow_remove`, `policy_list_set`, `policy_rollback`): administrators change the RBAC policy from the agent; every change is validated against the live catalog, written atomically, reloaded in place and audited. Namespace `policy` is reserved.
 - API keys stored in the users directory (hashed, shown once): `api_keys_issue|list|revoke` tools and `keystone-mcp keys` CLI. Service accounts call MCP with `Authorization: Bearer <key>`.
 - Service accounts (`svc:<name>`) with their own roles; `service_accounts_list|add|update` tools and `keystone-mcp service-accounts` CLI (built-in directory).
 - Upstreams receive `X-Keystone-Subject` and `X-Keystone-Subject-Type`.
