@@ -91,6 +91,18 @@ travels in clear text, same as every other header; prefer `https` whenever the
 upstream is reachable over anything less trusted than a network Keystone-MCP
 alone controls.
 
+## Subject headers (every proxied call)
+
+| Header | When present | Meaning |
+| --- | --- | --- |
+| `X-Keystone-Subject` | Always | Verified subject: an email for people, `svc:<name>` for service accounts. |
+| `X-Keystone-Subject-Type` | Always | `human` or `service`. |
+| `X-Author-Email` | People only | Same email as `X-Keystone-Subject` for humans; omitted for service accounts. Deprecated since 0.5.0, removed in 2.0. |
+
+These headers are trustworthy only if the upstream accepts traffic from
+Keystone alone; signed identity (`X-Keystone-Identity`, below) is the
+stronger check when configured.
+
 ## Who is calling: X-Keystone-Identity
 
 `X-Author-Email` is unsigned: anything on the same network can send that

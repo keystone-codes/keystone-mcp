@@ -9,9 +9,37 @@ in ``fastmcp``, ``mcp``, ``httpx``, ``sqlalchemy`` or ``redis`` transitively
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
+
+SERVICE_PREFIX = "svc:"
+_SERVICE_NAME_RE = re.compile(r"^[a-z][a-z0-9-]{1,62}$")
+
+
+def service_subject(name: str) -> str:
+    """Build the canonical subject identifier for a service account name."""
+    return f"{SERVICE_PREFIX}{name}"
+
+
+def parse_service_subject(subject: str) -> str | None:
+    """Return the service account name when *subject* is ``svc:<name>``, else ``None``."""
+    if not subject.startswith(SERVICE_PREFIX):
+        return None
+    name = subject[len(SERVICE_PREFIX) :]
+    if not name or not _SERVICE_NAME_RE.fullmatch(name):
+        return None
+    return name
+
+
+def subject_type_of(subject: str) -> Literal["human", "service"]:
+    """Infer subject type from the subject string alone."""
+    return "service" if parse_service_subject(subject) is not None else "human"
+
+
+def is_valid_service_account_name(name: str) -> bool:
+    return bool(_SERVICE_NAME_RE.fullmatch(name))
 
 
 def _iso_utc(value: datetime) -> str:
@@ -70,12 +98,50 @@ class MutationResult:
 
 
 @dataclass(frozen=True, slots=True)
+class ServiceAccountRecord:
+    """A service account entry for tool and API responses."""
+
+    name: str
+    subject: str
+    description: str | None
+    roles: tuple[str, ...]
+    is_blocked: bool
+    created_at: datetime
+    updated_at: datetime
+    created_by: str | None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "subject": self.subject,
+            "name": self.name,
+            "description": self.description,
+            "roles": list(self.roles),
+            "is_blocked": self.is_blocked,
+            "created_at": _iso_utc(self.created_at),
+            "updated_at": _iso_utc(self.updated_at),
+            "created_by": self.created_by,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ServiceAccountMutation:
+    """The outcome of one ``ServiceAccountDirectory`` write."""
+
+    account: ServiceAccountRecord
+    changed: bool
+    created: bool = False
+    roles_before: tuple[str, ...] | None = None
+    blocked_before: bool | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class UserResolveResult:
     """Effective roles and block state for a verified subject."""
 
     exists: bool
     roles: tuple[str, ...]
     is_blocked: bool
+    subject_type: Literal["human", "service"] = "human"
     from_cache: bool = False
     revision: int | None = None
 

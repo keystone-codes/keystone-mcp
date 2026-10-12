@@ -108,7 +108,12 @@ def build_identity_claims(
     sub_type = getattr(identity, "subject_type", None)
     if sub_type not in _KNOWN_SUBJECT_TYPES:
         sub_type = "human"
-    sub = subject or normalize_email(identity.email)
+    sub = subject or getattr(identity, "subject", None)
+    if not sub:
+        email = getattr(identity, "email", None)
+        sub = normalize_email(email) if email else ""
+    elif getattr(identity, "email", None) is not None and sub == getattr(identity, "email", None):
+        sub = normalize_email(sub)
 
     issued_at = int(now if now is not None else time.time())
     expires_at = issued_at + ceil(timeout_seconds) + ASSERTION_SKEW_SECONDS

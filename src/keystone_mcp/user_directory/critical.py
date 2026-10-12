@@ -14,7 +14,7 @@ from collections.abc import Iterable, Sequence
 from fnmatch import fnmatch
 
 #: Always critical: registered by the core catalog, never customer tools.
-CORE_CRITICAL_PATTERNS: tuple[str, ...] = ("users_*",)
+CORE_CRITICAL_PATTERNS: tuple[str, ...] = ("users_*", "service_accounts_*")
 
 
 def is_critical_tool(tool_name: str, policy_patterns: Iterable[str] = ()) -> bool:

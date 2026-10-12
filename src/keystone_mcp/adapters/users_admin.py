@@ -135,7 +135,9 @@ class UsersAdminAdapter:
                 self._record_mutation_audit(route, ctx, spec, result)
                 return result
 
-        actor_email = normalize_email(ctx.verified_identity.email)
+        actor_email = ctx.verified_identity.subject
+        if ctx.verified_identity.email is not None:
+            actor_email = normalize_email(actor_email)
         try:
             if name == "users_list":
                 is_blocked = spec.get("is_blocked")
@@ -291,7 +293,8 @@ class UsersAdminAdapter:
                 blocked_after = False if outcome == "done" else blocked_after
         self._observability.record_users_mutation(
             operation=route.name,
-            actor_email=ctx.verified_identity.email,
+            actor_email=ctx.verified_identity.subject,
+            actor_subject_type=ctx.verified_identity.subject_type,
             target_email=str(target_email) if target_email else None,
             outcome=outcome,
             code=str(code) if code is not None else None,

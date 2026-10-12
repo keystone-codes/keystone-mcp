@@ -122,7 +122,8 @@ interactive sign-in provider sets (Google and any configured OIDC provider;
 see `login-providers.md`), never a machine's api_key sign-in
 (`has_interactive_human_identity` in
 `src/keystone_mcp/rbac/human_identity.py`). Use it for irreversible
-confirming operations that must never run under a machine token.
+confirming operations that must never run under a machine token. Service
+accounts never satisfy `requires_human_identity`.
 
 ### 2.7 `critical_tools`
 

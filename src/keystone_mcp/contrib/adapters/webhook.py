@@ -139,7 +139,9 @@ class WebhookAdapter:
             }
 
         payload = request if request is not None else dict(args)
-        headers = {AUTHOR_EMAIL_HEADER: ctx.verified_identity.email}
+        headers: dict[str, str] = {}
+        if ctx.verified_identity.email is not None:
+            headers[AUTHOR_EMAIL_HEADER] = ctx.verified_identity.email
         if cfg.api_token:
             headers["Authorization"] = cfg.api_token
 

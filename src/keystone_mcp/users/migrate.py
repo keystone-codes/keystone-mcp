@@ -14,7 +14,7 @@ from alembic.runtime.migration import MigrationContext
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
-HEAD_REVISION = "0001_initial"
+HEAD_REVISION = "0002_service_accounts"
 # First 8 bytes of sha256(b"keystone-mcp:users:migrations"), interpreted as a
 # signed bigint (what pg_advisory_xact_lock expects).
 MIGRATION_LOCK_KEY = -1105817870462558087

@@ -124,6 +124,45 @@ def test_redact_db_url_hides_password() -> None:
     assert "***" in redacted
 
 
+def test_upgrade_to_0002_from_0001(tmp_path: Path) -> None:
+    import alembic.command
+    import alembic.config
+
+    from keystone_mcp.users.db import create_users_engine
+    from keystone_mcp.users.service import create_user
+
+    engine = create_users_engine(sqlite_url(tmp_path))
+    cfg = alembic.config.Config()
+    cfg.set_main_option("script_location", "keystone_mcp.users:migrations")
+    with engine.begin() as conn:
+        cfg.attributes["connection"] = conn
+        alembic.command.upgrade(cfg, "0001_initial")
+    with engine.begin() as conn:
+        from keystone_mcp.users.db import make_session_factory, session_scope
+
+        factory = make_session_factory(engine)
+        with session_scope(factory) as session:
+            create_user(
+                session,
+                email="keep@example.com",
+                full_name="Keep",
+                roles=["member"],
+                note=None,
+                created_by="test",
+                allowed_roles=None,
+            )
+    upgrade_to_head(engine)
+    inspector = inspect(engine)
+    assert "keystone_service_account" in inspector.get_table_names()
+    assert "keystone_user" in inspector.get_table_names()
+    with engine.connect() as conn:
+        row = conn.execute(
+            text("SELECT email FROM keystone_user WHERE email = 'keep@example.com'")
+        ).first()
+    assert row is not None
+    assert current_revision(engine) == HEAD_REVISION
+
+
 def test_postgres_is_configured_in_ci() -> None:
     """The Postgres-backed users-directory tests must not silently skip in CI.
 

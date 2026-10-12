@@ -59,10 +59,10 @@ class ThrottleMiddleware(Middleware):
         if identity is None:
             return await call_next(context)
 
-        if self._throttle.check(identity.email):
+        if self._throttle.check(identity.subject):
             return await call_next(context)
 
-        self._record_throttled(context.message.name, identity.email)
+        self._record_throttled(context.message.name, identity.subject)
         raise ToolError(THROTTLE_MESSAGE)
 
     def _record_throttled(self, tool_name: str, email: str) -> None:

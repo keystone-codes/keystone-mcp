@@ -80,3 +80,42 @@ class UserRoleRow(Base):
     role: Mapped[str] = mapped_column(String(64), nullable=False)
 
     user: Mapped[UserRow] = relationship(back_populates="roles")
+
+
+class ServiceAccountRow(Base):
+    """A machine identity (service account)."""
+
+    __tablename__ = "keystone_service_account"
+
+    name: Mapped[str] = mapped_column(String(63), primary_key=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_blocked: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_by: Mapped[str | None] = mapped_column(String(330), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow)
+
+    roles: Mapped[list[ServiceAccountRoleRow]] = relationship(
+        back_populates="account",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
+
+
+class ServiceAccountRoleRow(Base):
+    """A single role assignment for a service account."""
+
+    __tablename__ = "keystone_service_account_role"
+    __table_args__ = (
+        UniqueConstraint("name", "role", name="uq_keystone_service_account_role"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(
+        String(63),
+        ForeignKey("keystone_service_account.name", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    role: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    account: Mapped[ServiceAccountRow] = relationship(back_populates="roles")
