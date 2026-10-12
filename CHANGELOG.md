@@ -13,6 +13,9 @@ this project uses [Semantic Versioning](https://semver.org/).
   (`docs/environment.md#removed-variables`).
 - `.trivyignore` for temporarily accepted Trivy findings; each entry needs a
   reason and a review date, checked by `tests/test_trivyignore.py`.
+- Upstream registry: `transport: stdio` with `command`, `args`, `env`
+  (names of keystone-mcp variables, never their values) and `cwd`; a
+  supervised child process with restart backoff (1 second doubling to 60).
 
 ### Changed
 

@@ -34,3 +34,19 @@ entries:
   #   url: http://docs-mcp:8081/mcp
   #   namespace: docs
   #   enabled: true
+
+  # A ready-made MCP server run as a local process over stdio instead of a
+  # network call -- the shape most npm or pip MCP packages come in.
+  # Keystone-MCP starts, supervises, and restarts this process; "url" and
+  # "auth.bearer_env" are not allowed here. "command" is never passed
+  # through a shell, so "~" and "$VAR" are not expanded in it or in "args".
+  # - name: notes-mcp
+  #   namespace: notes
+  #   transport: stdio
+  #   command: python
+  #   args: ["server.py", "--root", "/srv/notes"]
+  #   cwd: /opt/notes-mcp
+  #   env:
+  #     # Child process variable name: keystone-mcp variable name (never the
+  #     # value). Startup refuses to run if the named variable is unset.
+  #     NOTES_API_TOKEN: KEYSTONE_MCP_UPSTREAM_NOTES_TOKEN
