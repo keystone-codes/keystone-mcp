@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-pytest_plugins = ["keystone_mcp.contract_tests"]
-
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
@@ -15,6 +13,8 @@ from keystone_mcp.user_directory.http import HttpUserDirectory
 from keystone_mcp.user_directory.protocol import UserDirectory
 from support.fake_users_service import build_fake_users_service
 from support.users_store import make_users_store
+
+pytest_plugins = ["keystone_mcp.contract_tests"]
 
 TOKEN = "contract-test-token"
 
