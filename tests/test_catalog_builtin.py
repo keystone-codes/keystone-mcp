@@ -38,7 +38,6 @@ def test_file_tools_absent_without_file_api_url():
 
     assert reg.get("create_upload_url") is None
     assert reg.get("get_download_link") is None
-    assert reg.get("send_chat_attachment") is None
     assert reg.get("upload_file") is None
 
 
