@@ -10,6 +10,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ### Added
 
+- CI: contract freeze gate — a frozen environment variable, policy key or CLI command cannot disappear without a `Removed` entry in the changelog.
 - `docs/compatibility.md`: public contracts frozen since 0.5.0, what counts as a breaking change, deprecation rule, supported versions.
 - Upstream resources and resource templates are published (URIs get the namespace, `scheme://<namespace>/...`) and authorized by `<namespace>_<name>` with the same allow patterns as tools.
 - Contract tests for sign-in providers and users directories (`pytest -p keystone_mcp.contract_tests`, extra `contract-tests`) and a plugin template in `examples/plugin-template`.

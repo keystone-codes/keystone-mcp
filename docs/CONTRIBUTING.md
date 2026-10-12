@@ -79,6 +79,16 @@ Changing a protocol in `keystone_mcp.login` or `keystone_mcp.user_directory`
 means changing the contract tests in the same pull request; the contract is
 frozen from 0.5.0.
 
+## Changing a public contract
+
+Public contracts are listed in [compatibility.md](compatibility.md). A new
+environment variable needs a `config.py` read, `.env.example`,
+[environment.md](environment.md), a row in `compatibility.md`, and an append to
+`tests/data/frozen-env-vars.txt`. Deprecate via the rule in that document; remove
+only in a major release through `REMOVED_VARIABLES` and a `### Removed` changelog
+entry. Policy keys and CLI commands follow the same append-only frozen lists.
+CI enforces this in `tests/test_contract_freeze.py`.
+
 ## Security checks
 
 CI runs a dependency audit (`uv audit`, OSV database) on every pull request
