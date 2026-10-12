@@ -69,6 +69,9 @@ In CI, a `postgres:16-alpine` service is always available and
 not skipped (`tests/test_users_migrations.py::test_postgres_is_configured_in_ci`
 fails the build if they would silently skip).
 
+The suite must pass without reruns or forced ordering; a flaky test is a bug
+to fix, not to retry (`tests/test_ci_hygiene.py`).
+
 CI runs the suite on Python 3.11, 3.12 and 3.13.
 
 ## Security checks
