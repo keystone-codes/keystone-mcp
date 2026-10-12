@@ -81,9 +81,8 @@ services:
       KEYSTONE_MCP_USERS_DB_URL: sqlite:////data/keystone-users.db
       KEYSTONE_MCP_THROTTLE_MAX: "1000"
       KEYSTONE_MCP_LOG_FORMAT: text
-    # No curl in the runtime image (F02); reuse the same python healthcheck
-    # module the Dockerfile's own HEALTHCHECK already runs, against /readyz
-    # (F03 landed before this card, so the readiness probe already exists).
+    # No curl in the runtime image; reuse the python healthcheck module the
+    # Dockerfile's own HEALTHCHECK runs, against /readyz.
     healthcheck:
       test: ["CMD", "python", "-m", "keystone_mcp.healthcheck", "/readyz"]
       interval: 5s

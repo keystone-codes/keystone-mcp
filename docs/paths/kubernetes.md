@@ -89,6 +89,20 @@ one, is not part of this check — see [observability-logging.md](../observabili
   address for every caller instead of the real client:
   [environment.md#behind-a-reverse-proxy](../environment.md#behind-a-reverse-proxy).
 
+## Metrics
+
+`/metrics` is off by default (`KEYSTONE_MCP_METRICS_ENABLED`). If you turn
+it on, a scrape must pass two checks: its source address must be in
+`KEYSTONE_MCP_INTERNAL_ALLOWED_CIDRS` (default loopback only — add your
+Prometheus pod network), and its `Host` must be allowed. Unlike `/healthz`
+and `/readyz`, `/metrics` is not exempt from the Host check, and by default
+only `KEYSTONE_MCP_BASE_URL`'s host is allowed, so a scrape by pod IP (pod
+or endpoints discovery) or by Service name is refused with `421`. Scrape a
+fixed name and add it to `KEYSTONE_MCP_ALLOWED_HOSTS` (e.g.
+`keystone.keystone.svc.cluster.local:8080`); note that a scrape through the
+Service reaches a different replica each time. Pod IPs cannot be listed in
+advance.
+
 ## Protecting an upstream from pod-to-pod spoofing
 
 `configmap.yaml`'s `upstreams.yaml` tells you to run your own service as a

@@ -172,14 +172,17 @@ exact host each client redirects back to:
 | Client | Host to allow |
 |---|---|
 | Claude Code | `localhost` (it listens on a different local port each time; the restriction matches on host only) |
-| Cursor, desktop app | `localhost` |
+| Cursor, desktop app | its custom-scheme callback as a `scheme://host` entry, e.g. `cursor://anysphere.cursor-retrieval` (confirm the host in the server log, see below); a bare `localhost` does not cover a `cursor://` redirect |
 | Cursor, web and Background Agents | `cursor.com` |
 | Claude Desktop, `mcp-remote` bridge | `localhost` |
 | Claude Desktop, custom connector | `claude.ai` |
 
-For a client not listed here, start the sign-in once with the restriction
-off, then search the server log for `redirect_uri host not allowed` — it
-names the exact host the client asked for.
+For a client not listed here, turn the restriction on with any entry (for
+example `localhost`), start the sign-in once, then search the server log
+for `redirect_uri host not allowed` — it names the host the client asked
+for. The log shows the host only: if the client's redirect uses a custom
+scheme (not `http`/`https`), the entry must be `scheme://host`, not the
+bare host.
 
 ## If sign-in does not work
 
@@ -190,3 +193,4 @@ names the exact host the client asked for.
 | Google sign-in fails with `redirect_uri_mismatch` | This is on the operator's side: the Google OAuth client's redirect URI does not match. See [google-oauth.md](google-oauth.md). |
 | The client shows an old or missing tool list | Reconnect (disable, then enable, the server). Keystone-MCP does not push a live tool-list update when its upstream catalog changes in the background; see [facade.md](facade.md). |
 | `http://` to a public address is refused | Use `https://`. A `production`-profile server refuses a plain-`http` address once it is reachable publicly. |
+| `421 Misdirected Request` | The address you connected to is not the server's own name. Use exactly the host in `KEYSTONE_MCP_BASE_URL` (for the local demo, `localhost`, `127.0.0.1` or `[::1]` on the same port); an operator can allow another name with `KEYSTONE_MCP_ALLOWED_HOSTS`. |
