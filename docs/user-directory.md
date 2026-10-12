@@ -158,7 +158,7 @@ class StaticFileUserDirectory:
 A richer example (LDAP, a ticketing system's user table) looks the same
 shape, just backed by a real connection instead of a file. Registering a
 directory from your own package without editing Keystone's core: see
-plugins.md (X09).
+plugins.md.
 
 ## Errors
 
@@ -174,6 +174,7 @@ plugins.md (X09).
 | `service_unconfigured` | No directory is configured, or it does not support administration. |
 | `service_timeout` | The directory's administration path timed out. |
 | `service_unavailable` | The directory (database or external service) did not answer. |
+| `service_error` | The directory (HTTP backend) answered with a response this client could not parse (an unrecognized status, an empty or malformed body, or a record missing a required field). |
 | `catalog_unavailable` / `catalog_timeout` | The read path (`resolve_user`/`ping`) could not reach the directory — fail-closed for login and RBAC. |
 
 ## The HTTP directory contract
@@ -202,7 +203,7 @@ segments are percent-encoded.) The user object has eight fields: `email`,
 `full_name`, `roles`, `is_blocked`, `created_at`, `updated_at` (ISO 8601,
 `Z` suffix), `created_by`, `note`.
 
-**Code normalization (decision S3).** `HttpUserDirectory` normalizes two of
+**Code normalization.** `HttpUserDirectory` normalizes two of
 the service's own codes onto the table above before Keystone ever sees them:
 `invalid_role` becomes `validation_error`, `user_already_exists` becomes
 `conflict`. Every other code the service reports passes through unchanged —
@@ -232,4 +233,4 @@ regardless.
 
 ## Registering a directory from your own package
 
-See plugins.md (X09) — not written yet.
+See plugins.md.
