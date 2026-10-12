@@ -17,8 +17,10 @@ who may reach this server and with which roles: ``users_list``,
 ``users_set_roles``, ``users_grant_role``, ``users_revoke_role``. These routes
 are registered only when ``KEYSTONE_MCP_RBAC_MODE=enforce``; authorization is
 RBAC policy plus the RBAC middleware. The ``admin=True`` flag is catalog
-metadata only and enforces nothing. User administration: built-in directory by
-default, HTTP directory with ``KEYSTONE_MCP_USERS_BACKEND=http``.
+metadata only and enforces nothing. ``users_list`` is published whenever a
+directory is configured; the other seven (administration) are published only
+when that directory declares the ``"admin"`` capability (X06) -- a read-only
+directory publishes ``users_list`` alone.
 
 Every route here is registered ``mode="live"`` — its adapter is wired and
 serving. Add a route with ``registry.add_route`` when a new built-in target is
@@ -27,13 +29,17 @@ ready.
 
 from __future__ import annotations
 
+import logging
+
 from keystone_mcp.adapters.base import Pattern
 from keystone_mcp.adapters.file_ref import FileRefAdapter
 from keystone_mcp.adapters.upload_url import UploadUrlAdapter
 from keystone_mcp.adapters.users_admin import RoleSource, UsersAdminAdapter
 from keystone_mcp.config import Settings
 from keystone_mcp.router.registry import Param, RouterRegistry
-from keystone_mcp.users.store import UsersStore
+from keystone_mcp.user_directory.protocol import UserDirectory
+
+logger = logging.getLogger(__name__)
 
 #: Every tool name the built-in catalog can register, whatever the settings.
 #: Used by upstream namespace validation (P09) to reject namespaces that
@@ -59,11 +65,11 @@ def register_catalog(
     settings: Settings,
     *,
     observability: object | None = None,
-    users_store: UsersStore | None = None,
+    directory: UserDirectory | None = None,
     role_source: RoleSource | None = None,
 ) -> None:
     users_admin = UsersAdminAdapter(
-        observability=observability, users_store=users_store, role_source=role_source
+        directory=directory, observability=observability, role_source=role_source
     )
 
     P = Param  # noqa: N806 — local alias for brevity
@@ -103,11 +109,14 @@ def register_catalog(
 
     if not settings.rbac_enforcing:
         return
+    if directory is None:
+        return
 
-    # ── ADMIN — user administration: built-in directory by default, HTTP
-    # directory with KEYSTONE_MCP_USERS_BACKEND=http. Who may call these tools
-    # is decided by the policy file. ``admin=True`` is catalog metadata only.
-    _users_tools: list[tuple[str, str, list[Param]]] = [
+    # ── ADMIN — user administration over whichever UserDirectory the server
+    # was built with. Who may call these tools is decided by the policy file.
+    # ``admin=True`` is catalog metadata only. ``users_list`` is published for
+    # any directory; the other seven only when it declares "admin" (X06).
+    _read_only_tools: list[tuple[str, str, list[Param]]] = [
         (
             "users_list",
             "List workspace users with optional filters (default: not blocked).",
@@ -117,6 +126,8 @@ def register_catalog(
                 P("email_contains", str, required=False, default=None),
             ],
         ),
+    ]
+    _admin_tools: list[tuple[str, str, list[Param]]] = [
         (
             "users_add",
             "Create a workspace user with an initial role set.",
@@ -171,7 +182,7 @@ def register_catalog(
             ],
         ),
     ]
-    for tool_name, description, params in _users_tools:
+    for tool_name, description, params in _read_only_tools:
         registry.add_route(
             tool_name,
             users_admin,
@@ -180,4 +191,20 @@ def register_catalog(
             description=description,
             mode="live",
             admin=True,
+        )
+    if "admin" in directory.capabilities:
+        for tool_name, description, params in _admin_tools:
+            registry.add_route(
+                tool_name,
+                users_admin,
+                pattern=Pattern.M_B,
+                params=params,
+                description=description,
+                mode="live",
+                admin=True,
+            )
+    else:
+        logger.warning(
+            "users directory %s is read-only: users_* administration tools are not published",
+            directory.name,
         )
