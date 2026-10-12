@@ -259,3 +259,21 @@ def test_docs_index_links_every_page() -> None:
         if (REPO_ROOT / rel_path).resolve() not in linked
     ]
     assert not missing, "docs/README.md does not link: " + ", ".join(missing)
+
+
+_README_MAX_LINES = 130
+
+
+def test_readme_is_short() -> None:
+    """``README.md`` stays short enough to read in one sitting.
+
+    The front page is a pitch, not a manual -- the rest of the detail lives
+    under ``docs/``. A 130-line cap keeps that true as sections are added or
+    edited; a change that needs more room trims an existing section instead
+    of growing the file.
+    """
+    readme_path = REPO_ROOT / "README.md"
+    line_count = len(readme_path.read_text(encoding="utf-8").splitlines())
+    assert line_count <= _README_MAX_LINES, (
+        f"README.md has {line_count} lines, more than the {_README_MAX_LINES}-line limit"
+    )
