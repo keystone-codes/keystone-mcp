@@ -22,7 +22,7 @@ from keystone_mcp.users.errors import (
     SelfAdminMutationError,
     UserAlreadyExistsError,
 )
-from keystone_mcp.users.records import ResolvedUser, UserRecord
+from keystone_mcp.users.records import ResolvedUser, user_record_from_row
 from keystone_mcp.users.roles import normalize_roles
 from support.users_db import users_engine  # noqa: F401 -- fixture import
 
@@ -38,10 +38,19 @@ def test_users_package_has_no_back_imports() -> None:
     Run in a fresh subprocess: in-process, other test modules already loaded
     in this same pytest session would have imported those modules long
     before this test runs, making an in-process sys.modules check meaningless.
+
+    ``keystone_mcp.users.errors``/``.records`` import the dependency-free
+    ``keystone_mcp.user_directory.types``/``.errors`` (X06), so the package
+    itself (and its lightweight ``protocol``/``critical`` submodules) is now
+    expected in ``sys.modules`` -- but nothing that depends on a concrete
+    directory implementation, Redis, or httpx should be.
     """
     code = (
         "import keystone_mcp.users, sys; "
-        "assert 'keystone_mcp.user_directory' not in sys.modules; "
+        "assert 'keystone_mcp.user_directory.local' not in sys.modules; "
+        "assert 'keystone_mcp.user_directory.http' not in sys.modules; "
+        "assert 'keystone_mcp.user_directory.factory' not in sys.modules; "
+        "assert 'keystone_mcp.user_directory.resolver' not in sys.modules; "
         "assert 'keystone_mcp.server' not in sys.modules; "
         "assert 'keystone_mcp.adapters' not in sys.modules; "
         "assert 'keystone_mcp.config' not in sys.modules"
@@ -581,7 +590,7 @@ def test_user_record_to_dict_shape(session_factory) -> None:  # noqa: ANN001
 
     with session_scope(session_factory) as session:
         user = service._load_user(session, "shape@example.com")
-        record = UserRecord.from_row(user)
+        record = user_record_from_row(user)
         payload = record.to_dict()
 
     assert set(payload.keys()) == {
