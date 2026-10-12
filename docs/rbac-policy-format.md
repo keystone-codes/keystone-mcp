@@ -108,6 +108,8 @@ other role.
 the allow patterns of all roles assigned to them. A user with no roles is
 denied everything.
 
+Why: [ADR 0002](adr/0002-roles-in-the-policy-file.md).
+
 ### 2.5 `deny`
 
 Global kill list. A tool matching any `deny` pattern is denied for every role,

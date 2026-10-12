@@ -232,6 +232,9 @@ def _docs_index_pages() -> list[str]:
     found = [p for p in base.glob("*.md") if p.name != "README.md"]
     found.extend((base / "paths").glob("*.md"))
     found.extend((base / "contrib").glob("*.md"))
+    adr_readme = base / "adr" / "README.md"
+    if adr_readme.is_file():
+        found.append(adr_readme)
     return sorted(p.relative_to(REPO_ROOT).as_posix() for p in found)
 
 
@@ -264,6 +267,72 @@ def test_docs_index_links_every_page() -> None:
 
 
 _README_MAX_LINES = 130
+
+
+def _adr_record_paths() -> list[Path]:
+    """Every numbered ADR under ``docs/adr/``, excluding ``README.md``."""
+    adr_dir = REPO_ROOT / "docs" / "adr"
+    if not adr_dir.is_dir():
+        return []
+    return sorted(adr_dir.glob("[0-9][0-9][0-9][0-9]-*.md"))
+
+
+def _markdown_outside_adr() -> list[Path]:
+    """All ``*.md`` files that count as outward references to ADRs."""
+    paths: set[Path] = set()
+    for name in _ROOT_FILES:
+        path = REPO_ROOT / name
+        if path.is_file():
+            paths.add(path.resolve())
+    for dirname in _SCAN_DIRS:
+        base = REPO_ROOT / dirname
+        if not base.is_dir():
+            continue
+        for path in base.rglob("*.md"):
+            rel_parts = path.relative_to(REPO_ROOT).parts
+            if rel_parts[:2] == ("docs", "adr"):
+                continue
+            if any(part in _EXCLUDED_DIR_NAMES for part in rel_parts):
+                continue
+            paths.add(path.resolve())
+    return sorted(paths)
+
+
+def test_adr_index_lists_every_record() -> None:
+    """``docs/adr/README.md`` links every numbered record file."""
+    index_path = REPO_ROOT / "docs" / "adr" / "README.md"
+    index_text = index_path.read_text(encoding="utf-8")
+    missing = [record.name for record in _adr_record_paths() if record.name not in index_text]
+    assert not missing, "docs/adr/README.md does not mention: " + ", ".join(missing)
+
+
+def test_every_adr_is_referenced_from_docs() -> None:
+    """Each ADR is linked from at least one Markdown file outside ``docs/adr/``."""
+    outward = _markdown_outside_adr()
+    combined = "\n".join(p.read_text(encoding="utf-8") for p in outward)
+    unreferenced = [record.name for record in _adr_record_paths() if record.name not in combined]
+    assert not unreferenced, "no outward link to ADR file(s): " + ", ".join(unreferenced)
+
+
+_ADR_REQUIRED_SECTIONS = (
+    "## Status",
+    "## Context",
+    "## Decision",
+    "## Consequences",
+    "## Alternatives considered",
+)
+
+
+def test_adr_has_required_sections() -> None:
+    """Each numbered ADR includes the standard section headings."""
+    problems: list[str] = []
+    for record in _adr_record_paths():
+        text = record.read_text(encoding="utf-8")
+        rel = record.relative_to(REPO_ROOT).as_posix()
+        for heading in _ADR_REQUIRED_SECTIONS:
+            if heading not in text:
+                problems.append(f"{rel}: missing {heading}")
+    assert not problems, "ADR section gaps:\n" + "\n".join(problems)
 
 
 def test_readme_is_short() -> None:

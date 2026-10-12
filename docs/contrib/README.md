@@ -10,7 +10,7 @@ Keystone-MCP itself registers nothing from `contrib/` — there is no
 environment variable that turns it on. A fork that wants one of these
 adapters imports the class and registers a route with it as the target, the
 same way it would register any other `Adapter` (see
-[adding-routes.md](../adding-routes.md)).
+[adding-routes.md](../adding-routes.md)). Why: [ADR 0006](../adr/0006-no-file-api-in-the-core.md).
 
 Settings under `contrib/` use the `KEYSTONE_MCP_CONTRIB_` prefix, are read
 only by the class that owns them (at construction time, not from the shared

@@ -225,6 +225,8 @@ command. [`examples/keystone-identity/test-vector.json`](../examples/keystone-id
 is a fixed assertion both reference verifiers accept, for checking a new
 implementation against the same token.
 
+Why: [ADR 0003](adr/0003-signed-identity-assertion.md).
+
 **Rotating the secret** without downtime: configure your service to accept
 two secrets (both reference verifiers take a list, tried in order), restart
 Keystone-MCP with the new `auth.identity_secret_env` value, then drop the old
