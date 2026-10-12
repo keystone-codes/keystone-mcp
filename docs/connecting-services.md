@@ -279,6 +279,64 @@ the request stream. Release resources in `finally` blocks. Keystone-MCP forwards
 a client cancel and applies the same upstream cancellation when a proxied call
 hits the configured per-tool timeout.
 
+## Running a stdio server
+
+Some upstreams speak MCP over **stdio** instead of Streamable HTTP. Keystone-MCP
+starts the child process, supervises it, and proxies calls the same way as for
+HTTP — discovery, RBAC, progress, and cancellation all apply. There is no
+`/healthz` on the child; availability is the process state (see
+`keystone_mcp_upstream_available` in [observability-rbac.md](observability-rbac.md)).
+
+Registry entry (no `url`):
+
+```yaml
+entries:
+  - name: notes
+    namespace: notes
+    transport: stdio
+    command: python
+    args: ["/opt/notes/server.py"]
+    cwd: /opt/notes
+    enabled: true
+    env:
+      MY_API_KEY: MY_API_KEY_ENV
+```
+
+- **`command` / `args` / `cwd`** — how Keystone-MCP starts the server. Use an
+  absolute path to the interpreter if `PATH` in the container is uncertain.
+- **`env`** — maps **child variable name → parent environment variable name**.
+  Only variables listed here are passed into the child; Keystone-MCP never
+  forwards its whole environment. Values must already be set in the Keystone-MCP
+  process (or container) under the names on the right.
+- **`auth.identity_secret_env`** — same HS256 assertion as HTTP, but it is sent
+  in `params._meta["keystone-mcp/identity"]` on `tools/call`, not in
+  `X-Keystone-Identity`. There is **no** `X-Author-Email` on stdio calls.
+- **Discovery at startup** — before the main server loop, Keystone-MCP may start
+  a **temporary** stdio process (`keep_alive=false`), list tools, and exit. After
+  the server is up, a **persistent** process serves all calls until shutdown.
+- **stderr** from the child is copied into Keystone-MCP's logs (logger
+  `keystone_mcp.upstream.stderr`).
+- **Restarts** — if the process crashes or stops answering, the supervisor logs
+  `upstream process down namespace=…` and restarts after a backoff (1 s, then
+  doubling up to 60 s). After a run stays healthy for one minute, the backoff
+  schedule resets to 1 s.
+- **Progress and cancellation** — behave like HTTP upstreams (see "Long-running
+  tools" above).
+- **Elicitation** — upstream-to-user prompts are not forwarded for stdio (same
+  gap as noted in [facade.md](facade.md#what-passes-through-the-door)).
+
+Servers installed with `npx -y …` need Node in the Keystone-MCP image. Prefer
+baking the package into the image and setting a generous
+`discovery_timeout_seconds` on the entry. Minimal pattern:
+
+```dockerfile
+FROM ghcr.io/keystone-codes/keystone-mcp:0.5.0
+RUN apt-get update && apt-get install -y nodejs npm && rm -rf /var/lib/apt/lists/*
+```
+
+See [`../examples/hello-stdio/`](../examples/hello-stdio/) for a small Python
+stdio server used in the demo compose stack.
+
 ## Tool naming
 
 Client-visible tool names are `<namespace>_<upstream tool name>` (or the name

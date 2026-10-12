@@ -12,8 +12,10 @@ for that (a load balancer polls every few seconds from every replica).
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
+import sys
 from pathlib import Path
 
 import httpx
@@ -29,6 +31,7 @@ from keystone_mcp.http.readiness import ReadinessProbe
 from keystone_mcp.server import bootstrap_rbac_policy, build_server
 
 BASE_URL = "http://localhost:8080"
+STDIO_SERVER = str(Path(__file__).parent / "support" / "stdio_upstream.py")
 
 RBAC_POLICY = """\
 version: "1.0.0"
@@ -264,6 +267,80 @@ async def test_readyz_http_users_backend_is_skipped(tmp_path: Path):
     response = await _get(app, "/readyz", client_host="127.0.0.1")
     assert response.status_code == 200
     assert response.json()["checks"]["users_directory"] == "skipped"
+
+
+def _build_app_with_stdio_upstream(
+    monkeypatch: pytest.MonkeyPatch, **settings_kw: object
+) -> tuple:
+    monkeypatch.setenv(
+        "KEYSTONE_MCP_UPSTREAMS",
+        json.dumps(
+            [
+                {
+                    "name": "notes",
+                    "namespace": "notes",
+                    "transport": "stdio",
+                    "command": sys.executable,
+                    "args": [STDIO_SERVER],
+                    "enabled": True,
+                }
+            ]
+        ),
+    )
+    settings = Settings(base_url=BASE_URL, **settings_kw)
+    built = build_server(
+        identity_provider=StaticIdentityProvider({"token"}),
+        settings=settings,
+        oauth_store=InMemoryOAuthStore(),
+        register_builtin_catalog=False,
+    )
+    return built[0], built[3], settings
+
+
+async def test_readyz_internal_body_lists_upstreams(monkeypatch: pytest.MonkeyPatch):
+    mcp, upstreams, settings = _build_app_with_stdio_upstream(monkeypatch)
+    assert "notes" in upstreams._sub_servers
+    app = mcp.http_app(path=settings.http_path)
+    response = await _get(app, "/readyz", client_host="127.0.0.1")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "ok"
+    assert "notes" in body["upstreams"]
+    assert body["upstreams"]["notes"]["transport"] == "stdio"
+
+
+async def _noop_start_connections(*, wait: float | None = None) -> None:
+    return
+
+
+async def test_readyz_ignores_unavailable_upstream_by_default(monkeypatch: pytest.MonkeyPatch):
+    mcp, upstreams, settings = _build_app_with_stdio_upstream(monkeypatch)
+    monkeypatch.setattr(upstreams, "start_connections", _noop_start_connections)
+    upstreams.mark_unavailable("notes", "down for test")
+    app = mcp.http_app(path=settings.http_path)
+    response = await _get(app, "/readyz", client_host="127.0.0.1")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "ok"
+    assert body["upstreams"]["notes"]["available"] is False
+    assert "upstreams" not in body.get("checks", {})
+
+
+async def test_readyz_require_all_fails_when_upstream_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("KEYSTONE_MCP_UPSTREAM_REQUIRE_ALL", "true")
+    mcp, upstreams, settings = _build_app_with_stdio_upstream(
+        monkeypatch, upstream_require_all=True
+    )
+    monkeypatch.setattr(upstreams, "start_connections", _noop_start_connections)
+    upstreams.mark_unavailable("notes", "down for test")
+    app = mcp.http_app(path=settings.http_path)
+    response = await _get(app, "/readyz", client_host="127.0.0.1")
+    assert response.status_code == 503
+    body = response.json()
+    assert body["checks"]["upstreams"] == "fail"
+    assert body["upstreams"]["notes"]["available"] is False
 
 
 # ── Logging: one WARNING per degradation, not one per poll ──────────────────

@@ -1,9 +1,10 @@
 # Run Keystone-MCP on your machine
 
 In about 15 minutes: three containers (Keystone-MCP, Redis, a sample
-upstream service), one sign-in with a DEV token, that service's tools in
-your catalog, a second person with a smaller role, and their catalog
-shrinking to match.
+HTTP upstream), plus a second upstream service **`notes`** started by
+Keystone-MCP over stdio inside the Keystone container; one sign-in with a DEV
+token, those tools in your catalog, a second person with a smaller role, and
+their catalog shrinking to match.
 
 > **Local only.** The DEV token is a shared password: anyone holding it can
 > sign in as any email already in the users directory. This demo binds to
@@ -66,15 +67,15 @@ You should see:
 ## Check the whole install with one command
 
 This script runs the full scenario below in one shot — sign-in, every
-`hello_*` tool, adding a member, and confirming the member's catalog has no
-`users_*`:
+`hello_*` tool, the stdio `notes_*` tools for the administrator, adding a
+member, and confirming the member's catalog has no `users_*` or `notes_*`:
 
 ```bash
 uv run python scripts/smoke_demo.py --base-url http://localhost:8080 \
   --dev-token demo-token --admin-email admin@example.com
 ```
 
-You should see twelve `[PASS]` lines, ending in `12/12 steps passed.` A
+You should see fifteen `[PASS]` lines, ending in `15/15 steps passed.` A
 `[FAIL] <step>: expected <X>, got <Y>` line names exactly which part broke.
 
 ## 3. Connect your MCP client
@@ -142,8 +143,10 @@ blocked".
 Ask your agent: "List the tools from keystone" (or check the client's own
 tool list).
 
-You should see a `hello` section (`hello_greet`, `hello_search`) plus eight
-`users_*` tools (`users_add`, `users_block`, `users_grant_role`, `users_list`,
+You should see a `hello` section (`hello_greet`, `hello_search`), a `notes`
+section (`notes_list`, `notes_read` — stdio upstream mounted from
+[`examples/hello-stdio`](../../examples/hello-stdio/)), plus eight `users_*`
+tools (`users_add`, `users_block`, `users_grant_role`, `users_list`,
 `users_revoke_role`, `users_set_roles`, `users_unblock`, `users_update`).
 
 Ask: "Call hello_greet with name Ada." You should see:
@@ -173,7 +176,7 @@ roles:
     description: "Everything, including user administration."
     allow: ["*"]
   member:
-    description: "Only the hello service."
+    description: "Only the hello service (not notes — stdio RBAC demo)."
     allow: ["hello_*"]
 ```
 

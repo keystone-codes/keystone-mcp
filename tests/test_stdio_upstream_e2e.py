@@ -23,15 +23,23 @@ from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import Settings
 from keystone_mcp.identity import VerifiedIdentity
 from keystone_mcp.identity_assertion import IDENTITY_META_KEY
-from keystone_mcp.server import bootstrap_upstreams, build_server
+from keystone_mcp.server import bootstrap_rbac_policy, bootstrap_upstreams, build_server
+from keystone_mcp.user_directory import build_in_memory_user_directory_resolver
 
 STDIO_SERVER = str(Path(__file__).parent / "support" / "stdio_upstream.py")
 ANN = VerifiedIdentity(email="ann@example.com")
 
 
+def _identity_ann() -> VerifiedIdentity:
+    return ANN
+
+
 @pytest.fixture(autouse=True)
 def patch_verified_identity(monkeypatch):
-    monkeypatch.setattr("keystone_mcp.identity.resolve_verified_identity", lambda: ANN)
+    monkeypatch.setattr("keystone_mcp.identity.resolve_verified_identity", _identity_ann)
+    monkeypatch.setattr(
+        "keystone_mcp.router.rbac_middleware.resolve_verified_identity", _identity_ann
+    )
 
 
 NOTES_POLICY = """\
@@ -64,6 +72,7 @@ def _build_stdio_server(
     rbac_mode: str = "off",
     policy: bool = False,
     upstream_payload: list[dict[str, object]] | None = None,
+    user_resolver=None,
     **settings_kw,
 ):
     monkeypatch.setenv(
@@ -75,6 +84,7 @@ def _build_stdio_server(
         policy_path = tmp_path / "policy.yaml"
         policy_path.write_text(NOTES_POLICY, encoding="utf-8")
         monkeypatch.setenv("KEYSTONE_MCP_RBAC_POLICY_PATH", str(policy_path))
+        settings_kw.setdefault("rbac_audit_subject_salt", "test-stdio-e2e-salt")
     settings = Settings(
         base_url="http://127.0.0.1:8080",
         refresh_interval_seconds=settings_kw.pop("refresh_interval_seconds", 0),
@@ -85,15 +95,20 @@ def _build_stdio_server(
         identity_provider=StaticIdentityProvider({"dev"}),
         register_builtin_catalog=False,
         oauth_store=InMemoryOAuthStore(),
+        user_resolver=user_resolver,
     )
 
 
 @asynccontextmanager
 async def _with_stdio_stack(monkeypatch, tmp_path: Path, **build_kw):
-    built = _build_stdio_server(monkeypatch, tmp_path, **build_kw)
-    mcp, upstreams = built[0], built[3]
+    user_resolver = build_kw.pop("user_resolver", None)
+    built = _build_stdio_server(monkeypatch, tmp_path, user_resolver=user_resolver, **build_kw)
+    mcp, registry, upstreams = built[0], built[1], built[3]
+    policy_manager = built[4]
     settings = Settings(base_url="http://127.0.0.1:8080")
-    await bootstrap_upstreams(upstreams, settings)
+    discovery = await bootstrap_upstreams(upstreams, settings)
+    if build_kw.get("policy"):
+        bootstrap_rbac_policy(policy_manager, registry, discovery=discovery)
     async with LifespanManager(mcp.http_app(path="/mcp")):
         yield mcp, upstreams, built[6]
 
@@ -115,16 +130,36 @@ async def test_bootstrap_discovers_with_a_temporary_process(monkeypatch, tmp_pat
 
 @pytest.mark.asyncio
 async def test_tools_published_and_called_through_rbac(monkeypatch, tmp_path):
-    async with _with_stdio_stack(monkeypatch, tmp_path, rbac_mode="off") as (
-        mcp,
-        _upstreams,
-        _reconciler,
-    ):
+    resolver, backend, _revision = build_in_memory_user_directory_resolver()
+    backend.seed("ann@example.com", roles=("member",))
+    backend.seed("bob@example.com", roles=())
+    async with _with_stdio_stack(
+        monkeypatch,
+        tmp_path,
+        rbac_mode="enforce",
+        policy=True,
+        user_resolver=resolver,
+    ) as (mcp, _upstreams, _reconciler):
+        def _ann() -> VerifiedIdentity:
+            return VerifiedIdentity(email="ann@example.com")
+
+        monkeypatch.setattr("keystone_mcp.identity.resolve_verified_identity", _ann)
+        monkeypatch.setattr("keystone_mcp.router.rbac_middleware.resolve_verified_identity", _ann)
         async with Client(mcp) as client:
             tools = {t.name for t in await client.list_tools()}
             assert "notes_greet" in tools
             out = await client.call_tool("notes_greet", {"name": "Ada"})
             assert "Ada" in out.content[0].text
+        def _bob() -> VerifiedIdentity:
+            return VerifiedIdentity(email="bob@example.com")
+
+        monkeypatch.setattr("keystone_mcp.identity.resolve_verified_identity", _bob)
+        monkeypatch.setattr("keystone_mcp.router.rbac_middleware.resolve_verified_identity", _bob)
+        async with Client(mcp) as client:
+            tools = {t.name for t in await client.list_tools()}
+            assert "notes_greet" not in tools
+            with pytest.raises(ToolError, match="access denied|denied"):
+                await client.call_tool("notes_greet", {"name": "Ada"})
 
 
 @pytest.mark.asyncio
