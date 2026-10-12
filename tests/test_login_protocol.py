@@ -17,7 +17,12 @@ from keystone_mcp.auth.identity_provider import StaticIdentityProvider
 from keystone_mcp.login.api_key import ApiKeyLoginProvider
 from keystone_mcp.login.factory import validate_login_providers
 from keystone_mcp.login.google import GoogleLoginProvider
-from keystone_mcp.login.protocol import FormLoginProvider, LoginRejected, RedirectLoginProvider
+from keystone_mcp.login.protocol import (
+    FormField,
+    FormLoginProvider,
+    LoginRejected,
+    RedirectLoginProvider,
+)
 from support.fake_login import FakeRedirectProvider
 from support.google_oidc_fixtures import build_mock_google_oidc
 
@@ -101,6 +106,50 @@ def test_validate_login_providers_rejects_duplicates_bad_names_and_two_forms():
 
     with pytest.raises(ValueError, match="RedirectLoginProvider"):
         validate_login_providers([_BrokenRedirect()])
+
+
+def test_validate_login_providers_rejects_name_with_trailing_newline():
+    # ``$`` also matches right before a trailing newline, so a ``.match`` (as
+    # opposed to ``.fullmatch``) against ``^[a-z][a-z0-9_-]{0,31}$`` would let
+    # a name like "acme\n" slip through as "valid".
+    with pytest.raises(ValueError, match="not valid"):
+        validate_login_providers([FakeRedirectProvider("acme\n")])
+
+
+def test_validate_login_providers_reserves_google_and_redirect_not_allowed():
+    # "google" may only be claimed by the real GoogleLoginProvider: nothing
+    # else may ride on the interactive-human trust that name carries
+    # (rbac/human_identity.py, and _complete_login's provider-name check).
+    with pytest.raises(ValueError, match="google"):
+        validate_login_providers([FakeRedirectProvider("google")])
+
+    # "redirect-not-allowed" is the fixed route authorize() sends a refused
+    # redirect_uri to (server.py registers it unconditionally); a provider
+    # claiming it would collide with that route.
+    with pytest.raises(ValueError, match="reserved"):
+        validate_login_providers([FakeRedirectProvider("redirect-not-allowed")])
+
+    # The real Google provider is of course still allowed to use its own name.
+    mock = build_mock_google_oidc("http://localhost/login/google/callback")
+    validate_login_providers([GoogleLoginProvider(mock.client)])
+
+
+def test_validate_login_providers_rejects_unsafe_form_fields():
+    from support.fake_login import FakeFormProvider
+
+    class _BadFieldName(FakeFormProvider):
+        def form_fields(self):
+            return (FormField("not safe!", "email", "email_label"),)
+
+    with pytest.raises(ValueError, match="unsafe"):
+        validate_login_providers([_BadFieldName("acme_form")])
+
+    class _BadInputType(FakeFormProvider):
+        def form_fields(self):
+            return (FormField("email", "not_a_real_type", "email_label"),)  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="input_type"):
+        validate_login_providers([_BadInputType("acme_form")])
 
 
 async def test_google_begin_puts_nonce_and_verifier_into_attempt():
