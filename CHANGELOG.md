@@ -11,6 +11,8 @@ this project uses [Semantic Versioning](https://semver.org/).
 - Startup refuses a removed variable that would change security behaviour
   if ignored, and warns about other removed variables
   (`docs/environment.md#removed-variables`).
+- `.trivyignore` for temporarily accepted Trivy findings; each entry needs a
+  reason and a review date, checked by `tests/test_trivyignore.py`.
 
 ### Changed
 
@@ -29,6 +31,12 @@ this project uses [Semantic Versioning](https://semver.org/).
 
 - Replace `KEYSTONE_MCP_RBAC_ENABLED=true` with `KEYSTONE_MCP_RBAC_MODE=enforce`;
   delete the old variable — the server does not start while it is set.
+
+### Security
+
+- Trivy image scan now blocks pull requests and releases on fixable HIGH and
+  CRITICAL findings; temporary exceptions live in `.trivyignore` with a
+  reason and a review date.
 
 ## [0.4.0] - 2026-10-11
 

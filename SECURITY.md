@@ -20,7 +20,8 @@ follow up with next steps as we investigate.
 Only the latest released minor version receives security fixes.
 
 Dependencies are audited on every PR and weekly (`uv audit`); the container
-image is scanned with Trivy.
+image is scanned with Trivy; a fixable HIGH or CRITICAL finding blocks the
+pull request and the release.
 
 ## Security documentation
 
