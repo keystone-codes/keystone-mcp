@@ -1,0 +1,10 @@
+{
+  "name": "keystone-identity-example",
+  "private": true,
+  "type": "module",
+  "description": "Reference TypeScript verifier for Keystone-MCP's X-Keystone-Identity assertion. Not published; copy keystoneIdentity.ts into your own service.",
+  "devDependencies": {
+    "jose": "^5.9.6",
+    "typescript": "^5.6.3"
+  }
+}
