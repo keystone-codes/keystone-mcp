@@ -20,11 +20,6 @@ import mcp_types
 from fastmcp import FastMCP
 
 from keystone_mcp.adapters.users_admin import RoleSource
-from keystone_mcp.auth.identity_provider import (
-    AuthServiceIdentityProvider,
-    IdentityProvider,
-    StaticIdentityProvider,
-)
 from keystone_mcp.auth.keystone_oauth_provider import KeystoneOAuthProvider
 from keystone_mcp.auth.login_pending_store import (
     InMemoryLoginPendingStore,
@@ -38,7 +33,6 @@ from keystone_mcp.auth.oauth_store import (
 from keystone_mcp.auth.throttle import PerIdentityThrottle
 from keystone_mcp.catalog import register_catalog
 from keystone_mcp.config import (
-    AUTH_SERVICE_URL_WITHOUT_TOKEN_ERROR,
     ConfigError,
     Settings,
     client_address_allowed,
@@ -50,7 +44,11 @@ from keystone_mcp.env_file import load_env_file
 from keystone_mcp.http.access_log import AccessLogMiddleware
 from keystone_mcp.http.host_guard import HostGuardMiddleware
 from keystone_mcp.http.readiness import ReadinessProbe
-from keystone_mcp.login.factory import build_login_providers, validate_login_providers
+from keystone_mcp.login.factory import (
+    build_login_providers,
+    login_providers_want_directory_resolver,
+    validate_login_providers,
+)
 from keystone_mcp.login.protocol import LoginProvider
 from keystone_mcp.observability import RbacObservability
 from keystone_mcp.observability.logging import configure_logging
@@ -137,26 +135,6 @@ class UpstreamDiscoveryResult:
         return sum(self.counts.values())
 
 
-def build_identity_provider(settings: Settings) -> IdentityProvider:
-    """Select dev-token or auth-service introspection based on configuration.
-
-    ``validate_settings`` already refuses an auth-service URL without a token at
-    startup; the same check is repeated here as defence-in-depth for callers
-    that assemble a server without going through ``load_settings``.
-    """
-    url = settings.auth_service_url.strip()
-    token = settings.auth_service_token.strip()
-    if url and not token:
-        raise ConfigError(AUTH_SERVICE_URL_WITHOUT_TOKEN_ERROR)
-    if url and token:
-        logger.warning(
-            "KEYSTONE_MCP_AUTH_SERVICE_URL / KEYSTONE_MCP_AUTH_SERVICE_TOKEN are deprecated "
-            "and will be removed in 0.4.1; API keys move into the built-in users directory."
-        )
-        return AuthServiceIdentityProvider(url, token)
-    return StaticIdentityProvider({token for token in settings.dev_tokens.split(",") if token})
-
-
 def policy_role_source(policy_manager: RbacPolicyManager | None) -> RoleSource:
     """Build the ``users_*`` adapter's view of which role names are assignable.
 
@@ -178,7 +156,6 @@ def policy_role_source(policy_manager: RbacPolicyManager | None) -> RoleSource:
 
 
 def build_server(
-    identity_provider: IdentityProvider | None = None,
     settings: Settings | None = None,
     register_builtin_catalog: bool = True,
     oauth_store: OAuthStore | None = None,
@@ -203,27 +180,12 @@ def build_server(
     routes, and seed valid tokens.
     """
     settings = settings or load_settings()
-    if login_providers is None:
-        if identity_provider is None:
-            identity_provider = build_identity_provider(settings)
-        login_providers = build_login_providers(settings, identity_provider=identity_provider)
-    elif identity_provider is None:
-        identity_provider = build_identity_provider(settings)
-    validate_login_providers(login_providers)
-    _login_providers_holder["providers"] = list(login_providers)
-    for _lp in login_providers:
-        if _lp.kind != "redirect":
-            continue
-        provider_type = "oidc"
-        if _lp.name == "google":
-            provider_type = "google"
-        logger.info(
-            "login provider %s (%s): callback %s/login/%s/callback",
-            _lp.name,
-            provider_type,
-            settings.base_url.rstrip("/"),
-            _lp.name,
-        )
+    auto_login_providers = login_providers is None
+    provisional_login_providers = login_providers
+    if provisional_login_providers is None:
+        provisional_login_providers = build_login_providers(settings, resolver=None)
+    validate_login_providers(provisional_login_providers)
+    login_providers = provisional_login_providers
 
     if oauth_store is None:
         store, pending_store = build_shared_auth_stores(settings)
@@ -304,6 +266,9 @@ def build_server(
         settings.rbac_enabled
         or (len(login_providers) > 0 and not only_builtin_api_key_provider)
         or (only_builtin_api_key_provider and dev_tokens_configured and local_users_directory_ready)
+        or (
+            local_users_directory_ready and login_providers_want_directory_resolver(login_providers)
+        )
     )
     # Built independently of whether a resolver was injected or auto-built
     # above (an embedding process, or a test, may supply its own resolver for
@@ -324,6 +289,36 @@ def build_server(
             settings,
             directory=directory,
             revision_reader=shared_revision,
+        )
+
+    if auto_login_providers:
+        login_providers = build_login_providers(settings, resolver=directory_resolver)
+        validate_login_providers(login_providers)
+
+    if (
+        settings.api_key_login_enabled
+        and directory is not None
+        and "api_keys" not in directory.capabilities
+    ):
+        raise ConfigError(
+            "API-key sign-in needs a users directory that stores API keys "
+            "(KEYSTONE_MCP_USERS_BACKEND=local). Remove api_key from the login "
+            "providers or switch the directory."
+        )
+
+    _login_providers_holder["providers"] = list(login_providers)
+    for _lp in login_providers:
+        if _lp.kind != "redirect":
+            continue
+        provider_type = "oidc"
+        if _lp.name == "google":
+            provider_type = "google"
+        logger.info(
+            "login provider %s (%s): callback %s/login/%s/callback",
+            _lp.name,
+            provider_type,
+            settings.base_url.rstrip("/"),
+            _lp.name,
         )
 
     # Built before the OAuth provider (rather than alongside registry/upstream
