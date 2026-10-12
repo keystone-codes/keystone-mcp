@@ -163,6 +163,22 @@ def test_upgrade_to_0002_from_0001(tmp_path: Path) -> None:
     assert current_revision(engine) == HEAD_REVISION
 
 
+def test_upgrade_to_0003_from_0002(tmp_path: Path) -> None:
+    import alembic.command
+    import alembic.config
+
+    engine = create_users_engine(sqlite_url(tmp_path))
+    cfg = alembic.config.Config()
+    cfg.set_main_option("script_location", "keystone_mcp.users:migrations")
+    with engine.begin() as conn:
+        cfg.attributes["connection"] = conn
+        alembic.command.upgrade(cfg, "0002_service_accounts")
+    upgrade_to_head(engine)
+    inspector = inspect(engine)
+    assert "keystone_api_key" in inspector.get_table_names()
+    assert current_revision(engine) == HEAD_REVISION
+
+
 def test_postgres_is_configured_in_ci() -> None:
     """The Postgres-backed users-directory tests must not silently skip in CI.
 

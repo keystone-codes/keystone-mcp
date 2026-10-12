@@ -10,9 +10,12 @@ in ``fastmcp``, ``mcp``, ``httpx``, ``sqlalchemy`` or ``redis`` transitively
 from __future__ import annotations
 
 import re
+import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal
+
+API_KEY_RE = re.compile(r"^ksk_[0-9a-f]{12}_[A-Za-z0-9_-]{43}$")
 
 SERVICE_PREFIX = "svc:"
 _SERVICE_NAME_RE = re.compile(r"^[a-z][a-z0-9-]{1,62}$")
@@ -40,6 +43,25 @@ def subject_type_of(subject: str) -> Literal["human", "service"]:
 
 def is_valid_service_account_name(name: str) -> bool:
     return bool(_SERVICE_NAME_RE.fullmatch(name))
+
+
+def parse_api_key(key: str) -> tuple[str, str] | None:
+    """Return ``(key_id, secret)`` when *key* matches the API key format."""
+    if not API_KEY_RE.fullmatch(key):
+        return None
+    key_id, secret = key[4:].split("_", 1)
+    return key_id, secret
+
+
+def format_api_key(key_id: str, secret: str) -> str:
+    return f"ksk_{key_id}_{secret}"
+
+
+def generate_api_key_material() -> tuple[str, str, str]:
+    """Return ``(key_id, secret, full_key)`` for a newly issued key."""
+    key_id = secrets.token_hex(6)
+    secret = secrets.token_urlsafe(32)
+    return key_id, secret, format_api_key(key_id, secret)
 
 
 def _iso_utc(value: datetime) -> str:
@@ -149,3 +171,41 @@ class UserResolveResult:
     def is_allow_decision(self) -> bool:
         """Whether the outcome permits RBAC evaluation (known, active, has roles)."""
         return self.exists and not self.is_blocked and bool(self.roles)
+
+
+@dataclass(frozen=True, slots=True)
+class ApiKeyRecord:
+    key_id: str
+    subject: str
+    label: str | None
+    created_at: datetime
+    created_by: str | None
+    expires_at: datetime | None
+    revoked_at: datetime | None
+    revoked_by: str | None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "key_id": self.key_id,
+            "subject": self.subject,
+            "label": self.label,
+            "created_at": _iso_utc(self.created_at),
+            "created_by": self.created_by,
+            "expires_at": _iso_utc(self.expires_at) if self.expires_at is not None else None,
+            "revoked_at": _iso_utc(self.revoked_at) if self.revoked_at is not None else None,
+            "revoked_by": self.revoked_by,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class IssuedApiKey:
+    record: ApiKeyRecord
+    key: str
+
+
+@dataclass(frozen=True, slots=True)
+class ApiKeyVerification:
+    key_id: str
+    subject: str
+    subject_type: Literal["human", "service"]
+    expires_at: datetime | None
