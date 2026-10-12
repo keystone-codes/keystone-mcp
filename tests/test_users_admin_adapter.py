@@ -11,7 +11,7 @@ from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 from fastmcp.server.middleware import MiddlewareContext
 
-from keystone_mcp.adapters.users_admin import ACTOR_EMAIL_HEADER, UsersAdminAdapter
+from keystone_mcp.adapters.users_admin import UsersAdminAdapter
 from keystone_mcp.catalog.builtin import register_catalog
 from keystone_mcp.config import Settings
 from keystone_mcp.identity import VerifiedIdentity
@@ -24,7 +24,7 @@ from keystone_mcp.user_directory import (
     build_in_memory_user_directory_resolver,
     build_user_directory,
 )
-from keystone_mcp.user_directory.http import HttpUserDirectory
+from keystone_mcp.user_directory.http import ACTOR_EMAIL_HEADER, HttpUserDirectory
 
 ADMIN = VerifiedIdentity(email="admin@example.com")
 OPERATOR = VerifiedIdentity(email="operator@example.com")
