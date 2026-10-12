@@ -107,5 +107,13 @@ jobs:
           -v
           -rs
 
+      - name: Contract freeze gate
+        run: >-
+          uv run pytest
+          tests/test_contract_freeze.py
+          tests/test_env_docs_sync.py
+          tests/test_removed_variables.py
+          -v
+
       - name: Full test suite
         run: uv run pytest -q

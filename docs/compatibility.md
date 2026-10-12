@@ -390,6 +390,8 @@ From 0.5.0 onward:
    `config.py`, [environment.md#removed-variables](environment.md#removed-variables),
    and `### Removed` in the changelog.
 
+Enforced in CI by `tests/test_contract_freeze.py`.
+
 ## Supported versions
 
 Until 1.0.0, only the latest released minor version receives security fixes.
