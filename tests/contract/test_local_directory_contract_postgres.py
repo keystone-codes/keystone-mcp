@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-pytest_plugins = ["keystone_mcp.contract_tests"]
-
 from collections.abc import Awaitable, Callable
 
 import pytest
@@ -20,6 +18,8 @@ from keystone_mcp.user_directory.revision import InMemoryRevisionReader
 from keystone_mcp.users.revision import InProcessRevisionWriter
 from keystone_mcp.users.store import UsersStore
 from support.users_db import postgres_engine  # noqa: F401 -- fixture import
+
+pytest_plugins = ["keystone_mcp.contract_tests"]
 
 
 @pytest.fixture

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-pytest_plugins = ["keystone_mcp.contract_tests"]
-
 from collections.abc import Awaitable, Callable
 
 import pytest
@@ -15,6 +13,8 @@ from keystone_mcp.contract_tests import (
 )
 from keystone_mcp.user_directory.memory import InMemoryUserDirectory
 from keystone_mcp.user_directory.protocol import UserDirectory
+
+pytest_plugins = ["keystone_mcp.contract_tests"]
 
 
 @pytest.fixture
