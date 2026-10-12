@@ -1,0 +1,304 @@
+"""Supervises one ``transport: stdio`` upstream subprocess.
+
+:class:`StdioUpstreamProcess` starts the child process, keeps a single
+``fastmcp.Client`` session open against it for as long as it is healthy,
+detects a crash or a hang, and restarts it with a rate-limited backoff. It
+owns nothing else: wiring this into :class:`~keystone_mcp.router.registry
+.UpstreamRegistry`, discovery, the proxy, ``/readyz``, or metrics is Y09's
+job, not this module's.
+
+Health is driven by two independent signals while the session is open:
+
+- the stderr pipe reaching end-of-file, which happens exactly when the child
+  process exits (see ``_read_stderr_until_eof``);
+- a periodic ``client.ping()`` that must complete within a short timeout,
+  catching a child that is still alive but no longer answering requests.
+
+The internal client is created with ``mode="legacy"``, pinning the MCP
+handshake-era protocol: most ready-made stdio servers (the npm/pip packages
+this feature exists for) speak that era, and — unlike the modern
+``2026-07-28`` era — it is the one in which ``ping`` exists at all.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import logging
+import os
+import time
+from collections.abc import Awaitable, Callable, Mapping, Sequence
+from typing import Literal
+
+import anyio
+import fastmcp
+from fastmcp.client.transports import StdioTransport
+
+logger = logging.getLogger(__name__)
+_stderr_logger = logging.getLogger("keystone_mcp.upstream.stderr")
+
+ProcessState = Literal["stopped", "starting", "running", "backoff"]
+StateCallback = Callable[[ProcessState, str | None], None]
+
+#: Restart delay schedule in seconds: 1, 2, 4, 8, 16, 32, then 60 forever.
+#: Resets to the start of this schedule once a run has been stable (see
+#: ``_STABLE_RUN_SECONDS``) — there is no permanent give-up.
+_BACKOFF_SCHEDULE: tuple[float, ...] = (1, 2, 4, 8, 16, 32, 60)
+
+#: A run that stayed healthy at least this long resets the backoff schedule.
+_STABLE_RUN_SECONDS = 60.0
+
+#: How often to ping a running process to notice a hang (not a crash).
+_PING_INTERVAL_SECONDS = 15.0
+
+#: Max time to wait for one ping to answer before treating it as a hang.
+_PING_TIMEOUT_SECONDS = 5.0
+
+#: Max time to wait for the supervisor task to wind down in ``stop()``.
+_STOP_TIMEOUT_SECONDS = 5.0
+
+#: Stderr lines are logged truncated, matching the redaction module's cap for
+#: one log field; a runaway writer cannot blow up log storage.
+_MAX_STDERR_LINE_CHARS = 2000
+
+
+class UpstreamProcessUnavailableError(RuntimeError):
+    """Raised by :meth:`StdioUpstreamProcess.client` when not ``running``."""
+
+
+class StdioUpstreamProcess:
+    """Keeps one stdio upstream process alive and exposes its MCP client.
+
+    ``env`` must already be the resolved child environment (name -> value);
+    this class does not read ``KEYSTONE_MCP_*`` itself — resolving an
+    entry's ``env_from`` pairs into values is Y09's job, at the call site
+    that constructs this object.
+    """
+
+    def __init__(
+        self,
+        *,
+        namespace: str,
+        command: str,
+        args: Sequence[str],
+        env: Mapping[str, str],
+        cwd: str | None,
+        init_timeout: float,
+        on_state: StateCallback | None = None,
+        clock: Callable[[], float] = time.monotonic,
+        sleep: Callable[[float], Awaitable[None]] = anyio.sleep,
+    ) -> None:
+        self._namespace = namespace
+        self._command = command
+        self._args = tuple(args)
+        self._env = dict(env)
+        self._cwd = cwd
+        self._init_timeout = init_timeout
+        self._on_state = on_state
+        self._clock = clock
+        self._sleep = sleep
+
+        self._state: ProcessState = "stopped"
+        self._restarts = 0
+        self._backoff_index = 0
+        self._client: fastmcp.Client | None = None
+
+        self._task_handle: asyncio.Task[None] | None = None
+        self._stop_requested = False
+        self._stop_event = anyio.Event()
+        self._first_attempt_done = anyio.Event()
+
+    @property
+    def state(self) -> ProcessState:
+        return self._state
+
+    @property
+    def restarts(self) -> int:
+        """Number of restarts after the first start (one per crash/hang/failed start)."""
+        return self._restarts
+
+    def client(self) -> fastmcp.Client:
+        """Return the live client. Raises when the process is not ``running``.
+
+        The returned object is the same :class:`fastmcp.Client` the
+        supervisor itself holds open; callers enter it with a nested
+        ``async with client():`` and share its one session.
+        """
+        if self._state != "running" or self._client is None:
+            raise UpstreamProcessUnavailableError(
+                f"upstream process {self._namespace!r} is not running (state={self._state})"
+            )
+        return self._client
+
+    async def start(self, *, wait: float) -> bool:
+        """Start the supervisor loop; wait up to ``wait`` seconds for ``running``.
+
+        Returns whether the process reached ``running`` within that window.
+        Starting again while already started is a no-op.
+        """
+        if self._task_handle is not None:
+            return self._state == "running"
+
+        self._task_handle = asyncio.create_task(self._run())
+        with anyio.move_on_after(wait):
+            await self._first_attempt_done.wait()
+        return self._state == "running"
+
+    async def stop(self) -> None:
+        """Stop the supervisor and the child process it is running, if any."""
+        if self._task_handle is None or self._stop_requested:
+            return
+        self._stop_requested = True
+        self._stop_event.set()
+        task = self._task_handle
+        with anyio.CancelScope(shield=True):
+            with anyio.move_on_after(_STOP_TIMEOUT_SECONDS):
+                await task
+            if not task.done():
+                task.cancel()
+                with contextlib.suppress(Exception):
+                    await task
+        self._set_state("stopped", None)
+
+    def _set_state(self, state: ProcessState, reason: str | None) -> None:
+        self._state = state
+        # Signal start()'s waiter the first time the initial attempt resolves
+        # one way or the other. _run_once() itself does not return until the
+        # process stops (it supervises a healthy run indefinitely), so this
+        # cannot wait for _run_once() to return -- only for the state it sets.
+        if state in ("running", "backoff") and not self._first_attempt_done.is_set():
+            self._first_attempt_done.set()
+        if self._on_state is not None:
+            self._on_state(state, reason)
+
+    async def _run(self) -> None:
+        try:
+            while not self._stop_requested:
+                self._set_state("starting", None)
+                reason, started_at = await self._run_once()
+                if self._stop_requested:
+                    break
+
+                if started_at is not None and (self._clock() - started_at) >= _STABLE_RUN_SECONDS:
+                    self._backoff_index = 0
+
+                delay = _BACKOFF_SCHEDULE[min(self._backoff_index, len(_BACKOFF_SCHEDULE) - 1)]
+                self._backoff_index += 1
+                self._restarts += 1
+                self._set_state("backoff", reason)
+                logger.warning(
+                    "upstream process down namespace=%s: %s; restart %d in %ds",
+                    self._namespace,
+                    reason,
+                    self._restarts,
+                    delay,
+                )
+                await self._sleep(delay)
+        finally:
+            if not self._first_attempt_done.is_set():
+                self._first_attempt_done.set()
+
+    async def _run_once(self) -> tuple[str, float | None]:
+        """Run one attempt: start the process, serve while healthy, return why it stopped."""
+        read_fd, write_fd = os.pipe()
+        writer = os.fdopen(write_fd, "w", buffering=1)
+        started_at: float | None = None
+        closed_read_fd = False
+        try:
+            transport = StdioTransport(
+                self._command,
+                list(self._args),
+                env=dict(self._env),
+                cwd=self._cwd,
+                keep_alive=False,
+                log_file=writer,
+            )
+            client = fastmcp.Client(transport, init_timeout=self._init_timeout, mode="legacy")
+            async with client:
+                # The child holds its own copy of the write end; closing ours
+                # here is what lets stderr's read end see EOF when it exits.
+                writer.close()
+                writer = None
+                self._client = client
+                started_at = self._clock()
+                self._set_state("running", None)
+                try:
+                    reason = await self._supervise_running(client, read_fd)
+                finally:
+                    # _supervise_running's stderr reader always takes ownership
+                    # of read_fd (via os.fdopen) and closes it on its way out,
+                    # on every path (EOF, cancellation, exception) -- closing
+                    # it again here would risk closing an unrelated fd number
+                    # the OS has since reused.
+                    closed_read_fd = True
+            return reason, started_at
+        except Exception as exc:  # noqa: BLE001 - becomes a logged restart reason
+            return f"start failed: {type(exc).__name__}: {exc}", started_at
+        finally:
+            self._client = None
+            if writer is not None:
+                with contextlib.suppress(OSError):
+                    writer.close()
+            if not closed_read_fd:
+                with contextlib.suppress(OSError):
+                    os.close(read_fd)
+
+    async def _supervise_running(self, client: fastmcp.Client, read_fd: int) -> str:
+        """Wait until the process exits, hangs, or ``stop()`` is called."""
+        eof_event = anyio.Event()
+        outcome: dict[str, str] = {}
+
+        async def watch_stderr() -> None:
+            await self._read_stderr_until_eof(read_fd)
+            eof_event.set()
+
+        async def watch_eof(tg: anyio.abc.TaskGroup) -> None:
+            await eof_event.wait()
+            outcome.setdefault("reason", "process exited")
+            tg.cancel_scope.cancel()
+
+        async def watch_ping(tg: anyio.abc.TaskGroup) -> None:
+            while True:
+                await self._sleep(_PING_INTERVAL_SECONDS)
+                if eof_event.is_set() or self._stop_requested:
+                    return
+                try:
+                    with anyio.fail_after(_PING_TIMEOUT_SECONDS):
+                        ok = await client.ping()
+                    if not ok:
+                        raise RuntimeError("ping returned a falsy result")
+                except BaseException as exc:  # noqa: BLE001 - any failure ends the run
+                    outcome["reason"] = f"ping failed: {type(exc).__name__}"
+                    tg.cancel_scope.cancel()
+                    return
+
+        async def watch_stop(tg: anyio.abc.TaskGroup) -> None:
+            await self._stop_event.wait()
+            tg.cancel_scope.cancel()
+
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(watch_stderr)
+            tg.start_soon(watch_eof, tg)
+            tg.start_soon(watch_ping, tg)
+            tg.start_soon(watch_stop, tg)
+
+        if self._stop_requested:
+            return "stopped"
+        return outcome.get("reason", "process exited")
+
+    async def _read_stderr_until_eof(self, read_fd: int) -> None:
+        """Log the child's stderr, one line at a time, until the pipe closes."""
+        loop = asyncio.get_running_loop()
+        reader = asyncio.StreamReader()
+        protocol = asyncio.StreamReaderProtocol(reader)
+        read_file = os.fdopen(read_fd, "rb", buffering=0)
+        transport, _ = await loop.connect_read_pipe(lambda: protocol, read_file)
+        try:
+            while True:
+                line = await reader.readline()
+                if not line:
+                    return
+                text = line.decode("utf-8", errors="replace")[:_MAX_STDERR_LINE_CHARS].rstrip("\n")
+                _stderr_logger.info("namespace=%s %s", self._namespace, text)
+        finally:
+            transport.close()

@@ -59,6 +59,16 @@ _PRIVATE_HOSTNAMES = frozenset({"localhost"})
 #: 1-64 chars, A-Z/a-z/0-9/_/-, not starting or ending with '_' or '-'.
 _NAMESPACE_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9_-]{0,62}[A-Za-z0-9])?$")
 
+#: Fields only meaningful for ``transport: stdio`` entries (Y08); forbidden
+#: with ``transport: http`` (the default).
+_STDIO_ONLY_FIELDS = ("command", "args", "env", "cwd")
+
+#: A name in the child process's own environment, set by ``env`` in a
+#: ``transport: stdio`` entry — e.g. ``GITHUB_TOKEN``. Distinct from the name
+#: of the keystone-mcp variable that supplies its value, which is checked the
+#: same way as ``auth.bearer_env`` (see ``_BEARER_ENV_RE`` above).
+_ENV_CHILD_NAME_RE = re.compile(r"^[A-Z_][A-Z0-9_]*$")
+
 
 class ValidationError(ValueError):
     """One or more upstream registry validation failures."""
@@ -241,6 +251,97 @@ def _auth_env_name_errors(auth: dict[str, Any], key: str) -> list[str]:
     return []
 
 
+def _normalize_env_shorthand(env: Any) -> dict[Any, Any] | None:
+    """Expand the ``env: [NAME, ...]`` shorthand to ``{NAME: NAME, ...}``.
+
+    Returns ``None`` when ``env`` is neither a mapping nor a list of strings
+    (a structural error the caller reports).
+    """
+    if isinstance(env, dict):
+        return env
+    if isinstance(env, list) and all(isinstance(item, str) for item in env):
+        return {name: name for name in env}
+    return None
+
+
+def env_field_errors(env: Any) -> list[str]:
+    """Structural errors for one ``transport: stdio`` entry's ``env`` field.
+
+    ``env`` maps a name in the child process's environment to the name of the
+    keystone-mcp environment variable that supplies its value (never the
+    value itself — same rule as ``auth.bearer_env``), or is the shorthand list
+    form ``[NAME, ...]`` equivalent to ``{NAME: NAME, ...}``. Messages are not
+    prefixed with ``entries[i].``; see :func:`auth_field_errors`.
+    """
+    if env is None:
+        return []
+    mapping = _normalize_env_shorthand(env)
+    if mapping is None:
+        return ["env must be an object, or an array of environment variable names"]
+
+    errors: list[str] = []
+    for child, value in mapping.items():
+        child_name = child if isinstance(child, str) else str(child)
+        if not isinstance(child, str) or not _ENV_CHILD_NAME_RE.match(child_name):
+            errors.append(
+                f"env.{child_name} is not a valid environment variable name (A-Z, 0-9, _)"
+            )
+            continue
+        candidate = value.strip() if isinstance(value, str) else ""
+        if not candidate or not _BEARER_ENV_RE.match(candidate):
+            errors.append(
+                f"env.{child_name} must name an environment variable of keystone-mcp (A-Z, 0-9, _)"
+            )
+        elif candidate in _RESERVED_BEARER_ENV_NAMES:
+            errors.append(
+                f"env.{child_name} must not name {candidate!r}: keystone-mcp's own "
+                "configuration already reads that variable for a different purpose"
+            )
+
+    return errors
+
+
+def transport_field_errors(item: dict[str, Any]) -> tuple[str, list[str]]:
+    """Validate the ``transport`` field and the fields it gates.
+
+    Returns the effective transport (``"http"`` when the declared value is
+    invalid, so the rest of :func:`validate_upstream_registry` can still run
+    against a sensible default) and the list of error messages, not prefixed
+    with ``entries[i].``.
+    """
+    errors: list[str] = []
+    transport_raw = item.get("transport", "http")
+    transport = transport_raw.strip() if isinstance(transport_raw, str) else transport_raw
+    if transport not in ("http", "stdio"):
+        errors.append(f"transport must be 'http' or 'stdio' (got {transport_raw!r})")
+        transport = "http"
+
+    if transport == "stdio":
+        command = item.get("command")
+        if not isinstance(command, str) or not command.strip() or "\n" in command:
+            errors.append("command is required for transport: stdio")
+        if item.get("url"):
+            errors.append("url is not allowed with transport: stdio")
+        args = item.get("args")
+        if args is not None and not (
+            isinstance(args, list) and all(isinstance(a, str) for a in args)
+        ):
+            errors.append("args must be an array of strings")
+        cwd = item.get("cwd")
+        if cwd is not None and not isinstance(cwd, str):
+            errors.append("cwd must be a string")
+        errors.extend(env_field_errors(item.get("env")))
+        auth = item.get("auth")
+        if isinstance(auth, dict) and "bearer_env" in auth:
+            errors.append("auth.bearer_env is not supported with transport: stdio")
+    else:
+        for field_name in _STDIO_ONLY_FIELDS:
+            if item.get(field_name) is not None:
+                errors.append(f"{field_name} requires transport: stdio")
+
+    return transport, errors
+
+
 def namespace_errors(namespaces: Sequence[str]) -> list[str]:
     """Return human-readable errors for a set of upstream namespaces.
 
@@ -350,7 +451,14 @@ def validate_upstream_registry(
             seen_namespaces.add(namespace)
             all_namespaces.append(namespace)
 
-        if not url:
+        transport, transport_errors = transport_field_errors(item)
+        for message in transport_errors:
+            errors.append(f"{prefix}.{message}")
+
+        if transport == "stdio":
+            # transport_field_errors already rejects a non-empty url above.
+            pass
+        elif not url:
             errors.append(f"{prefix}.url is required")
         else:
             for message in validate_upstream_url(url, policy=policy):
