@@ -72,6 +72,11 @@ class RbacDecision:
     reason: RbacDenialReason | None = None
     roles: frozenset[str] = frozenset()
     cache_hit: bool | None = None
+    # The sign-in method's name (``claims["auth_method"]``), so an operator
+    # reading the audit log can see *why* a HUMAN_IDENTITY_REQUIRED denial
+    # happened ("signed in with api_key") without cross-referencing the
+    # token store. ``None`` when there is no verified identity at all.
+    login_provider: str | None = None
 
 
 def _request_correlation_id() -> str | None:
@@ -224,6 +229,8 @@ class RbacMiddleware(Middleware):
             self._record_decision(decision, operation=operation)
             return decision
 
+        login_provider = (identity.claims or {}).get("auth_method")
+
         critical = False
         if tool_name:
             # Critical-tool globs live in the active policy; the core built-ins
@@ -239,6 +246,7 @@ class RbacMiddleware(Middleware):
             decision = RbacDecision(
                 tool_name=tool_name or "",
                 email=identity.email,
+                login_provider=login_provider,
                 allowed=False,
                 reason=RbacDenialReason.ROLES_UNAVAILABLE,
             )
@@ -254,6 +262,7 @@ class RbacMiddleware(Middleware):
             decision = RbacDecision(
                 tool_name=tool_name or "",
                 email=identity.email,
+                login_provider=login_provider,
                 allowed=False,
                 reason=RbacDenialReason.ROLES_UNAVAILABLE,
             )
@@ -265,6 +274,7 @@ class RbacMiddleware(Middleware):
             decision = RbacDecision(
                 tool_name=tool_name or "",
                 email=identity.email,
+                login_provider=login_provider,
                 allowed=False,
                 reason=RbacDenialReason.USER_BLOCKED,
                 roles=roles,
@@ -277,6 +287,7 @@ class RbacMiddleware(Middleware):
             decision = RbacDecision(
                 tool_name=tool_name or "",
                 email=identity.email,
+                login_provider=login_provider,
                 allowed=False,
                 reason=RbacDenialReason.NO_ROLES,
                 roles=roles,
@@ -289,6 +300,7 @@ class RbacMiddleware(Middleware):
             decision = RbacDecision(
                 tool_name="",
                 email=identity.email,
+                login_provider=login_provider,
                 allowed=True,
                 roles=roles,
                 cache_hit=getattr(user, "from_cache", False),
@@ -301,6 +313,7 @@ class RbacMiddleware(Middleware):
             decision = RbacDecision(
                 tool_name=tool_name,
                 email=identity.email,
+                login_provider=login_provider,
                 allowed=False,
                 reason=RbacDenialReason.POLICY_UNAVAILABLE,
                 cache_hit=getattr(user, "from_cache", False),
@@ -315,6 +328,7 @@ class RbacMiddleware(Middleware):
                 decision = RbacDecision(
                     tool_name=tool_name,
                     email=identity.email,
+                    login_provider=login_provider,
                     allowed=False,
                     reason=RbacDenialReason.HUMAN_IDENTITY_REQUIRED,
                     roles=roles,
@@ -325,6 +339,7 @@ class RbacMiddleware(Middleware):
             decision = RbacDecision(
                 tool_name=tool_name,
                 email=identity.email,
+                login_provider=login_provider,
                 allowed=True,
                 roles=roles,
                 cache_hit=getattr(user, "from_cache", False),
@@ -335,6 +350,7 @@ class RbacMiddleware(Middleware):
         decision = RbacDecision(
             tool_name=tool_name,
             email=identity.email,
+            login_provider=login_provider,
             allowed=False,
             reason=RbacDenialReason.NOT_PERMITTED,
             roles=roles,
@@ -354,6 +370,7 @@ class RbacMiddleware(Middleware):
                 cache_hit=decision.cache_hit,
                 operation=operation,
                 request_id=_request_correlation_id(),
+                login_provider=decision.login_provider,
             )
             return
         logger.info(

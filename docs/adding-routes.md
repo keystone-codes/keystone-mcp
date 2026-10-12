@@ -268,12 +268,6 @@ for the field and the header it produces.
 - **Sign-in providers: `keystone_mcp.login.LoginProvider` (redirect and form
   kinds).** Configuration of custom providers arrives with OIDC providers;
   see `docs/login-providers.md` (added in the next change).
-- **"Interactive human" is a string comparison.** Whether a signed-in
-  identity counts as an interactive human, for `requires_human_identity` in
-  the policy file, is `claims.get("auth_method") == "google"`
-  (`src/keystone_mcp/rbac/human_identity.py`). A different interactive login
-  cannot make this true without a core change. Planned for 0.5.0: the login
-  provider itself reports whether its sign-in is interactive.
 - **No entry points yet.** Every seam above is wired by editing one factory
   function in the core (`build_identity_provider`,
   `build_user_directory_resolver`, `UsersAdminAdapter`) rather than by
