@@ -52,7 +52,7 @@ class SmokeError(Exception):
 
 
 def build_minimal_args(input_schema: dict[str, Any] | None) -> dict[str, Any]:
-    """Build the smallest argument dict that satisfies a tool's ``inputSchema``.
+    """Build the smallest argument dict that satisfies a tool's ``input_schema``.
 
     Only required properties are filled in, with one fixed placeholder value
     per JSON Schema type, so this script never needs to know a tool's actual
@@ -417,7 +417,7 @@ async def run(args: argparse.Namespace) -> int:
                 step = "Call every hello_* tool"
                 try:
                     for tool in hello_tools:
-                        tool_args = build_minimal_args(tool.inputSchema)
+                        tool_args = build_minimal_args(tool.input_schema)
                         result = await admin.call_tool(tool.name, tool_args)
                         if result.is_error:
                             raise SmokeError(f"{tool.name} returned an error: {result.data}")
@@ -476,7 +476,7 @@ async def run(args: argparse.Namespace) -> int:
 
                 first_hello = next(t for t in tools if t.name.startswith("hello_"))
                 result = await member.call_tool(
-                    first_hello.name, build_minimal_args(first_hello.inputSchema)
+                    first_hello.name, build_minimal_args(first_hello.input_schema)
                 )
                 if result.is_error:
                     raise SmokeError(f"{first_hello.name} returned an error: {result.data}")
