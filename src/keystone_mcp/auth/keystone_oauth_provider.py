@@ -653,16 +653,20 @@ class KeystoneOAuthProvider(OAuthProvider):
         """Confirm ``identity.provider`` matches the route it came back on, and normalize its email.
 
         ``identity.provider`` becomes the issued token's ``auth_method``
-        claim, and RBAC's interactive-human gate
-        (``rbac/human_identity.py``) trusts ``auth_method == "google"`` as
-        proof an interactive human signed in. Without this check, a
-        third-party provider configured under some other name could simply
-        report ``provider="google"`` in the ``LoginIdentity`` it returns and
-        earn that trust for itself -- Keystone must instead derive
-        ``auth_method`` from *which route the sign-in came back on*
-        (``name`` in ``handle_login_callback``, ``form_provider.name`` in
+        claim. Without this check, a third-party provider configured under
+        some other name could simply report ``provider="google"`` in the
+        ``LoginIdentity`` it returns and claim to be the built-in Google
+        provider -- Keystone must instead derive ``auth_method`` from *which
+        route the sign-in came back on* (``name`` in
+        ``handle_login_callback``, ``form_provider.name`` in
         ``handle_login``), and refuse the attempt outright when a provider's
-        own claim disagrees with it.
+        own claim disagrees with it. RBAC's interactive-human gate
+        (``rbac/human_identity.py``) no longer trusts ``auth_method ==
+        "google"`` either (X05): it reads the ``interactive`` claim, which
+        ``_complete_login`` derives from the *registered provider's own*
+        ``LoginProvider.interactive`` -- looked up by this same route name,
+        not from the identity a provider hands back -- so a provider cannot
+        earn that trust by self-reporting it any more than it can the name.
 
         The email is normalized again here (on top of the generic providers'
         own normalization) as defence in depth: a provider is third-party
@@ -857,12 +861,14 @@ class KeystoneOAuthProvider(OAuthProvider):
             return None
         return _parse_pending_txn_raw(raw)
 
-    async def _put_auth_code(self, code: AuthorizationCode, *, auth_method: str) -> None:
+    async def _put_auth_code(
+        self, code: AuthorizationCode, *, auth_method: str, interactive: bool
+    ) -> None:
         ttl = max(int(code.expires_at - time.time()), 1)
         await self._pending_store.put(
             _NS_AUTH_CODE,
             code.code,
-            _encode_auth_code_envelope(code, auth_method),
+            _encode_auth_code_envelope(code, auth_method, interactive),
             ttl,
         )
 
@@ -873,13 +879,13 @@ class KeystoneOAuthProvider(OAuthProvider):
         parsed = _parse_auth_code_envelope(raw)
         if parsed is None:
             return None
-        code, _auth_method = parsed
+        code, _auth_method, _interactive = parsed
         if code.expires_at < time.time():
             await self._pending_store.consume(_NS_AUTH_CODE, code_str)
             return None
         return code
 
-    async def _consume_auth_code(self, code_str: str) -> tuple[AuthorizationCode, str] | None:
+    async def _consume_auth_code(self, code_str: str) -> tuple[AuthorizationCode, str, bool] | None:
         raw = await self._pending_store.consume(_NS_AUTH_CODE, code_str)
         if raw is None:
             return None
@@ -902,7 +908,7 @@ class KeystoneOAuthProvider(OAuthProvider):
         consumed = await self._consume_auth_code(authorization_code.code)
         if consumed is None:
             raise ValueError("authorization code invalid or already consumed")
-        consumed_code, auth_method = consumed
+        consumed_code, auth_method, interactive = consumed
         if consumed_code.code != authorization_code.code:
             raise ValueError("authorization code invalid or already consumed")
 
@@ -911,7 +917,7 @@ class KeystoneOAuthProvider(OAuthProvider):
         refresh_token = f"km_rt_{secrets.token_urlsafe(32)}"
         now = int(time.time())
         expires_at = now + self._settings.token_cache_ttl_seconds
-        token_claims = {"email": email, "auth_method": auth_method}
+        token_claims = {"email": email, "auth_method": auth_method, "interactive": interactive}
 
         # Renew the client's lifetime before writing the refresh token it will
         # own, so the client record never expires ahead of a token issued
@@ -938,7 +944,10 @@ class KeystoneOAuthProvider(OAuthProvider):
             )
         )
         await self._put_refresh_meta(
-            refresh_token, auth_method=auth_method, resource=authorization_code.resource
+            refresh_token,
+            auth_method=auth_method,
+            resource=authorization_code.resource,
+            interactive=interactive,
         )
         return OAuthToken(
             access_token=access_token,
@@ -983,13 +992,32 @@ class KeystoneOAuthProvider(OAuthProvider):
         # also carries the resource (RFC 8707) the original access token was
         # bound to, so a refreshed token keeps that binding instead of coming
         # back unbound.
-        auth_method, resource = await self._read_refresh_meta(refresh_token.token)
+        auth_method, resource, interactive = await self._read_refresh_meta(refresh_token.token)
+        if auth_method not in self._providers:
+            # The sign-in provider this session was opened through was
+            # removed from the configuration (or was never configured at
+            # all, for a marker that never belonged to this deployment).
+            # X03 used to read an unrecognised auth_method as "api_key",
+            # silently turning an interactive session into a machine one
+            # that could still refresh forever; X05 refuses instead, since
+            # only the operator removing the provider on purpose should end
+            # sessions opened through it -- not let them keep renewing under
+            # a different, weaker identity.
+            logger.warning(
+                "refresh refused: sign-in provider %r is no longer configured", auth_method
+            )
+            await self._store.delete_refresh_token(refresh_token.token)
+            await self._pending_store.consume(_NS_REFRESH_AUTH, refresh_token.token)
+            raise TokenError(
+                error="invalid_grant",
+                error_description="sign-in provider is no longer configured",
+            )
         email = refresh_token.subject or ""
         granted = scopes or refresh_token.scopes
         access_token = f"km_at_{secrets.token_urlsafe(32)}"
         new_refresh = f"km_rt_{secrets.token_urlsafe(32)}"
         now = int(time.time())
-        token_claims = {"email": email, "auth_method": auth_method}
+        token_claims = {"email": email, "auth_method": auth_method, "interactive": interactive}
 
         # Renew the client's lifetime before writing the new refresh token.
         await self._store.touch_client(client.client_id)
@@ -1016,7 +1044,9 @@ class KeystoneOAuthProvider(OAuthProvider):
                 subject=email,
             )
         )
-        await self._put_refresh_meta(new_refresh, auth_method=auth_method, resource=resource)
+        await self._put_refresh_meta(
+            new_refresh, auth_method=auth_method, resource=resource, interactive=interactive
+        )
 
         # The replacement is durable; retiring the old token can no longer
         # strand the session.
@@ -1039,6 +1069,7 @@ class KeystoneOAuthProvider(OAuthProvider):
             refresh_token.token,
             auth_method=auth_method,
             resource=resource,
+            interactive=interactive,
             ttl_seconds=_OLD_REFRESH_MARKER_GRACE_SECONDS,
         )
         return OAuthToken(
@@ -1245,7 +1276,13 @@ class KeystoneOAuthProvider(OAuthProvider):
         # a real server runs this branch too, and a token-login email is
         # accepted without ever being checked against the directory.
 
-        return await self._complete_login(txn_id, identity, lang, auth_method=form_provider.name)
+        return await self._complete_login(
+            txn_id,
+            identity,
+            lang,
+            auth_method=form_provider.name,
+            interactive=form_provider.interactive,
+        )
 
     async def start_login_redirect_get(self, request: Request, name: str) -> Response:
         """``GET /login/{name}`` no longer redirects straight to the provider (A13).
@@ -1483,10 +1520,18 @@ class KeystoneOAuthProvider(OAuthProvider):
                 self._error_page(lang, "error_google_user_denied"), status_code=403
             )
 
-        return await self._complete_login(attempt.txn_id, identity, lang, auth_method=name)
+        return await self._complete_login(
+            attempt.txn_id, identity, lang, auth_method=name, interactive=provider.interactive
+        )
 
     async def _complete_login(
-        self, txn_id: str, identity: LoginIdentity, lang: str, *, auth_method: str
+        self,
+        txn_id: str,
+        identity: LoginIdentity,
+        lang: str,
+        *,
+        auth_method: str,
+        interactive: bool,
     ) -> Response:
         pending = await self._consume_pending_txn(txn_id)
         if pending is None:
@@ -1505,7 +1550,7 @@ class KeystoneOAuthProvider(OAuthProvider):
             resource=params.resource,
             subject=identity.email,
         )
-        await self._put_auth_code(auth_code, auth_method=auth_method)
+        await self._put_auth_code(auth_code, auth_method=auth_method, interactive=interactive)
         redirect_to = construct_redirect_uri(
             str(params.redirect_uri), code=code_str, state=params.state
         )
@@ -1517,9 +1562,10 @@ class KeystoneOAuthProvider(OAuthProvider):
         *,
         auth_method: str,
         resource: str | None,
+        interactive: bool,
         ttl_seconds: int | None = None,
     ) -> None:
-        """Hold the login method and resource for the refresh token's lifetime.
+        """Hold the login method, resource and interactive flag for the refresh token's lifetime.
 
         The marker is keyed by refresh token, so by default it lives exactly
         as long as the token (``ttl_seconds=None``): a longer TTL leaves
@@ -1527,48 +1573,62 @@ class KeystoneOAuthProvider(OAuthProvider):
         one silently downgrades a Google session to ``api_key`` (closing the
         human-identity gate) while the token still works. The resource
         travels the same way so a refreshed access token can keep the RFC 8707
-        binding the original one was issued with.
+        binding the original one was issued with, and so does ``interactive``
+        (X05): without it, a refreshed token would have to re-derive the flag
+        from ``auth_method == "google"``, exactly the name-based shortcut this
+        change removes.
 
         ``ttl_seconds`` is overridden to a short grace period when rotation
         rewrites the *old* token's marker instead of deleting it outright
         (finding #2, see ``exchange_refresh_token``).
         """
         ttl = ttl_seconds if ttl_seconds is not None else self._settings.refresh_token_ttl_seconds
-        payload = json.dumps({"auth_method": auth_method, "resource": resource})
+        payload = json.dumps(
+            {"auth_method": auth_method, "resource": resource, "interactive": interactive}
+        )
         await self._pending_store.put(_NS_REFRESH_AUTH, refresh_token, payload, ttl)
 
-    async def _read_refresh_meta(self, refresh_token: str) -> tuple[str, str | None]:
-        """Return ``(auth_method, resource)`` for a refresh token's marker.
+    async def _read_refresh_meta(self, refresh_token: str) -> tuple[str, str | None, bool]:
+        """Return ``(auth_method, resource, interactive)`` for a refresh token's marker.
 
-        Markers written before this field existed are a bare string
-        (``"google"`` or ``"api_key"``): read as that method with no resource.
-        Missing or unparsable markers fall back to ``("api_key", None)``, the
-        same default ``_read_refresh_auth_method`` used before this change.
-        Acceptable ``auth_method`` values are the names of the providers
-        currently configured, plus ``"google"`` and ``"api_key"`` even when
-        neither is configured right now: a refresh token issued while they
-        were still enabled must not be silently downgraded to ``"api_key"``
-        just because the deployment's provider list changed.
+        Pure parsing: this does not check whether ``auth_method`` names a
+        sign-in provider configured right now -- ``exchange_refresh_token``
+        does that itself and decides whether to refuse the refresh (X05).
+
+        Markers written before the ``interactive`` field existed (0.4.0,
+        ``{"auth_method", "resource"}``) or in the oldest, bare-string form
+        (``"google"`` or ``"api_key"``) have no claim to read, so it is
+        rebuilt from the sign-in method's own name: ``interactive =
+        (auth_method == "google")``, the same rule
+        ``has_interactive_human_identity`` uses for an access token minted
+        before this claim existed. Missing or unparsable markers fall back to
+        ``("api_key", None, False)``, the same default used before this
+        change.
         """
         raw = await self._pending_store.get(_NS_REFRESH_AUTH, refresh_token)
         if raw is None:
-            return "api_key", None
-        allowed_methods = set(self._providers.keys()) | {"google", "api_key"}
-        if raw in allowed_methods:
-            return raw, None
+            return "api_key", None, False
         try:
             data = json.loads(raw)
         except ValueError:
-            return "api_key", None
-        if not isinstance(data, dict):
-            return "api_key", None
-        auth_method = data.get("auth_method")
-        if auth_method not in allowed_methods:
-            auth_method = "api_key"
-        resource = data.get("resource")
-        if resource is not None and not isinstance(resource, str):
-            resource = None
-        return auth_method, resource
+            data = None
+        if isinstance(data, dict):
+            auth_method = data.get("auth_method")
+            if not isinstance(auth_method, str) or not auth_method:
+                return "api_key", None, False
+            resource = data.get("resource")
+            if resource is not None and not isinstance(resource, str):
+                resource = None
+            if "interactive" in data:
+                interactive = data["interactive"] is True
+            else:
+                interactive = auth_method == "google"
+            return auth_method, resource, interactive
+        # Oldest format: a bare auth_method string ("google" or "api_key").
+        auth_method = raw.strip()
+        if not auth_method:
+            return "api_key", None, False
+        return auth_method, None, auth_method == "google"
 
     def _login_form_html(
         self,
@@ -1660,11 +1720,28 @@ def _parse_pending_txn_raw(raw: str) -> _PendingAuthorization | None:
     return _PendingAuthorization(client_id, params)
 
 
-def _encode_auth_code_envelope(code: AuthorizationCode, auth_method: str) -> str:
-    return json.dumps({"code": code.model_dump(mode="json"), "auth_method": auth_method})
+def _encode_auth_code_envelope(code: AuthorizationCode, auth_method: str, interactive: bool) -> str:
+    return json.dumps(
+        {
+            "code": code.model_dump(mode="json"),
+            "auth_method": auth_method,
+            "interactive": interactive,
+        }
+    )
 
 
-def _parse_auth_code_envelope(raw: str) -> tuple[AuthorizationCode, str] | None:
+def _parse_auth_code_envelope(raw: str) -> tuple[AuthorizationCode, str, bool] | None:
+    """Parse an authorization-code envelope, bridging pre-0.5.0 shapes.
+
+    - Current shape: ``{"code", "auth_method", "interactive"}``.
+    - 0.4.0 shape: ``{"code", "auth_method"}`` with no ``interactive`` key --
+      rebuilt from the sign-in method's own name (``interactive = auth_method
+      == "google"``), the same rule ``has_interactive_human_identity`` uses
+      for a token minted before this claim existed.
+    - Oldest (3.x) shape: a bare ``AuthorizationCode`` with no envelope at
+      all -- ``auth_method`` defaults to ``"api_key"`` (never interactive),
+      exactly as before this change.
+    """
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError:
@@ -1675,9 +1752,13 @@ def _parse_auth_code_envelope(raw: str) -> tuple[AuthorizationCode, str] | None:
         except ValidationError:
             return None
         auth_method = str(payload.get("auth_method", "api_key")).strip() or "api_key"
-        return code, auth_method
+        if "interactive" in payload:
+            interactive = payload["interactive"] is True
+        else:
+            interactive = auth_method == "google"
+        return code, auth_method, interactive
     try:
-        return AuthorizationCode.model_validate_json(raw), "api_key"
+        return AuthorizationCode.model_validate_json(raw), "api_key", False
     except ValidationError:
         return None
 

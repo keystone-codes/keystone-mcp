@@ -45,7 +45,9 @@ subject identifiers that are guessable from an email address — see
 
 Emitted on RBAC middleware allow/deny (list-tools and call-tool). Subject is
 `sub_<16 hex>` (never raw email). Includes `policy_version`, `policy_content_hash`,
-`reason`, `cache_hit`, `operation`.
+`reason`, `cache_hit`, `operation`, `login_provider` (the sign-in method's
+name, e.g. `google` or `api_key` — lets a `human_identity_required` denial be
+read without a separate token lookup).
 
 ### `rbac_users_mutation`
 
