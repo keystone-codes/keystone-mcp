@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING
 
-from fastmcp.exceptions import PromptError, ToolError
+from fastmcp.exceptions import PromptError, ResourceError, ToolError
 from fastmcp.server.middleware import Middleware, MiddlewareContext
 
 from keystone_mcp.config import Settings
@@ -39,10 +39,14 @@ if TYPE_CHECKING:
         CallToolRequestParams,
         GetPromptRequestParams,
         ListPromptsRequest,
+        ListResourcesRequest,
+        ListResourceTemplatesRequest,
         ListToolsRequest,
+        ReadResourceRequestParams,
     )
 
     from keystone_mcp.observability.service import RbacObservability
+    from keystone_mcp.router.upstream_content import UpstreamContentCatalog
 
 logger = logging.getLogger(__name__)
 
@@ -113,9 +117,11 @@ class RbacMiddleware(Middleware):
         settings: Settings | None = None,
         observability: RbacObservability | None = None,
         enforce: bool | None = None,
+        content_catalog: UpstreamContentCatalog | None = None,
     ) -> None:
         self._policy_manager = policy_manager
         self._user_resolver = user_resolver
+        self._content_catalog = content_catalog
         self._observability = observability
         if enforce is not None:
             self._enforce = enforce
@@ -206,6 +212,108 @@ class RbacMiddleware(Middleware):
         )
         if not decision.allowed and self._enforce:
             raise PromptError(CLIENT_DENIAL_MESSAGE)
+        token = current_call_decision.set(decision)
+        try:
+            return await call_next(context)
+        finally:
+            current_call_decision.reset(token)
+
+    async def on_list_resources(
+        self,
+        context: MiddlewareContext[ListResourcesRequest],
+        call_next,
+    ):
+        resources = list(await call_next(context))
+        decision = await self._evaluate(
+            context,
+            name=None,
+            roles_only=True,
+            operation="list_resources",
+        )
+        if not self._enforce:
+            return resources
+        if not decision.allowed:
+            return []
+        policy = self._load_policy(operation="list_resources")
+        if policy is None:
+            return []
+        catalog = self._content_catalog
+        filtered = []
+        for resource in resources:
+            rbac_name = None
+            if catalog is not None:
+                rbac_name = catalog.rbac_name_for_uri(str(resource.uri))
+            if rbac_name is None:
+                filtered.append(resource)
+                continue
+            if policy.allows(decision.roles, rbac_name):
+                filtered.append(resource)
+        return filtered
+
+    async def on_list_resource_templates(
+        self,
+        context: MiddlewareContext[ListResourceTemplatesRequest],
+        call_next,
+    ):
+        templates = list(await call_next(context))
+        decision = await self._evaluate(
+            context,
+            name=None,
+            roles_only=True,
+            operation="list_resource_templates",
+        )
+        if not self._enforce:
+            return templates
+        if not decision.allowed:
+            return []
+        policy = self._load_policy(operation="list_resource_templates")
+        if policy is None:
+            return []
+        catalog = self._content_catalog
+        filtered = []
+        for template in templates:
+            rbac_name = None
+            if catalog is not None:
+                rbac_name = catalog.rbac_name_for_template_listing(template.uri_template)
+            if rbac_name is None:
+                filtered.append(template)
+                continue
+            if policy.allows(decision.roles, rbac_name):
+                filtered.append(template)
+        return filtered
+
+    async def on_read_resource(
+        self,
+        context: MiddlewareContext[ReadResourceRequestParams],
+        call_next,
+    ):
+        published_uri = str(context.message.uri)
+        rbac_name = None
+        if self._content_catalog is not None:
+            rbac_name = self._content_catalog.rbac_name_for_uri(published_uri)
+
+        if rbac_name is None:
+            identity = resolve_verified_identity()
+            decision = RbacDecision(
+                tool_name=published_uri,
+                email=identity.email if identity else None,
+                allowed=False,
+                reason=RbacDenialReason.NOT_PERMITTED,
+                subject_type=identity.subject_type if identity else None,
+            )
+            self._record_decision(decision, operation="read_resource")
+            if self._enforce:
+                raise ResourceError(CLIENT_DENIAL_MESSAGE)
+            return await call_next(context)
+
+        decision = await self._evaluate(
+            context,
+            name=rbac_name,
+            roles_only=False,
+            operation="read_resource",
+        )
+        if not decision.allowed and self._enforce:
+            raise ResourceError(CLIENT_DENIAL_MESSAGE)
         token = current_call_decision.set(decision)
         try:
             return await call_next(context)

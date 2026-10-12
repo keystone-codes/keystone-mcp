@@ -506,8 +506,13 @@ def build_server(
                 directory_resolver,
                 settings=settings,
                 observability=rbac_observability,
+                content_catalog=upstreams.content,
             )
         )
+
+    from keystone_mcp.router.upstream_uri_middleware import UpstreamResourceUriMiddleware
+
+    mcp.add_middleware(UpstreamResourceUriMiddleware(upstreams.content))
 
     mcp.add_middleware(
         ToolCallObservabilityMiddleware(observability=rbac_observability),
