@@ -90,6 +90,11 @@ _TOOL_DEFINITIONS: dict[str, types.Tool] = {
             "properties": {"seconds": {"type": "number", "default": 30}},
         },
     ),
+    "ask": types.Tool(
+        name="ask",
+        description="Ask the client a question when elicitation is available.",
+        inputSchema=_EMPTY_SCHEMA,
+    ),
 }
 
 _TOOL_ORDER: tuple[str, ...] = (
@@ -101,6 +106,7 @@ _TOOL_ORDER: tuple[str, ...] = (
     "meta",
     "count",
     "slow",
+    "ask",
 )
 
 
@@ -169,6 +175,27 @@ async def _run_tool(
             print("slow-cancelled", file=sys.stderr, flush=True)
             raise
         return [types.TextContent(type="text", text="slow done")]
+
+    if name == "ask":
+        if not ctx.session.check_client_capability(
+            types.ClientCapabilities(
+                elicitation=types.ElicitationCapability(
+                    form=types.FormElicitationCapability(),
+                )
+            )
+        ):
+            return [types.TextContent(type="text", text="no-elicitation")]
+        schema = {
+            "type": "object",
+            "properties": {"ok": {"type": "boolean"}},
+            "required": ["ok"],
+        }
+        result = await ctx.session.elicit_form(
+            "Proceed?",
+            schema,
+            related_request_id=ctx.request_id,
+        )
+        return [types.TextContent(type="text", text=f"answer={result.action}")]
 
     raise ValueError(f"unknown tool: {name}")
 

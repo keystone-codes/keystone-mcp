@@ -92,6 +92,11 @@ _UPSTREAM_PROCESS_RESTARTS = Counter(
     "Restarts of stdio upstream processes",
     ["namespace"],
 )
+_UPSTREAM_ELICITATIONS = Counter(
+    "keystone_mcp_upstream_elicitations_total",
+    "Upstream elicitation rounds forwarded to the Keystone client",
+    ["namespace", "action"],
+)
 _OAUTH_CLIENT_REGISTRATIONS = Counter(
     "keystone_mcp_oauth_client_registrations_total",
     "Dynamic client registration (POST /register) outcomes",
@@ -230,6 +235,11 @@ class RbacMetrics:
             return
         _UPSTREAM_PROCESS_RESTARTS.labels(namespace=namespace).inc()
 
+    def record_upstream_elicitation(self, *, namespace: str, action: str) -> None:
+        if not self._enabled:
+            return
+        _UPSTREAM_ELICITATIONS.labels(namespace=namespace, action=action).inc()
+
     def record_oauth_client_registration(self, *, outcome: str) -> None:
         if not self._enabled:
             return
@@ -242,3 +252,8 @@ class RbacMetrics:
 
     def scrape(self) -> tuple[bytes, str]:
         return generate_latest(), CONTENT_TYPE_LATEST
+
+
+def record_upstream_elicitation(*, namespace: str, action: str) -> None:
+    """Increment elicitation counter without an observability handle (proxy path)."""
+    _UPSTREAM_ELICITATIONS.labels(namespace=namespace, action=action).inc()

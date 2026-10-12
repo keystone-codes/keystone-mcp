@@ -279,6 +279,22 @@ the request stream. Release resources in `finally` blocks. Keystone-MCP forwards
 a client cancel and applies the same upstream cancellation when a proxied call
 hits the configured per-tool timeout.
 
+## Asking the human (elicitation)
+
+Before a destructive or ambiguous step, your tool may ask the connected MCP
+client for confirmation. On the handshake protocol, call `elicit_form` (or the
+equivalent in your SDK) while handling `tools/call`; Keystone forwards that
+question when the client declared form-mode elicitation and
+`KEYSTONE_MCP_PROXY_ELICITATION` is enabled (default). On MCP 2026-07-28,
+return an `InputRequiredResult` with form-mode `ElicitRequest` entries from the
+tool body instead of trying to open a back-channel mid-call.
+
+Check that the client supports elicitation before asking; if it does not,
+continue without a prompt or fail with a clear tool error. Do not ask for
+passwords or other secrets through elicitation — the MCP specification
+forbids it. URL-mode elicitation is declined by Keystone and never shown to
+the client.
+
 ## Running a stdio server
 
 Some upstreams speak MCP over **stdio** instead of Streamable HTTP. Keystone-MCP
