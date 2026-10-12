@@ -28,7 +28,7 @@ import logging
 import os
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from typing import Literal
+from typing import Any, Literal
 
 import anyio
 import fastmcp
@@ -60,6 +60,13 @@ _STOP_TIMEOUT_SECONDS = 5.0
 #: Stderr lines are logged truncated, matching the redaction module's cap for
 #: one log field; a runaway writer cannot blow up log storage.
 _MAX_STDERR_LINE_CHARS = 2000
+
+#: ``asyncio.StreamReader`` buffer limit for one stderr line. Generous on
+#: purpose: the asyncio default (64 KiB) is tight enough that a single long
+#: diagnostic line with no newline could raise out of ``readline()`` (see
+#: ``_read_stderr_until_eof``) well before ``_MAX_STDERR_LINE_CHARS`` would
+#: ever truncate it for logging.
+_STDERR_READER_LIMIT = 1 << 20  # 1 MiB
 
 
 class UpstreamProcessUnavailableError(RuntimeError):
@@ -193,64 +200,97 @@ class StdioUpstreamProcess:
                     self._restarts,
                     delay,
                 )
-                await self._sleep(delay)
+                await self._sleep_interruptibly(delay)
         finally:
             if not self._first_attempt_done.is_set():
                 self._first_attempt_done.set()
 
-    async def _run_once(self) -> tuple[str, float | None]:
-        """Run one attempt: start the process, serve while healthy, return why it stopped."""
-        read_fd, write_fd = os.pipe()
-        writer = os.fdopen(write_fd, "w", buffering=1)
-        started_at: float | None = None
-        closed_read_fd = False
-        try:
-            transport = StdioTransport(
-                self._command,
-                list(self._args),
-                env=dict(self._env),
-                cwd=self._cwd,
-                keep_alive=False,
-                log_file=writer,
-            )
-            client = fastmcp.Client(transport, init_timeout=self._init_timeout, mode="legacy")
-            async with client:
-                # The child holds its own copy of the write end; closing ours
-                # here is what lets stderr's read end see EOF when it exits.
-                writer.close()
-                writer = None
-                self._client = client
-                started_at = self._clock()
-                self._set_state("running", None)
-                try:
-                    reason = await self._supervise_running(client, read_fd)
-                finally:
-                    # _supervise_running's stderr reader always takes ownership
-                    # of read_fd (via os.fdopen) and closes it on its way out,
-                    # on every path (EOF, cancellation, exception) -- closing
-                    # it again here would risk closing an unrelated fd number
-                    # the OS has since reused.
-                    closed_read_fd = True
-            return reason, started_at
-        except Exception as exc:  # noqa: BLE001 - becomes a logged restart reason
-            return f"start failed: {type(exc).__name__}: {exc}", started_at
-        finally:
-            self._client = None
-            if writer is not None:
-                with contextlib.suppress(OSError):
-                    writer.close()
-            if not closed_read_fd:
-                with contextlib.suppress(OSError):
-                    os.close(read_fd)
+    async def _sleep_interruptibly(self, delay: float) -> None:
+        """Sleep for ``delay`` seconds, but return as soon as ``stop()`` runs.
 
-    async def _supervise_running(self, client: fastmcp.Client, read_fd: int) -> str:
-        """Wait until the process exits, hangs, or ``stop()`` is called."""
+        Without this, calling ``stop()`` while the supervisor is paused
+        between restart attempts would have to wait out the rest of that
+        pause -- up to 60 seconds -- before it could return.
+        """
+        if self._stop_requested:
+            return
+
+        async def _cancel_on_stop(tg: anyio.abc.TaskGroup) -> None:
+            await self._stop_event.wait()
+            tg.cancel_scope.cancel()
+
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(_cancel_on_stop, tg)
+            await self._sleep(delay)
+            tg.cancel_scope.cancel()
+
+    async def _run_once(self) -> tuple[str, float | None]:
+        """Run one attempt: start the process, serve while healthy, return why it stopped.
+
+        Stderr is drained from the moment the pipe exists, *before* the
+        child process is even spawned -- not only once ``initialize`` has
+        succeeded. A server that writes a lot to stderr before it answers
+        ``initialize`` would otherwise fill the pipe's kernel buffer and
+        block on ``write()``, hanging startup forever with nothing reading
+        the other end; and a server that crashes during startup would have
+        its diagnostic output discarded instead of logged. The stderr
+        reader keeps running for the rest of this attempt, wrapped around
+        everything else below, so its task group only finishes -- letting
+        this method actually return -- once stderr has reached EOF (the
+        child exited) or this attempt has nothing left to read.
+        """
+        read_fd, write_fd = os.pipe()
+        writer: Any = os.fdopen(write_fd, "w", buffering=1)
+        started_at: float | None = None
         eof_event = anyio.Event()
-        outcome: dict[str, str] = {}
 
         async def watch_stderr() -> None:
             await self._read_stderr_until_eof(read_fd)
             eof_event.set()
+
+        async with anyio.create_task_group() as stderr_tg:
+            stderr_tg.start_soon(watch_stderr)
+            try:
+                transport = StdioTransport(
+                    self._command,
+                    list(self._args),
+                    env=dict(self._env),
+                    cwd=self._cwd,
+                    keep_alive=False,
+                    log_file=writer,
+                )
+                client = fastmcp.Client(transport, init_timeout=self._init_timeout, mode="legacy")
+                async with client:
+                    # The child now holds its own copy of the write end;
+                    # closing ours here is what lets stderr's read end see
+                    # EOF once the child exits. It cannot cause a premature
+                    # EOF by itself: the child's copy is still open.
+                    writer.close()
+                    writer = None
+                    self._client = client
+                    started_at = self._clock()
+                    self._set_state("running", None)
+                    reason = await self._supervise_running(client, eof_event)
+                return reason, started_at
+            except Exception as exc:  # noqa: BLE001 - becomes a logged restart reason
+                return (
+                    f"start failed: {type(exc).__name__} running {os.path.basename(self._command)}",
+                    started_at,
+                )
+            finally:
+                self._client = None
+                if writer is not None:
+                    with contextlib.suppress(OSError):
+                        writer.close()
+
+    async def _supervise_running(self, client: fastmcp.Client, eof_event: anyio.Event) -> str:
+        """Wait until the process exits, hangs, or ``stop()`` is called.
+
+        ``eof_event`` is set by the stderr reader that ``_run_once`` already
+        started before this process was even spawned; this method only
+        watches it, it does not own stderr.
+        """
+        outcome: dict[str, str] = {}
 
         async def watch_eof(tg: anyio.abc.TaskGroup) -> None:
             await eof_event.wait()
@@ -267,7 +307,7 @@ class StdioUpstreamProcess:
                         ok = await client.ping()
                     if not ok:
                         raise RuntimeError("ping returned a falsy result")
-                except BaseException as exc:  # noqa: BLE001 - any failure ends the run
+                except Exception as exc:  # noqa: BLE001 - any failure ends the run
                     outcome["reason"] = f"ping failed: {type(exc).__name__}"
                     tg.cancel_scope.cancel()
                     return
@@ -277,7 +317,6 @@ class StdioUpstreamProcess:
             tg.cancel_scope.cancel()
 
         async with anyio.create_task_group() as tg:
-            tg.start_soon(watch_stderr)
             tg.start_soon(watch_eof, tg)
             tg.start_soon(watch_ping, tg)
             tg.start_soon(watch_stop, tg)
@@ -287,15 +326,34 @@ class StdioUpstreamProcess:
         return outcome.get("reason", "process exited")
 
     async def _read_stderr_until_eof(self, read_fd: int) -> None:
-        """Log the child's stderr, one line at a time, until the pipe closes."""
+        """Log the child's stderr, one line at a time, until the pipe closes.
+
+        Takes ownership of ``read_fd`` and closes it on every path (EOF,
+        cancellation, exception).
+        """
         loop = asyncio.get_running_loop()
-        reader = asyncio.StreamReader()
+        reader = asyncio.StreamReader(limit=_STDERR_READER_LIMIT)
         protocol = asyncio.StreamReaderProtocol(reader)
         read_file = os.fdopen(read_fd, "rb", buffering=0)
         transport, _ = await loop.connect_read_pipe(lambda: protocol, read_file)
         try:
             while True:
-                line = await reader.readline()
+                try:
+                    line = await reader.readline()
+                except ValueError:
+                    # A line longer than _STDERR_READER_LIMIT with no
+                    # newline: asyncio's readline() has already discarded
+                    # the oversized chunk from its internal buffer before
+                    # raising, so the stream itself is still fine to read --
+                    # only the one line is lost. Treating this as fatal
+                    # would kill and restart a perfectly healthy process
+                    # over a single noisy log line.
+                    _stderr_logger.warning(
+                        "namespace=%s <stderr line exceeded %d bytes without a newline; skipped>",
+                        self._namespace,
+                        _STDERR_READER_LIMIT,
+                    )
+                    continue
                 if not line:
                     return
                 text = line.decode("utf-8", errors="replace")[:_MAX_STDERR_LINE_CHARS].rstrip("\n")
