@@ -285,10 +285,10 @@ Why: [ADR 0004](adr/0004-redis-is-required.md).
   effective budget multiplies by the replica count. See
   [environment.md#more-than-one-replica](environment.md#more-than-one-replica)
   for the per-process throttle note.
-- There is no way to revoke every session a person holds in one action.
-  Blocking them in the users directory takes effect on their **next call**
-  (the directory is re-checked every time), but an access token already
-  issued keeps working until it expires on its own.
+- Blocking a person in the users directory, or calling `users_logout`, revokes
+  every OAuth access and refresh token for that person immediately. The next
+  request with an old token is rejected; unblocking does not bring old
+  sessions back.
 - Interactive sign-in is Google only; a general OIDC provider is planned
   for 0.5.0. The deprecated API-key method
   (`KEYSTONE_MCP_AUTH_SERVICE_URL`) is still accepted under `production`

@@ -5,7 +5,7 @@ description: Manage Keystone-MCP users and roles - add, update, block/unblock, g
 
 # Keystone-MCP user and role administration
 
-The Keystone-MCP connector exposes eight `users_*` tools backed by the shared users
+The Keystone-MCP connector exposes nine `users_*` tools backed by the shared users
 directory. Pick the tool from the table below and call it once with exactly the
 listed arguments. Do not probe other tools and do not guess argument names.
 
@@ -37,8 +37,9 @@ permissions are the union of each role's allow patterns.
 | Remove one role, keep the rest | `users_revoke_role` | `{"email": "...", "role": "administrator"}` |
 | Set the exact role set | `users_set_roles` | `{"email": "...", "roles": ["administrator"]}` |
 | Change name or note | `users_update` | `{"email": "...", "full_name": "..."}` or `{"email": "...", "note": "..."}` |
-| Revoke access | `users_block` | `{"email": "..."}` |
-| Restore access | `users_unblock` | `{"email": "..."}` |
+| Revoke access | `users_block` | `{"email": "..."}` — also ends all OAuth sessions (`revoked_tokens` in the response) |
+| End sessions only | `users_logout` | `{"email": "..."}` — revokes tokens; person can sign in again; directory entry not required |
+| Restore access | `users_unblock` | `{"email": "..."}` — does not restore old sessions |
 
 ## Rules
 
@@ -68,7 +69,9 @@ roles disappear, then act.
 ## Reading the result
 
 Success is `{"state": "done", "user": {...}}`, or `{"state": "done", "users": [...],
-"total": N}` for `users_list`. Failure is `{"state": "error", "code": "...",
+"total": N}` for `users_list`, or `{"state": "done", "email": "...", "revoked_tokens": N}`
+for `users_logout`. `users_block` may add top-level `revoked_tokens` (or `null` if the
+token store failed during revoke). Failure is `{"state": "error", "code": "...",
 "message": "..."}`.
 
 Report the resulting roles and blocked status back to the user — do not just say

@@ -46,6 +46,7 @@ BUILTIN_TOOL_NAMES: frozenset[str] = frozenset(
         "users_set_roles",
         "users_grant_role",
         "users_revoke_role",
+        "users_logout",
         "service_accounts_list",
         "service_accounts_add",
         "service_accounts_update",
@@ -61,6 +62,7 @@ def register_catalog(
     directory: UserDirectory | None = None,
     role_source: RoleSource | None = None,
     policy_store: object | None = None,
+    session_revoker: object | None = None,
 ) -> None:
     """``policy_store``, when given, is a ``keystone_mcp.rbac.policy_store.PolicyStore``.
 
@@ -70,7 +72,10 @@ def register_catalog(
     package from the catalog module for a parameter nothing here reads yet.
     """
     users_admin = UsersAdminAdapter(
-        directory=directory, observability=observability, role_source=role_source
+        directory=directory,
+        observability=observability,
+        role_source=role_source,
+        session_revoker=session_revoker,
     )
     service_accounts_admin = ServiceAccountsAdminAdapter(
         directory=directory, observability=observability, role_source=role_source
@@ -126,6 +131,12 @@ def register_catalog(
         (
             "users_unblock",
             "Unblock a previously blocked user account.",
+            [P("email", str)],
+        ),
+        (
+            "users_logout",
+            "End all sessions of a user: every access and refresh token is revoked; "
+            "the user can sign in again.",
             [P("email", str)],
         ),
         (
