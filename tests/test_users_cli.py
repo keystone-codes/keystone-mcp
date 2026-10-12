@@ -356,7 +356,7 @@ def test_import_creates_users_with_roles_and_block_state(
     assert exit_code == 0
     out = capsys.readouterr().out.strip()
     assert out == (
-        "created=3 updated=0 unchanged=0 skipped_roles=0 skipped_invalid=0 admin_or_block_changes=0"
+        "created=3 updated=0 unchanged=0 skipped_roles=0 skipped_invalid=0 admin_or_block_changes=0 revoked_sessions=0"
     )
 
     users = {u.email: u for u in _list_users(db_url)}
@@ -435,7 +435,7 @@ def test_import_is_idempotent(tmp_path: Path, monkeypatch, capsys) -> None:
 
     assert main(argv) == 0
     assert capsys.readouterr().out.strip() == (
-        "created=1 updated=0 unchanged=0 skipped_roles=0 skipped_invalid=0 admin_or_block_changes=0"
+        "created=1 updated=0 unchanged=0 skipped_roles=0 skipped_invalid=0 admin_or_block_changes=0 revoked_sessions=0"
     )
 
     async def _read() -> str | None:
@@ -449,7 +449,7 @@ def test_import_is_idempotent(tmp_path: Path, monkeypatch, capsys) -> None:
 
     assert main(argv) == 0
     assert capsys.readouterr().out.strip() == (
-        "created=0 updated=0 unchanged=1 skipped_roles=0 skipped_invalid=0 admin_or_block_changes=0"
+        "created=0 updated=0 unchanged=1 skipped_roles=0 skipped_invalid=0 admin_or_block_changes=0 revoked_sessions=0"
     )
     assert asyncio.run(_read()) == "1"
 
@@ -482,7 +482,7 @@ def test_import_source_wins_on_existing_user(tmp_path: Path, monkeypatch, capsys
 
     assert exit_code == 0
     assert capsys.readouterr().out.strip() == (
-        "created=0 updated=1 unchanged=0 skipped_roles=0 skipped_invalid=0 admin_or_block_changes=1"
+        "created=0 updated=1 unchanged=0 skipped_roles=0 skipped_invalid=0 admin_or_block_changes=1 revoked_sessions=0"
     )
 
     users = {u.email: u for u in _list_users(db_url)}
@@ -592,7 +592,7 @@ def test_import_rejects_overlong_created_by_without_crashing(
     assert exit_code == 0
     captured = capsys.readouterr()
     assert captured.out.strip() == (
-        "created=1 updated=0 unchanged=0 skipped_roles=0 skipped_invalid=1 admin_or_block_changes=0"
+        "created=1 updated=0 unchanged=0 skipped_roles=0 skipped_invalid=1 admin_or_block_changes=0 revoked_sessions=0"
     )
     assert "badcreatedby@example.com" in captured.err
     assert "created_by" in captured.err
@@ -659,7 +659,7 @@ def test_import_dry_run_writes_nothing(tmp_path: Path, monkeypatch, capsys) -> N
     out = capsys.readouterr().out.strip()
     assert out == (
         "created=1 updated=0 unchanged=0 skipped_roles=0 "
-        "skipped_invalid=0 admin_or_block_changes=0 (dry run, nothing written)"
+        "skipped_invalid=0 admin_or_block_changes=0 revoked_sessions=0 (dry run, nothing written)"
     )
     assert _list_users(db_url) == []
 
@@ -826,7 +826,7 @@ def test_import_skips_invalid_records_and_still_writes_the_rest(
     out = captured.out.strip()
     err = captured.err
     assert out == (
-        "created=1 updated=0 unchanged=0 skipped_roles=0 skipped_invalid=3 admin_or_block_changes=0"
+        "created=1 updated=0 unchanged=0 skipped_roles=0 skipped_invalid=3 admin_or_block_changes=0 revoked_sessions=0"
     )
     assert "not-an-email" in err
     assert "longname@example.com" in err
@@ -876,7 +876,7 @@ def test_import_dry_run_reports_admin_or_block_changes(tmp_path: Path, monkeypat
     captured = capsys.readouterr()
     out = captured.out.strip()
     err = captured.err
-    assert "admin_or_block_changes=1" in out
+    assert "admin_or_block_changes=1 revoked_sessions=0" in out
     assert "administrator" in err
     assert "block" in err
 
@@ -922,7 +922,7 @@ def test_import_reblocking_a_locally_unblocked_user_counts_as_change(
     assert exit_code == 0
     captured = capsys.readouterr()
     assert captured.out.strip() == (
-        "created=0 updated=1 unchanged=0 skipped_roles=0 skipped_invalid=0 admin_or_block_changes=1"
+        "created=0 updated=1 unchanged=0 skipped_roles=0 skipped_invalid=0 admin_or_block_changes=1 revoked_sessions=0"
     )
     assert "block" in captured.err
 
@@ -979,7 +979,7 @@ def test_import_revoking_a_locally_granted_role_counts_as_change(
     assert exit_code == 0
     captured = capsys.readouterr()
     assert captured.out.strip() == (
-        "created=0 updated=1 unchanged=0 skipped_roles=0 skipped_invalid=0 admin_or_block_changes=1"
+        "created=0 updated=1 unchanged=0 skipped_roles=0 skipped_invalid=0 admin_or_block_changes=1 revoked_sessions=0"
     )
     assert "role" in captured.err
 
@@ -1023,6 +1023,165 @@ def test_import_on_fresh_database_warns_but_does_not_require_create(
     err = capsys.readouterr().err
     assert "will be created" in err
     assert db_path.is_file()
+
+
+# --- block / unblock / logout ----------------------------------------------
+
+
+def _seed_oauth_pair(redis_url: str, *, email: str) -> tuple[str, str]:
+    """Write one access+refresh pair for *email* into Redis; return (at, rt)."""
+    import time
+    import uuid
+
+    from mcp.server.auth.provider import AccessToken, RefreshToken
+
+    from keystone_mcp.auth.oauth_store import RedisOAuthStore
+
+    store = RedisOAuthStore(
+        redis_url,
+        client_ttl_seconds=5000,
+        refresh_ttl_seconds=3000,
+        access_ttl_seconds=3600,
+    )
+
+    async def _run() -> tuple[str, str]:
+        now = int(time.time())
+        at = f"km_at_{uuid.uuid4().hex}"
+        rt = f"km_rt_{uuid.uuid4().hex}"
+        try:
+            await store.put_access_token(
+                AccessToken(
+                    token=at,
+                    client_id="cli-test-client",
+                    scopes=[],
+                    expires_at=now + 3600,
+                    subject=email,
+                    claims={"iat": now},
+                )
+            )
+            await store.put_refresh_token(
+                RefreshToken(
+                    token=rt,
+                    client_id="cli-test-client",
+                    scopes=[],
+                    expires_at=now + 3000,
+                    subject=email,
+                )
+            )
+            return at, rt
+        finally:
+            await store.aclose()
+
+    return asyncio.run(_run())
+
+
+def test_cli_block_revokes_sessions(tmp_path: Path, monkeypatch, capsys) -> None:
+    if not _REAL_REDIS_URL:
+        pytest.skip("KEYSTONE_MCP_REDIS_URL is not set")
+
+    db_url = f"sqlite:///{tmp_path}/keystone-users.db"
+    monkeypatch.setenv("KEYSTONE_MCP_USERS_DB_URL", db_url)
+    monkeypatch.setenv("KEYSTONE_MCP_REDIS_URL", _REAL_REDIS_URL)
+    _seed_user(db_path=tmp_path / "keystone-users.db", email="victim@example.com", roles=["member"])
+    _seed_oauth_pair(_REAL_REDIS_URL, email="victim@example.com")
+
+    exit_code = main(["users", "block", "--email", "victim@example.com"])
+
+    assert exit_code == 0
+    assert capsys.readouterr().out.strip() == "Blocked victim@example.com; revoked 2 token(s)"
+    users = {u.email: u for u in _list_users(db_url)}
+    assert users["victim@example.com"].is_blocked is True
+
+
+def test_cli_block_without_redis_still_blocks(tmp_path: Path, monkeypatch, capsys) -> None:
+    db_url = f"sqlite:///{tmp_path}/keystone-users.db"
+    monkeypatch.setenv("KEYSTONE_MCP_USERS_DB_URL", db_url)
+    _seed_user(db_path=tmp_path / "keystone-users.db", email="victim@example.com", roles=["member"])
+
+    exit_code = main(["users", "block", "--email", "victim@example.com"])
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    assert captured.out.strip() == "Blocked victim@example.com; revoked 0 token(s)"
+    assert "sessions not revoked: KEYSTONE_MCP_REDIS_URL is not set" in captured.err
+    users = {u.email: u for u in _list_users(db_url)}
+    assert users["victim@example.com"].is_blocked is True
+
+
+def test_cli_logout_without_redis_fails(tmp_path: Path, monkeypatch, capsys) -> None:
+    db_url = f"sqlite:///{tmp_path}/keystone-users.db"
+    monkeypatch.setenv("KEYSTONE_MCP_USERS_DB_URL", db_url)
+
+    exit_code = main(["users", "logout", "--email", "anyone@example.com"])
+
+    assert exit_code == 1
+    assert "KEYSTONE_MCP_REDIS_URL is not set" in capsys.readouterr().err
+
+
+def test_cli_unblock(tmp_path: Path, monkeypatch, capsys) -> None:
+    db_path = tmp_path / "keystone-users.db"
+    db_url = f"sqlite:///{db_path}"
+    monkeypatch.setenv("KEYSTONE_MCP_USERS_DB_URL", db_url)
+    _seed_user(
+        db_path,
+        email="victim@example.com",
+        roles=["member"],
+        is_blocked=True,
+    )
+
+    exit_code = main(["users", "unblock", "--email", "victim@example.com"])
+
+    assert exit_code == 0
+    assert capsys.readouterr().out.strip() == "Unblocked victim@example.com"
+    users = {u.email: u for u in _list_users(db_url)}
+    assert users["victim@example.com"].is_blocked is False
+
+
+def test_cli_block_last_admin_refused(tmp_path: Path, monkeypatch, capsys) -> None:
+    db_path = tmp_path / "keystone-users.db"
+    monkeypatch.setenv("KEYSTONE_MCP_USERS_DB_URL", f"sqlite:///{db_path}")
+    _seed_user(db_path, email="sole@example.com", roles=["administrator"])
+
+    exit_code = main(["users", "block", "--email", "sole@example.com"])
+
+    assert exit_code == 1
+    assert "last active administrator" in capsys.readouterr().err.lower()
+
+
+def test_import_block_revokes_sessions(tmp_path: Path, monkeypatch, capsys) -> None:
+    if not _REAL_REDIS_URL:
+        pytest.skip("KEYSTONE_MCP_REDIS_URL is not set")
+
+    db_path = tmp_path / "keystone-users.db"
+    db_url = f"sqlite:///{db_path}"
+    monkeypatch.setenv("KEYSTONE_MCP_USERS_DB_URL", db_url)
+    monkeypatch.setenv("KEYSTONE_MCP_REDIS_URL", _REAL_REDIS_URL)
+    policy_path = _write_policy(tmp_path)
+    _seed_user(db_path, email="person@example.com", roles=["member"], is_blocked=False)
+    _seed_oauth_pair(_REAL_REDIS_URL, email="person@example.com")
+
+    blocked = [_user_payload("person@example.com", "Person", ["member"], True)]
+    transport = _transport_for([], blocked)
+    monkeypatch.setattr(users_cli, "_source_transport", lambda: transport)
+
+    exit_code = main(
+        [
+            "users",
+            "import",
+            "--from-url",
+            "http://source.example",
+            "--token",
+            "t0k",
+            "--policy",
+            str(policy_path),
+        ]
+    )
+
+    assert exit_code == 0
+    assert capsys.readouterr().out.strip() == (
+        "created=0 updated=1 unchanged=0 skipped_roles=0 skipped_invalid=0 "
+        "admin_or_block_changes=1 revoked_sessions=2"
+    )
 
 
 # --- grant-admin reads KEYSTONE_MCP_ENV_FILE (deferred by A06) --------------

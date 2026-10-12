@@ -213,6 +213,26 @@ unrelated, empty database is exactly the failure mode a break-glass recovery
 command run from the wrong directory would otherwise hit. `import` has no
 such flag: writing into a fresh database is its normal first use.
 
+## Block, unblock, and logout from the host
+
+When RBAC is `off` or no administrator can call `users_*`, an operator on
+the server host can manage access directly:
+
+```bash
+keystone-mcp users block   --email person@example.com
+keystone-mcp users unblock --email person@example.com
+keystone-mcp users logout  --email person@example.com
+```
+
+`block` sets `is_blocked` and revokes every OAuth session for that email
+when `KEYSTONE_MCP_REDIS_URL` is set; without Redis the block still applies,
+but existing tokens live until they expire (the command prints a warning).
+`logout` revokes sessions only and requires Redis. `unblock` lifts the block
+without restoring old tokens — the person signs in again for new ones. The
+same last-administrator rule as `users_block` applies. Re-running `users
+import` that re-applies a block from the source also revokes sessions; the
+import summary includes `revoked_sessions`.
+
 ## Service accounts
 
 Machine callers (CI, schedulers, agents without a human at the keyboard) use a
