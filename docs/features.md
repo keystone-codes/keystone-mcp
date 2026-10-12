@@ -20,10 +20,14 @@ Keystone-MCP keeps its own list of people — email, roles, blocked or not.
 By default it is built in: a SQLite file for a single host, or PostgreSQL
 for production and more than one replica. A fork that already runs its own
 users service can point `KEYSTONE_MCP_USERS_BACKEND=http` at it instead and
-keep using that directory. Either way, the rest of Keystone-MCP (sign-in,
-RBAC, the `users_*` tools) works the same. Details: [users.md](users.md) and,
-for the HTTP contract a fork's own directory must meet,
-[adding-routes.md](adding-routes.md#the-http-users-directory-contract).
+keep using that directory. Both are implementations of one `UserDirectory`
+protocol — read access (`resolve_user`, `list_users`) plus an optional
+`UserDirectoryAdmin` capability that wires up the `users_*` tools; a
+directory that cannot administer still publishes `users_list`. Either way,
+the rest of Keystone-MCP (sign-in, RBAC, the `users_*` tools) works the
+same. Details: [users.md](users.md) and, for the protocol itself and the
+HTTP contract a fork's own directory must meet,
+[user-directory.md](user-directory.md).
 
 ## Any sign-in method
 
