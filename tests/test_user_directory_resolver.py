@@ -14,7 +14,7 @@ from keystone_mcp.user_directory import (
     build_user_directory_resolver,
     is_critical_tool,
 )
-from keystone_mcp.user_directory.cache import ResolutionCache
+from keystone_mcp.user_directory.cache import ApiKeyVerificationCache, ResolutionCache
 from keystone_mcp.user_directory.circuit_breaker import CircuitBreaker
 from keystone_mcp.user_directory.http import HttpUserDirectory
 from keystone_mcp.user_directory.memory import InMemoryUserDirectoryBackend
@@ -137,6 +137,7 @@ async def test_fail_closed_on_timeout() -> None:
         revision_reader=InMemoryRevisionReader(),
         cache=ResolutionCache(allow_ttl_seconds=60, deny_ttl_seconds=30),
         circuit_breaker=CircuitBreaker(failure_threshold=5, recovery_seconds=30),
+        api_key_cache=ApiKeyVerificationCache(allow_ttl_seconds=60, deny_ttl_seconds=30),
     )
 
     with pytest.raises(UserDirectoryUnavailableError) as exc_info:
@@ -350,6 +351,7 @@ async def test_resolver_propagates_revision_unavailable() -> None:
         ),
         cache=ResolutionCache(allow_ttl_seconds=60, deny_ttl_seconds=30),
         circuit_breaker=CircuitBreaker(failure_threshold=5, recovery_seconds=30),
+        api_key_cache=ApiKeyVerificationCache(allow_ttl_seconds=60, deny_ttl_seconds=30),
     )
 
     with pytest.raises(UserDirectoryUnavailableError) as exc_info:

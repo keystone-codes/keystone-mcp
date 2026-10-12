@@ -21,6 +21,9 @@ from collections.abc import Sequence
 
 from keystone_mcp.user_directory.errors import UserDirectoryUnavailableError
 from keystone_mcp.user_directory.types import (
+    ApiKeyRecord,
+    ApiKeyVerification,
+    IssuedApiKey,
     MutationResult,
     ServiceAccountMutation,
     ServiceAccountRecord,
@@ -45,7 +48,7 @@ class LocalUserDirectory:
 
     @property
     def capabilities(self) -> frozenset[str]:
-        return frozenset({"admin", "service_accounts"})
+        return frozenset({"admin", "service_accounts", "api_keys"})
 
     async def ping(self) -> None:
         """Delegate to :meth:`UsersStore.ping` (``SELECT 1``) for readiness checks."""
@@ -173,6 +176,35 @@ class LocalUserDirectory:
             is_blocked=is_blocked,
             actor=actor,
         )
+
+    async def issue_api_key(
+        self,
+        *,
+        subject: str,
+        label: str | None,
+        expires_in_days: int | None,
+        actor: str,
+    ) -> IssuedApiKey:
+        return await self._store.issue_api_key(
+            subject=subject,
+            label=label,
+            expires_in_days=expires_in_days,
+            created_by=actor,
+        )
+
+    async def list_api_keys(
+        self,
+        *,
+        subject: str | None = None,
+        include_revoked: bool = False,
+    ) -> list[ApiKeyRecord]:
+        return await self._store.list_api_keys(subject=subject, include_revoked=include_revoked)
+
+    async def revoke_api_key(self, *, key_id: str, actor: str) -> tuple[ApiKeyRecord, bool]:
+        return await self._store.revoke_api_key(key_id=key_id, actor=actor)
+
+    async def verify_api_key(self, key: str) -> ApiKeyVerification | None:
+        return await self._store.verify_api_key(key)
 
     async def aclose(self) -> None:
         # The store's engine is owned by whoever built it (the server), not

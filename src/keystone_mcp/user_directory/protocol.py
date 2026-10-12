@@ -51,6 +51,9 @@ from collections.abc import Sequence
 from typing import Literal, Protocol, runtime_checkable
 
 from keystone_mcp.user_directory.types import (
+    ApiKeyRecord,
+    ApiKeyVerification,
+    IssuedApiKey,
     MutationResult,
     ServiceAccountMutation,
     ServiceAccountRecord,
@@ -58,8 +61,8 @@ from keystone_mcp.user_directory.types import (
     UserResolveResult,
 )
 
-#: What a directory can do beyond reading. X08 adds "api_keys" to this literal.
-Capability = Literal["admin", "service_accounts"]
+#: What a directory can do beyond reading.
+Capability = Literal["admin", "service_accounts", "api_keys"]
 
 
 @runtime_checkable
@@ -160,6 +163,29 @@ class ServiceAccountDirectory(UserDirectory, Protocol):
 
 
 @runtime_checkable
+class ApiKeyDirectory(UserDirectory, Protocol):
+    async def issue_api_key(
+        self,
+        *,
+        subject: str,
+        label: str | None,
+        expires_in_days: int | None,
+        actor: str,
+    ) -> IssuedApiKey: ...
+
+    async def list_api_keys(
+        self,
+        *,
+        subject: str | None = None,
+        include_revoked: bool = False,
+    ) -> list[ApiKeyRecord]: ...
+
+    async def revoke_api_key(self, *, key_id: str, actor: str) -> tuple[ApiKeyRecord, bool]: ...
+
+    async def verify_api_key(self, key: str) -> ApiKeyVerification | None: ...
+
+
+@runtime_checkable
 class UserDirectoryBackend(Protocol):
     """Deprecated: a read-only, single-method directory client (0.4.0).
 
@@ -181,5 +207,7 @@ class UserDirectoryResolver(Protocol):
     """Cached fail-closed resolver used by login and RBAC enforcement."""
 
     async def resolve(self, email: str, *, critical: bool = False) -> UserResolveResult: ...
+
+    async def verify_api_key(self, key: str) -> ApiKeyVerification | None: ...
 
     async def aclose(self) -> None: ...
