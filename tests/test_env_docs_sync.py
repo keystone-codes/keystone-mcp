@@ -1,11 +1,11 @@
 """Keep ``config.py``, ``.env.example`` and ``docs/environment.md`` in sync.
 
 Every ``KEYSTONE_MCP_*`` variable read by the code must be documented in
-``docs/environment.md`` and listed in ``.env.example``. This module extracts
-the three name sets with plain regexes (not by importing
-``keystone_mcp.config`` or introspecting its dataclass, since names living
-inside ``default_factory=lambda`` cannot be recovered that way) and compares
-them.
+``docs/environment.md`` and listed in ``.env.example``. The three name sets
+are extracted with plain regexes in ``tests/support/env_vars.py`` (not by
+importing ``keystone_mcp.config`` or introspecting its dataclass, since names
+living inside ``default_factory=lambda`` cannot be recovered that way); this
+module just compares them.
 """
 
 from __future__ import annotations
@@ -13,51 +13,27 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from support.env_vars import (
+    code_variables,
+    env_example_variables,
+    environment_md_variables,
+)
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SRC_ROOT = REPO_ROOT / "src" / "keystone_mcp"
 ENV_EXAMPLE_PATH = REPO_ROOT / ".env.example"
 ENVIRONMENT_DOC_PATH = REPO_ROOT / "docs" / "environment.md"
 
-# Matches every place the code reads a KEYSTONE_MCP_* variable: the _env*
-# helpers in config.py, and direct os.environ/os.getenv reads anywhere else
-# in src/ (e.g. a dedicated .env loader).
-CODE_VARIABLE_PATTERN = re.compile(
-    r"(?:_env(?:_int|_float|_bool)?\(|os\.environ\.get\(|os\.getenv\(|os\.environ\[)"
-    r"\s*[\"'](KEYSTONE_MCP_[A-Z0-9_]+)[\"']"
-)
-
-# Matches a variable assignment line in .env.example, commented out or not.
-# Repeated names (e.g. mentioned again in a later section) are fine, we only
-# care about the resulting set.
-ENV_EXAMPLE_VARIABLE_PATTERN = re.compile(
-    r"^\s*#?\s*(KEYSTONE_MCP_[A-Z0-9_]+)=",
-    re.MULTILINE,
-)
-
-# Matches the first column of a Markdown table row in docs/environment.md,
-# e.g. "| `KEYSTONE_MCP_BASE_URL` | `http://localhost:8080` | ... |".
-DOCS_VARIABLE_PATTERN = re.compile(
-    r"^\|\s*`(KEYSTONE_MCP_[A-Z0-9_]+)`\s*\|",
-    re.MULTILINE,
-)
-
 
 def _variables_read_by_code() -> set[str]:
-    names: set[str] = set()
-    for path in SRC_ROOT.rglob("*.py"):
-        text = path.read_text(encoding="utf-8")
-        names.update(CODE_VARIABLE_PATTERN.findall(text))
-    return names
+    return code_variables()
 
 
 def _variables_in_env_example() -> set[str]:
-    text = ENV_EXAMPLE_PATH.read_text(encoding="utf-8")
-    return set(ENV_EXAMPLE_VARIABLE_PATTERN.findall(text))
+    return env_example_variables(ENV_EXAMPLE_PATH)
 
 
 def _variables_in_environment_doc() -> set[str]:
-    text = ENVIRONMENT_DOC_PATH.read_text(encoding="utf-8")
-    return set(DOCS_VARIABLE_PATTERN.findall(text))
+    return environment_md_variables(ENVIRONMENT_DOC_PATH)
 
 
 def _format_diff(missing: set[str], extra: set[str], doc_label: str) -> str:
