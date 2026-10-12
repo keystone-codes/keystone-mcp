@@ -298,6 +298,8 @@ def main(argv: list[str] | None = None) -> int:
         return args.handler(args)
     if args.command == "users":
         return args.handler(args)
+    if args.command == "keys":
+        return args.handler(args)
     if args.command == "service-accounts":
         return args.handler(args)
     parser.error(f"unknown command: {args.command}")

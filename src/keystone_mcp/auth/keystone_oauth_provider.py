@@ -1086,6 +1086,8 @@ class KeystoneOAuthProvider(OAuthProvider):
 
     # ── Access tokens (Resource Server) ───────────────────────────────────
     async def load_access_token(self, token: str) -> AccessToken | None:
+        if token.startswith("ksk_"):
+            return await self._verify_service_api_key(token)
         return await self._store.get_access_token(token)
 
     async def verify_token(self, token: str) -> AccessToken | None:
@@ -1723,6 +1725,8 @@ class KeystoneOAuthProvider(OAuthProvider):
         t = TRANSLATIONS.get(lang, TRANSLATIONS[FALLBACK_LANG])
         direction = "rtl" if lang in RTL_LANGS else "ltr"
         err = f'<p style="color:#c00">{html.escape(t[error_key])}</p>' if error_key else ""
+        if error_key:
+            err += f'<input type="hidden" name="login_error" value="{html.escape(error_key)}">'
         txn = html.escape(txn_id)
 
         consent_block = _consent_block_html(t, client_name, redirect_uri)
