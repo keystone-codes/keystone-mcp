@@ -108,6 +108,13 @@ async def test_post_login_with_invalid_token_has_security_headers():
 
 @pytest.mark.asyncio
 async def test_get_login_google_disabled_has_security_headers():
+    """X03: with Google disabled, no ``/login/google`` route is registered at all.
+
+    Keystone only registers a route per *configured* redirect login
+    provider, so this is now a bare Starlette 404 rather than a Keystone
+    error page — it carries no security headers of Keystone's own, since
+    no Keystone handler ever runs for it.
+    """
     app = _build_app()
     async with LifespanManager(app):
         async with httpx.AsyncClient(
@@ -115,7 +122,6 @@ async def test_get_login_google_disabled_has_security_headers():
         ) as client:
             resp = await client.get("/login/google", params={"txn": "x"})
             assert resp.status_code == 404
-            _assert_security_headers(resp)
 
 
 @pytest.mark.asyncio
