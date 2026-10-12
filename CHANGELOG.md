@@ -32,6 +32,8 @@ this project uses [Semantic Versioning](https://semver.org/).
   a users-directory change.
 - Progress notifications from upstream tools reach the client
   (`notifications/progress`), when the client asked for progress.
+- A client cancellation or a keystone-mcp tool timeout is forwarded to the
+  upstream request.
 - Published on PyPI as `keystone-mcp-gateway` (same version as the image);
   `keystone-mcp serve` starts the server; the package ships type information
   (`py.typed`).
@@ -51,6 +53,7 @@ this project uses [Semantic Versioning](https://semver.org/).
   permissions, and the supported-versions table in SECURITY.md.
 - README states what Keystone-MCP does not do: multi-tenancy, an admin UI,
   storing business data, routing by request content.
+- Tool-call metrics record `outcome="cancelled"`.
 - Runtime moved to FastMCP 4.1 and MCP Python SDK 2. Clients that support MCP
   2026-07-28 negotiate it; older clients keep the handshake protocol. No
   configuration changes; OAuth clients and sessions stored in Redis remain
