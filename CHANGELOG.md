@@ -8,6 +8,7 @@ this project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Upstream resources and resource templates are published (URIs get the namespace, `scheme://<namespace>/...`) and authorized by `<namespace>_<name>` with the same allow patterns as tools.
 - HTTP upstream elicitation forwarding (`KEYSTONE_MCP_PROXY_ELICITATION`, default
   `true`): form-mode `elicitation/create` and MCP 2026-07-28 `input_required`
   guard rounds reach the Keystone client with a `[namespace]` message prefix;

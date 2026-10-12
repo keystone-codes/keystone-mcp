@@ -22,10 +22,16 @@ from keystone_mcp.router.upstream import (
     UpstreamListToolsError,
     UpstreamToolSpec,
     build_upstream_prompt_specs,
+    build_upstream_resource_specs,
+    build_upstream_template_specs,
     build_upstream_tool_specs,
     fetch_upstream_prompts,
+    fetch_upstream_resource_templates,
+    fetch_upstream_resources,
     fetch_upstream_tools,
     list_upstream_prompts,
+    list_upstream_resource_templates,
+    list_upstream_resources,
     list_upstream_tools,
 )
 
@@ -71,8 +77,17 @@ class SurfaceReconciler:
     _namespace_prompt_fingerprints: dict[str, dict[str, str]] = field(
         default_factory=dict, init=False, repr=False
     )
+    _namespace_resource_fingerprints: dict[str, dict[str, str]] = field(
+        default_factory=dict, init=False, repr=False
+    )
+    _namespace_template_fingerprints: dict[str, dict[str, str]] = field(
+        default_factory=dict, init=False, repr=False
+    )
     _empty_list_streak: dict[str, int] = field(default_factory=dict, init=False, repr=False)
     _empty_prompt_list_streak: dict[str, int] = field(default_factory=dict, init=False, repr=False)
+    _empty_resource_list_streak: dict[str, int] = field(
+        default_factory=dict, init=False, repr=False
+    )
     _last_users_revision: int | None = field(default=None, init=False, repr=False)
 
     def seed_snapshots(self) -> None:
@@ -84,6 +99,14 @@ class SurfaceReconciler:
         }
         self._namespace_prompt_fingerprints = {
             cfg.namespace: self._fingerprint_prompts_namespace(cfg.namespace)
+            for cfg in self.upstreams._upstreams
+        }
+        self._namespace_resource_fingerprints = {
+            cfg.namespace: self._fingerprint_resources_namespace(cfg.namespace)
+            for cfg in self.upstreams._upstreams
+        }
+        self._namespace_template_fingerprints = {
+            cfg.namespace: self._fingerprint_templates_namespace(cfg.namespace)
             for cfg in self.upstreams._upstreams
         }
 
@@ -175,8 +198,13 @@ class SurfaceReconciler:
 
         catalog_changed = False
         prompts_catalog_changed = False
+        resources_catalog_changed = False
         try:
-            catalog_changed, prompts_catalog_changed = await self._refresh_catalogs()
+            (
+                catalog_changed,
+                prompts_catalog_changed,
+                resources_catalog_changed,
+            ) = await self._refresh_catalogs()
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -203,6 +231,8 @@ class SurfaceReconciler:
             kinds.add("tools")
         if prompts_catalog_changed:
             kinds.add("prompts")
+        if resources_catalog_changed:
+            kinds.add("resources")
         if kinds and self.client_sessions is not None:
             reached = await self.client_sessions.broadcast_list_changed(kinds)
             logger.info(
@@ -218,15 +248,17 @@ class SurfaceReconciler:
                 for kind in kinds:
                     self.observability.record_list_changed(kind=kind, sessions=reached)
 
-    async def _refresh_catalogs(self) -> tuple[bool, bool]:
-        """Refresh every configured namespace; return (tools_changed, prompts_changed)."""
+    async def _refresh_catalogs(self) -> tuple[bool, bool, bool]:
+        """Refresh every namespace; return (tools, prompts, resources) changed flags."""
         tools_changed = False
         prompts_changed = False
+        resources_changed = False
         for cfg in self.upstreams._upstreams:
             try:
-                tc, pc = await self._refresh_namespace(cfg)
+                tc, pc, rc = await self._refresh_namespace(cfg)
                 tools_changed = tools_changed or tc
                 prompts_changed = prompts_changed or pc
+                resources_changed = resources_changed or rc
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -236,10 +268,10 @@ class SurfaceReconciler:
                     cfg.namespace,
                 )
                 self._record_catalog_outcome(held=True)
-        return tools_changed, prompts_changed
+        return tools_changed, prompts_changed, resources_changed
 
-    async def _refresh_namespace(self, cfg: object) -> tuple[bool, bool]:
-        """Refresh one namespace's tool and prompt catalogs."""
+    async def _refresh_namespace(self, cfg: object) -> tuple[bool, bool, bool]:
+        """Refresh one namespace's tool, prompt and resource catalogs."""
         from keystone_mcp.router.upstream import UpstreamConfig
 
         assert isinstance(cfg, UpstreamConfig)
@@ -252,6 +284,8 @@ class SurfaceReconciler:
             else self.upstreams.discovery_timeout_seconds
         )
         prompts_raw: list = []
+        resources_raw: list = []
+        templates_raw: list = []
         try:
             if cfg.transport == "stdio":
                 try:
@@ -266,7 +300,7 @@ class SurfaceReconciler:
                         exc,
                     )
                     self._record_catalog_outcome(held=True)
-                    return False, False
+                    return False, False, False
                 async with client:
                     tools = await list_upstream_tools(client, timeout_seconds=discovery_timeout)
                     try:
@@ -277,6 +311,20 @@ class SurfaceReconciler:
                         logger.warning(
                             "upstream prompts refresh failed namespace=%s: %s; "
                             "keeping previous prompts",
+                            namespace,
+                            exc,
+                        )
+                    try:
+                        resources_raw = await list_upstream_resources(
+                            client, timeout_seconds=discovery_timeout
+                        )
+                        templates_raw = await list_upstream_resource_templates(
+                            client, timeout_seconds=discovery_timeout
+                        )
+                    except UpstreamListToolsError as exc:
+                        logger.warning(
+                            "upstream resources refresh failed namespace=%s: %s; "
+                            "keeping previous resources",
                             namespace,
                             exc,
                         )
@@ -308,6 +356,34 @@ class SurfaceReconciler:
                         namespace,
                         exc,
                     )
+                try:
+                    resources_raw = await fetch_upstream_resources(
+                        cfg.url,
+                        timeout_seconds=discovery_timeout,
+                        httpx_client_factory=(
+                            self.upstreams.http_client_factory(discovery_timeout)
+                            if self.upstreams.http_client_factory
+                            else None
+                        ),
+                        headers=self.upstreams.upstream_headers(namespace),
+                    )
+                    templates_raw = await fetch_upstream_resource_templates(
+                        cfg.url,
+                        timeout_seconds=discovery_timeout,
+                        httpx_client_factory=(
+                            self.upstreams.http_client_factory(discovery_timeout)
+                            if self.upstreams.http_client_factory
+                            else None
+                        ),
+                        headers=self.upstreams.upstream_headers(namespace),
+                    )
+                except UpstreamListToolsError as exc:
+                    logger.warning(
+                        "upstream resources refresh failed namespace=%s: %s; "
+                        "keeping previous resources",
+                        namespace,
+                        exc,
+                    )
         except UpstreamListToolsError as exc:
             self.upstreams.mark_unavailable(namespace, str(exc))
             logger.warning(
@@ -316,7 +392,7 @@ class SurfaceReconciler:
                 exc,
             )
             self._record_catalog_outcome(held=True)
-            return False, False
+            return False, False, False
 
         became_available = self.upstreams.mark_available(namespace)
         specs = build_upstream_tool_specs(cfg, tools, schema_patches=self.upstreams.schema_patches)
@@ -335,7 +411,10 @@ class SurfaceReconciler:
                 self._record_catalog_outcome(held=True)
                 self._maybe_log_drift(became_available)
                 prompts_changed = self._refresh_prompts_for_namespace(cfg, prompts_raw)
-                return False, prompts_changed
+                resources_changed = self._refresh_resources_for_namespace(
+                    cfg, resources_raw, templates_raw
+                )
+                return False, prompts_changed, resources_changed
             logger.warning(
                 "upstream refresh namespace=%s empty twice; removing proxy tools",
                 namespace,
@@ -383,7 +462,8 @@ class SurfaceReconciler:
             self._maybe_log_drift(became_available, added=added, removed=removed, updated=updated)
 
         prompts_changed = self._refresh_prompts_for_namespace(cfg, prompts_raw)
-        return tools_changed, prompts_changed
+        resources_changed = self._refresh_resources_for_namespace(cfg, resources_raw, templates_raw)
+        return tools_changed, prompts_changed, resources_changed
 
     def _maybe_log_drift(
         self,
@@ -575,6 +655,66 @@ class SurfaceReconciler:
         }
         changed = self.upstreams._apply_prompt_specs(cfg, prompt_specs, raw_by_route)
         self._namespace_prompt_fingerprints[namespace] = dict(desired)
+        return changed
+
+    def _fingerprint_resources_namespace(self, namespace: str) -> dict[str, str]:
+        return {
+            uri: spec.fingerprint
+            for uri, spec in self.upstreams.content.resources(namespace).items()
+        }
+
+    def _fingerprint_templates_namespace(self, namespace: str) -> dict[str, str]:
+        return {
+            uri_template: spec.fingerprint
+            for uri_template, spec in self.upstreams.content.templates(namespace).items()
+        }
+
+    def _refresh_resources_for_namespace(
+        self, cfg: object, resources_raw: list, templates_raw: list
+    ) -> bool:
+        from keystone_mcp.router.upstream import UpstreamConfig
+
+        assert isinstance(cfg, UpstreamConfig)
+        namespace = cfg.namespace
+        previous_res = self._namespace_resource_fingerprints.get(namespace, {})
+        previous_tpl = self._namespace_template_fingerprints.get(namespace, {})
+        resource_specs = build_upstream_resource_specs(cfg, resources_raw)
+        template_specs = build_upstream_template_specs(cfg, templates_raw)
+        desired_res = {uri: spec.fingerprint for uri, spec in resource_specs.items()}
+        desired_tpl = {ut: spec.fingerprint for ut, spec in template_specs.items()}
+
+        if not desired_res and not desired_tpl and (previous_res or previous_tpl):
+            streak = self._empty_resource_list_streak.get(namespace, 0) + 1
+            self._empty_resource_list_streak[namespace] = streak
+            if streak < 2:
+                logger.warning(
+                    "upstream refresh namespace=%s returned zero resources; "
+                    "holding previous resources (streak=%d)",
+                    namespace,
+                    streak,
+                )
+                return False
+            logger.warning(
+                "upstream refresh namespace=%s empty resources twice; removing proxy resources",
+                namespace,
+            )
+        elif desired_res or desired_tpl:
+            self._empty_resource_list_streak[namespace] = 0
+
+        if desired_res == previous_res and desired_tpl == previous_tpl:
+            return False
+
+        raw_resources = {str(r.uri): r for r in resources_raw}
+        raw_templates = {t.uri_template: t for t in templates_raw}
+        changed = self.upstreams._apply_resource_specs(
+            cfg,
+            resource_specs,
+            template_specs,
+            raw_resources,
+            raw_templates,
+        )
+        self._namespace_resource_fingerprints[namespace] = dict(desired_res)
+        self._namespace_template_fingerprints[namespace] = dict(desired_tpl)
         return changed
 
     def _fingerprint_namespace(self, namespace: str) -> dict[str, str]:

@@ -104,6 +104,27 @@ def attach_upstream_elicitation_callback(
     client._session_kwargs["elicitation_callback"] = callback
 
 
+async def call_upstream_resource_read(
+    client: "Client",
+    uri: str,
+    *,
+    input_responses: types.InputResponses | None = None,
+    request_state: str | None = None,
+) -> types.ReadResourceResult | types.InputRequiredResult:
+    """``resources/read`` on an upstream without forwarding client ``_meta``."""
+    if client.protocol_version not in MODERN_PROTOCOL_VERSIONS:
+        return await client.read_resource_mcp(uri, meta=None)
+    return await client._await_with_session_monitoring(
+        client.session.read_resource(
+            uri,
+            meta=None,
+            input_responses=input_responses,
+            request_state=request_state,
+            allow_input_required=True,
+        )
+    )
+
+
 async def call_upstream_prompt_modern(
     client: "Client",
     name: str,
