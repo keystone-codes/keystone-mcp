@@ -6,7 +6,19 @@ import re
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
-_BEARER_RE = re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]+\b", re.IGNORECASE)
+_API_KEY_RE = re.compile(r"\bksk_[0-9a-f]{12}_[A-Za-z0-9_-]{43}\b")
+
+
+def _mask_api_key(match: re.Match[str]) -> str:
+    value = match.group(0)
+    key_id = value[4:16]
+    return f"ksk_{key_id}_***"
+
+
+_BEARER_RE = re.compile(
+    r"\bBearer\s+(?!ksk_[0-9a-f]{12}_)[A-Za-z0-9._~+/=-]+\b",
+    re.IGNORECASE,
+)
 #: A bare compact JWT (e.g. the X-Keystone-Identity assertion, Y01) — three
 #: base64url segments, the header segment always starting with ``eyJ`` (the
 #: base64 encoding of ``{"``). Catches a token logged outside a "Bearer "
@@ -24,7 +36,8 @@ _REDACTED = "***REDACTED***"
 def redact_string(value: str) -> str:
     if not value:
         return value
-    out = _BEARER_RE.sub("Bearer ***REDACTED***", value)
+    out = _API_KEY_RE.sub(_mask_api_key, value)
+    out = _BEARER_RE.sub("Bearer ***REDACTED***", out)
     out = _REDIS_URL_RE.sub(_redact_redis_url, out)
     out = _EMAIL_RE.sub("***@***", out)
     out = _TOKEN_KV_RE.sub(lambda m: f"{m.group(1)}={_REDACTED}", out)

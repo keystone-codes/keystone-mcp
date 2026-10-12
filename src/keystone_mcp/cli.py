@@ -33,6 +33,7 @@ from keystone_mcp.rbac.policy import (
     load_policy_file,
     validate_policy_against_catalog,
 )
+from keystone_mcp.users.api_keys_cli import add_api_keys_commands
 from keystone_mcp.users.cli import add_users_commands
 from keystone_mcp.users.service_accounts_cli import add_service_accounts_commands
 
@@ -285,6 +286,7 @@ def main(argv: list[str] | None = None) -> int:
     serve.set_defaults(handler=_cmd_serve)
 
     add_users_commands(subparsers)
+    add_api_keys_commands(subparsers)
     add_service_accounts_commands(subparsers)
 
     args = parser.parse_args(argv)
