@@ -131,7 +131,7 @@ def build_identity_claims(
     }
 
     if sub_type == "human" and identity.email:
-        claims["email"] = identity.email
+        claims["email"] = normalize_email(identity.email)
 
     client_id = getattr(identity, "client_id", None)
     if client_id:

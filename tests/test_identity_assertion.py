@@ -188,7 +188,8 @@ def test_sub_type_defaults_to_human_and_reads_identity():
     claims = _claims(identity=plain)
     assert claims["sub_type"] == "human"
     assert claims["sub"] == "ann@example.com"
-    assert claims["email"] == "Ann@Example.com"
+    # email is normalized the same way as sub (same identity, same case).
+    assert claims["email"] == "ann@example.com"
 
     service = _FutureIdentity(email="", claims=None, subject="svc:ci", subject_type="service")
     service_claims = _claims(identity=service)
