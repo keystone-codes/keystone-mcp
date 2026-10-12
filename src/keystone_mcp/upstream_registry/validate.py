@@ -24,6 +24,9 @@ _SECRET_LIKE_AUTH_KEYS = frozenset({"token", "bearer", "secret", "password"})
 #: both.
 _AUTH_ENV_NAME_KEYS = frozenset({"bearer_env", "identity_secret_env"})
 
+#: Non-secret ``auth`` keys (Y11 ``identity_alg``).
+_AUTH_PLAIN_KEYS = frozenset({"identity_alg"})
+
 #: ``auth.bearer_env`` (and, identically, ``auth.identity_secret_env``) must
 #: look like a shell environment variable name AND live under this reserved
 #: prefix. Without this, a registry entry could name *any* environment
@@ -201,7 +204,7 @@ def auth_field_errors(auth: Any) -> list[str]:
 
     errors: list[str] = []
     for key in auth:
-        if key in _AUTH_ENV_NAME_KEYS:
+        if key in _AUTH_ENV_NAME_KEYS or key in _AUTH_PLAIN_KEYS:
             continue
         if key in _SECRET_LIKE_AUTH_KEYS:
             errors.append(
@@ -213,6 +216,13 @@ def auth_field_errors(auth: Any) -> list[str]:
 
     for key in _AUTH_ENV_NAME_KEYS:
         errors.extend(_auth_env_name_errors(auth, key))
+
+    identity_alg = auth.get("identity_alg")
+    if identity_alg is not None:
+        if not isinstance(identity_alg, str) or identity_alg.strip() != "ES256":
+            errors.append("auth.identity_alg must be ES256")
+        elif "identity_secret_env" in auth:
+            errors.append("auth: use either identity_secret_env (HS256) or identity_alg: ES256")
 
     bearer_env = auth.get("bearer_env")
     identity_secret_env = auth.get("identity_secret_env")

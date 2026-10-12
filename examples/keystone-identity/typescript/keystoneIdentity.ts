@@ -6,25 +6,27 @@
 // ../../../docs/connecting-services.md (section "Who is calling:
 // X-Keystone-Identity") for the full contract.
 //
-// Usage:
+// Usage (HS256):
 //   import { IdentityError, verifyKeystoneIdentity } from "./keystoneIdentity.js";
-//   try {
-//     const identity = await verifyKeystoneIdentity(header, {
-//       secrets: [process.env.MYSVC_IDENTITY_SECRET!],
-//       audience: "mysvc-mcp", // this upstream's own registry entry name
-//     });
-//   } catch (err) {
-//     if (err instanceof IdentityError) throw new Error(`identity rejected: ${err.message}`);
-//     throw err;
-//   }
+//   const identity = await verifyKeystoneIdentity(header, {
+//     secrets: [process.env.MYSVC_IDENTITY_SECRET!],
+//     audience: "mysvc-mcp",
+//   });
+//
+// Usage (ES256, Keystone JWKS):
+//   const identity = await verifyKeystoneIdentity(header, {
+//     jwksUrl: "https://keystone.example/.well-known/keystone-identity-jwks.json",
+//     audience: "mysvc-mcp",
+//     algorithms: ["ES256"],
+//   });
 
-import { jwtVerify } from "jose";
+import { createRemoteJWKSet, jwtVerify } from "jose";
 
 /** JWT header `typ` Keystone-MCP stamps on every assertion. */
 const IDENTITY_TYP = "keystone-identity+jwt";
 
-/** The only algorithm ever accepted -- never read the algorithm from the token. */
-const ALGORITHMS = ["HS256"];
+const HS256_ALGORITHMS = ["HS256"];
+const ES256_ALGORITHMS = ["ES256"];
 
 export class IdentityError extends Error {}
 
@@ -44,18 +46,29 @@ export interface KeystoneIdentity {
 }
 
 export interface VerifyKeystoneIdentityOptions {
-  /** Tried in order, so a secret can be rotated without downtime. */
-  secrets: string[];
+  /** Tried in order for HS256 (secret rotation). */
+  secrets?: string[];
+  /** Keystone `/.well-known/keystone-identity-jwks.json` for ES256. */
+  jwksUrl?: string;
   /** Required: this upstream's own registry entry `name` (not `namespace`). */
   audience: string;
   /** Checked only when given. */
   issuer?: string;
   leewaySeconds?: number;
+  /** Pin allowed algorithms; never read from the token. */
+  algorithms?: string[];
 }
 
 export async function verifyKeystoneIdentity(
   token: string | null | undefined,
-  { secrets, audience, issuer, leewaySeconds = 30 }: VerifyKeystoneIdentityOptions,
+  {
+    secrets,
+    jwksUrl,
+    audience,
+    issuer,
+    leewaySeconds = 30,
+    algorithms,
+  }: VerifyKeystoneIdentityOptions,
 ): Promise<KeystoneIdentity> {
   if (!token) {
     throw new IdentityError("missing X-Keystone-Identity");
@@ -63,15 +76,44 @@ export async function verifyKeystoneIdentity(
   if (!audience) {
     throw new IdentityError("audience is required");
   }
+  if (secrets?.length && jwksUrl) {
+    throw new IdentityError("pass either secrets (HS256) or jwksUrl (ES256), not both");
+  }
+  if (!secrets?.length && !jwksUrl) {
+    throw new IdentityError("secrets or jwksUrl is required");
+  }
 
+  if (jwksUrl) {
+    const allowed = algorithms ?? ES256_ALGORITHMS;
+    try {
+      const { payload, protectedHeader } = await jwtVerify(token, createRemoteJWKSet(new URL(jwksUrl)), {
+        algorithms: allowed,
+        audience,
+        issuer,
+        clockTolerance: leewaySeconds,
+        requiredClaims: ["exp", "iat", "aud", "sub"],
+      });
+      if (protectedHeader.typ !== IDENTITY_TYP) {
+        throw new IdentityError(`unexpected typ: ${String(protectedHeader.typ)}`);
+      }
+      return claimsToIdentity(payload as Record<string, unknown>);
+    } catch (err) {
+      if (err instanceof IdentityError) {
+        throw err;
+      }
+      throw new IdentityError(`signature or claims rejected: ${String(err)}`);
+    }
+  }
+
+  const allowed = algorithms ?? HS256_ALGORITHMS;
   let lastError: unknown;
-  for (const secret of secrets) {
+  for (const secret of secrets!) {
     try {
       const { payload, protectedHeader } = await jwtVerify(
         token,
         new TextEncoder().encode(secret),
         {
-          algorithms: ALGORITHMS,
+          algorithms: allowed,
           audience,
           issuer,
           clockTolerance: leewaySeconds,
@@ -131,7 +173,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       vector.token,
       new TextEncoder().encode(vector.secret),
       {
-        algorithms: ALGORITHMS,
+        algorithms: HS256_ALGORITHMS,
         audience: vector.audience,
         issuer: vector.issuer,
         currentDate: new Date(vector.now * 1000),

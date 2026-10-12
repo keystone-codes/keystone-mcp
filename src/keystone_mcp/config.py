@@ -604,6 +604,9 @@ class UpstreamConfig:
     # variable's name, never its value. ``None`` means this upstream receives
     # no ``X-Keystone-Identity`` header, only the unsigned ``X-Author-Email``.
     identity_secret_env: str | None = None
+    # When ``"ES256"``, Keystone signs assertions with
+    # ``KEYSTONE_MCP_IDENTITY_SIGNING_KEY`` instead of ``identity_secret_env``.
+    identity_alg: Literal["ES256"] | None = None
     # ``transport: stdio`` fields (Y08). ``url`` is ``""`` for a stdio entry.
     # ``env_from`` pairs a name in the child process's environment with the
     # name of the keystone-mcp environment variable that supplies it — never
@@ -1043,6 +1046,12 @@ class Settings:
         default_factory=lambda: _env_bool("KEYSTONE_MCP_UPSTREAM_EGRESS_ALLOW_PRIVATE", False)
     )
     upstreams_json: str = field(default_factory=lambda: _env("KEYSTONE_MCP_UPSTREAMS", ""))
+    # Optional EC P-256 PEM private key for ES256 identity assertions (Y11).
+    # Empty means ES256 is unavailable; upstream entries with
+    # ``auth.identity_alg: ES256`` refuse to start without it.
+    identity_signing_key: str = field(
+        default_factory=lambda: _env("KEYSTONE_MCP_IDENTITY_SIGNING_KEY", "")
+    )
 
     @property
     def http_path(self) -> str:
@@ -1342,6 +1351,16 @@ def validate_settings(settings: Settings) -> None:
         if value < 0:
             raise ConfigError(f"{name} must be zero or positive (got {value})")
 
+    from keystone_mcp.identity_assertion import load_ec_p256_private_key
+
+    if settings.identity_signing_key.strip():
+        try:
+            load_ec_p256_private_key(settings.identity_signing_key)
+        except ValueError:
+            raise ConfigError(
+                "KEYSTONE_MCP_IDENTITY_SIGNING_KEY must be a PEM EC P-256 private key"
+            )
+
     if settings.rbac_mode == "off":
         return
 
@@ -1436,7 +1455,11 @@ def startup_warnings(settings: Settings, *, environ: Mapping[str, str] | None = 
         # at all (there are no HTTP headers to a child process), so its
         # warning must say that instead of naming a header it never gets.
         for cfg in settings.upstreams:
-            if not cfg.enabled or cfg.identity_secret_env is not None:
+            if (
+                not cfg.enabled
+                or cfg.identity_secret_env is not None
+                or cfg.identity_alg == "ES256"
+            ):
                 continue
             if cfg.transport == "stdio":
                 warnings.append(

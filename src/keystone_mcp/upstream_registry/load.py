@@ -11,7 +11,7 @@ from typing import Any, Literal
 import yaml
 
 from keystone_mcp.config import UpstreamConfig, _parse_prefix_list
-from keystone_mcp.identity_assertion import resolve_identity_secret
+from keystone_mcp.identity_assertion import identity_signing_key_from_env, resolve_identity_secret
 from keystone_mcp.upstream_registry.policy import UpstreamSecurityPolicy
 from keystone_mcp.upstream_registry.validate import (
     _normalize_env_shorthand,
@@ -55,11 +55,11 @@ def read_registry_document(path: Path) -> dict[str, Any]:
 
 def _parse_auth(
     item: dict[str, Any], *, name: str, transport: str, check_environment: bool = True
-) -> tuple[str | None, str | None]:
-    """Validate and resolve an entry's optional ``auth.bearer_env`` and
-    ``auth.identity_secret_env``.
+) -> tuple[str | None, str | None, Literal["ES256"] | None]:
+    """Validate and resolve an entry's optional ``auth.bearer_env``,
+    ``auth.identity_secret_env``, and ``auth.identity_alg``.
 
-    Returns ``(bearer_env, identity_secret_env)`` — each the environment
+    Returns ``(bearer_env, identity_secret_env, identity_alg)`` — each the environment
     variable's *name*, never its value, so that
     :class:`~keystone_mcp.config.UpstreamConfig` only ever carries names a
     ``repr()`` can safely print. Raises ``ValueError`` if the ``auth`` field
@@ -82,7 +82,18 @@ def _parse_auth(
     if errors:
         raise ValueError(f"upstream {name!r}: {errors[0]}")
     if auth is None:
-        return None, None
+        return None, None, None
+
+    identity_alg: Literal["ES256"] | None = None
+    if "identity_alg" in auth:
+        raw_alg = auth.get("identity_alg")
+        if not isinstance(raw_alg, str) or raw_alg.strip() != "ES256":
+            raise ValueError(f"upstream {name!r}: auth.identity_alg must be ES256")
+        identity_alg = "ES256"
+        if check_environment and identity_signing_key_from_env() is None:
+            raise ValueError(
+                f"upstream {name!r}: auth.identity_alg ES256 needs KEYSTONE_MCP_IDENTITY_SIGNING_KEY"
+            )
 
     bearer_env: str | None = None
     if "bearer_env" in auth:
@@ -98,6 +109,11 @@ def _parse_auth(
 
     identity_secret_env: str | None = None
     if "identity_secret_env" in auth:
+        if identity_alg is not None:
+            raise ValueError(
+                f"upstream {name!r}: auth: use either identity_secret_env (HS256) "
+                "or identity_alg: ES256"
+            )
         identity_secret_env = str(auth["identity_secret_env"]).strip()
         if check_environment:
             # Validates presence and minimum length; the secret value itself
@@ -105,7 +121,7 @@ def _parse_auth(
             # UpstreamRegistry.add_upstream.
             resolve_identity_secret(name, identity_secret_env)
 
-    return bearer_env, identity_secret_env
+    return bearer_env, identity_secret_env, identity_alg
 
 
 def _parse_env_from(
@@ -156,7 +172,7 @@ def parse_upstream_entry(
     if transport not in ("http", "stdio"):
         raise ValueError(f"upstream {name!r}: transport must be 'http' or 'stdio'")
 
-    bearer_env, identity_secret_env = _parse_auth(
+    bearer_env, identity_secret_env, identity_alg = _parse_auth(
         item, name=name, transport=transport, check_environment=check_environment
     )
 
@@ -259,6 +275,7 @@ def parse_upstream_entry(
         tool_timeout_seconds=tool_timeout,
         bearer_env=bearer_env,
         identity_secret_env=identity_secret_env,
+        identity_alg=identity_alg,
         transport=transport,
         command=command,
         args=args,
