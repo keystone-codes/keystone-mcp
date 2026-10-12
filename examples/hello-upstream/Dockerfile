@@ -3,8 +3,9 @@
 
 FROM python:3.12-slim
 
-# Pinned to the "mcp" version Keystone-MCP itself locks (see ../../uv.lock),
-# so the demo exercises the same SDK release.
+# Pinned to MCP Python SDK 1.x on purpose: Keystone-MCP itself moved to SDK 2
+# (see ../../uv.lock), so this demo upstream deliberately stays behind to
+# exercise the older handshake protocol through Keystone-MCP's proxy.
 RUN pip install --no-cache-dir mcp==1.28.1
 
 RUN groupadd --system --gid 10001 hello \

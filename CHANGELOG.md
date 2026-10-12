@@ -22,6 +22,13 @@ this project uses [Semantic Versioning](https://semver.org/).
   permissions, and the supported-versions table in SECURITY.md.
 - README states what Keystone-MCP does not do: multi-tenancy, an admin UI,
   storing business data, routing by request content.
+- Runtime moved to FastMCP 4.1 and MCP Python SDK 2. Clients that support MCP
+  2026-07-28 negotiate it; older clients keep the handshake protocol. No
+  configuration changes; OAuth clients and sessions stored in Redis remain
+  valid.
+- Idle HTTP sessions of the handshake protocol now close after 30 minutes
+  (FastMCP default); clients reconnect transparently.
+- Developers: the test suite runs without reruns; `pytest-rerunfailures` removed.
 
 ### Removed
 
