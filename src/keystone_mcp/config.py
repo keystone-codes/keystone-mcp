@@ -874,6 +874,9 @@ class Settings:
     google_allowed_domain: str = field(
         default_factory=lambda: _env("KEYSTONE_MCP_GOOGLE_ALLOWED_DOMAIN", "")
     )
+    login_providers_path: str = field(
+        default_factory=lambda: _env("KEYSTONE_MCP_LOGIN_PROVIDERS_PATH", "")
+    )
 
     # Users directory: built in by default (local), or an external HTTP service
     # (fork-only; see docs/users.md).
@@ -1158,7 +1161,17 @@ def validate_settings(settings: Settings) -> None:
             "KEYSTONE_MCP_ENABLED_LOGIN_METHODS"
         )
 
-    if settings.google_login_enabled:
+    providers_file = settings.login_providers_path.strip()
+    if providers_file:
+        from keystone_mcp.login.config import load_login_providers_file
+
+        load_login_providers_file(
+            providers_file,
+            deployment_profile=settings.deployment_profile,
+            environ=os.environ,
+        )
+
+    if settings.google_login_enabled and not providers_file:
         missing_google = [
             name
             for name, value in (
@@ -1202,9 +1215,15 @@ def validate_settings(settings: Settings) -> None:
     # (unknown/blocked → deny), independent of rbac_enabled; the RBAC middleware
     # needs the same directory when rbac_enabled=true. The built-in (local)
     # backend needs neither URL nor token: it has its own checks below.
-    if settings.users_backend == "http" and (
-        settings.google_login_enabled or settings.rbac_enabled
-    ):
+    from keystone_mcp.login.factory import file_has_interactive_providers
+
+    needs_users_for_login = settings.rbac_enabled
+    if providers_file:
+        needs_users_for_login = needs_users_for_login or file_has_interactive_providers(settings)
+    else:
+        needs_users_for_login = needs_users_for_login or settings.google_login_enabled
+
+    if settings.users_backend == "http" and needs_users_for_login:
         missing_users = [
             name
             for name, value in (
@@ -1215,7 +1234,7 @@ def validate_settings(settings: Settings) -> None:
         ]
         if missing_users:
             raise ConfigError(
-                "Users directory settings are required when Google login or RBAC "
+                "Users directory settings are required when interactive sign-in or RBAC "
                 "is enabled but missing: " + ", ".join(missing_users)
             )
 
@@ -1480,6 +1499,29 @@ def startup_warnings(settings: Settings, *, environ: Mapping[str, str] | None = 
                 "own port mapping); bind KEYSTONE_MCP_HOST to loopback "
                 "otherwise.".format(settings.host)
             )
+
+    _LEGACY_LOGIN_ENV = (
+        "KEYSTONE_MCP_GOOGLE_CLIENT_ID",
+        "KEYSTONE_MCP_GOOGLE_CLIENT_SECRET",
+        "KEYSTONE_MCP_GOOGLE_ALLOWED_DOMAIN",
+        "KEYSTONE_MCP_ENABLED_LOGIN_METHODS",
+        "KEYSTONE_MCP_PRIMARY_LOGIN_METHOD",
+    )
+    env_map = os.environ if environ is None else environ
+    legacy_set = any(env_map.get(name, "").strip() for name in _LEGACY_LOGIN_ENV)
+    if legacy_set:
+        base_msg = (
+            "KEYSTONE_MCP_GOOGLE_*, KEYSTONE_MCP_ENABLED_LOGIN_METHODS and "
+            "KEYSTONE_MCP_PRIMARY_LOGIN_METHOD are deprecated since 0.5.0 and will "
+            "be removed in a future major version. Describe sign-in providers in the "
+            "file named by KEYSTONE_MCP_LOGIN_PROVIDERS_PATH (docs/login-providers.md)."
+        )
+        if settings.login_providers_path.strip():
+            warnings.append(
+                f"{base_msg} They are ignored because KEYSTONE_MCP_LOGIN_PROVIDERS_PATH is set."
+            )
+        else:
+            warnings.append(base_msg)
 
     return warnings
 
