@@ -40,6 +40,13 @@ services:
     restart: unless-stopped
     networks:
       - keystone-demo
+    environment:
+      # Demo-only secret, not a real one -- change it for anything that is
+      # not this throwaway local compose stack. Must match
+      # KEYSTONE_MCP_UPSTREAM_HELLO_IDENTITY_SECRET below, which Keystone
+      # signs X-Keystone-Identity with for the "hello" upstream.
+      HELLO_IDENTITY_SECRET: ${KEYSTONE_DEMO_HELLO_SECRET:-demo-identity-secret-change-me-0123456789}
+      HELLO_IDENTITY_AUDIENCE: hello
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/healthz')"]
       interval: 5s
@@ -73,6 +80,10 @@ services:
       KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT: demo-salt-not-a-secret
       KEYSTONE_MCP_UPSTREAMS_PATH: /etc/keystone-mcp/upstreams.yaml
       KEYSTONE_MCP_UPSTREAM_ALLOW_INSECURE_HTTP: "true"
+      # Demo-only secret, not a real one -- change it for anything that is
+      # not this throwaway local compose stack. Must match
+      # HELLO_IDENTITY_SECRET on hello-upstream below.
+      KEYSTONE_MCP_UPSTREAM_HELLO_IDENTITY_SECRET: ${KEYSTONE_DEMO_HELLO_SECRET:-demo-identity-secret-change-me-0123456789}
       KEYSTONE_MCP_ENABLED_LOGIN_METHODS: api_key
       KEYSTONE_MCP_PRIMARY_LOGIN_METHOD: api_key
       KEYSTONE_MCP_DEV_TOKENS: ${KEYSTONE_DEMO_TOKEN:-demo-token}

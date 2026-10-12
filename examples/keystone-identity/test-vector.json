@@ -1,0 +1,25 @@
+{
+  "_comment": "Fixed X-Keystone-Identity assertion for exercising the Python and TypeScript reference verifiers without a live Keystone-MCP. Generated once with keystone_mcp.identity_assertion.build_identity_claims (Y01), now=1767225600, jti fixed; already expired by design, so a check against it must disable exp verification (see docs/connecting-services.md and tests/test_identity_examples.py).",
+  "secret": "kt-demo-test-vector-signing-secret-4040x",
+  "audience": "hello",
+  "issuer": "http://localhost:8080",
+  "now": 1767225600,
+  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6ImtleXN0b25lLWlkZW50aXR5K2p3dCJ9.eyJpc3MiOiJodHRwOi8vbG9jYWxob3N0OjgwODAiLCJhdWQiOiJoZWxsbyIsInN1YiI6ImFubkBleGFtcGxlLmNvbSIsInN1Yl90eXBlIjoiaHVtYW4iLCJyb2xlcyI6WyJtZW1iZXIiXSwicmJhYyI6ImVuZm9yY2UiLCJhdXRoX21ldGhvZCI6Imdvb2dsZSIsImludGVyYWN0aXZlIjp0cnVlLCJ0YXNrX2lkIjoidF92ZWN0b3IiLCJtY3BfbWV0aG9kIjoidG9vbHMvY2FsbCIsIm1jcF90YXJnZXQiOiJ3aG9hbWkiLCJpYXQiOjE3NjcyMjU2MDAsImV4cCI6MTc2NzIyNTg0MCwianRpIjoidmVjdG9yLWZpeGVkLWp0aS0wMDAxIiwiZW1haWwiOiJhbm5AZXhhbXBsZS5jb20ifQ.FKm-rKvX5l31oAM9B1Ba5yV0SK6swsJBQ23rzMeAxUE",
+  "claims": {
+    "iss": "http://localhost:8080",
+    "aud": "hello",
+    "sub": "ann@example.com",
+    "sub_type": "human",
+    "roles": ["member"],
+    "rbac": "enforce",
+    "auth_method": "google",
+    "interactive": true,
+    "task_id": "t_vector",
+    "mcp_method": "tools/call",
+    "mcp_target": "whoami",
+    "iat": 1767225600,
+    "exp": 1767225840,
+    "jti": "vector-fixed-jti-0001",
+    "email": "ann@example.com"
+  }
+}
