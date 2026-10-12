@@ -8,6 +8,7 @@ this project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Upstream resources and resource templates are published (URIs get the namespace, `scheme://<namespace>/...`) and authorized by `<namespace>_<name>` with the same allow patterns as tools.
 - Contract tests for sign-in providers and users directories (`pytest -p keystone_mcp.contract_tests`, extra `contract-tests`) and a plugin template in `examples/plugin-template`.
 - HTTP upstream elicitation forwarding (`KEYSTONE_MCP_PROXY_ELICITATION`, default
   `true`): form-mode `elicitation/create` and MCP 2026-07-28 `input_required`

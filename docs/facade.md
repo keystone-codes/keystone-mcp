@@ -76,15 +76,24 @@ warning and its tools appear on the next refresh
 
 ## Prompts and resources
 
-Upstream prompts are published like tools: the client sees them as
-`<namespace>_<name>` and the same RBAC allow patterns apply — there is no
-separate prompts or resources section in the policy file. Upstream resources
-(and resource templates) will follow the same rule; their URIs receive the
-namespace (`scheme://<namespace>/...`, details in Y12).
+Upstream prompts, resources and resource templates are published like tools:
+the client sees prompts as `<namespace>_<name>`; resource URIs receive the
+namespace (`scheme://<namespace>/...`, e.g. upstream `file:///handbook.md` becomes
+`file://hello//handbook.md`). RBAC uses the same allow patterns as tools —
+`<namespace>_<resource.name>` for both static resources and templates (the policy
+file has no separate prompts or resources section). Two upstream resources that
+share the same `name` get one RBAC name and one policy decision.
 
-Stdio upstreams do not receive a signed identity assertion on `prompts/get`
-(HTTP headers are not available on the stdio transport); only the unsigned
-subject headers reach HTTP upstreams as today.
+`resources/read` is allowed only for URIs that match a published resource or
+template; any other URI is denied in `enforce` mode.
+
+Keystone does not publish `notifications/resources/updated` and does not
+implement `resources/subscribe`. On MCP 2026-07-28 a client may subscribe via
+`subscriptions/listen`, but Keystone never emits resource-update events.
+
+Stdio upstreams do not receive a signed identity assertion on `prompts/get` or
+`resources/read` (HTTP headers are not available on the stdio transport); only
+the unsigned subject headers reach HTTP upstreams as today.
 
 ## Discovery
 
@@ -202,7 +211,9 @@ not implemented yet or deliberately never forwarded.
 | `notifications/cancelled` (client → upstream) | yes: a client cancel or a keystone-mcp timeout is forwarded to the upstream request (as `notifications/cancelled` on the handshake protocol, by closing the request stream on MCP 2026-07-28) |
 | `prompts/list`, `prompts/get` | yes |
 | `notifications/prompts/list_changed` | yes, after an upstream prompt catalog change; both protocol eras |
-| `resources/*` | not yet |
+| `resources/list`, `resources/read`, `resources/templates/list` | yes |
+| `notifications/resources/list_changed` | yes, after an upstream resource catalog change; both protocol eras |
+| `resources/subscribe`, `notifications/resources/updated` | no |
 | `elicitation/create` (upstream → user) | yes for HTTP upstreams: form mode only, prefixed with `[namespace]`; URL mode is declined; not for stdio upstreams. On MCP 2026-07-28 the question reaches the client as an `input_required` result of the tool call; a 2026-07-28 client cannot be asked by an upstream that speaks the handshake protocol (the upstream gets `decline`) |
 | `sampling/createMessage`, `roots/list` | no, by design: needs its own trust model |
 | `notifications/message` (upstream logs) | no: upstream logs stay with the upstream |

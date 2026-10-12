@@ -29,8 +29,17 @@ from keystone_mcp.identity_assertion import (
     resolve_identity_secret,
 )
 from keystone_mcp.rbac.upstream_state import UpstreamCatalogState
-from keystone_mcp.router.catalog_fingerprint import prompt_fingerprint, tool_fingerprint
-from keystone_mcp.router.proxy_components import UpstreamProxyPrompt
+from keystone_mcp.router.catalog_fingerprint import (
+    prompt_fingerprint,
+    resource_fingerprint,
+    template_fingerprint,
+    tool_fingerprint,
+)
+from keystone_mcp.router.proxy_components import (
+    UpstreamProxyPrompt,
+    UpstreamProxyResource,
+    UpstreamProxyTemplate,
+)
 from keystone_mcp.router.proxy_schema import PatchTable, apply_proxy_schema_patches
 from keystone_mcp.router.registry import Param
 from keystone_mcp.router.route import Mode
@@ -42,7 +51,13 @@ from keystone_mcp.router.upstream_connection import (
     UpstreamConnection,
     temporary_stdio_client,
 )
-from keystone_mcp.router.upstream_content import UpstreamContentCatalog, UpstreamPromptSpec
+from keystone_mcp.router.upstream_content import (
+    UpstreamContentCatalog,
+    UpstreamPromptSpec,
+    UpstreamResourceSpec,
+    UpstreamTemplateSpec,
+    published_uri_for_namespace,
+)
 
 if TYPE_CHECKING:
     from mcp.shared._httpx_utils import McpHttpClientFactory
@@ -192,6 +207,72 @@ async def list_upstream_prompts(
     raise UpstreamListToolsError(f"auto-pagination limit ({max_pages} pages) reached")
 
 
+async def list_upstream_resources(
+    client: Client,
+    *,
+    timeout_seconds: float,
+    max_pages: int = _AUTO_PAGINATION_MAX_PAGES,
+) -> list[Any]:
+    """Paginated ``list_resources`` on an already-constructed MCP client."""
+    caps = client.server_capabilities
+    if caps is None or caps.resources is None:
+        return []
+
+    all_resources: list[Any] = []
+    cursor: str | None = None
+    seen_cursors: set[str] = set()
+
+    async def _one_page() -> Any:
+        return await client.list_resources_mcp(cursor=cursor)
+
+    for _ in range(max_pages):
+        try:
+            result = await asyncio.wait_for(_one_page(), timeout=timeout_seconds)
+        except Exception as exc:
+            raise UpstreamListToolsError(str(exc)) from exc
+        all_resources.extend(result.resources)
+        if not result.next_cursor:
+            return all_resources
+        if result.next_cursor in seen_cursors:
+            raise UpstreamListToolsError(f"duplicate pagination cursor {result.next_cursor!r}")
+        seen_cursors.add(result.next_cursor)
+        cursor = result.next_cursor
+    raise UpstreamListToolsError(f"auto-pagination limit ({max_pages} pages) reached")
+
+
+async def list_upstream_resource_templates(
+    client: Client,
+    *,
+    timeout_seconds: float,
+    max_pages: int = _AUTO_PAGINATION_MAX_PAGES,
+) -> list[Any]:
+    """Paginated ``list_resource_templates`` on an already-constructed MCP client."""
+    caps = client.server_capabilities
+    if caps is None or caps.resources is None:
+        return []
+
+    all_templates: list[Any] = []
+    cursor: str | None = None
+    seen_cursors: set[str] = set()
+
+    async def _one_page() -> Any:
+        return await client.list_resource_templates_mcp(cursor=cursor)
+
+    for _ in range(max_pages):
+        try:
+            result = await asyncio.wait_for(_one_page(), timeout=timeout_seconds)
+        except Exception as exc:
+            raise UpstreamListToolsError(str(exc)) from exc
+        all_templates.extend(result.resource_templates)
+        if not result.next_cursor:
+            return all_templates
+        if result.next_cursor in seen_cursors:
+            raise UpstreamListToolsError(f"duplicate pagination cursor {result.next_cursor!r}")
+        seen_cursors.add(result.next_cursor)
+        cursor = result.next_cursor
+    raise UpstreamListToolsError(f"auto-pagination limit ({max_pages} pages) reached")
+
+
 async def fetch_upstream_tools(
     url: str,
     *,
@@ -247,6 +328,56 @@ async def fetch_upstream_prompts(
         )
         async with Client(transport, init_timeout=timeout_seconds) as client:
             return await list_upstream_prompts(
+                client, timeout_seconds=timeout_seconds, max_pages=max_pages
+            )
+    except UpstreamListToolsError:
+        raise
+    except Exception as exc:
+        raise UpstreamListToolsError(f"{type(exc).__name__}: {exc}") from exc
+
+
+async def fetch_upstream_resources(
+    url: str,
+    *,
+    timeout_seconds: float,
+    max_pages: int = _AUTO_PAGINATION_MAX_PAGES,
+    httpx_client_factory: "McpHttpClientFactory | None" = None,
+    headers: Mapping[str, str] | None = None,
+) -> list[Any]:
+    """HTTP discovery helper for resources; mirrors :func:`fetch_upstream_tools`."""
+    try:
+        transport = StreamableHttpTransport(
+            url.rstrip("/"),
+            headers=dict(headers or {}),
+            httpx_client_factory=httpx_client_factory,
+        )
+        async with Client(transport, init_timeout=timeout_seconds) as client:
+            return await list_upstream_resources(
+                client, timeout_seconds=timeout_seconds, max_pages=max_pages
+            )
+    except UpstreamListToolsError:
+        raise
+    except Exception as exc:
+        raise UpstreamListToolsError(f"{type(exc).__name__}: {exc}") from exc
+
+
+async def fetch_upstream_resource_templates(
+    url: str,
+    *,
+    timeout_seconds: float,
+    max_pages: int = _AUTO_PAGINATION_MAX_PAGES,
+    httpx_client_factory: "McpHttpClientFactory | None" = None,
+    headers: Mapping[str, str] | None = None,
+) -> list[Any]:
+    """HTTP discovery helper for resource templates."""
+    try:
+        transport = StreamableHttpTransport(
+            url.rstrip("/"),
+            headers=dict(headers or {}),
+            httpx_client_factory=httpx_client_factory,
+        )
+        async with Client(transport, init_timeout=timeout_seconds) as client:
+            return await list_upstream_resource_templates(
                 client, timeout_seconds=timeout_seconds, max_pages=max_pages
             )
     except UpstreamListToolsError:
@@ -395,6 +526,66 @@ def build_upstream_prompt_specs(
                 title=title,
                 description=description,
                 arguments=arg_fp,
+            ),
+        )
+    return specs
+
+
+def build_upstream_resource_specs(
+    cfg: UpstreamConfig,
+    resources: Iterable[Any],
+) -> dict[str, UpstreamResourceSpec]:
+    """Map upstream resource URIs to specs (tool filters do not apply)."""
+    specs: dict[str, UpstreamResourceSpec] = {}
+    for resource in resources:
+        uri = str(resource.uri)
+        name = resource.name
+        published = published_uri_for_namespace(cfg.namespace, uri)
+        rbac_name = f"{cfg.namespace}_{name}"
+        title = getattr(resource, "title", None)
+        description = getattr(resource, "description", None) or ""
+        mime_type = getattr(resource, "mime_type", None)
+        specs[uri] = UpstreamResourceSpec(
+            uri=uri,
+            published_uri=published,
+            name=name,
+            rbac_name=rbac_name,
+            fingerprint=resource_fingerprint(
+                uri=uri,
+                name=name,
+                title=title,
+                description=description,
+                mime_type=mime_type,
+            ),
+        )
+    return specs
+
+
+def build_upstream_template_specs(
+    cfg: UpstreamConfig,
+    templates: Iterable[Any],
+) -> dict[str, UpstreamTemplateSpec]:
+    """Map upstream template URI templates to specs (tool filters do not apply)."""
+    specs: dict[str, UpstreamTemplateSpec] = {}
+    for template in templates:
+        uri_template = template.uri_template
+        name = template.name
+        published = published_uri_for_namespace(cfg.namespace, uri_template)
+        rbac_name = f"{cfg.namespace}_{name}"
+        title = getattr(template, "title", None)
+        description = getattr(template, "description", None) or ""
+        mime_type = getattr(template, "mime_type", None)
+        specs[uri_template] = UpstreamTemplateSpec(
+            uri_template=uri_template,
+            published_uri_template=published,
+            name=name,
+            rbac_name=rbac_name,
+            fingerprint=template_fingerprint(
+                uri_template=uri_template,
+                name=name,
+                title=title,
+                description=description,
+                mime_type=mime_type,
             ),
         )
     return specs
@@ -970,6 +1161,171 @@ class UpstreamRegistry:
         self.content.set_prompts(namespace, specs)
         return changed
 
+    async def _list_resources_for_config(
+        self,
+        cfg: UpstreamConfig,
+        discovery_timeout: float,
+        *,
+        catalog_client: Client | None = None,
+    ) -> tuple[list[Any], list[Any]]:
+        if catalog_client is not None:
+            resources = await list_upstream_resources(
+                catalog_client, timeout_seconds=discovery_timeout
+            )
+            templates = await list_upstream_resource_templates(
+                catalog_client, timeout_seconds=discovery_timeout
+            )
+            return resources, templates
+        if cfg.transport == "stdio":
+            conn = self._connections[cfg.namespace]
+            if isinstance(conn, StdioUpstreamConnection) and conn.process.state == "running":
+                client = conn.catalog_client(timeout=discovery_timeout)
+                async with client:
+                    resources = await list_upstream_resources(
+                        client, timeout_seconds=discovery_timeout
+                    )
+                    templates = await list_upstream_resource_templates(
+                        client, timeout_seconds=discovery_timeout
+                    )
+                return resources, templates
+            assert cfg.command is not None
+            child_env = resolve_stdio_child_env(cfg.env_from)
+            client = temporary_stdio_client(
+                command=cfg.command,
+                args=cfg.args,
+                env=child_env,
+                cwd=cfg.cwd,
+                init_timeout=discovery_timeout,
+            )
+            async with client:
+                resources = await list_upstream_resources(client, timeout_seconds=discovery_timeout)
+                templates = await list_upstream_resource_templates(
+                    client, timeout_seconds=discovery_timeout
+                )
+            return resources, templates
+        resources = await fetch_upstream_resources(
+            cfg.url,
+            timeout_seconds=discovery_timeout,
+            httpx_client_factory=(
+                self.http_client_factory(discovery_timeout) if self.http_client_factory else None
+            ),
+            headers=self.upstream_headers(cfg.namespace),
+        )
+        templates = await fetch_upstream_resource_templates(
+            cfg.url,
+            timeout_seconds=discovery_timeout,
+            httpx_client_factory=(
+                self.http_client_factory(discovery_timeout) if self.http_client_factory else None
+            ),
+            headers=self.upstream_headers(cfg.namespace),
+        )
+        return resources, templates
+
+    def _apply_resource_specs(
+        self,
+        cfg: UpstreamConfig,
+        resource_specs: dict[str, UpstreamResourceSpec],
+        template_specs: dict[str, UpstreamTemplateSpec],
+        raw_resources: dict[str, Any],
+        raw_templates: dict[str, Any],
+    ) -> bool:
+        namespace = cfg.namespace
+        sub = self._sub_servers[namespace]
+        adapter = self._adapters[namespace]
+        previous_resources = self.content.resources(namespace)
+        previous_templates = self.content.templates(namespace)
+        desired_res = {uri: spec.fingerprint for uri, spec in resource_specs.items()}
+        desired_tpl = {ut: spec.fingerprint for ut, spec in template_specs.items()}
+        prev_res = {uri: spec.fingerprint for uri, spec in previous_resources.items()}
+        prev_tpl = {ut: spec.fingerprint for ut, spec in previous_templates.items()}
+        if desired_res == prev_res and desired_tpl == prev_tpl:
+            return False
+
+        changed = False
+        tool_timeout = self._tool_timeout_for(cfg)
+
+        for uri in sorted(set(prev_res) - set(desired_res)):
+            spec = previous_resources[uri]
+            sub._local_provider.remove_resource(spec.published_uri)
+            changed = True
+
+        for uri_template in sorted(set(prev_tpl) - set(desired_tpl)):
+            spec = previous_templates[uri_template]
+            sub._local_provider.remove_template(spec.published_uri_template)
+            changed = True
+
+        for uri in sorted(desired_res):
+            spec = resource_specs[uri]
+            if uri in prev_res and prev_res[uri] == spec.fingerprint:
+                continue
+            owner = self.content.owner_of_resource_rbac(spec.rbac_name)
+            owner_key = f"{namespace}:{spec.uri}"
+            if owner is not None and owner != owner_key:
+                logger.error(
+                    "upstream resources refused namespace=%s resource=%s: "
+                    "rbac name %s already owned by %s",
+                    namespace,
+                    spec.name,
+                    spec.rbac_name,
+                    owner,
+                )
+                continue
+            if uri in prev_res:
+                sub._local_provider.remove_resource(spec.published_uri)
+            mcp_resource = raw_resources[uri]
+            proxy = UpstreamProxyResource.from_upstream_resource(
+                registry=self,
+                namespace=namespace,
+                upstream_name=cfg.name,
+                mcp_resource=mcp_resource,
+                backend_uri=spec.uri,
+                identity_signer=adapter._identity_signer,
+                extra_headers=dict(self.upstream_headers(namespace)),
+                tool_timeout=tool_timeout,
+                rbac_mode=self.rbac_mode,
+                transport=self.connection(namespace).transport,
+            )
+            sub.add_resource(proxy)
+            changed = True
+
+        for uri_template in sorted(desired_tpl):
+            spec = template_specs[uri_template]
+            if uri_template in prev_tpl and prev_tpl[uri_template] == spec.fingerprint:
+                continue
+            owner = self.content.owner_of_template_rbac(spec.rbac_name)
+            owner_key = f"{namespace}:{spec.uri_template}"
+            if owner is not None and owner != owner_key:
+                logger.error(
+                    "upstream templates refused namespace=%s template=%s: "
+                    "rbac name %s already owned by %s",
+                    namespace,
+                    spec.name,
+                    spec.rbac_name,
+                    owner,
+                )
+                continue
+            if uri_template in prev_tpl:
+                sub._local_provider.remove_template(spec.published_uri_template)
+            mcp_template = raw_templates[uri_template]
+            proxy = UpstreamProxyTemplate.from_upstream_template(
+                registry=self,
+                namespace=namespace,
+                upstream_name=cfg.name,
+                mcp_template=mcp_template,
+                backend_uri_template=spec.uri_template,
+                identity_signer=adapter._identity_signer,
+                extra_headers=dict(self.upstream_headers(namespace)),
+                tool_timeout=tool_timeout,
+                rbac_mode=self.rbac_mode,
+                transport=self.connection(namespace).transport,
+            )
+            sub.add_template(proxy)
+            changed = True
+
+        self.content.set_resources(namespace, resource_specs)
+        self.content.set_templates(namespace, template_specs)
+        return changed
+
     async def _discover_one(self, cfg: UpstreamConfig) -> int:
         if cfg.mode != "proxy_1to1":
             raise ValueError(f"unsupported upstream mode: {cfg.mode}")
@@ -984,6 +1340,8 @@ class UpstreamRegistry:
             else self.discovery_timeout_seconds
         )
         prompts_raw: list[Any] = []
+        resources_raw: list[Any] = []
+        templates_raw: list[Any] = []
         if cfg.transport == "stdio":
             conn = self._connections[cfg.namespace]
             if isinstance(conn, StdioUpstreamConnection) and conn.process.state == "running":
@@ -1001,6 +1359,17 @@ class UpstreamRegistry:
                             cfg.namespace,
                             exc,
                         )
+                    try:
+                        resources_raw, templates_raw = await self._list_resources_for_config(
+                            cfg, discovery_timeout, catalog_client=client
+                        )
+                    except UpstreamListToolsError as exc:
+                        logger.warning(
+                            "upstream resources refresh failed namespace=%s: %s; "
+                            "keeping previous resources",
+                            cfg.namespace,
+                            exc,
+                        )
             else:
                 tools = await self._discover_stdio_tools(cfg, discovery_timeout)
                 try:
@@ -1008,6 +1377,17 @@ class UpstreamRegistry:
                 except UpstreamListToolsError as exc:
                     logger.warning(
                         "upstream prompts refresh failed namespace=%s: %s; keeping previous prompts",
+                        cfg.namespace,
+                        exc,
+                    )
+                try:
+                    resources_raw, templates_raw = await self._list_resources_for_config(
+                        cfg, discovery_timeout
+                    )
+                except UpstreamListToolsError as exc:
+                    logger.warning(
+                        "upstream resources refresh failed namespace=%s: %s; "
+                        "keeping previous resources",
                         cfg.namespace,
                         exc,
                     )
@@ -1036,6 +1416,16 @@ class UpstreamRegistry:
             except UpstreamListToolsError as exc:
                 logger.warning(
                     "upstream prompts refresh failed namespace=%s: %s; keeping previous prompts",
+                    cfg.namespace,
+                    exc,
+                )
+            try:
+                resources_raw, templates_raw = await self._list_resources_for_config(
+                    cfg, discovery_timeout
+                )
+            except UpstreamListToolsError as exc:
+                logger.warning(
+                    "upstream resources refresh failed namespace=%s: %s; keeping previous resources",
                     cfg.namespace,
                     exc,
                 )
@@ -1100,6 +1490,14 @@ class UpstreamRegistry:
             if resolve_mounted_tool_name(p.name, cfg.strip_prefix)
         }
         self._apply_prompt_specs(cfg, prompt_specs, raw_by_route)
+
+        resource_specs = build_upstream_resource_specs(cfg, resources_raw)
+        template_specs = build_upstream_template_specs(cfg, templates_raw)
+        raw_resources = {str(r.uri): r for r in resources_raw}
+        raw_templates = {t.uri_template: t for t in templates_raw}
+        self._apply_resource_specs(
+            cfg, resource_specs, template_specs, raw_resources, raw_templates
+        )
 
         logger.info(
             "discovered upstream=%s namespace=%s tools=%d",

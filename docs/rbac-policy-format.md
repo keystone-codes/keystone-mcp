@@ -68,8 +68,9 @@ namespace (not starting with `billing_`) using `include_prefixes`/
 `strip_prefix`.
 
 Allow patterns match tools, prompts and resources by their published name
-(`<namespace>_<name>` for tools and prompts; resources use the resource name or
-template name with the namespace inserted into the URI — see the facade docs).
+(`<namespace>_<name>` for tools, prompts, static resources and resource
+templates — see [facade.md](facade.md)). Example: upstream resource
+`handbook` in namespace `hello` is allowed with `hello_handbook`, not by URI.
 
 ### 2.2 `version`
 
