@@ -21,8 +21,11 @@ from keystone_mcp.router.stdio_process import UpstreamProcessUnavailableError
 from keystone_mcp.router.upstream import (
     UpstreamListToolsError,
     UpstreamToolSpec,
+    build_upstream_prompt_specs,
     build_upstream_tool_specs,
+    fetch_upstream_prompts,
     fetch_upstream_tools,
+    list_upstream_prompts,
     list_upstream_tools,
 )
 
@@ -65,7 +68,11 @@ class SurfaceReconciler:
     _namespace_fingerprints: dict[str, dict[str, str]] = field(
         default_factory=dict, init=False, repr=False
     )
+    _namespace_prompt_fingerprints: dict[str, dict[str, str]] = field(
+        default_factory=dict, init=False, repr=False
+    )
     _empty_list_streak: dict[str, int] = field(default_factory=dict, init=False, repr=False)
+    _empty_prompt_list_streak: dict[str, int] = field(default_factory=dict, init=False, repr=False)
     _last_users_revision: int | None = field(default=None, init=False, repr=False)
 
     def seed_snapshots(self) -> None:
@@ -73,6 +80,10 @@ class SurfaceReconciler:
         self._policy_hash, self._snapshot_hash = policy_files_content_hashes(self.settings)
         self._namespace_fingerprints = {
             cfg.namespace: self._fingerprint_namespace(cfg.namespace)
+            for cfg in self.upstreams._upstreams
+        }
+        self._namespace_prompt_fingerprints = {
+            cfg.namespace: self._fingerprint_prompts_namespace(cfg.namespace)
             for cfg in self.upstreams._upstreams
         }
 
@@ -163,8 +174,9 @@ class SurfaceReconciler:
             self._policy_reload_event.clear()
 
         catalog_changed = False
+        prompts_catalog_changed = False
         try:
-            catalog_changed = await self._refresh_catalogs()
+            catalog_changed, prompts_catalog_changed = await self._refresh_catalogs()
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -186,27 +198,35 @@ class SurfaceReconciler:
         except Exception:
             logger.exception("surface reconciler step %s failed", "observe_users_revision")
 
-        if (
-            catalog_changed or policy_reloaded or users_revision_changed
-        ) and self.client_sessions is not None:
-            reached = await self.client_sessions.broadcast_list_changed({"tools"})
+        kinds: set[str] = set()
+        if catalog_changed or policy_reloaded or users_revision_changed:
+            kinds.add("tools")
+        if prompts_catalog_changed:
+            kinds.add("prompts")
+        if kinds and self.client_sessions is not None:
+            reached = await self.client_sessions.broadcast_list_changed(kinds)
             logger.info(
-                "sent tools/list_changed to %d session(s) (catalog=%s policy=%s users=%s)",
+                "sent list_changed kinds=%s to %d session(s) (catalog=%s prompts=%s policy=%s users=%s)",
+                sorted(kinds),
                 reached,
                 catalog_changed,
+                prompts_catalog_changed,
                 policy_reloaded,
                 users_revision_changed,
             )
             if self.observability is not None:
-                self.observability.record_list_changed(kind="tools", sessions=reached)
+                for kind in kinds:
+                    self.observability.record_list_changed(kind=kind, sessions=reached)
 
-    async def _refresh_catalogs(self) -> bool:
-        """Refresh every configured namespace; return whether any tool list changed."""
-        changed = False
+    async def _refresh_catalogs(self) -> tuple[bool, bool]:
+        """Refresh every configured namespace; return (tools_changed, prompts_changed)."""
+        tools_changed = False
+        prompts_changed = False
         for cfg in self.upstreams._upstreams:
             try:
-                if await self._refresh_namespace(cfg):
-                    changed = True
+                tc, pc = await self._refresh_namespace(cfg)
+                tools_changed = tools_changed or tc
+                prompts_changed = prompts_changed or pc
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -216,10 +236,10 @@ class SurfaceReconciler:
                     cfg.namespace,
                 )
                 self._record_catalog_outcome(held=True)
-        return changed
+        return tools_changed, prompts_changed
 
-    async def _refresh_namespace(self, cfg: object) -> bool:
-        """Refresh one namespace's tool catalog; return whether it changed (added/removed/updated)."""
+    async def _refresh_namespace(self, cfg: object) -> tuple[bool, bool]:
+        """Refresh one namespace's tool and prompt catalogs."""
         from keystone_mcp.router.upstream import UpstreamConfig
 
         assert isinstance(cfg, UpstreamConfig)
@@ -231,6 +251,7 @@ class SurfaceReconciler:
             if cfg.discovery_timeout_seconds is not None
             else self.upstreams.discovery_timeout_seconds
         )
+        prompts_raw: list = []
         try:
             if cfg.transport == "stdio":
                 try:
@@ -245,9 +266,20 @@ class SurfaceReconciler:
                         exc,
                     )
                     self._record_catalog_outcome(held=True)
-                    return False
+                    return False, False
                 async with client:
                     tools = await list_upstream_tools(client, timeout_seconds=discovery_timeout)
+                    try:
+                        prompts_raw = await list_upstream_prompts(
+                            client, timeout_seconds=discovery_timeout
+                        )
+                    except UpstreamListToolsError as exc:
+                        logger.warning(
+                            "upstream prompts refresh failed namespace=%s: %s; "
+                            "keeping previous prompts",
+                            namespace,
+                            exc,
+                        )
             else:
                 tools = await fetch_upstream_tools(
                     cfg.url,
@@ -259,6 +291,23 @@ class SurfaceReconciler:
                     ),
                     headers=self.upstreams.upstream_headers(namespace),
                 )
+                try:
+                    prompts_raw = await fetch_upstream_prompts(
+                        cfg.url,
+                        timeout_seconds=discovery_timeout,
+                        httpx_client_factory=(
+                            self.upstreams.http_client_factory(discovery_timeout)
+                            if self.upstreams.http_client_factory
+                            else None
+                        ),
+                        headers=self.upstreams.upstream_headers(namespace),
+                    )
+                except UpstreamListToolsError as exc:
+                    logger.warning(
+                        "upstream prompts refresh failed namespace=%s: %s; keeping previous prompts",
+                        namespace,
+                        exc,
+                    )
         except UpstreamListToolsError as exc:
             self.upstreams.mark_unavailable(namespace, str(exc))
             logger.warning(
@@ -267,7 +316,7 @@ class SurfaceReconciler:
                 exc,
             )
             self._record_catalog_outcome(held=True)
-            return False
+            return False, False
 
         became_available = self.upstreams.mark_available(namespace)
         specs = build_upstream_tool_specs(cfg, tools, schema_patches=self.upstreams.schema_patches)
@@ -285,7 +334,8 @@ class SurfaceReconciler:
                 )
                 self._record_catalog_outcome(held=True)
                 self._maybe_log_drift(became_available)
-                return False
+                prompts_changed = self._refresh_prompts_for_namespace(cfg, prompts_raw)
+                return False, prompts_changed
             logger.warning(
                 "upstream refresh namespace=%s empty twice; removing proxy tools",
                 namespace,
@@ -293,45 +343,47 @@ class SurfaceReconciler:
         elif desired:
             self._empty_list_streak[namespace] = 0
 
+        tools_changed = False
         if desired == previous:
             self._record_catalog_outcome(unchanged=True)
-            # A namespace that came back up with its previous (possibly
-            # empty) catalog unchanged still needs its policy allow patterns
-            # re-verified: nothing else triggers that check for it (P06).
             self._maybe_log_drift(became_available)
-            return False
-
-        added, removed, updated, skipped = self._apply_namespace_diff(cfg, specs, previous, desired)
-        # Do not cache a fingerprint for a route that was skipped (an
-        # unpublishable schema) or refused (a published-name collision, P09):
-        # if we did, the next tick would see its fingerprint already matches
-        # "previous" and never retry it. When the route was already
-        # registered under an older, different spec (an update attempt that
-        # failed), keep that *old* fingerprint instead of dropping the key
-        # outright -- the old route is still live in both the registry and
-        # FastMCP (add_route is atomic), and dropping the key would also
-        # drop it out of "previous" for the removal diff above, orphaning it
-        # forever once the upstream really does stop offering it.
-        new_fingerprints = dict(desired)
-        for route_name in skipped:
-            if route_name in previous:
-                new_fingerprints[route_name] = previous[route_name]
-            else:
-                new_fingerprints.pop(route_name, None)
-        self._namespace_fingerprints[namespace] = new_fingerprints
-        if added or removed or updated:
-            logger.info(
-                "upstream catalog refreshed namespace=%s added=%d removed=%d updated=%d",
-                namespace,
-                added,
-                removed,
-                updated,
-            )
-            self._record_catalog_outcome(applied=True, added=added, removed=removed)
         else:
-            self._record_catalog_outcome(unchanged=True)
-        self._maybe_log_drift(became_available, added=added, removed=removed, updated=updated)
-        return bool(added or removed or updated)
+            added, removed, updated, skipped = self._apply_namespace_diff(
+                cfg, specs, previous, desired
+            )
+            # Do not cache a fingerprint for a route that was skipped (an
+            # unpublishable schema) or refused (a published-name collision, P09):
+            # if we did, the next tick would see its fingerprint already matches
+            # "previous" and never retry it. When the route was already
+            # registered under an older, different spec (an update attempt that
+            # failed), keep that *old* fingerprint instead of dropping the key
+            # outright -- the old route is still live in both the registry and
+            # FastMCP (add_route is atomic), and dropping the key would also
+            # drop it out of "previous" for the removal diff above, orphaning it
+            # forever once the upstream really does stop offering it.
+            new_fingerprints = dict(desired)
+            for route_name in skipped:
+                if route_name in previous:
+                    new_fingerprints[route_name] = previous[route_name]
+                else:
+                    new_fingerprints.pop(route_name, None)
+            self._namespace_fingerprints[namespace] = new_fingerprints
+            if added or removed or updated:
+                logger.info(
+                    "upstream catalog refreshed namespace=%s added=%d removed=%d updated=%d",
+                    namespace,
+                    added,
+                    removed,
+                    updated,
+                )
+                self._record_catalog_outcome(applied=True, added=added, removed=removed)
+                tools_changed = True
+            else:
+                self._record_catalog_outcome(unchanged=True)
+            self._maybe_log_drift(became_available, added=added, removed=removed, updated=updated)
+
+        prompts_changed = self._refresh_prompts_for_namespace(cfg, prompts_raw)
+        return tools_changed, prompts_changed
 
     def _maybe_log_drift(
         self,
@@ -479,6 +531,51 @@ class SurfaceReconciler:
             return False
         self.registry.remove_route(route_key)
         return True
+
+    def _fingerprint_prompts_namespace(self, namespace: str) -> dict[str, str]:
+        return {
+            name: spec.fingerprint
+            for name, spec in self.upstreams.content.prompts(namespace).items()
+        }
+
+    def _refresh_prompts_for_namespace(self, cfg: object, prompts_raw: list) -> bool:
+        from keystone_mcp.router.upstream import UpstreamConfig, resolve_mounted_tool_name
+
+        assert isinstance(cfg, UpstreamConfig)
+        namespace = cfg.namespace
+        previous = self._namespace_prompt_fingerprints.get(namespace, {})
+        prompt_specs = build_upstream_prompt_specs(cfg, prompts_raw)
+        desired = {name: spec.fingerprint for name, spec in prompt_specs.items()}
+
+        if not desired and previous:
+            streak = self._empty_prompt_list_streak.get(namespace, 0) + 1
+            self._empty_prompt_list_streak[namespace] = streak
+            if streak < 2:
+                logger.warning(
+                    "upstream refresh namespace=%s returned zero prompts; "
+                    "holding previous prompts (streak=%d)",
+                    namespace,
+                    streak,
+                )
+                return False
+            logger.warning(
+                "upstream refresh namespace=%s empty prompts twice; removing proxy prompts",
+                namespace,
+            )
+        elif desired:
+            self._empty_prompt_list_streak[namespace] = 0
+
+        if desired == previous:
+            return False
+
+        raw_by_route = {
+            resolve_mounted_tool_name(p.name, cfg.strip_prefix): p
+            for p in prompts_raw
+            if resolve_mounted_tool_name(p.name, cfg.strip_prefix)
+        }
+        changed = self.upstreams._apply_prompt_specs(cfg, prompt_specs, raw_by_route)
+        self._namespace_prompt_fingerprints[namespace] = dict(desired)
+        return changed
 
     def _fingerprint_namespace(self, namespace: str) -> dict[str, str]:
         fingerprints: dict[str, str] = {}

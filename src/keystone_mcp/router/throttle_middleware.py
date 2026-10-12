@@ -25,7 +25,7 @@ from keystone_mcp.identity import resolve_verified_identity
 from keystone_mcp.observability.subject import hash_subject
 
 if TYPE_CHECKING:
-    from mcp.types import CallToolRequestParams
+    from mcp.types import CallToolRequestParams, GetPromptRequestParams
 
     from keystone_mcp.observability.service import RbacObservability
 
@@ -55,6 +55,21 @@ class ThrottleMiddleware(Middleware):
             self._observability.record_tool_call_attempt(
                 tool_name=context.message.name,
             )
+        identity = resolve_verified_identity()
+        if identity is None:
+            return await call_next(context)
+
+        if self._throttle.check(identity.subject):
+            return await call_next(context)
+
+        self._record_throttled(context.message.name, identity.subject)
+        raise ToolError(THROTTLE_MESSAGE)
+
+    async def on_get_prompt(
+        self,
+        context: MiddlewareContext[GetPromptRequestParams],
+        call_next,
+    ):
         identity = resolve_verified_identity()
         if identity is None:
             return await call_next(context)

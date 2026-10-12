@@ -156,6 +156,7 @@ def build_lowlevel_upstream_app(
     *,
     tools: Collection[str] | None = None,
     extra_tools: Collection[str] | None = None,
+    prompts: bool = False,
     observed: dict[str, Any] | None = None,
     require_bearer: str | None = None,
     stateless: bool = True,
@@ -330,11 +331,60 @@ def build_lowlevel_upstream_app(
             )
         return types.CallToolResult(content=content)
 
-    server: Server = Server(
-        "hello-upstream",
-        on_list_tools=_on_list_tools,
-        on_call_tool=_on_call_tool,
-    )
+    async def _on_list_prompts(
+        ctx: Any, _params: types.PaginatedRequestParams | None
+    ) -> types.ListPromptsResult:
+        _check_bearer(ctx)
+        if observed is not None:
+            observed["list_prompts_calls"] = observed.get("list_prompts_calls", 0) + 1
+        return types.ListPromptsResult(
+            prompts=[
+                types.Prompt(
+                    name="summarize",
+                    description="Summarize a topic.",
+                    arguments=[
+                        types.PromptArgument(
+                            name="topic",
+                            description="Topic to summarize",
+                            required=True,
+                        )
+                    ],
+                )
+            ]
+        )
+
+    async def _on_get_prompt(
+        ctx: Any, params: types.GetPromptRequestParams
+    ) -> types.GetPromptResult:
+        _check_bearer(ctx)
+        request = ctx.request
+        headers = {k.lower(): v for k, v in request.headers.items()} if request else {}
+        if observed is not None:
+            observed["prompt_headers"] = headers
+            meta = getattr(params, "meta", None)
+            if meta is not None:
+                observed["prompt_meta"] = dict(meta)
+            else:
+                observed["prompt_meta"] = {}
+        topic = (params.arguments or {}).get("topic", "")
+        return types.GetPromptResult(
+            messages=[
+                types.PromptMessage(
+                    role="user",
+                    content=types.TextContent(type="text", text=f"Summarize {topic}"),
+                )
+            ]
+        )
+
+    server_kwargs: dict[str, Any] = {
+        "on_list_tools": _on_list_tools,
+        "on_call_tool": _on_call_tool,
+    }
+    if prompts:
+        server_kwargs["on_list_prompts"] = _on_list_prompts
+        server_kwargs["on_get_prompt"] = _on_get_prompt
+
+    server: Server = Server("hello-upstream", **server_kwargs)
 
     manager = StreamableHTTPSessionManager(
         app=server, stateless=stateless, json_response=json_response
