@@ -20,7 +20,6 @@ import keystone_mcp.server as server_module
 from conftest import BASE_URL, obtain_access_token, refresh_access_token
 from keystone_mcp.adapters.stub import StubAdapter
 from keystone_mcp.adapters.users_admin import UsersAdminAdapter
-from keystone_mcp.auth.identity_provider import StaticIdentityProvider
 from keystone_mcp.auth.login_pending_store import InMemoryLoginPendingStore
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.auth.sessions import SessionRevoker
@@ -31,6 +30,7 @@ from keystone_mcp.router.engine import RouterEngine
 from keystone_mcp.router.registry import RouterRegistry
 from keystone_mcp.server import bootstrap_platform, build_server
 from keystone_mcp.user_directory.local import LocalUserDirectory
+from support.login import dev_token_login
 from support.users_store import make_users_store
 
 VALID_TOKEN = "valid-test-token"
@@ -87,13 +87,12 @@ async def session_harness(tmp_path: Path):
 
     oauth_store = InMemoryOAuthStore()
     pending = InMemoryLoginPendingStore()
-    idp = StaticIdentityProvider({VALID_TOKEN})
 
     mcp, registry, _oauth, upstreams, policy_manager, observability, _recon = build_server(
-        identity_provider=idp,
         settings=settings,
         oauth_store=oauth_store,
         login_pending_store=pending,
+        login_providers=[dev_token_login({VALID_TOKEN})],
     )
     registry.add_route("member_ping", StubAdapter(), mode="live")
     await bootstrap_platform(
