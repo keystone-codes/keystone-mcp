@@ -100,7 +100,8 @@ def build_user_directory_resolver(
     if resolved_directory is None and backend is not None:
         warnings.warn(
             "UserDirectoryBackend is deprecated; implement "
-            "keystone_mcp.user_directory.UserDirectory. Removed in 0.6.0.",
+            "keystone_mcp.user_directory.UserDirectory. Deprecated since "
+            "0.5.0, removed in 2.0.",
             DeprecationWarning,
             stacklevel=2,
         )
