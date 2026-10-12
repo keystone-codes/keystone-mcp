@@ -139,6 +139,9 @@ this project uses [Semantic Versioning](https://semver.org/).
   error page (400 or 503) instead of an unhandled 500.
 - Refreshing a session opened through a sign-in provider that is no longer
   configured is refused.
+- OIDC discovery endpoints must share the configured issuer origin; login
+  providers YAML parse errors no longer echo file contents; unverified email
+  without domain restriction is rejected at config load.
 
 ### Migration
 
