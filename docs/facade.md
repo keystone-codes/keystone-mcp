@@ -151,7 +151,9 @@ File transfer is not built in: run a file service as an upstream MCP server
 5. The proxy forwards the call with `X-Author-Email` and the configured timeout.
 6. Progress notifications from the upstream are relayed to the client while
    the call runs, when the client asked for them.
-7. The upstream's answer goes back unchanged: every content block,
+7. If the client cancels or the per-tool timeout expires, Keystone-MCP forwards
+   that cancellation to the upstream request (see the table below).
+8. The upstream's answer goes back unchanged: every content block,
    `structuredContent`, `isError`. With `KEYSTONE_MCP_PROXY_STATUS_ENVELOPE=true`
    it is wrapped in `{state, tool, task_id, result}` and a `status` of
    `error`, `refused` or `accepted` is mapped to an error, a rate-limit
@@ -171,7 +173,7 @@ not implemented yet or deliberately never forwarded.
 | `tools/list`, `tools/call` | yes |
 | `notifications/progress` (upstream → client) | yes, when the client sends a `progressToken`; both protocol eras |
 | `notifications/tools/list_changed` | yes, after a catalog change, an RBAC policy reload or a users-directory change; both protocol eras — see "Discovery" above |
-| `notifications/cancelled` (client → upstream) | not yet |
+| `notifications/cancelled` (client → upstream) | yes: a client cancel or a keystone-mcp timeout is forwarded to the upstream request (as `notifications/cancelled` on the handshake protocol, by closing the request stream on MCP 2026-07-28) |
 | `prompts/*` | not yet |
 | `resources/*` | not yet |
 | `elicitation/create` (upstream → user) | under evaluation |
