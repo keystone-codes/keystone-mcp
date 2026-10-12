@@ -232,3 +232,20 @@ async def test_throttled_denial_is_recorded_for_observability(patch_verified_ide
     assert recorded[0]["reason"] is RbacDenialReason.THROTTLED
     assert recorded[0]["tool_name"] == "ping"
     assert recorded[0]["operation"] == "call_tool"
+
+
+@pytest.mark.asyncio
+async def test_get_prompt_consumes_throttle(patch_verified_identity):
+    from mcp.types import GetPromptRequestParams
+
+    middleware = ThrottleMiddleware(PerIdentityThrottle(max_requests=1, window_seconds=60))
+
+    async def _noop(_context):
+        return "ok"
+
+    params = GetPromptRequestParams(name="hello_summarize", arguments={"topic": "x"})
+    context = MiddlewareContext(message=params, fastmcp_context=None)  # type: ignore[arg-type]
+
+    await middleware.on_get_prompt(context, _noop)
+    with pytest.raises(ToolError, match=THROTTLE_MESSAGE):
+        await middleware.on_get_prompt(context, _noop)

@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import threading
-from collections.abc import Collection, Sequence
+from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from fnmatch import fnmatch
@@ -238,6 +238,17 @@ def policy_files_content_hashes(settings: Settings) -> tuple[str | None, str | N
     return policy_hash, snapshot_hash
 
 
+def _live_catalog_names(
+    policy_manager: RbacPolicyManager,
+    registry: RouterRegistry,
+) -> frozenset[str]:
+    names = frozenset(collect_live_tool_names(registry))
+    extra = policy_manager._extra_catalog_names
+    if extra is None:
+        return names
+    return names | extra()
+
+
 def log_live_catalog_drift(
     policy_manager: RbacPolicyManager,
     registry: RouterRegistry,
@@ -246,11 +257,11 @@ def log_live_catalog_drift(
     policy = policy_manager.active_policy
     if policy is None:
         return
-    live_tools = collect_live_tool_names(registry)
+    live_tools = _live_catalog_names(policy_manager, registry)
     snapshot = policy_manager.catalog_snapshot()
     result = validate_policy_against_catalog(
         policy,
-        frozenset(live_tools) | snapshot.active,
+        live_tools | snapshot.active,
         reserved_tool_names=snapshot.reserved,
         wip_tool_names=snapshot.wip,
     )
@@ -278,11 +289,13 @@ class RbacPolicyManager:
         settings: Settings,
         *,
         upstream_catalog_state: UpstreamCatalogStateProvider | None = None,
+        extra_catalog_names: Callable[[], frozenset[str]] | None = None,
     ) -> None:
         self._settings = settings
         self._lock = threading.Lock()
         self._snapshot: PolicySnapshot | None = None
         self._upstream_catalog_state_provider = upstream_catalog_state
+        self._extra_catalog_names = extra_catalog_names
 
     @property
     def snapshot(self) -> PolicySnapshot | None:
@@ -364,7 +377,7 @@ class RbacPolicyManager:
     def _load_and_validate(self, registry: RouterRegistry) -> PolicySnapshot:
         path = self.policy_path()
         policy, content_hash = load_policy_file_with_hash(path)
-        live_tools = collect_live_tool_names(registry)
+        live_tools = _live_catalog_names(self, registry)
         assert_live_catalog_validation(
             policy,
             live_tools,

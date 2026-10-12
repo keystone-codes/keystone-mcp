@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from typing import Any
 
@@ -59,3 +60,21 @@ def tool_fingerprint(
     if annotations:
         body["annotations"] = json.dumps(annotations, sort_keys=True, separators=(",", ":"))
     return json.dumps(body, sort_keys=True, separators=(",", ":"))
+
+
+def prompt_fingerprint(
+    *,
+    name: str,
+    title: str | None,
+    description: str | None,
+    arguments: list[dict[str, Any]],
+) -> str:
+    """Stable fingerprint for one upstream prompt (Y06)."""
+    payload = {
+        "name": name,
+        "title": title or "",
+        "description": description or "",
+        "arguments": arguments,
+    }
+    body = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()
