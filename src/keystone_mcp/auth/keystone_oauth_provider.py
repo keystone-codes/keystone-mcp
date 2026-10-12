@@ -2,11 +2,15 @@
 
 Implements the full embedded OAuth server pattern on top of FastMCP's
 ``OAuthProvider`` so Claude can connect as a remote OAuth connector. The provider
-emits the discovery/registration/authorize/token endpoints; user credentials are
-collected on a login page (``/login``) where the ``api_token`` is validated via the
-:class:`IdentityProvider`. A valid login binds the verified ``email`` to the issued
-access token as a claim and ``subject`` — this is the verified identity propagated
-downstream as ``X-Author-Email``.
+emits the discovery/registration/authorize/token endpoints; credentials are
+collected on a login page (``/login`` plus one ``/login/{name}`` pair per
+configured redirect provider) through the pluggable
+:class:`~keystone_mcp.login.protocol.LoginProvider` contract (X03) — this
+provider owns the OAuth transaction, the consent screen, the CSRF/browser
+binding and the users-directory check; a provider only proves who signed in.
+A valid login binds the verified ``email`` to the issued access token as a
+claim and ``subject`` — this is the verified identity propagated downstream
+as ``X-Author-Email``.
 
 OAuth clients and tokens persist in :class:`~keystone_mcp.auth.oauth_store.OAuthStore`
 (Redis in production). Pending login transactions and authorization codes persist in
@@ -24,6 +28,7 @@ import json
 import logging
 import secrets
 import time
+from collections.abc import Sequence
 from urllib.parse import urlencode, urlparse
 
 from fastmcp.server.auth import OAuthProvider
@@ -43,14 +48,6 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse, RedirectResponse, Response
 from starlette.routing import Route
 
-from keystone_mcp.auth.google_oidc import (
-    GoogleIdTokenError,
-    GoogleOidcClient,
-    GoogleOidcError,
-    GoogleTokenExchangeError,
-    email_matches_allowed_domain,
-)
-from keystone_mcp.auth.identity_provider import IdentityProvider
 from keystone_mcp.auth.login_pending_store import LoginPendingStore
 from keystone_mcp.auth.oauth_store import OAuthStore
 from keystone_mcp.auth.throttle import (
@@ -60,6 +57,12 @@ from keystone_mcp.auth.throttle import (
     wrap_asgi_with_ip_login_throttle,
 )
 from keystone_mcp.config import Settings, resources_equivalent
+from keystone_mcp.login.protocol import (
+    FormLoginProvider,
+    LoginIdentity,
+    LoginProvider,
+    LoginRejected,
+)
 from keystone_mcp.observability.service import RbacObservability
 from keystone_mcp.user_directory.errors import UserDirectoryUnavailableError
 from keystone_mcp.user_directory.protocol import UserDirectoryResolver
@@ -69,7 +72,7 @@ logger = logging.getLogger(__name__)
 
 _NS_PENDING_TXN = "txn"
 _NS_AUTH_CODE = "code"
-_NS_GOOGLE_STATE = "google"
+_NS_LOGIN_ATTEMPT = "login_attempt"
 _NS_REFRESH_AUTH = "refresh_auth"
 
 # How long a rotated-away refresh token's auth_method/resource marker is kept
@@ -80,9 +83,9 @@ _NS_REFRESH_AUTH = "refresh_auth"
 # grace window is what it reads instead of nothing.
 _OLD_REFRESH_MARKER_GRACE_SECONDS = 60
 
-# Double-submit CSRF cookie for the consent screen's "Sign in with Google"
-# form (A13). Scoped to the /login path and as short-lived as the login
-# transaction it protects.
+# Double-submit CSRF cookie for the consent screen's redirect-provider
+# button forms (A13; generalized from Google-only in X03). Scoped to the
+# /login path and as short-lived as the login transaction it protects.
 #
 # Over https, the cookie carries the `__Host-` prefix instead (finding #4,
 # second review): a browser refuses to even store a `__Host-`-prefixed cookie
@@ -103,14 +106,15 @@ _CSRF_COOKIE_NAME_HOST_PREFIXED = "__Host-km_login_csrf"
 def _hash_csrf_cookie(value: str) -> str:
     """SHA-256 of a ``km_login_csrf`` cookie value, hex-encoded.
 
-    Used to bind the Google OIDC ``state`` round trip to the browser that
-    started it (finding #1): the hash travels inside the server-side pending
-    envelope keyed by ``state``, and is compared against a hash of the
-    cookie presented on ``/login/google/callback``. A plain equality check on
-    secrets of fixed, known length does not need ``hmac.compare_digest`` to
-    produce a timing side channel worth caring about, but the callers compare
-    these hashes with ``secrets.compare_digest`` anyway, for the same reason
-    the CSRF field comparison on ``POST /login/google`` does.
+    Used to bind a redirect provider's ``state`` round trip to the browser
+    that started it (finding #1): the hash travels inside the server-side
+    pending envelope keyed by ``state``, and is compared against a hash of
+    the cookie presented on ``/login/{name}/callback``. A plain equality
+    check on secrets of fixed, known length does not need
+    ``hmac.compare_digest`` to produce a timing side channel worth caring
+    about, but the callers compare these hashes with
+    ``secrets.compare_digest`` anyway, for the same reason the CSRF field
+    comparison on ``POST /login/{name}`` does.
     """
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
@@ -498,26 +502,34 @@ class _PendingAuthorization:
         self.params = params
 
 
-class _GooglePendingState:
-    __slots__ = ("txn_id", "nonce", "pkce_verifier", "csrf_hash")
+class _LoginAttempt:
+    """A redirect provider's in-flight sign-in attempt, keyed by ``state``.
 
-    def __init__(self, txn_id: str, nonce: str, pkce_verifier: str, csrf_hash: str) -> None:
+    Replaces the Google-only ``_GooglePendingState``: the same record shape
+    now serves any ``RedirectLoginProvider`` (X03). ``attempt`` is whatever
+    private per-attempt data the provider's own ``begin()`` returned (a
+    nonce, a PKCE verifier, ...) — Keystone never looks inside it, only
+    stores and hands it back to ``complete()``.
+    """
+
+    __slots__ = ("txn_id", "provider", "attempt", "csrf_hash")
+
+    def __init__(self, txn_id: str, provider: str, attempt: dict[str, str], csrf_hash: str) -> None:
         self.txn_id = txn_id
-        self.nonce = nonce
-        self.pkce_verifier = pkce_verifier
+        self.provider = provider
+        self.attempt = attempt
         self.csrf_hash = csrf_hash
 
 
 class KeystoneOAuthProvider(OAuthProvider):
     def __init__(
         self,
-        identity_provider: IdentityProvider,
         settings: Settings,
         oauth_store: OAuthStore,
         login_pending_store: LoginPendingStore,
         *,
+        login_providers: Sequence[LoginProvider],
         user_resolver: UserDirectoryResolver | None = None,
-        google_oidc_client: GoogleOidcClient | None = None,
         login_throttle: LoginAttemptThrottle | None = None,
         oauth_endpoint_throttle: LoginAttemptThrottle | None = None,
         observability: RbacObservability | None = None,
@@ -530,12 +542,11 @@ class KeystoneOAuthProvider(OAuthProvider):
             ),
             required_scopes=None,
         )
-        self._identity = identity_provider
         self._settings = settings
         self._store = oauth_store
         self._pending_store = login_pending_store
+        self._providers: dict[str, LoginProvider] = {p.name: p for p in login_providers}
         self._user_resolver = user_resolver
-        self._google_oidc = google_oidc_client
         self._login_throttle = login_throttle or LoginAttemptThrottle(
             settings.login_throttle_ip_max,
             settings.login_throttle_email_max,
@@ -601,14 +612,22 @@ class KeystoneOAuthProvider(OAuthProvider):
             wrapped.append(_rebuild(route, app) if app is not route.app else route)
         return wrapped
 
-    def _google_client(self) -> GoogleOidcClient:
-        if self._google_oidc is not None:
-            return self._google_oidc
-        return GoogleOidcClient(
-            self._settings.google_client_id,
-            self._settings.google_client_secret,
-            self._settings.google_redirect_uri,
-        )
+    def _callback_url(self, name: str) -> str:
+        """Where a redirect provider named *name* sends the browser back.
+
+        For the provider named ``google`` this always equals
+        ``settings.google_redirect_uri`` (the address registered with Google
+        — S4), since that property uses this same ``{base_url}/login/{name}/
+        callback`` formula.
+        """
+        return f"{self._settings.base_url.rstrip('/')}/login/{name}/callback"
+
+    def _form_provider(self) -> FormLoginProvider | None:
+        """The configured ``form``-kind provider, if any (at most one — validated at startup)."""
+        for provider in self._providers.values():
+            if provider.kind == "form":
+                return provider  # type: ignore[return-value]
+        return None
 
     def _csrf_cookie_name(self) -> str:
         """The ``km_login_csrf`` cookie's name for this deployment (finding #4).
@@ -1041,8 +1060,10 @@ class KeystoneOAuthProvider(OAuthProvider):
         return _html_response(self._error_page(lang, "error_redirect_host"), status_code=400)
 
     async def handle_login(self, request: Request) -> Response:
+        """``POST /login``: the single configured ``form``-kind provider's credential form."""
         lang = _pick_language(request, self._settings.login_default_lang)
-        if not self._settings.api_key_login_enabled:
+        form_provider = self._form_provider()
+        if form_provider is None:
             return _html_response(self._error_page(lang, "error_request"), status_code=400)
 
         allowed_ip, retry_ip = self._login_throttle.check_ip(peer_host(request))
@@ -1051,7 +1072,10 @@ class KeystoneOAuthProvider(OAuthProvider):
 
         form = await request.form()
         txn_id = str(form.get("txn", ""))
-        api_token = str(form.get("api_token", ""))
+        # The login-throttle-by-email key: read directly off the form rather
+        # than from the provider's (not-yet-verified) result, exactly as the
+        # api_token form has always done, so a bad guess against a given
+        # email is throttled before the provider ever runs.
         email = normalize_email(str(form.get("email", "")))
 
         allowed_email, retry_email = self._login_throttle.check_email_failures(email)
@@ -1066,8 +1090,32 @@ class KeystoneOAuthProvider(OAuthProvider):
         if pending is None:
             return _html_response(self._error_page(lang, "error_request"), status_code=400)
 
-        # Authoritative check: invalid api_token → NO code is issued.
-        if not await self._identity.verify(api_token, email):
+        raw_form = {
+            field.name: str(form.get(field.name, "")) for field in form_provider.form_fields()
+        }
+        try:
+            identity = await form_provider.verify(raw_form)
+        except LoginRejected:
+            self._login_throttle.record_login_failure(email)
+            client = await self._store.get_client(pending.client_id)
+            if client is None:
+                return _html_response(self._error_page(lang, "error_request"), status_code=400)
+            return self._render_consent_page(
+                request,
+                txn_id,
+                lang,
+                pending,
+                client,
+                error_key="error_invalid",
+                status_code=401,
+            )
+        except Exception:
+            # The protocol's own rule (keystone_mcp/login/protocol.py): any
+            # exception other than LoginRejected is the provider being
+            # unavailable or buggy, not the credentials being wrong — logged
+            # with a traceback, shown to the user the same as a bad
+            # credential since there is no more specific page for this form.
+            logger.exception("unexpected error from login provider %s", form_provider.name)
             self._login_throttle.record_login_failure(email)
             client = await self._store.get_client(pending.client_id)
             if client is None:
@@ -1090,7 +1138,7 @@ class KeystoneOAuthProvider(OAuthProvider):
         # which emails the directory knows about.
         if self._user_resolver is not None:
             try:
-                resolved = await self._user_resolver.resolve(email)
+                resolved = await self._user_resolver.resolve(identity.email)
             except UserDirectoryUnavailableError:
                 client = await self._store.get_client(pending.client_id)
                 if client is None:
@@ -1105,7 +1153,7 @@ class KeystoneOAuthProvider(OAuthProvider):
                     status_code=503,
                 )
             if not resolved.exists or resolved.is_blocked:
-                self._login_throttle.record_login_failure(email)
+                self._login_throttle.record_login_failure(identity.email)
                 client = await self._store.get_client(pending.client_id)
                 if client is None:
                     return _html_response(self._error_page(lang, "error_request"), status_code=400)
@@ -1127,17 +1175,21 @@ class KeystoneOAuthProvider(OAuthProvider):
         # a real server runs this branch too, and a token-login email is
         # accepted without ever being checked against the directory.
 
-        return await self._complete_login_with_email(txn_id, email, lang, auth_method="api_key")
+        return await self._complete_login(txn_id, identity, lang)
 
-    async def start_google_login(self, request: Request) -> Response:
-        """``GET /login/google`` no longer redirects straight to Google (A13).
+    async def start_login_redirect_get(self, request: Request, name: str) -> Response:
+        """``GET /login/{name}`` no longer redirects straight to the provider (A13).
 
         A bare link to this route used to skip the consent screen entirely;
         now it bounces to it (303) so the screen cannot be bypassed by a
-        direct URL.
+        direct URL. Only reachable for a configured redirect provider: the
+        route is not registered at all otherwise (server.py), so the
+        defensive 404 below only guards against a provider disabled after
+        this route was registered (e.g. a future hot-reload).
         """
         lang = _pick_language(request, self._settings.login_default_lang)
-        if not self._settings.google_login_enabled:
+        provider = self._providers.get(name)
+        if provider is None or provider.kind != "redirect":
             return _html_response(self._error_page(lang, "error_google_disabled"), status_code=404)
 
         txn_id = request.query_params.get("txn", "").strip()
@@ -1146,15 +1198,17 @@ class KeystoneOAuthProvider(OAuthProvider):
             status_code=303,
         )
 
-    async def start_google_login_post(self, request: Request) -> Response:
-        """Consent screen's Google button target: requires a matching CSRF pair.
+    async def start_login_redirect(self, request: Request, name: str) -> Response:
+        """Consent screen's provider button target: requires a matching CSRF pair.
 
         The double-submit cookie (``km_login_csrf``) is unreadable from another
         origin and is not sent on a cross-site POST under ``SameSite=Lax``, so a
-        forged form submission cannot reach Google on the victim's behalf.
+        forged form submission cannot start a redirect sign-in on the victim's
+        behalf.
         """
         lang = _pick_language(request, self._settings.login_default_lang)
-        if not self._settings.google_login_enabled:
+        provider = self._providers.get(name)
+        if provider is None or provider.kind != "redirect":
             return _html_response(self._error_page(lang, "error_google_disabled"), status_code=404)
 
         allowed_ip, retry_ip = self._login_throttle.check_ip(peer_host(request))
@@ -1171,32 +1225,29 @@ class KeystoneOAuthProvider(OAuthProvider):
         if await self._get_pending_txn(txn_id) is None:
             return _html_response(self._error_page(lang, "error_request"), status_code=400)
 
-        return await self._redirect_to_google(txn_id, csrf_cookie)
-
-    async def _redirect_to_google(self, txn_id: str, csrf_cookie: str) -> Response:
-        google_state = secrets.token_urlsafe(24)
-        client = self._google_client()
-        nonce = client.new_nonce()
-        verifier, challenge = client.new_pkce_pair()
-        # Binds this Google round trip to the browser that started it
-        # (finding #1): only a hash travels through Google, never the cookie
-        # value itself, in case the state envelope ever leaked (it is opaque
-        # server-side state, but there is no reason to carry the raw secret).
+        state = secrets.token_urlsafe(24)
+        # Binds this round trip to the browser that started it (finding #1,
+        # 0.4.0 A13/A17): only a hash travels through the external provider,
+        # never the cookie value itself, in case the state envelope ever
+        # leaked (it is opaque server-side state, but there is no reason to
+        # carry the raw secret).
         csrf_hash = _hash_csrf_cookie(csrf_cookie)
-        envelope = _encode_google_pending(txn_id, nonce, verifier, csrf_hash)
+        redirect = await provider.begin(state=state, callback_url=self._callback_url(name))
+        envelope = json.dumps(
+            {
+                "txn": txn_id,
+                "provider": name,
+                "attempt": dict(redirect.attempt),
+                "csrf_hash": csrf_hash,
+            }
+        )
         await self._pending_store.put(
-            _NS_GOOGLE_STATE,
-            google_state,
+            _NS_LOGIN_ATTEMPT,
+            state,
             envelope,
             self._settings.login_pending_txn_ttl_seconds,
         )
-        redirect_url = client.build_authorization_url(
-            state=google_state,
-            nonce=nonce,
-            code_challenge=challenge,
-            hosted_domain=self._settings.google_allowed_domain.strip() or None,
-        )
-        return RedirectResponse(url=redirect_url, status_code=302)
+        return RedirectResponse(url=redirect.url, status_code=302)
 
     def _render_consent_page(
         self,
@@ -1209,7 +1260,7 @@ class KeystoneOAuthProvider(OAuthProvider):
         error_key: str | None = None,
         status_code: int = 200,
     ) -> Response:
-        """Build the consent screen and, if Google is enabled, (re)issue its CSRF cookie.
+        """Build the consent screen and, if a redirect provider is configured, (re)issue its CSRF cookie.
 
         A fresh value is minted on every render (finding #4, second review):
         the cookie used to be reused whenever the request already carried one
@@ -1228,14 +1279,13 @@ class KeystoneOAuthProvider(OAuthProvider):
         "reload and retry" inconvenience, not a dead end.
         """
         csrf_token: str | None = None
-        if self._settings.google_login_enabled:
+        if any(provider.kind == "redirect" for provider in self._providers.values()):
             csrf_token = secrets.token_urlsafe(32)
 
         content = self._login_form_html(
             txn_id,
             lang,
             error_key=error_key,
-            settings=self._settings,
             client_name=client.client_name,
             redirect_uri=str(pending.params.redirect_uri),
             csrf_token=csrf_token,
@@ -1253,82 +1303,85 @@ class KeystoneOAuthProvider(OAuthProvider):
             )
         return response
 
-    async def handle_google_callback(self, request: Request) -> Response:
+    async def handle_login_callback(self, request: Request, name: str) -> Response:
+        """``GET /login/{name}/callback``: hand the callback to the named redirect provider.
+
+        Only reachable for a configured redirect provider (server.py
+        registers this route per provider); the ``provider is None`` branch
+        below is defensive, matching ``start_login_redirect``.
+        """
         lang = _pick_language(request, self._settings.login_default_lang)
-        if not self._settings.google_login_enabled:
-            return _html_response(self._error_page(lang, "error_google_disabled"), status_code=404)
 
-        error = request.query_params.get("error")
-        if error:
-            return _html_response(self._error_page(lang, "error_google_identity"), status_code=400)
-
-        google_state = request.query_params.get("state", "").strip()
-        code = request.query_params.get("code", "").strip()
-        if not google_state or not code:
+        state = request.query_params.get("state", "").strip()
+        if not state:
             return _html_response(self._error_page(lang, "error_request"), status_code=400)
 
-        raw = await self._pending_store.consume(_NS_GOOGLE_STATE, google_state)
+        raw = await self._pending_store.consume(_NS_LOGIN_ATTEMPT, state)
         if raw is None:
             return _html_response(self._error_page(lang, "error_request"), status_code=400)
 
-        pending_google = _parse_google_pending_raw(raw)
-        if pending_google is None:
+        attempt = _parse_login_attempt_raw(raw)
+        if attempt is None or attempt.provider != name:
             return _html_response(self._error_page(lang, "error_request"), status_code=400)
 
-        # Binds this callback to the browser that started the Google round
-        # trip (finding #1): without this, a browser that never visited
-        # /login or POSTed /login/google — and so never holds the matching
-        # km_login_csrf cookie — could still complete a Google login whose
-        # `state` it only received as a link (e.g. one an attacker forwards
-        # from their own /login/google POST). google_state is already
+        provider = self._providers.get(name)
+        if provider is None or provider.kind != "redirect":
+            return _html_response(self._error_page(lang, "error_request"), status_code=400)
+
+        # Binds this callback to the browser that started the round trip
+        # (finding #1, 0.4.0 A13/A17): without this, a browser that never
+        # visited /login or POSTed /login/{name} — and so never holds the
+        # matching km_login_csrf cookie — could still complete a sign-in
+        # whose `state` it only received as a link (e.g. one an attacker
+        # forwards from their own /login/{name} POST). `state` is already
         # consumed above regardless of the outcome; that is unchanged from
         # before this check and is fine, since it is a single-use nonce
-        # either way. The login transaction itself (pending_google.txn_id) is
-        # not touched until _complete_login_with_email, below, so refusing
-        # here does not burn it.
+        # either way. The login transaction itself (attempt.txn_id) is not
+        # touched until _complete_login, below, so refusing here does not
+        # burn it.
         callback_csrf_cookie = request.cookies.get(self._csrf_cookie_name(), "")
         if not callback_csrf_cookie or not secrets.compare_digest(
-            _hash_csrf_cookie(callback_csrf_cookie), pending_google.csrf_hash
+            _hash_csrf_cookie(callback_csrf_cookie), attempt.csrf_hash
         ):
-            logger.warning("google callback refused: csrf cookie missing or mismatched")
+            logger.warning("login callback refused: csrf cookie missing or mismatched")
             return _html_response(self._error_page(lang, "error_request"), status_code=400)
 
-        client = self._google_client()
+        params = dict(request.query_params)
         try:
-            token_body = await client.exchange_code(code, pending_google.pkce_verifier)
-            identity = client.verify_id_token(str(token_body["id_token"]), pending_google.nonce)
-        except GoogleTokenExchangeError:
+            identity = await provider.complete(
+                params=params, callback_url=self._callback_url(name), attempt=attempt.attempt
+            )
+        except LoginRejected as exc:
+            if exc.reason == "domain_not_allowed":
+                return _html_response(
+                    self._error_page(lang, "error_google_domain"), status_code=403
+                )
+            if exc.reason == "request_invalid":
+                # Preserves handle_google_callback's old distinction: the
+                # provider itself returned an `error=...` (e.g. the person
+                # cancelled on the provider's own consent screen) gets the
+                # identity-failure page; any other malformed callback (a
+                # missing `code`) gets the generic invalid-request page.
+                if "error" in params:
+                    return _html_response(
+                        self._error_page(lang, "error_google_identity"), status_code=400
+                    )
+                return _html_response(self._error_page(lang, "error_request"), status_code=400)
             return _html_response(self._error_page(lang, "error_google_identity"), status_code=400)
-        except GoogleIdTokenError:
+        except Exception:
+            logger.exception("unexpected error from login provider %s", name)
             return _html_response(self._error_page(lang, "error_google_identity"), status_code=400)
-        except GoogleOidcError:
-            return _html_response(self._error_page(lang, "error_google_identity"), status_code=400)
-
-        # Google's own email claim is already lower-case in practice, but
-        # normalizing here too (as handle_login does for token sign-in, A01)
-        # costs nothing and removes the dependency on that holding forever
-        # (finding #7): every downstream use — domain check, directory
-        # lookup, and the subject written into the issued token — sees the
-        # same normalized value handle_login would produce for the same
-        # address.
-        email = normalize_email(identity.email)
-
-        allowed_domain = self._settings.google_allowed_domain.strip()
-        if allowed_domain and not email_matches_allowed_domain(
-            email,
-            allowed_domain,
-            hosted_domain=identity.hosted_domain,
-        ):
-            return _html_response(self._error_page(lang, "error_google_domain"), status_code=403)
 
         if self._user_resolver is None:
-            logger.error("google login enabled but user directory resolver is not configured")
+            logger.error(
+                "login provider %s enabled but user directory resolver is not configured", name
+            )
             return _html_response(
                 self._error_page(lang, "error_google_unavailable"), status_code=503
             )
 
         try:
-            resolved = await self._user_resolver.resolve(email)
+            resolved = await self._user_resolver.resolve(identity.email)
         except UserDirectoryUnavailableError:
             return _html_response(
                 self._error_page(lang, "error_google_unavailable"), status_code=503
@@ -1339,13 +1392,9 @@ class KeystoneOAuthProvider(OAuthProvider):
                 self._error_page(lang, "error_google_user_denied"), status_code=403
             )
 
-        return await self._complete_login_with_email(
-            pending_google.txn_id, email, lang, auth_method="google"
-        )
+        return await self._complete_login(attempt.txn_id, identity, lang)
 
-    async def _complete_login_with_email(
-        self, txn_id: str, email: str, lang: str, *, auth_method: str
-    ) -> Response:
+    async def _complete_login(self, txn_id: str, identity: LoginIdentity, lang: str) -> Response:
         pending = await self._consume_pending_txn(txn_id)
         if pending is None:
             return _html_response(self._error_page(lang, "error_request"), status_code=400)
@@ -1361,9 +1410,9 @@ class KeystoneOAuthProvider(OAuthProvider):
             redirect_uri=params.redirect_uri,
             redirect_uri_provided_explicitly=params.redirect_uri_provided_explicitly,
             resource=params.resource,
-            subject=email,
+            subject=identity.email,
         )
-        await self._put_auth_code(auth_code, auth_method=auth_method)
+        await self._put_auth_code(auth_code, auth_method=identity.provider)
         redirect_to = construct_redirect_uri(
             str(params.redirect_uri), code=code_str, state=params.state
         )
@@ -1402,11 +1451,17 @@ class KeystoneOAuthProvider(OAuthProvider):
         (``"google"`` or ``"api_key"``): read as that method with no resource.
         Missing or unparsable markers fall back to ``("api_key", None)``, the
         same default ``_read_refresh_auth_method`` used before this change.
+        Acceptable ``auth_method`` values are the names of the providers
+        currently configured, plus ``"google"`` and ``"api_key"`` even when
+        neither is configured right now: a refresh token issued while they
+        were still enabled must not be silently downgraded to ``"api_key"``
+        just because the deployment's provider list changed.
         """
         raw = await self._pending_store.get(_NS_REFRESH_AUTH, refresh_token)
         if raw is None:
             return "api_key", None
-        if raw in {"google", "api_key"}:
+        allowed_methods = set(self._providers.keys()) | {"google", "api_key"}
+        if raw in allowed_methods:
             return raw, None
         try:
             data = json.loads(raw)
@@ -1415,20 +1470,19 @@ class KeystoneOAuthProvider(OAuthProvider):
         if not isinstance(data, dict):
             return "api_key", None
         auth_method = data.get("auth_method")
-        if auth_method not in {"google", "api_key"}:
+        if auth_method not in allowed_methods:
             auth_method = "api_key"
         resource = data.get("resource")
         if resource is not None and not isinstance(resource, str):
             resource = None
         return auth_method, resource
 
-    @staticmethod
     def _login_form_html(
+        self,
         txn_id: str,
         lang: str,
         error_key: str | None = None,
         *,
-        settings: Settings | None = None,
         client_name: str | None = None,
         redirect_uri: str = "",
         csrf_token: str | None = None,
@@ -1440,25 +1494,39 @@ class KeystoneOAuthProvider(OAuthProvider):
 
         consent_block = _consent_block_html(t, client_name, redirect_uri)
 
-        google_block = ""
-        api_key_block = ""
-        if settings is not None and settings.google_login_enabled:
-            csrf_value = html.escape(csrf_token or "")
-            google_block = f"""
-  <form method="post" action="/login/google">
+        # Rendered in provider order (factory.py: Google first, then the
+        # api_token form — the same order the page has always shown them
+        # in). At most one form-kind provider is allowed (validated at
+        # startup), so form_block is built at most once.
+        csrf_value = html.escape(csrf_token or "")
+        redirect_blocks: list[str] = []
+        form_block = ""
+        for provider in self._providers.values():
+            if provider.kind == "redirect":
+                button_text = (
+                    t["google_button"] if provider.name == "google" else html.escape(provider.title)
+                )
+                redirect_blocks.append(f"""
+  <form method="post" action="/login/{provider.name}">
     <input type="hidden" name="txn" value="{txn}">
     <input type="hidden" name="csrf" value="{csrf_value}">
     <button type="submit" style="display:block;width:100%;text-align:center;padding:10px;
-border:1px solid #ccc;background:none">{html.escape(t["google_button"])}</button>
-  </form>"""
-        if settings is not None and settings.api_key_login_enabled:
-            api_key_block = f"""
+border:1px solid #ccc;background:none">{button_text}</button>
+  </form>""")
+            elif provider.kind == "form":
+                fields_html = "".join(
+                    f"<label>{html.escape(t[field.label_key])}<br>"
+                    f'<input name="{field.name}" type="{field.input_type}" required '
+                    f'style="width:100%"></label><br><br>\n    '
+                    for field in provider.form_fields()
+                )
+                form_block = f"""
   <form method="post" action="/login">
     <input type="hidden" name="txn" value="{txn}">
-    <label>{html.escape(t["email_label"])}<br><input name="email" type="email" required style="width:100%"></label><br><br>
-    <label>{html.escape(t["token_label"])}<br><input name="api_token" type="password" required style="width:100%"></label><br><br>
-    <button type="submit">{html.escape(t["submit"])}</button>
+    {fields_html}<button type="submit">{html.escape(t["submit"])}</button>
   </form>"""
+
+        redirect_html = "".join(redirect_blocks)
 
         return f"""<!doctype html>
 <html lang="{lang}" dir="{direction}"><head><meta charset="utf-8">
@@ -1469,8 +1537,8 @@ border:1px solid #ccc;background:none">{html.escape(t["google_button"])}</button
   <p>{html.escape(t["subtitle"])}</p>
   {consent_block}
   {err}
-  {google_block}
-  {api_key_block}
+  {redirect_html}
+  {form_block}
 </body></html>"""
 
     @staticmethod
@@ -1520,13 +1588,13 @@ def _parse_auth_code_envelope(raw: str) -> tuple[AuthorizationCode, str] | None:
         return None
 
 
-def _encode_google_pending(txn_id: str, nonce: str, pkce_verifier: str, csrf_hash: str) -> str:
-    return json.dumps(
-        {"txn": txn_id, "nonce": nonce, "verifier": pkce_verifier, "csrf_hash": csrf_hash}
-    )
+def _parse_login_attempt_raw(raw: str) -> _LoginAttempt | None:
+    """Parse a ``login_attempt`` envelope written by ``start_login_redirect``.
 
-
-def _parse_google_pending_raw(raw: str) -> _GooglePendingState | None:
+    Replaces the Google-only ``_parse_google_pending_raw``: the stored shape
+    is now ``{"txn", "provider", "attempt", "csrf_hash"}`` for any redirect
+    provider (X03).
+    """
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError:
@@ -1534,15 +1602,18 @@ def _parse_google_pending_raw(raw: str) -> _GooglePendingState | None:
     if not isinstance(payload, dict):
         return None
     txn_id = str(payload.get("txn", "")).strip()
-    nonce = str(payload.get("nonce", "")).strip()
-    verifier = str(payload.get("verifier", "")).strip()
-    # Required, not defaulted: an envelope written before this field existed
-    # (a Google login already in flight across a deploy) has no csrf_hash to
-    # check against, and treating that as "no restriction" would reopen
-    # finding #1 for exactly the in-flight logins a deploy is most likely to
-    # catch. Failing them closed just means a re-click of "Sign in with
-    # Google".
-    csrf_hash = str(payload.get("csrf_hash", "")).strip()
-    if not txn_id or not nonce or not verifier or not csrf_hash:
+    provider_name = str(payload.get("provider", "")).strip()
+    attempt = payload.get("attempt")
+    if not isinstance(attempt, dict):
         return None
-    return _GooglePendingState(txn_id, nonce, verifier, csrf_hash)
+    # Required, not defaulted: an envelope written before this field existed
+    # (a login already in flight across a deploy) has no csrf_hash to check
+    # against, and treating that as "no restriction" would reopen finding #1
+    # for exactly the in-flight logins a deploy is most likely to catch.
+    # Failing them closed just means a re-click of the provider's button.
+    csrf_hash = str(payload.get("csrf_hash", "")).strip()
+    if not txn_id or not provider_name or not csrf_hash:
+        return None
+    return _LoginAttempt(
+        txn_id, provider_name, {str(k): str(v) for k, v in attempt.items()}, csrf_hash
+    )

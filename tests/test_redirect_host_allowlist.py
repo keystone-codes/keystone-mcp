@@ -30,6 +30,7 @@ from keystone_mcp.auth.keystone_oauth_provider import (
 from keystone_mcp.auth.login_pending_store import InMemoryLoginPendingStore
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import ConfigError, Settings
+from keystone_mcp.login.api_key import ApiKeyLoginProvider
 from keystone_mcp.server import build_server
 
 VALID_TOKEN = "valid-test-token"
@@ -351,7 +352,10 @@ async def test_refresh_exchange_refused_for_preexisting_client_on_unlisted_host(
     settings = Settings(base_url=BASE_URL, oauth_allowed_redirect_hosts=("claude.ai",))
     store = InMemoryOAuthStore()
     provider = KeystoneOAuthProvider(
-        StaticIdentityProvider({VALID_TOKEN}), settings, store, InMemoryLoginPendingStore()
+        settings,
+        store,
+        InMemoryLoginPendingStore(),
+        login_providers=[ApiKeyLoginProvider(StaticIdentityProvider({VALID_TOKEN}))],
     )
     client = _preexisting_client()
     await store.put_client(client)
@@ -379,7 +383,10 @@ async def test_authorization_code_exchange_refused_for_preexisting_client_on_unl
     settings = Settings(base_url=BASE_URL, oauth_allowed_redirect_hosts=("claude.ai",))
     store = InMemoryOAuthStore()
     provider = KeystoneOAuthProvider(
-        StaticIdentityProvider({VALID_TOKEN}), settings, store, InMemoryLoginPendingStore()
+        settings,
+        store,
+        InMemoryLoginPendingStore(),
+        login_providers=[ApiKeyLoginProvider(StaticIdentityProvider({VALID_TOKEN}))],
     )
     client = _preexisting_client()
     await store.put_client(client)
