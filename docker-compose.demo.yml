@@ -68,6 +68,7 @@ services:
       - "127.0.0.1:8080:8080"
     volumes:
       - ./examples/demo:/etc/keystone-mcp:ro
+      - ./examples/hello-stdio:/opt/hello-stdio:ro
       - keystone-data:/data
     environment:
       KEYSTONE_MCP_DEPLOYMENT_PROFILE: local

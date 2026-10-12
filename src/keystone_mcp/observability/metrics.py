@@ -87,6 +87,11 @@ _UPSTREAM_AVAILABLE = Gauge(
     "1 when the last discovery or refresh of the upstream succeeded, else 0",
     ["namespace"],
 )
+_UPSTREAM_PROCESS_RESTARTS = Counter(
+    "keystone_mcp_upstream_process_restarts_total",
+    "Restarts of stdio upstream processes",
+    ["namespace"],
+)
 _OAUTH_CLIENT_REGISTRATIONS = Counter(
     "keystone_mcp_oauth_client_registrations_total",
     "Dynamic client registration (POST /register) outcomes",
@@ -219,6 +224,11 @@ class RbacMetrics:
         if not self._enabled:
             return
         _UPSTREAM_AVAILABLE.labels(namespace=namespace).set(1 if available else 0)
+
+    def record_upstream_process_restart(self, *, namespace: str) -> None:
+        if not self._enabled:
+            return
+        _UPSTREAM_PROCESS_RESTARTS.labels(namespace=namespace).inc()
 
     def record_oauth_client_registration(self, *, outcome: str) -> None:
         if not self._enabled:

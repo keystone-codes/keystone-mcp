@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from redis.asyncio import Redis
 
     from keystone_mcp.rbac.loader import RbacPolicyManager
+    from keystone_mcp.router.upstream import UpstreamRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -62,11 +63,15 @@ class ReadinessProbe:
         policy_manager: RbacPolicyManager | None,
         users_backend: object | None,
         timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+        upstreams: UpstreamRegistry | None = None,
+        require_all: bool = False,
     ) -> None:
         self._redis = redis
         self._policy_manager = policy_manager
         self._users_backend = users_backend
         self._timeout_seconds = timeout_seconds
+        self._upstreams = upstreams
+        self._require_all = require_all
         # None until the first poll completes, so the very first result never
         # logs a "restored" transition it did not earn.
         self._was_ready: bool | None = None
@@ -86,6 +91,9 @@ class ReadinessProbe:
             "rbac_policy": rbac_result,
             "users_directory": users_result,
         }
+        if self._require_all and self._upstreams is not None:
+            unavailable = self._upstreams.unavailable_namespaces()
+            checks["upstreams"] = "fail" if unavailable else "ok"
         exceptions = {"redis": redis_exc, "rbac_policy": rbac_exc, "users_directory": users_exc}
         ready = all(value != "fail" for value in checks.values())
         self._log_transition(ready, checks, exceptions)
