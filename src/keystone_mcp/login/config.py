@@ -222,6 +222,13 @@ def _parse_provider(
             raise ConfigError(f"{_prefix(path)}.require_email_verified: must be a boolean")
         require_email_verified = val
 
+    if not require_email_verified and not allowed_domains and hosted_domain is None:
+        raise ConfigError(
+            f"{_prefix(path)}: require_email_verified is false but neither allowed_domains "
+            "nor hosted_domain is set; the provider would accept any email signed by the IdP. "
+            "Set allowed_domains or hosted_domain, or keep require_email_verified true."
+        )
+
     groups_claim: str | None = None
     if "groups_claim" in raw:
         groups_claim = _require_str(raw, "groups_claim", path=path)
@@ -289,7 +296,11 @@ def load_login_providers_file(
     try:
         document = yaml.safe_load(raw_text)
     except yaml.YAMLError as exc:
-        raise ConfigError(f"KEYSTONE_MCP_LOGIN_PROVIDERS_PATH: invalid YAML: {exc}") from exc
+        msg = "KEYSTONE_MCP_LOGIN_PROVIDERS_PATH: invalid YAML"
+        mark = getattr(exc, "problem_mark", None)
+        if mark is not None:
+            msg = f"{msg} at line {mark.line + 1}"
+        raise ConfigError(msg) from None
 
     if not isinstance(document, dict):
         raise ConfigError("KEYSTONE_MCP_LOGIN_PROVIDERS_PATH: root must be a mapping")

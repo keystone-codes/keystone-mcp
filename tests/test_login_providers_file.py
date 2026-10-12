@@ -179,6 +179,79 @@ def test_legacy_variables_warn_deprecated():
     assert any("deprecated since 0.5.0" in w for w in warnings)
 
 
+def test_invalid_yaml_does_not_leak_secret_in_error(tmp_path):
+    secret = "super-secret-yaml-leak-value"
+    path = tmp_path / "providers.yaml"
+    path.write_text(
+        f"version: 1\nproviders:\n  - name: okta\n    client_secret: {secret}\n    bad: [\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError) as exc:
+        load_login_providers_file(str(path), deployment_profile="local")
+    message = str(exc.value)
+    assert secret not in message
+    assert exc.value.__cause__ is None
+
+
+def test_require_email_verified_false_without_domain_refused(tmp_path, monkeypatch):
+    monkeypatch.setenv("KEYSTONE_MCP_LOGIN_ENTRA_SECRET", "secret")
+    path = _write(
+        tmp_path,
+        """
+        version: 1
+        providers:
+          - name: entra
+            type: oidc
+            issuer: https://login.microsoftonline.com/tenant/v2.0
+            client_id: cid
+            client_secret_env: KEYSTONE_MCP_LOGIN_ENTRA_SECRET
+            require_email_verified: false
+        """,
+    )
+    with pytest.raises(ConfigError, match="allowed_domains"):
+        load_login_providers_file(path, deployment_profile="local")
+
+
+def test_require_email_verified_false_with_allowed_domains_accepted(tmp_path, monkeypatch):
+    monkeypatch.setenv("KEYSTONE_MCP_LOGIN_ENTRA_SECRET", "secret")
+    path = _write(
+        tmp_path,
+        """
+        version: 1
+        providers:
+          - name: entra
+            type: oidc
+            issuer: https://login.microsoftonline.com/tenant/v2.0
+            client_id: cid
+            client_secret_env: KEYSTONE_MCP_LOGIN_ENTRA_SECRET
+            require_email_verified: false
+            allowed_domains:
+              - example.com
+        """,
+    )
+    entries = load_login_providers_file(path, deployment_profile="local")
+    assert entries[0].require_email_verified is False
+    assert entries[0].allowed_domains == ("example.com",)
+
+
+def test_require_email_verified_true_without_domains_accepted(tmp_path, monkeypatch):
+    monkeypatch.setenv("KEYSTONE_MCP_LOGIN_OKTA_SECRET", "secret")
+    path = _write(
+        tmp_path,
+        """
+        version: 1
+        providers:
+          - name: okta
+            type: oidc
+            issuer: https://example.okta.com
+            client_id: cid
+            client_secret_env: KEYSTONE_MCP_LOGIN_OKTA_SECRET
+            require_email_verified: true
+        """,
+    )
+    load_login_providers_file(path, deployment_profile="local")
+
+
 def test_legacy_variables_ignored_when_file_set_warns(tmp_path, monkeypatch):
     monkeypatch.setenv("KEYSTONE_MCP_LOGIN_OKTA_SECRET", "secret")
     path = _write(
