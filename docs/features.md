@@ -31,14 +31,12 @@ HTTP contract a fork's own directory must meet,
 
 ## Any sign-in method
 
-Today a person signs in with Google (the production method) or with a DEV
-token (local testing only — a shared password accepted under the `local`
-profile). A deprecated API-key method still exists for one more release.
-There is no common plugin interface for identity providers yet: adding a
-third one means writing to the `IdentityProvider` protocol directly (see
-[adding-routes.md](adding-routes.md#extending-keystone-mcp-in-a-fork)). A
-general way to register your own identity provider without touching that
-code is planned for **0.5.0**.
+People sign in through **LoginProvider** implementations listed in a YAML
+file (`KEYSTONE_MCP_LOGIN_PROVIDERS_PATH`): Google, any OpenID Connect issuer
+(Okta, Microsoft Entra ID, Keycloak), and the built-in API-key form. Setup for
+each provider is in [login-providers.md](login-providers.md). DEV tokens remain
+a local-profile shortcut. Third-party packages will register additional
+providers via entry points in a later release.
 
 ## Onboarding and access management through the agent
 

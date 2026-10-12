@@ -300,22 +300,23 @@ you chose local Redis and `127.0.0.1:6379` is free.
 | `KEYSTONE_MCP_AUTH_SERVICE_URL` | `""` | Deprecated, removed in 0.4.1. When set, api-key login validates against this introspection service instead of `DEV_TOKENS`. Both must be set together; URL without token is refused at startup. |
 | `KEYSTONE_MCP_AUTH_SERVICE_TOKEN` | `""` | Deprecated, removed in 0.4.1. Both must be set together; URL without token is refused at startup. |
 | `KEYSTONE_MCP_DEV_TOKENS` | `""` | Comma-separated api-keys accepted directly when no auth service is configured. |
-| `KEYSTONE_MCP_PRIMARY_LOGIN_METHOD` | `api_key` | Login method shown first (`api_key` or `google`); must be in `ENABLED_LOGIN_METHODS`. |
-| `KEYSTONE_MCP_ENABLED_LOGIN_METHODS` | `api_key` | Comma-separated set of login methods offered. |
+| `KEYSTONE_MCP_LOGIN_PROVIDERS_PATH` | `""` | Path to a YAML file listing sign-in providers (Google, Okta, any OIDC issuer, API key). When set, it replaces the legacy variables below. See [login-providers.md](login-providers.md). |
+| `KEYSTONE_MCP_PRIMARY_LOGIN_METHOD` | `api_key` | Deprecated since 0.5.0 (kept until the next major version); see [login-providers.md](login-providers.md). Login method shown first; must be in `ENABLED_LOGIN_METHODS`. |
+| `KEYSTONE_MCP_ENABLED_LOGIN_METHODS` | `api_key` | Deprecated since 0.5.0 (kept until the next major version); see [login-providers.md](login-providers.md). Comma-separated set of login methods offered when no providers file is configured. |
 | `KEYSTONE_MCP_LOGIN_DEFAULT_LANG` | `en` | Login-page fallback language: `ar`, `en`, `he`, or `ru`. |
 
-### Google
+### Google (legacy env vars)
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `KEYSTONE_MCP_GOOGLE_CLIENT_ID` | `""` | Required when `google` is an enabled login method. |
-| `KEYSTONE_MCP_GOOGLE_CLIENT_SECRET` | `""` | Required when `google` is an enabled login method. |
-| `KEYSTONE_MCP_GOOGLE_ALLOWED_DOMAIN` | `""` | Optional Google Workspace domain restriction. |
+| `KEYSTONE_MCP_GOOGLE_CLIENT_ID` | `""` | Deprecated since 0.5.0 (kept until the next major version); see [login-providers.md](login-providers.md). Required when `google` is an enabled login method and no providers file is set. |
+| `KEYSTONE_MCP_GOOGLE_CLIENT_SECRET` | `""` | Deprecated since 0.5.0 (kept until the next major version); see [login-providers.md](login-providers.md). Required when `google` is an enabled login method and no providers file is set. |
+| `KEYSTONE_MCP_GOOGLE_ALLOWED_DOMAIN` | `""` | Deprecated since 0.5.0 (kept until the next major version); see [login-providers.md](login-providers.md). Optional Google Workspace domain restriction. |
 
 A client cannot supply its own email. The address comes from the verified
-login. Google sign-in also requires the address to already exist in the users
-directory and not be blocked. Creating the Cloud project, the web client, and
-the redirect URI is [google-oauth.md](google-oauth.md). The redirect URI is
+login. Redirect sign-in also requires the address to already exist in the users
+directory and not be blocked. Provider setup (Google, Okta, Entra ID, Keycloak)
+is [login-providers.md](login-providers.md). The Google redirect URI remains
 `{KEYSTONE_MCP_BASE_URL}/login/google/callback`.
 
 ### Registering a client manually
