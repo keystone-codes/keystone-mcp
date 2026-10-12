@@ -110,6 +110,8 @@ forever on an allowance that no longer holds. See
 [`KEYSTONE_MCP_OAUTH_ALLOWED_REDIRECT_HOSTS`](environment.md) for the exact
 matching rules.
 
+Why: [ADR 0005](adr/0005-dynamic-client-registration-on-by-default.md).
+
 ## Trust zones
 
 ![Clients reach only Keystone-MCP on the public network. Service MCP ports, Redis, and databases stay on a private network with no published port.](network.svg)
@@ -158,6 +160,8 @@ only once the stronger ones configured for it have passed.
    — prefer `X-Keystone-Identity`.
 
 The proxy itself never follows a redirect an upstream sends back.
+
+Why: [ADR 0003](adr/0003-signed-identity-assertion.md).
 
 ## RBAC modes
 
@@ -221,6 +225,8 @@ An access token is bound to the resource (RFC 8707) named in the
 comparison; refreshing keeps that same binding instead of dropping it.
 `KEYSTONE_MCP_REQUIRE_RESOURCE_INDICATOR=true` refuses any token that names
 no resource at all, including one issued before this binding existed.
+
+Why: [ADR 0004](adr/0004-redis-is-required.md).
 
 ## What is protected by default
 

@@ -294,6 +294,8 @@ username and password are percent-encoded. `./setup.sh` writes
 `KEYSTONE_MCP_REDIS_URL` and starts the `keystone-redis` container only when
 you chose local Redis and `127.0.0.1:6379` is free.
 
+Why: [ADR 0004](adr/0004-redis-is-required.md).
+
 ## Login
 
 | Variable | Default | Meaning |
