@@ -451,6 +451,40 @@ entry). Rotation is a Keystone-MCP restart with the new value: during the
 rotation window, have the upstream service accept both the old and the new
 secret so a call signed just before the restart still verifies.
 
+A registry entry's `transport` is `http` (the default) or `stdio`. A
+`stdio` entry runs as a local process instead of a network call and adds
+four fields in place of `url`:
+
+- `command` — the executable to run: a name resolved from `PATH`, or an
+  absolute path. Required; never passed through a shell, so `~` and `$VAR`
+  are not expanded.
+- `args` — a list of command-line argument strings. Defaults to `[]`.
+- `env` — which keystone-mcp environment variables the process receives,
+  and under what name. Two equivalent forms: a mapping
+  `{CHILD_NAME: KEYSTONE_MCP_VARIABLE_NAME}`, or the shorthand list
+  `[NAME, ...]` (short for `{NAME: NAME}`). The value is always a
+  *variable name*, never the secret itself — same rule as `auth.bearer_env`
+  above, including the `KEYSTONE_MCP_UPSTREAM_` prefix requirement.
+  Startup refuses to run if a named variable is not set at all (an empty
+  value is accepted). The process otherwise receives none of
+  keystone-mcp's own environment, only a minimal safe set
+  (`HOME`/`LOGNAME`/`PATH`/`SHELL`/`TERM`/`USER` on Linux and macOS) plus
+  whatever `env` names.
+- `cwd` — the process's working directory. Optional; must be an existing
+  directory when set.
+
+`url` and `auth.bearer_env` are not allowed on a `stdio` entry: there is no
+HTTP request to send a bearer token on. `auth.identity_secret_env` is still
+allowed on a `stdio` entry — the signed identity assertion for stdio calls
+travels in the request `_meta` instead of a header (Y09). Startup also
+refuses to run if `command` cannot be found or is not executable.
+`keystone-mcp upstream validate` checks only the registry's structure — it
+does not require the command, the directory, or the named environment
+variables to actually exist on the machine it runs on. Keystone-MCP
+supervises the process once started: a crash or an unresponsive process is
+restarted with a backoff that doubles from one second up to one minute,
+resetting after a run stays healthy for a minute.
+
 How a service is mounted, filtered and discovered is [facade.md](facade.md).
 
 ## Internal endpoints

@@ -63,6 +63,13 @@ and its own integrations. Keystone-MCP only needs its URL, a namespace, and
 optionally a bearer token to authenticate back to it. Contract:
 [connecting-services.md](connecting-services.md).
 
+A service can also be a local process instead of a network one: a registry
+entry with `transport: stdio` names a `command`, its `args`, and the names
+of the environment variables it needs (never their values) — the shape
+most ready-made MCP servers from npm or pip come in. Keystone-MCP starts
+that process, supervises it, and restarts it with a backoff after a crash
+or a hang.
+
 ## One policy file, reloaded live
 
 Access rules — which role may call which tool patterns — live in one YAML
