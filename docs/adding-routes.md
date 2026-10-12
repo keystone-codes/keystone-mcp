@@ -337,11 +337,9 @@ directory.
 
 ### Not replaceable yet
 
-- **Google is the only interactive login.** Sign-in through another OIDC
-  provider (Okta, Entra, Keycloak) needs a core change today — there is no
-  second `KeystoneOAuthProvider` seam a fork can point elsewhere. Planned for
-  0.5.0 as a common `LoginProvider` protocol, with Google becoming one
-  implementation among several.
+- **Sign-in providers: `keystone_mcp.login.LoginProvider` (redirect and form
+  kinds).** Configuration of custom providers arrives with OIDC providers;
+  see `docs/login-providers.md` (added in the next change).
 - **"Interactive human" is a string comparison.** Whether a signed-in
   identity counts as an interactive human, for `requires_human_identity` in
   the policy file, is `claims.get("auth_method") == "google"`

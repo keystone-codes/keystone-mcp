@@ -16,6 +16,7 @@ from keystone_mcp.auth.keystone_oauth_provider import KeystoneOAuthProvider
 from keystone_mcp.auth.login_pending_store import InMemoryLoginPendingStore
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import Settings, resources_equivalent
+from keystone_mcp.login.api_key import ApiKeyLoginProvider
 from keystone_mcp.server import build_server
 
 BASE_URL = "https://mcp.example.com"
@@ -72,10 +73,10 @@ def _provider(**overrides) -> tuple[KeystoneOAuthProvider, InMemoryOAuthStore, S
     settings = Settings(base_url=BASE_URL, **overrides)
     store = InMemoryOAuthStore()
     provider = KeystoneOAuthProvider(
-        StaticIdentityProvider({"token"}),
         settings,
         store,
         InMemoryLoginPendingStore(),
+        login_providers=[ApiKeyLoginProvider(StaticIdentityProvider({"token"}))],
     )
     return provider, store, settings
 

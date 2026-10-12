@@ -111,7 +111,7 @@ async def _complete_google_callback(
     if nonce is None:
         nonce = parse_qs(parsed.query).get("nonce", [None])[0]
     if nonce is None:
-        nonce = oauth._google_client().new_nonce()
+        nonce = mock_google.client.new_nonce()
     mock_google.set_pending_identity(email=email, nonce=nonce, hd=hd)
 
     callback_params = {"state": state or google_state, "code": google_code}
@@ -138,7 +138,9 @@ async def test_google_login_redirect_includes_state_nonce_pkce(google_harness):
     assert query["client_id"] == ["test-google-client"]
     assert query["redirect_uri"] == [google_harness["settings"].google_redirect_uri]
 
-    raw = await google_harness["oauth"]._pending_store.get("google", query["state"][0])
+    # X03: the pending-attempt namespace is now "login_attempt" (shared by any
+    # redirect provider), not the Google-only "google" it used to be.
+    raw = await google_harness["oauth"]._pending_store.get("login_attempt", query["state"][0])
     assert raw is not None
 
 
@@ -178,7 +180,6 @@ async def test_google_callback_success_issues_authorization_code(google_harness)
 
 async def test_google_callback_invalid_id_token_signature(google_harness):
     client = google_harness["client"]
-    oauth = google_harness["oauth"]
     mock_google = google_harness["mock_google"]
     settings = google_harness["settings"]
 
@@ -188,7 +189,7 @@ async def test_google_callback_invalid_id_token_signature(google_harness):
 
     redirect_url = await _start_google_redirect(client, txn)
     google_state = parse_qs(urlparse(redirect_url).query)["state"][0]
-    mock_google.last_nonce = oauth._google_client().new_nonce()
+    mock_google.last_nonce = mock_google.client.new_nonce()
     bad_token = (
         sign_google_id_token(
             mock_google.keys,
