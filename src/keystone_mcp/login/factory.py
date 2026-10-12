@@ -1,70 +1,80 @@
-"""Build and validate the configured list of ``LoginProvider`` instances.
-
-Entry-point based discovery of third-party providers arrives with X09; for
-now this assembles built-in providers from ``Settings`` or a providers file.
-"""
+"""Build and validate the configured list of ``LoginProvider`` instances."""
 
 from __future__ import annotations
 
-import os
+import logging
 import re
 from collections.abc import Callable, Sequence
 
 import httpx
 
-from keystone_mcp.config import Settings
+from keystone_mcp.config import ConfigError, Settings
 from keystone_mcp.login.api_key import ApiKeyLoginProvider
-from keystone_mcp.login.config import LoginProviderEntry, load_login_providers_file
-from keystone_mcp.login.oidc import (
-    OidcLoginProvider,
-    OidcProviderConfig,
-    google_provider_config,
-    is_builtin_google_provider,
-)
+from keystone_mcp.login.config import load_login_providers_file
+from keystone_mcp.login.oidc import OidcLoginProvider, is_builtin_google_provider
 from keystone_mcp.login.protocol import FormLoginProvider, LoginProvider, RedirectLoginProvider
+from keystone_mcp.plugins import (
+    LOGIN_PROVIDERS_GROUP,
+    LoginProviderConfig,
+    LoginProviderFactory,
+    build_plugin_context,
+    discover,
+    entry_point_label,
+    load_factory,
+)
 from keystone_mcp.user_directory.protocol import UserDirectoryResolver
 
+logger = logging.getLogger(__name__)
+
 _PROVIDER_NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
-
-# Provider names a deployment may never configure for a custom implementation.
-#
-# - "redirect-not-allowed" is the fixed route authorize() sends a refused
-#   redirect_uri to (server.py registers GET /login/redirect-not-allowed
-#   unconditionally); a provider claiming that name would collide with it.
-# - "google" is reserved for the built-in Google OIDC preset: nothing else may
-#   claim it, since RBAC's interactive-human check and _complete_login's
-#   provider-name check both trust the *route* a sign-in came back on.
 _RESERVED_PROVIDER_NAMES = frozenset({"redirect-not-allowed"})
-
 _FORM_FIELD_NAME_RE = re.compile(r"^[A-Za-z0-9_]+$")
 _VALID_FORM_FIELD_INPUT_TYPES = frozenset({"email", "password", "text"})
 
 
-def _entry_to_oidc_config(entry: LoginProviderEntry) -> OidcProviderConfig:
-    if entry.type == "google":
-        return google_provider_config(
-            client_id=entry.client_id,
-            client_secret=entry.client_secret,
-            allowed_domain=entry.allowed_domain,
-            name=entry.name,
-            title=entry.title,
+def _invoke_login_factory(
+    factory: LoginProviderFactory,
+    config: LoginProviderConfig,
+    context,
+) -> LoginProvider:
+    try:
+        return factory(config, context)
+    except ValueError as exc:
+        raise ConfigError(f"login provider {config.name!r}: {exc}") from exc
+
+
+def _build_one(
+    config: LoginProviderConfig,
+    *,
+    settings: Settings,
+    resolver: UserDirectoryResolver | None,
+    http_client_factory: Callable[[], httpx.AsyncClient] | None,
+) -> LoginProvider:
+    factory_obj = load_factory(LOGIN_PROVIDERS_GROUP, config.type)
+    if not callable(factory_obj):
+        raise ConfigError(
+            f"{LOGIN_PROVIDERS_GROUP} '{config.type}' did not resolve to a callable factory"
         )
-    return OidcProviderConfig(
-        name=entry.name,
-        title=entry.title,
-        issuer=entry.issuer,
-        client_id=entry.client_id,
-        client_secret=entry.client_secret,
-        scopes=entry.scopes,
-        allowed_domains=entry.allowed_domains,
-        hosted_domain=entry.hosted_domain,
-        email_claim=entry.email_claim,
-        require_email_verified=entry.require_email_verified,
-        groups_claim=entry.groups_claim,
-        extra_authorize_params=entry.extra_authorize_params or {},
-        additional_issuers=entry.additional_issuers,
-        token_auth_method=entry.token_auth_method,
-    )
+    context = build_plugin_context(settings, user_resolver=resolver)
+    provider = _invoke_login_factory(factory_obj, config, context)
+    if isinstance(provider, OidcLoginProvider) and http_client_factory is not None:
+        provider = OidcLoginProvider(
+            provider.config,
+            http_client_factory=http_client_factory,
+        )
+    ep = discover(LOGIN_PROVIDERS_GROUP)[config.type]
+    dist, version, _target = entry_point_label(ep)
+    if provider.kind == "redirect":
+        logger.info(
+            "login provider %s: type %s from %s %s, callback %s/login/%s/callback",
+            config.name,
+            config.type,
+            dist,
+            version,
+            settings.base_url.rstrip("/"),
+            provider.name,
+        )
+    return provider
 
 
 def _build_from_file(
@@ -76,24 +86,16 @@ def _build_from_file(
     entries = load_login_providers_file(
         settings.login_providers_path,
         deployment_profile=settings.deployment_profile,
-        environ=os.environ,
     )
-    providers: list[LoginProvider] = []
-    for entry in entries:
-        if entry.type == "api_key":
-            dev_set = frozenset(t for t in settings.dev_tokens.split(",") if t.strip())
-            providers.append(
-                ApiKeyLoginProvider(
-                    resolver=resolver,
-                    dev_tokens=dev_set,
-                    resolve_directory_keys=True,
-                    enforce_directory_for_dev_tokens=bool(dev_set),
-                )
-            )
-        else:
-            config = _entry_to_oidc_config(entry)
-            providers.append(OidcLoginProvider(config, http_client_factory=http_client_factory))
-    return providers
+    return [
+        _build_one(
+            entry,
+            settings=settings,
+            resolver=resolver,
+            http_client_factory=http_client_factory,
+        )
+        for entry in entries
+    ]
 
 
 def _legacy_google_enabled(settings: Settings) -> bool:
@@ -117,20 +119,36 @@ def build_login_providers(
 
     providers: list[LoginProvider] = []
     if _legacy_google_enabled(settings):
-        config = google_provider_config(
-            client_id=settings.google_client_id,
-            client_secret=settings.google_client_secret,
-            allowed_domain=settings.google_allowed_domain,
+        config = LoginProviderConfig(
+            name="google",
+            type="google",
+            title="Google",
+            options={
+                "client_id": settings.google_client_id,
+                "client_secret_env": "KEYSTONE_MCP_GOOGLE_CLIENT_SECRET",
+            },
         )
-        providers.append(OidcLoginProvider(config, http_client_factory=http_client_factory))
-    if settings.api_key_login_enabled:
-        dev_set = frozenset(t for t in settings.dev_tokens.split(",") if t.strip())
         providers.append(
-            ApiKeyLoginProvider(
+            _build_one(
+                config,
+                settings=settings,
                 resolver=resolver,
-                dev_tokens=dev_set,
-                resolve_directory_keys=True,
-                enforce_directory_for_dev_tokens=bool(dev_set),
+                http_client_factory=http_client_factory,
+            )
+        )
+    if settings.api_key_login_enabled:
+        config = LoginProviderConfig(
+            name="api_key",
+            type="api_key",
+            title="API key",
+            options={},
+        )
+        providers.append(
+            _build_one(
+                config,
+                settings=settings,
+                resolver=resolver,
+                http_client_factory=http_client_factory,
             )
         )
     return providers
@@ -152,7 +170,6 @@ def file_has_interactive_providers(settings: Settings) -> bool:
     entries = load_login_providers_file(
         path,
         deployment_profile=settings.deployment_profile,
-        environ=os.environ,
     )
     return any(entry.type in ("oidc", "google") for entry in entries)
 
@@ -165,7 +182,6 @@ def file_has_api_key_provider(settings: Settings) -> bool:
     entries = load_login_providers_file(
         path,
         deployment_profile=settings.deployment_profile,
-        environ=os.environ,
     )
     return any(entry.type == "api_key" for entry in entries)
 

@@ -210,3 +210,20 @@ class LocalUserDirectory:
         # The store's engine is owned by whoever built it (the server), not
         # by this directory, so there is nothing to close here.
         return None
+
+
+def create_local_directory(context, options) -> LocalUserDirectory:
+    from collections.abc import Mapping
+
+    from keystone_mcp.config import Settings
+    from keystone_mcp.plugins import PluginContext
+    from keystone_mcp.users.factory import build_users_store
+
+    if not isinstance(context, PluginContext):
+        raise TypeError("invalid factory arguments")
+    if options and not isinstance(options, Mapping):
+        raise TypeError("options must be a mapping")
+    settings = context.settings
+    if not isinstance(settings, Settings):
+        raise TypeError("context.settings must be Settings")
+    return LocalUserDirectory(build_users_store(settings))

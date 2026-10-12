@@ -71,6 +71,16 @@ def _write_wheel(
         if include_required_files:
             for relative_path in check_version.REQUIRED_WHEEL_FILES:
                 archive.writestr(relative_path, "# placeholder\n")
+            archive.writestr(
+                f"{normalized}-{version}.dist-info/entry_points.txt",
+                "[keystone_mcp.login_providers]\n"
+                "oidc = keystone_mcp.login.oidc:create_oidc_provider\n"
+                "google = keystone_mcp.login.oidc:create_google_provider\n"
+                "api_key = keystone_mcp.login.api_key:create_api_key_provider\n"
+                "[keystone_mcp.user_directories]\n"
+                "local = keystone_mcp.user_directory.local:create_local_directory\n"
+                "http = keystone_mcp.user_directory.http:create_http_directory\n",
+            )
     return wheel_path
 
 
@@ -122,6 +132,35 @@ def test_dist_dir_version_mismatch_fails(tmp_path: Path) -> None:
     joined = " ".join(errors)
     assert "0.4.1" in joined
     assert "0.4.0" in joined
+    assert check_version.main(["--root", str(root), "--dist-dir", str(dist_dir)]) == 1
+
+
+def test_wheel_without_entry_points_fails(tmp_path: Path) -> None:
+    root = _write_project(tmp_path)
+    dist_dir = tmp_path / "dist"
+    dist_dir.mkdir()
+    wheel_path = _write_wheel(dist_dir)
+    with zipfile.ZipFile(wheel_path, "a") as archive:
+        to_remove = [
+            name
+            for name in archive.namelist()
+            if name.endswith(".dist-info/entry_points.txt")
+        ]
+        for name in to_remove:
+            pass
+    # Rebuild wheel without entry_points.txt
+    with zipfile.ZipFile(wheel_path, "r") as archive:
+        names = [n for n in archive.namelist() if not n.endswith("entry_points.txt")]
+        payloads = {n: archive.read(n) for n in names}
+    wheel_path.unlink()
+    with zipfile.ZipFile(wheel_path, "w") as archive:
+        for name, data in payloads.items():
+            archive.writestr(name, data)
+    _write_sdist(dist_dir)
+
+    errors = check_version.check(root, None, dist_dir)
+    assert errors
+    assert any("entry_points" in e for e in errors)
     assert check_version.main(["--root", str(root), "--dist-dir", str(dist_dir)]) == 1
 
 

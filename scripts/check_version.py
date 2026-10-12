@@ -76,6 +76,11 @@ REQUIRED_WHEEL_FILES: tuple[str, ...] = (
     "keystone_mcp/users/migrations/versions/0001_initial.py",
 )
 
+_REQUIRED_ENTRY_POINT_GROUPS: dict[str, frozenset[str]] = {
+    "keystone_mcp.login_providers": frozenset({"oidc", "google", "api_key"}),
+    "keystone_mcp.user_directories": frozenset({"local", "http"}),
+}
+
 # A sdist must not leak the operator-facing repository layout: internal task
 # cards, the test suite (large, and no use to an installed package) or any
 # flavour of a real or example .env file.
@@ -212,6 +217,39 @@ def _check_wheel(wheel_path: Path, pyproject_version: str) -> list[str]:
     missing_files = [name for name in REQUIRED_WHEEL_FILES if name not in names]
     if missing_files:
         errors.append(f"{wheel_path.name}: missing required file(s): {', '.join(missing_files)}")
+
+    entry_points_name = next(
+        (name for name in names if name.endswith(".dist-info/entry_points.txt")), None
+    )
+    if entry_points_name is None:
+        errors.append(f"{wheel_path.name}: no *.dist-info/entry_points.txt found")
+    else:
+        try:
+            with zipfile.ZipFile(wheel_path) as archive:
+                body = archive.read(entry_points_name).decode("utf-8")
+        except zipfile.BadZipFile:
+            body = ""
+        parsed_groups: dict[str, set[str]] = {}
+        current_group: str | None = None
+        for line in body.splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            if stripped.startswith("[") and stripped.endswith("]"):
+                current_group = stripped[1:-1]
+                parsed_groups.setdefault(current_group, set())
+                continue
+            if current_group is not None and "=" in stripped:
+                entry_name = stripped.split("=", 1)[0].strip()
+                parsed_groups[current_group].add(entry_name)
+        for group, required_names in _REQUIRED_ENTRY_POINT_GROUPS.items():
+            found = parsed_groups.get(group, set())
+            missing = sorted(required_names - found)
+            if missing:
+                errors.append(
+                    f"{wheel_path.name}: {entry_points_name} group {group!r} "
+                    f"missing entry point(s): {', '.join(missing)}"
+                )
 
     return errors
 

@@ -142,3 +142,13 @@ class FakeFormProvider:
         return LoginIdentity(
             email=form.get("email", ""), provider=self._reported_provider, interactive=False
         )
+
+
+def create_acme_login_provider(config, context) -> FakeRedirectProvider:
+    """Entry-point factory for plugin integration tests."""
+    from keystone_mcp.plugins import LoginProviderConfig, PluginContext
+
+    if not isinstance(config, LoginProviderConfig) or not isinstance(context, PluginContext):
+        raise TypeError("invalid factory arguments")
+    title = config.title if config.title is not None else config.name
+    return FakeRedirectProvider(config.name, title=title)
