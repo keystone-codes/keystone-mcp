@@ -7,7 +7,6 @@ from fastmcp import Client, FastMCP
 
 from keystone_mcp.adapters.base import Pattern
 from keystone_mcp.adapters.mcp_proxy import McpProxyAdapter
-from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import Settings
 from keystone_mcp.identity import VerifiedIdentity
 from keystone_mcp.router.context import RouteContext
@@ -15,7 +14,6 @@ from keystone_mcp.router.engine import RouterEngine
 from keystone_mcp.router.registry import RouterRegistry
 from keystone_mcp.router.route import Route
 from keystone_mcp.router.schema import omit_implicit_null_args, schema_to_params
-from keystone_mcp.server import build_server
 
 ID = VerifiedIdentity(email="analyst@example.com")
 
@@ -308,39 +306,3 @@ async def test_add_route_update_failure_keeps_the_old_tool_published() -> None:
         tools = await client.list_tools()
     search_tool = next(t for t in tools if t.name == "search")
     assert list(search_tool.input_schema["properties"]) == ["query"]
-
-
-async def test_keyword_only_does_not_change_builtin_schemas() -> None:
-    """Switching handler params to keyword-only must not alter published schemas.
-
-    ``create_upload_url`` (all-optional params) and ``get_download_link`` (one
-    required param) were valid as ``POSITIONAL_OR_KEYWORD`` signatures; their
-    published ``inputSchema`` is pinned here byte-for-byte so the keyword-only
-    change is proven to be a no-op for them. The file tools are published only
-    when a file API is configured.
-    """
-    settings = Settings(
-        base_url="http://localhost:8080",
-        rbac_mode="off",
-        file_api_base_url="http://files:8100",
-    )
-    main, *_ = build_server(settings=settings, oauth_store=InMemoryOAuthStore())
-
-    async with Client(main) as client:
-        tools = await client.list_tools()
-
-    by_name = {t.name: t for t in tools}
-    assert by_name["create_upload_url"].input_schema == {
-        "additionalProperties": False,
-        "properties": {
-            "filename": {"default": None, "type": "string"},
-            "content_type": {"default": None, "type": "string"},
-        },
-        "type": "object",
-    }
-    assert by_name["get_download_link"].input_schema == {
-        "additionalProperties": False,
-        "properties": {"file_id": {"type": "string"}},
-        "required": ["file_id"],
-        "type": "object",
-    }

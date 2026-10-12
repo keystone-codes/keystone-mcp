@@ -35,6 +35,10 @@ this project uses [Semantic Versioning](https://semver.org/).
 - `KEYSTONE_MCP_RBAC_ENABLED`. Use `KEYSTONE_MCP_RBAC_MODE`.
 - The placeholder adapters `det_internal` and `chat_attachment`, and
   `KEYSTONE_MCP_DET_INTERNAL_URL`. Neither adapter was registered by default.
+- Built-in file tools `create_upload_url` and `get_download_link`, the file
+  API adapters (`keystone_mcp.adapters.upload_url`, `keystone_mcp.adapters.file_ref`,
+  `keystone_mcp.storage`) and `KEYSTONE_MCP_FILE_API_URL` (startup is refused
+  while it is set). File transfer is an upstream service like any other.
 
 ### Migration
 
@@ -42,6 +46,9 @@ this project uses [Semantic Versioning](https://semver.org/).
   delete the old variable — the server does not start while it is set.
 - A fork that registered `DetInternalAdapter` or `ChatAttachmentAdapter` must
   keep its own copy of the class (see the 0.4.x source).
+- If you used the file tools, expose your file service as an MCP server and
+  list it in the upstream registry; remove `KEYSTONE_MCP_FILE_API_URL` from
+  `.env` and the two tool names from your policy file.
 
 ### Security
 

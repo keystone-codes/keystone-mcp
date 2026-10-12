@@ -89,6 +89,16 @@ def test_several_fatal_variables_are_reported_together(monkeypatch):
     assert "KEYSTONE_MCP_Z01_PROBE" in message
 
 
+def test_file_api_url_is_refused_with_hint(monkeypatch):
+    """The built-in file tools were removed (Z03): a stale .env is refused."""
+    monkeypatch.setenv("KEYSTONE_MCP_FILE_API_URL", "http://x")
+    with pytest.raises(ConfigError) as exc_info:
+        load_settings()
+    message = str(exc_info.value)
+    assert "KEYSTONE_MCP_FILE_API_URL" in message
+    assert "upstream MCP server" in message
+
+
 def test_removed_variables_are_not_read_by_code():
     """A removed variable must not still be read somewhere in src/."""
     assert set(REMOVED_VARIABLES) & code_variables() == set()

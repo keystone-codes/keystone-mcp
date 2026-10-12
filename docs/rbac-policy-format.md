@@ -131,12 +131,10 @@ one directory round trip per invocation.
 #### Core critical built-ins
 
 The following are **always** critical, whatever the policy says, because the
-core catalog (`src/keystone_mcp/catalog/builtin.py`) registers them as platform
-primitives: `users_*`, `create_upload_url`, `get_download_link`. `users_*` is
-published only when `KEYSTONE_MCP_RBAC_MODE=enforce`; `create_upload_url` and
-`get_download_link` only when `KEYSTONE_MCP_FILE_API_URL` is set. They are
-critical whenever they are published, and need not be repeated in
-`critical_tools`; listing them is harmless.
+core catalog (`src/keystone_mcp/catalog/builtin.py`) registers them as a
+platform primitive: `users_*`, published only when
+`KEYSTONE_MCP_RBAC_MODE=enforce`. It is critical whenever it is published, and
+need not be repeated in `critical_tools`; listing it is harmless.
 
 ### 2.8 `reserved_allow_patterns`
 

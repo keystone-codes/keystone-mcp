@@ -1141,12 +1141,11 @@ async def test_require_all_refuses_when_one_upstream_is_down():
 
 
 def test_default_policy_loads_against_builtin_catalog_in_enforce(tmp_path: Path):
-    """A fresh enforce deployment, no file API and no upstream, still starts.
+    """A fresh enforce deployment, no upstream, still starts.
 
-    ``register_catalog`` then publishes only the users_* admin tools (the file
-    tools are skipped without ``KEYSTONE_MCP_FILE_API_URL``), and the shipped
-    default policy (administrator: allow "*") must validate against that
-    catalog without any "unmatched allow patterns" refusal.
+    ``register_catalog`` publishes only the users_* admin tools, and the
+    shipped default policy (administrator: allow "*") must validate against
+    that catalog without any "unmatched allow patterns" refusal.
     """
     settings = Settings(
         base_url="http://localhost:8080",

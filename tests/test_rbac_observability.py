@@ -479,7 +479,7 @@ async def test_audit_marks_policy_declared_critical_tools(
     async def call_next(_context):
         return {"ok": True}
 
-    for tool_name, expected in (("ledger_commit", True), ("create_upload_url", True)):
+    for tool_name, expected in (("ledger_commit", True), ("create_upload_url", False)):
         caplog.clear()
         ctx = MiddlewareContext(message=type("Msg", (), {"name": tool_name})())
         await middleware.on_call_tool(ctx, call_next)
