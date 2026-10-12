@@ -8,6 +8,7 @@ from keystone_mcp.catalog.builtin import register_catalog
 from keystone_mcp.config import Settings
 from keystone_mcp.router.engine import RouterEngine
 from keystone_mcp.router.registry import RouterRegistry
+from keystone_mcp.user_directory.memory import InMemoryUserDirectory
 
 
 def _registry(settings: Settings | None = None) -> RouterRegistry:
@@ -86,7 +87,7 @@ def test_builtin_descriptions_have_no_legacy_terms(tmp_path: Path):
 def test_catalog_registers_users_tools_only_in_enforce(tmp_path):
     settings = _enforce_settings(tmp_path)
     reg = _registry(settings)
-    register_catalog(reg, settings)
+    register_catalog(reg, settings, directory=InMemoryUserDirectory())
 
     for name in (
         "users_list",
@@ -109,7 +110,68 @@ def test_builtin_tool_names_constant_covers_registered_tools(tmp_path: Path):
 
     settings = _enforce_settings(tmp_path, file_api_base_url="http://files.internal.example:8100")
     reg = _registry(settings)
-    register_catalog(reg, settings)
+    register_catalog(reg, settings, directory=InMemoryUserDirectory())
 
     registered = {route.name for route in reg.routes.values() if route.namespace is None}
     assert registered == BUILTIN_TOOL_NAMES
+
+
+class _ReadOnlyDirectory:
+    """A directory that declares no capabilities (X06): ``users_list`` only."""
+
+    name = "read-only-fake"
+    capabilities: frozenset[str] = frozenset()
+
+    async def resolve_user(self, subject):  # pragma: no cover - not exercised
+        raise NotImplementedError
+
+    async def list_users(self, *, is_blocked=False, role=None, email_contains=None):
+        return []
+
+    async def ping(self) -> None:
+        return None
+
+    async def aclose(self) -> None:
+        return None
+
+
+def test_read_only_directory_publishes_only_users_list(tmp_path, caplog):
+    settings = _enforce_settings(tmp_path)
+    reg = _registry(settings)
+    with caplog.at_level("WARNING", logger="keystone_mcp.catalog.builtin"):
+        register_catalog(reg, settings, directory=_ReadOnlyDirectory())
+
+    assert reg.get("users_list") is not None
+    for name in (
+        "users_add",
+        "users_update",
+        "users_block",
+        "users_unblock",
+        "users_set_roles",
+        "users_grant_role",
+        "users_revoke_role",
+    ):
+        assert reg.get(name) is None, name
+    warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    assert any("read-only" in message for message in warnings)
+
+
+def test_admin_directory_publishes_all_users_tools(tmp_path):
+    settings = _enforce_settings(tmp_path)
+    reg = _registry(settings)
+    register_catalog(reg, settings, directory=InMemoryUserDirectory())
+
+    for name in (
+        "users_list",
+        "users_add",
+        "users_update",
+        "users_block",
+        "users_unblock",
+        "users_set_roles",
+        "users_grant_role",
+        "users_revoke_role",
+    ):
+        route = reg.get(name)
+        assert route is not None, name
+        assert route.mode == "live"
+        assert route.admin is True

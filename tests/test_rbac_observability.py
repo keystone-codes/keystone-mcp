@@ -303,7 +303,7 @@ async def test_users_mutation_audited_on_service_timeout(
         raise httpx.TimeoutException("timed out")
 
     adapter = UsersAdminAdapter(
-        client_factory=_mock_client_factory(handler),
+        directory=_http_directory(handler),
         observability=observability,
     )
     engine = RouterEngine(settings)
@@ -335,15 +335,20 @@ async def test_users_mutation_audited_on_service_timeout(
     assert "user@example.com" not in json.dumps(event)
 
 
-def _mock_client_factory(handler):
-    def factory(_ctx=None):
-        return httpx.AsyncClient(
-            transport=httpx.MockTransport(handler),
-            base_url="http://mcp-users:8080",
-            headers={"Authorization": "Bearer service-secret"},
-        )
+def _http_directory(handler):
+    from keystone_mcp.user_directory.http import HttpUserDirectory
 
-    return factory
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler),
+        base_url="http://mcp-users:8080",
+        headers={"Authorization": "Bearer service-secret"},
+    )
+    return HttpUserDirectory(
+        base_url="http://mcp-users:8080",
+        service_token="service-secret",
+        timeout_seconds=5.0,
+        client=client,
+    )
 
 
 @pytest.mark.asyncio
