@@ -59,6 +59,20 @@ def test_removed_non_fatal_variable_gives_startup_warning(monkeypatch):
     assert "KEYSTONE_MCP_Z01_PROBE" in warnings[0]
 
 
+def test_removed_internal_call_url_gives_startup_warning(monkeypatch):
+    """KEYSTONE_MCP_DET_INTERNAL_URL (its placeholder adapter is gone) warns, not fails."""
+    from keystone_mcp.config import startup_warnings
+
+    monkeypatch.setenv("KEYSTONE_MCP_DET_INTERNAL_URL", "http://localhost:8000")
+    settings = load_settings()
+    warnings = startup_warnings(
+        settings, environ={"KEYSTONE_MCP_DET_INTERNAL_URL": "http://localhost:8000"}
+    )
+    assert len(warnings) == 1
+    assert "KEYSTONE_MCP_DET_INTERNAL_URL" in warnings[0]
+    assert "removed" in warnings[0]
+
+
 def test_several_fatal_variables_are_reported_together(monkeypatch):
     other = RemovedVariable(
         removed_in="0.5.0",
