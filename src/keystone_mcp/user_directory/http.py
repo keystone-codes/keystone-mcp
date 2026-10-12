@@ -1,4 +1,4 @@
-"""HTTP users directory: reads and administers an external mcp-users service.
+"""HTTP users directory: reads and administers an external HTTP users directory service.
 
 Used when ``KEYSTONE_MCP_USERS_BACKEND=http``. The read path
 (``resolve_user``, ``ping``) raises
@@ -128,7 +128,7 @@ def _parse_user_response_body(body: Any) -> UserRecord:
 
 
 class HttpUserDirectory:
-    """Calls the mcp-users HTTP contract with a Bearer service token."""
+    """Calls the HTTP users directory contract with a Bearer service token."""
 
     def __init__(
         self,

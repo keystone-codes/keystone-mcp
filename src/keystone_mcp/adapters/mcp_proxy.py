@@ -14,7 +14,7 @@ upstream's answer — every content block, ``structuredContent``, ``_meta`` and
 ``isError`` — reaches the client unchanged, as a :class:`fastmcp.tools.base.
 ToolResult`. With ``status_envelope=True`` (``KEYSTONE_MCP_PROXY_STATUS_ENVELOPE=
 true``) the adapter instead reproduces the 0.3.x behaviour: the response is
-wrapped in the Model M ``{"state", "tool", "task_id", "result"}`` envelope and
+wrapped in the status envelope ``{"state", "tool", "task_id", "result"}`` and
 a ``status`` field of ``error``/``refused``/``accepted`` is mapped to an
 error, a rate-limit error, or a pending task.
 

@@ -1,4 +1,4 @@
-"""Stub adapter — canonical Model-M response by pattern (default target)."""
+"""Stub adapter — canonical status-envelope stub by pattern (default target)."""
 
 from __future__ import annotations
 

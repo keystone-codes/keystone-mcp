@@ -2,7 +2,7 @@
 
 Each adapter talks to one server-side target on behalf of the verified identity:
 
-    stub          canonical Model-M response by pattern (default before "live")
+    stub          canonical status-envelope stub by pattern (default before "live")
     mcp_proxy     downstream MCP server over streamable HTTP (upstream 1:1 proxy)
 
 Reference adapters for forks (``WebhookAdapter``, ``ExternalHttpAdapter``) live
