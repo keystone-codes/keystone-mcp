@@ -1,5 +1,5 @@
 [project]
-name = "keystone-mcp"
+name = "keystone-mcp-gateway"
 version = "0.4.0"
 description = "OAuth 2.1 MCP server that fronts one or more upstream MCP servers with policy-file-driven RBAC"
 readme = "README.md"
@@ -14,6 +14,7 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Framework :: AsyncIO",
     "Topic :: Internet :: WWW/HTTP",
+    "Typing :: Typed",
 ]
 dependencies = [
     "fastmcp>=4.1.0,<5",
@@ -64,6 +65,9 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/keystone_mcp"]
+
+[tool.hatch.build.targets.sdist]
+only-include = ["src/keystone_mcp", "README.md", "LICENSE", "CHANGELOG.md", "pyproject.toml"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
