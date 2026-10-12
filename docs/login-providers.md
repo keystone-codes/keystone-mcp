@@ -66,8 +66,8 @@ valid redirect URI as above. For local Keycloak on loopback HTTP, use
 - **Issuer mismatch** — copy the `issuer` field from
   `/.well-known/openid-configuration` into the file character-for-character.
 - **Clock skew** — id tokens are rejected when server time is far from the provider.
-- **Email** — enable `email` scope/claim; set `require_email_verified: false` only
-  when the provider never sets it and you rely on `allowed_domains`.
+- **Email** — enable `email` scope/claim; with `require_email_verified: false` you
+  must set `allowed_domains` or `hosted_domain`, or startup refuses the file.
 - **Domains** — use `allowed_domains` for Okta/Entra/Keycloak; `hosted_domain` is
   for Google Workspace (`hd`).
 
