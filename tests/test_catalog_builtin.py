@@ -1,4 +1,4 @@
-"""The built-in catalog registers the live file transfer/admin tools."""
+"""The built-in catalog registers the live admin tools."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ def _registry(settings: Settings | None = None) -> RouterRegistry:
     return RouterRegistry(engine)
 
 
-def _enforce_settings(tmp_path: Path, *, file_api_base_url: str = "") -> Settings:
+def _enforce_settings(tmp_path: Path) -> Settings:
     policy = tmp_path / "rbac-policy.yaml"
     policy.write_text("default_deny: true\nroles: {}\n", encoding="utf-8")
     return Settings(
@@ -27,44 +27,31 @@ def _enforce_settings(tmp_path: Path, *, file_api_base_url: str = "") -> Setting
         users_service_token="token",
         redis_url="redis://localhost:6379/0",
         rbac_audit_subject_salt="test-salt",
-        file_api_base_url=file_api_base_url,
     )
 
 
-def test_file_tools_absent_without_file_api_url():
-    """No KEYSTONE_MCP_FILE_API_URL -> the file tools are not published at all."""
-    reg = _registry(Settings(base_url="http://localhost:8080", rbac_mode="off"))
-    register_catalog(reg, Settings(base_url="http://localhost:8080", rbac_mode="off"))
+def test_file_tools_are_gone(tmp_path: Path):
+    """The file API was removed in 0.5.0: no mode publishes it, and the
+    adapters that used to back it no longer exist on keystone_mcp.adapters.
+    """
+    import keystone_mcp.adapters as adapters_module
 
-    assert reg.get("create_upload_url") is None
-    assert reg.get("get_download_link") is None
-    assert reg.get("upload_file") is None
+    for rbac_mode, settings in (
+        ("off", Settings(base_url="http://localhost:8080", rbac_mode="off")),
+        ("enforce", _enforce_settings(tmp_path)),
+    ):
+        reg = _registry(settings)
+        register_catalog(reg, settings)
+        assert reg.get("create_upload_url") is None, rbac_mode
+        assert reg.get("get_download_link") is None, rbac_mode
 
-
-def test_file_tools_registered_with_file_api_url():
-    """Setting KEYSTONE_MCP_FILE_API_URL publishes both file tools, live."""
-    settings = Settings(
-        base_url="http://localhost:8080",
-        rbac_mode="off",
-        file_api_base_url="http://files.internal.example:8100",
-    )
-    reg = _registry(settings)
-    register_catalog(reg, settings)
-
-    for name in ("create_upload_url", "get_download_link"):
-        assert reg.get(name) is not None, f"{name} not registered"
-
-    create = reg.get("create_upload_url")
-    assert create.mode == "live"
-    param_names = {p.name for p in create.params}
-    assert param_names == {"filename", "content_type"}
-    filename_param = next(p for p in create.params if p.name == "filename")
-    assert filename_param.default is None
+    assert not hasattr(adapters_module, "UploadUrlAdapter")
+    assert not hasattr(adapters_module, "FileRefAdapter")
 
 
 def test_builtin_descriptions_have_no_legacy_terms(tmp_path: Path):
     """Tool descriptions and parameter names carry no internal platform labels."""
-    settings = _enforce_settings(tmp_path, file_api_base_url="http://files.internal.example:8100")
+    settings = _enforce_settings(tmp_path)
     reg = _registry(settings)
     register_catalog(reg, settings)
 
@@ -96,7 +83,7 @@ def test_catalog_registers_users_tools_only_in_enforce(tmp_path):
 
 
 def test_catalog_drops_base64_upload_file():
-    """The inline-base64 upload_file tool is retired; create_upload_url replaces it."""
+    """The inline-base64 upload_file tool is retired."""
     reg = _registry()
     register_catalog(reg, Settings(base_url="http://localhost:8080", rbac_mode="off"))
 
@@ -107,7 +94,7 @@ def test_builtin_tool_names_constant_covers_registered_tools(tmp_path: Path):
     """BUILTIN_TOOL_NAMES (used by P09 namespace validation) matches reality."""
     from keystone_mcp.catalog.builtin import BUILTIN_TOOL_NAMES
 
-    settings = _enforce_settings(tmp_path, file_api_base_url="http://files.internal.example:8100")
+    settings = _enforce_settings(tmp_path)
     reg = _registry(settings)
     register_catalog(reg, settings)
 

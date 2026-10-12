@@ -124,16 +124,16 @@ does.
 
 ## Built-in tools
 
-Two groups are Keystone-MCP's own, not proxied:
+Keystone-MCP's own, not proxied:
 
 - `users_list`, `users_add`, `users_update`, `users_block`, `users_unblock`,
   `users_set_roles`, `users_grant_role`, `users_revoke_role` — the users
   directory, from the agent. Published only when
   `KEYSTONE_MCP_RBAC_MODE=enforce`. Who may call them is the policy file. See
   [users.md](users.md).
-- `create_upload_url` and `get_download_link` — short-lived signed URLs, so
-  a large file does not travel inside a tool-call payload. Published only
-  when `KEYSTONE_MCP_FILE_API_URL` points at your own file API.
+
+File transfer is not built in: run a file service as an upstream MCP server
+(see [connecting-services.md](connecting-services.md)).
 
 ## A call, end to end
 

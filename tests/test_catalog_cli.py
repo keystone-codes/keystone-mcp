@@ -22,14 +22,14 @@ roles:
       - documents_*
       - reports_*
       - ledger_read
-      - create_upload_url
-      - get_download_link
+      - demo_upload
+      - demo_download
   viewer:
     description: viewer
     allow:
       - documents_read
       - reports_read
-      - get_download_link
+      - demo_download
 """
 
 SNAPSHOT_YAML = """\
@@ -60,8 +60,8 @@ def _live_file(tmp_path: Path, names: tuple[str, ...]) -> Path:
 
 
 LIVE_OK = (
-    "create_upload_url",
-    "get_download_link",
+    "demo_upload",
+    "demo_download",
     "documents_read",
     "documents_write",
     "reports_read",
@@ -91,8 +91,8 @@ def test_catalog_validate_with_snapshot(policy_path: Path, snapshot_path: Path, 
     live = _live_file(
         tmp_path,
         (
-            "create_upload_url",
-            "get_download_link",
+            "demo_upload",
+            "demo_download",
             "reports_read",
             "reports_write",
             "ledger_read",
