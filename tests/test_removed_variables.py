@@ -12,11 +12,13 @@ disabled while the operator believes it is enforced.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
 
 from keystone_mcp.config import REMOVED_VARIABLES, ConfigError, RemovedVariable, load_settings
+from keystone_mcp.env_file import load_env_file
 from support.env_vars import code_variables, environment_md_variables
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -97,6 +99,40 @@ def test_file_api_url_is_refused_with_hint(monkeypatch):
     message = str(exc_info.value)
     assert "KEYSTONE_MCP_FILE_API_URL" in message
     assert "upstream MCP server" in message
+
+
+def test_removed_fatal_variable_in_env_file_is_refused_at_startup(tmp_path, monkeypatch):
+    """A stale `.env` is caught the same way a stale shell environment is.
+
+    ``server.main()`` always calls ``load_env_file()`` before ``load_settings()``
+    (see ``keystone_mcp.env_file``); a removed fatal variable left behind in an
+    operator's env file must reach the same refusal, not just the same variable
+    set directly in the shell.
+
+    ``load_env_file()`` writes straight into the real ``os.environ`` (that is
+    the point of it — ``KEYSTONE_MCP_RBAC_ENABLED`` has to be visible to the
+    real ``load_settings()`` afterwards, the same way it would be for the real
+    server). ``monkeypatch.delenv(..., raising=False)`` does not register an
+    undo for a name that was not already set, so it would not clean up a value
+    written later by code it does not know about; the explicit ``finally``
+    guarantees the variable never leaks into another test.
+    """
+    assert "KEYSTONE_MCP_RBAC_ENABLED" not in os.environ
+    env_file = tmp_path / "stale.env"
+    env_file.write_text("KEYSTONE_MCP_RBAC_ENABLED=true\n", encoding="utf-8")
+    monkeypatch.setenv("KEYSTONE_MCP_ENV_FILE", str(env_file))
+
+    try:
+        result = load_env_file()
+        assert "KEYSTONE_MCP_RBAC_ENABLED" in result.loaded
+
+        with pytest.raises(ConfigError) as exc_info:
+            load_settings()
+        message = str(exc_info.value)
+        assert "KEYSTONE_MCP_RBAC_ENABLED" in message
+        assert "KEYSTONE_MCP_RBAC_MODE" in message
+    finally:
+        os.environ.pop("KEYSTONE_MCP_RBAC_ENABLED", None)
 
 
 def test_removed_variables_are_not_read_by_code():

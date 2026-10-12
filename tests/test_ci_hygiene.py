@@ -30,7 +30,7 @@ _SELF_PATH = Path(__file__).resolve()
 
 def test_no_reruns_in_ci():
     """No workflow file reruns failed tests or replays a cached last-failed set."""
-    workflow_files = sorted(WORKFLOWS_DIR.glob("*.yml"))
+    workflow_files = sorted(WORKFLOWS_DIR.glob("*.yml")) + sorted(WORKFLOWS_DIR.glob("*.yaml"))
     assert workflow_files, f"no workflow files found under {WORKFLOWS_DIR}"
     for path in workflow_files:
         text = path.read_text(encoding="utf-8")
@@ -43,10 +43,17 @@ def test_no_reruns_in_ci():
 
 
 def test_no_test_reordering_hook():
-    """No conftest.py under tests/ forces e2e tests to collect in a chosen order."""
-    conftest_files = sorted(TESTS_DIR.rglob("conftest.py"))
-    assert conftest_files, f"no conftest.py found under {TESTS_DIR}"
-    for path in conftest_files:
+    """No file under tests/ (conftest.py or otherwise) forces a collection order.
+
+    ``pytest_collection_modifyitems`` only takes effect from a conftest.py,
+    but the crutch being guarded against here is the hook function itself
+    reappearing — including tucked into a helper module under
+    ``tests/support`` and imported from a conftest.py, which would still
+    slip past a search limited to files literally named ``conftest.py``.
+    """
+    test_files = sorted(TESTS_DIR.rglob("*.py"))
+    assert test_files, f"no Python files found under {TESTS_DIR}"
+    for path in test_files:
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for node in ast.walk(tree):
             if (
