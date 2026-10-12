@@ -21,6 +21,7 @@ from keystone_mcp.config import Settings
 from keystone_mcp.identity import resolve_verified_identity
 from keystone_mcp.observability.logging.context import get_request_id
 from keystone_mcp.observability.subject import hash_subject
+from keystone_mcp.rbac.call_decision import current_call_decision
 from keystone_mcp.rbac.human_identity import (
     has_interactive_human_identity,
     requires_human_identity,
@@ -146,7 +147,17 @@ class RbacMiddleware(Middleware):
         )
         if not decision.allowed and self._enforce:
             raise ToolError(CLIENT_DENIAL_MESSAGE)
-        return await call_next(context)
+        # Published for the duration of this call only (reset in `finally`,
+        # not left for the next call on a reused task) so a signer further
+        # down the same call (keystone_mcp.identity_assertion) can read
+        # exactly the roles RBAC used to allow it. Not set at all when the
+        # decision denied the call in enforce mode, since execution never
+        # reaches `call_next`.
+        token = current_call_decision.set(decision)
+        try:
+            return await call_next(context)
+        finally:
+            current_call_decision.reset(token)
 
     def _active_policy(self) -> RbacPolicy | None:
         """Active policy without recording a decision (None when not loaded)."""

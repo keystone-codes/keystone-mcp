@@ -550,6 +550,11 @@ class UpstreamConfig:
     # (``auth.bearer_env`` in the registry entry) — never the token value
     # itself, so this dataclass's repr stays safe to log.
     bearer_env: str | None = None
+    # Name of the environment variable holding this upstream's identity
+    # assertion secret (``auth.identity_secret_env``, Y01) — again, only the
+    # variable's name, never its value. ``None`` means this upstream receives
+    # no ``X-Keystone-Identity`` header, only the unsigned ``X-Author-Email``.
+    identity_secret_env: str | None = None
 
     def build_tool_filter(self):
         """Return a predicate for downstream tool names (discovery filter)."""
@@ -1403,6 +1408,15 @@ def startup_warnings(settings: Settings, *, environ: Mapping[str, str] | None = 
                 "may point at private addresses; keep the upstream registry "
                 "under operator control"
             )
+        # W6 (Y01): an upstream with no identity_secret_env only ever learns
+        # who is calling from the unsigned, deprecated X-Author-Email header.
+        for cfg in settings.upstreams:
+            if cfg.enabled and cfg.identity_secret_env is None:
+                warnings.append(
+                    f"upstream namespace={cfg.namespace} receives only the unsigned "
+                    "X-Author-Email header; set auth.identity_secret_env so the "
+                    "service can verify who is calling"
+                )
     else:
         dev_token_set = {t for t in settings.dev_tokens.split(",") if t.strip()}
         # W4: the only local-profile warning (dev tokens under off/observe are
