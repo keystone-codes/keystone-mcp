@@ -1194,11 +1194,12 @@ class KeystoneOAuthProvider(OAuthProvider):
         if isinstance(token, AccessToken):
             await self._store.delete_access_token(token.token)
             return
-        await self._store.delete_refresh_token(token.token)
-        await self._pending_store.consume(_NS_REFRESH_AUTH, token.token)
         subject = token.subject or ""
         if subject:
-            await self._store.revoke_client_tokens(subject, token.client_id)
+            await self._store.revoke_refresh_grant(subject, token.client_id, token.token)
+        else:
+            await self._store.delete_refresh_token(token.token)
+        await self._pending_store.consume(_NS_REFRESH_AUTH, token.token)
 
     # ── Login page (custom routes, registered by the server) ──────────────
     async def render_login(self, request: Request) -> Response:
