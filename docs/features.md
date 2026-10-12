@@ -71,6 +71,11 @@ registry and supervisor already start that process, keep it alive, and
 restart it with a backoff after a crash or a hang; proxying calls to it
 lands with the stdio wiring.
 
+A long-running tool can report progress while it runs
+(`notifications/progress`); Keystone-MCP relays every update to the client,
+in the same call, exactly as the upstream sent it — see "What passes
+through the door" in [facade.md](facade.md#what-passes-through-the-door).
+
 ## One policy file, reloaded live
 
 Access rules — which role may call which tool patterns — live in one YAML

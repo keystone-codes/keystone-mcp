@@ -142,6 +142,27 @@ otherwise — verification examples: see below. An entry with no
 `X-Author-Email`; the `production` deployment profile logs a startup warning
 for each such entry.
 
+## Long-running tools
+
+A tool that takes a while can report progress while it runs: send
+`notifications/progress` against the `progressToken` on the incoming
+request's `_meta` (every MCP SDK exposes this — e.g. `ctx.session.
+report_progress(progress, total, message)` on the low-level Python SDK).
+Keystone-MCP relays every one of those notifications to the client, in the
+same call, for as long as it is still running — the client sees them exactly
+as if it had called your service directly.
+
+Whether anyone actually sees them is decided entirely on the client side,
+not by the request your service received: a `progressToken` on that request
+means Keystone-MCP's own MCP client library asked for progress, which it
+always does, whether or not the real client did — your service cannot tell
+the two apart. Keystone-MCP only relays a notification onward when the real
+client sent its own `progressToken` to Keystone-MCP; otherwise it is
+received and silently dropped. So send progress whenever you have a
+meaningful update for a tool that may run long, the same way you would for
+any other MCP client — you do not need to (and cannot reliably) guess
+whether anyone downstream is listening.
+
 ## Tool naming
 
 Client-visible tool names are `<namespace>_<upstream tool name>` (or the name
