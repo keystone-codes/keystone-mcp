@@ -15,18 +15,18 @@ import asyncio
 import logging
 import threading
 from collections.abc import Sequence
-from dataclasses import dataclass
 
 from redis.exceptions import RedisError
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
 
+from keystone_mcp.user_directory.types import MutationResult, UserRecord
 from keystone_mcp.users import service
 from keystone_mcp.users.db import describe_db_url, make_session_factory, session_scope
 from keystone_mcp.users.errors import UsersError, UsersStoreUnavailableError
 from keystone_mcp.users.migrate import upgrade_to_head
-from keystone_mcp.users.records import ImportedUser, ResolvedUser, UserRecord
+from keystone_mcp.users.records import ImportedUser, ResolvedUser, user_record_from_row
 from keystone_mcp.users.revision import RevisionWriter
 from keystone_mcp.users.service import ImportOutcome, Mutation
 
@@ -38,25 +38,15 @@ logger = logging.getLogger(__name__)
 _BUMP_FAILURE_TYPES = (RedisError, OSError)
 
 
-@dataclass(frozen=True, slots=True)
-class MutationResult:
-    """A :class:`~keystone_mcp.users.service.Mutation`, shaped for callers outside this package."""
-
-    user: UserRecord
-    changed: bool
-    created: bool = False
-    roles_before: tuple[str, ...] = ()
-    blocked_before: bool = False
-
-    @classmethod
-    def _from_mutation(cls, mutation: Mutation) -> MutationResult:
-        return cls(
-            user=UserRecord.from_row(mutation.user),
-            changed=mutation.changed,
-            created=mutation.created,
-            roles_before=mutation.roles_before,
-            blocked_before=mutation.blocked_before,
-        )
+def _mutation_result_from_mutation(mutation: Mutation) -> MutationResult:
+    """Shape a service-layer :class:`Mutation` for callers outside this package."""
+    return MutationResult(
+        user=user_record_from_row(mutation.user),
+        changed=mutation.changed,
+        created=mutation.created,
+        roles_before=mutation.roles_before,
+        blocked_before=mutation.blocked_before,
+    )
 
 
 def _wrap_database_errors(exc: Exception) -> Exception:
@@ -119,7 +109,7 @@ class UsersStore:
             role=role,
             email_contains=email_contains,
         )
-        return [UserRecord.from_row(row) for row in rows]
+        return [user_record_from_row(row) for row in rows]
 
     async def count_active_administrators(self) -> int:
         return await self._read(service.count_active_administrators)
@@ -325,7 +315,7 @@ class UsersStore:
         except Exception as exc:
             raise _wrap_database_errors(exc) from exc
 
-        result = MutationResult._from_mutation(mutation)
+        result = _mutation_result_from_mutation(mutation)
         if result.changed:
             # Bumped after the transaction above has already committed (we are
             # here only once asyncio.to_thread has returned): another request

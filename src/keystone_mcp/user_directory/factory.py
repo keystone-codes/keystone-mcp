@@ -1,19 +1,27 @@
-"""Factory wiring Settings, Redis, and directory backends."""
+"""Factory wiring Settings, Redis, and directory implementations.
+
+``local`` and ``http`` (and the legacy ``UserDirectoryBackend`` wrapper) are
+imported lazily, inside the functions below, so that ``import
+keystone_mcp.user_directory`` alone never pulls in SQLAlchemy or httpx (see
+``tests/test_user_directory_protocol.py::test_protocol_and_types_are_dependency_free``).
+"""
 
 from __future__ import annotations
 
 import logging
+import warnings
 from typing import TYPE_CHECKING
 
 from redis.asyncio import Redis
 
-from keystone_mcp.config import Settings
+from keystone_mcp.config import ConfigError, Settings
 from keystone_mcp.user_directory.cache import ResolutionCache
 from keystone_mcp.user_directory.circuit_breaker import CircuitBreaker
-from keystone_mcp.user_directory.http import HttpUserDirectoryBackend
-from keystone_mcp.user_directory.local import LocalUserDirectoryBackend
-from keystone_mcp.user_directory.memory import InMemoryUserDirectoryBackend
-from keystone_mcp.user_directory.protocol import UserDirectoryBackend
+from keystone_mcp.user_directory.protocol import (
+    UserDirectory,
+    UserDirectoryAdmin,
+    UserDirectoryBackend,
+)
 from keystone_mcp.user_directory.resolver import CachedUserDirectoryResolver
 from keystone_mcp.user_directory.revision import (
     InMemoryRevisionReader,
@@ -27,27 +35,81 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def validate_directory_capabilities(directory: UserDirectory) -> UserDirectory:
+    """Refuse a directory that declares ``"admin"`` without implementing it.
+
+    Applied to every directory this module builds, and reusable by whatever
+    builds one from elsewhere (a plugin loaded through an entry point, X09)
+    so the same mistake is caught the same way everywhere.
+    """
+    if "admin" in directory.capabilities and not isinstance(directory, UserDirectoryAdmin):
+        raise ConfigError(
+            f"users directory {directory.name!r} declares 'admin' but does not "
+            "implement UserDirectoryAdmin"
+        )
+    return directory
+
+
+def build_user_directory(
+    settings: Settings,
+    *,
+    users_store: UsersStore | None = None,
+) -> UserDirectory:
+    """Build the ``local`` or ``http`` directory named by ``settings.users_backend``.
+
+    Raises :class:`~keystone_mcp.config.ConfigError` if a directory declares
+    the ``"admin"`` capability without actually implementing
+    :class:`~keystone_mcp.user_directory.protocol.UserDirectoryAdmin` -- a
+    configuration mistake caught at startup rather than on the first
+    ``users_*`` call.
+    """
+    directory: UserDirectory
+    if settings.users_backend == "http":
+        from keystone_mcp.user_directory.http import HttpUserDirectory
+
+        directory = HttpUserDirectory(
+            base_url=settings.users_service_url,
+            service_token=settings.users_service_token,
+            timeout_seconds=settings.users_service_timeout_seconds,
+        )
+    else:
+        from keystone_mcp.user_directory.local import LocalUserDirectory
+        from keystone_mcp.users.factory import build_users_store
+
+        directory = LocalUserDirectory(users_store or build_users_store(settings))
+    return validate_directory_capabilities(directory)
+
+
 def build_user_directory_resolver(
     settings: Settings,
     *,
+    directory: UserDirectory | None = None,
     backend: UserDirectoryBackend | None = None,
     revision_reader: RevisionReader | None = None,
     redis_client: Redis | None = None,
     users_store: UsersStore | None = None,
 ) -> CachedUserDirectoryResolver:
-    """Construct the cached resolver from platform settings."""
-    resolved_backend = backend
-    if resolved_backend is None:
-        if settings.users_backend == "http":
-            resolved_backend = HttpUserDirectoryBackend(
-                base_url=settings.users_service_url,
-                service_token=settings.users_service_token,
-                timeout_seconds=settings.users_service_timeout_seconds,
-            )
-        else:
-            from keystone_mcp.users.factory import build_users_store
+    """Construct the cached resolver from platform settings.
 
-            resolved_backend = LocalUserDirectoryBackend(users_store or build_users_store(settings))
+    ``backend`` is the deprecated 0.4.0 keyword (a single-method
+    ``UserDirectoryBackend``): passing it wraps it in
+    :class:`~keystone_mcp.user_directory.compat.ReadOnlyBackendDirectory` and
+    emits a :class:`DeprecationWarning`. Prefer ``directory=``.
+    """
+    resolved_directory = directory
+    if resolved_directory is None and backend is not None:
+        warnings.warn(
+            "UserDirectoryBackend is deprecated; implement "
+            "keystone_mcp.user_directory.UserDirectory. Removed in 0.6.0.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        from keystone_mcp.user_directory.compat import ReadOnlyBackendDirectory
+
+        resolved_directory = ReadOnlyBackendDirectory(backend)
+    if resolved_directory is None:
+        resolved_directory = build_user_directory(settings, users_store=users_store)
+
     resolved_revision = revision_reader
     if resolved_revision is None:
         if redis_client is not None:
@@ -84,7 +146,7 @@ def build_user_directory_resolver(
         recovery_seconds=float(settings.users_circuit_recovery_seconds),
     )
     return CachedUserDirectoryResolver(
-        resolved_backend,
+        resolved_directory,
         revision_reader=resolved_revision,
         cache=cache,
         circuit_breaker=circuit,
@@ -97,12 +159,14 @@ def build_in_memory_user_directory_resolver(
     deny_ttl_seconds: float = 30.0,
     failure_threshold: int = 3,
     recovery_seconds: float = 30.0,
-) -> tuple[CachedUserDirectoryResolver, InMemoryUserDirectoryBackend, InMemoryRevisionReader]:
+):
     """Convenience helper for unit tests and local development."""
-    backend = InMemoryUserDirectoryBackend()
+    from keystone_mcp.user_directory.memory import InMemoryUserDirectory
+
+    directory = InMemoryUserDirectory()
     revision_reader = InMemoryRevisionReader()
     resolver = CachedUserDirectoryResolver(
-        backend,
+        directory,
         revision_reader=revision_reader,
         cache=ResolutionCache(
             allow_ttl_seconds=allow_ttl_seconds,
@@ -113,4 +177,4 @@ def build_in_memory_user_directory_resolver(
             recovery_seconds=recovery_seconds,
         ),
     )
-    return resolver, backend, revision_reader
+    return resolver, directory, revision_reader
