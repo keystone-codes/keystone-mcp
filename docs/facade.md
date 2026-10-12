@@ -140,7 +140,7 @@ Keystone-MCP's own, not proxied:
   [users.md](users.md).
 
 File transfer is not built in: run a file service as an upstream MCP server
-(see [connecting-services.md](connecting-services.md)).
+(see [connecting-services.md](connecting-services.md)). Why: [ADR 0006](adr/0006-no-file-api-in-the-core.md).
 
 ## A call, end to end
 

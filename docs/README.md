@@ -47,6 +47,7 @@ find there, not just the file name.
 
 ## Project
 
+- [Why things are the way they are](adr/README.md)
 - [Changelog](../CHANGELOG.md)
 - [Contributing](CONTRIBUTING.md)
 - [Security reports](../SECURITY.md)
