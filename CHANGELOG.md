@@ -8,6 +8,8 @@ this project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Service accounts (`svc:<name>`) with their own roles; `service_accounts_list|add|update` tools and `keystone-mcp service-accounts` CLI (built-in directory).
+- Upstreams receive `X-Keystone-Subject` and `X-Keystone-Subject-Type`.
 - Startup refuses a removed variable that would change security behaviour
   if ignored, and warns about other removed variables
   (`docs/environment.md#removed-variables`).
@@ -42,6 +44,7 @@ this project uses [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- `X-Author-Email` is sent only for people.
 - Documentation brought in line with the 0.4.0 code: the Host/Origin
   allowlist and /metrics, deployment profile rules P5 and W5, the
   Kubernetes and Prometheus examples, client redirect hosts, host install
@@ -133,6 +136,9 @@ this project uses [Semantic Versioning](https://semver.org/).
 - Google users: nothing to do now; when convenient, move the Google settings into
   a login providers file (`type: google`). The Google redirect URI stays
   `<base>/login/google/callback`.
+- Database migration `0002_service_accounts` runs at startup. Accounts like
+  `bot@…` created as people keep working; move them to service accounts to get
+  correct audit and human-only checks.
 - Replace `KEYSTONE_MCP_RBAC_ENABLED=true` with `KEYSTONE_MCP_RBAC_MODE=enforce`;
   delete the old variable — the server does not start while it is set.
 - A fork that registered `DetInternalAdapter` or `ChatAttachmentAdapter` must

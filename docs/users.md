@@ -202,3 +202,22 @@ passed, since silently creating (and writing the new administrator into) an
 unrelated, empty database is exactly the failure mode a break-glass recovery
 command run from the wrong directory would otherwise hit. `import` has no
 such flag: writing into a fresh database is its normal first use.
+
+## Service accounts
+
+Machine callers (CI, schedulers, agents without a human at the keyboard) use a
+**service account** instead of a person-shaped user record. Each account is
+identified by `svc:<name>` where `name` matches `^[a-z][a-z0-9-]{1,62}$`
+(lowercase letters, digits, hyphens). Service accounts hold normal RBAC roles
+but **cannot** receive the `administrator` role, and they **never** satisfy
+`requires_human_identity` — even if a token claim says `interactive: true`.
+
+When `KEYSTONE_MCP_RBAC_MODE=enforce` and the built-in directory is active,
+Keystone publishes `service_accounts_list`, `service_accounts_add`, and
+`service_accounts_update` (administrators only, same policy gate as `users_*`).
+The CLI mirrors these operations: `keystone-mcp service-accounts add|list|update`
+(requires `KEYSTONE_MCP_USERS_BACKEND=local`). HTTP-backed directories do not
+support service accounts yet.
+
+How a service account signs in is covered in the next section (API keys, once
+configured).

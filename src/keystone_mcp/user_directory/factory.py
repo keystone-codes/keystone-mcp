@@ -18,6 +18,7 @@ from keystone_mcp.config import ConfigError, Settings
 from keystone_mcp.user_directory.cache import ResolutionCache
 from keystone_mcp.user_directory.circuit_breaker import CircuitBreaker
 from keystone_mcp.user_directory.protocol import (
+    ServiceAccountDirectory,
     UserDirectory,
     UserDirectoryAdmin,
     UserDirectoryBackend,
@@ -46,6 +47,13 @@ def validate_directory_capabilities(directory: UserDirectory) -> UserDirectory:
         raise ConfigError(
             f"users directory {directory.name!r} declares 'admin' but does not "
             "implement UserDirectoryAdmin"
+        )
+    if "service_accounts" in directory.capabilities and not isinstance(
+        directory, ServiceAccountDirectory
+    ):
+        raise ConfigError(
+            f"users directory {directory.name!r} declares 'service_accounts' but does not "
+            "implement ServiceAccountDirectory"
         )
     return directory
 

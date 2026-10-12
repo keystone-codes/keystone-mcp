@@ -12,10 +12,29 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
-from keystone_mcp.user_directory.types import UserRecord
-from keystone_mcp.users.models import UserRow
+from keystone_mcp.user_directory.types import ServiceAccountRecord, UserRecord, service_subject
+from keystone_mcp.users.models import ServiceAccountRow, UserRow
 
-__all__ = ["ImportedUser", "ResolvedUser", "UserRecord", "user_record_from_row"]
+__all__ = [
+    "ImportedUser",
+    "ResolvedUser",
+    "UserRecord",
+    "service_account_record_from_row",
+    "user_record_from_row",
+]
+
+
+def service_account_record_from_row(row: ServiceAccountRow) -> ServiceAccountRecord:
+    return ServiceAccountRecord(
+        name=row.name,
+        subject=service_subject(row.name),
+        description=row.description,
+        roles=tuple(sorted({assignment.role for assignment in row.roles})),
+        is_blocked=row.is_blocked,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+        created_by=row.created_by,
+    )
 
 
 def user_record_from_row(row: UserRow) -> UserRecord:
@@ -38,6 +57,7 @@ class ResolvedUser:
     exists: bool
     roles: tuple[str, ...]
     is_blocked: bool
+    subject_type: str = "human"
 
 
 @dataclass(frozen=True, slots=True)

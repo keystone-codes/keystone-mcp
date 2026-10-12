@@ -14,7 +14,7 @@ from fastmcp.tools.base import ToolResult
 from keystone_mcp.adapters.base import Pattern
 from keystone_mcp.adapters.mcp_proxy import McpProxyAdapter
 from keystone_mcp.config import Settings, load_settings
-from keystone_mcp.identity import AUTHOR_EMAIL_HEADER, VerifiedIdentity
+from keystone_mcp.identity import AUTHOR_EMAIL_HEADER, VerifiedIdentity, upstream_identity_headers
 from keystone_mcp.router.context import RouteContext
 from keystone_mcp.router.route import Route
 from support.lowlevel_upstream import (
@@ -250,7 +250,7 @@ async def test_injected_factory_receives_identity_headers_and_timeout():
     out = await adapter.execute(route, _ctx(), {"report_key": "r1"}, None)
 
     assert out.is_error is False
-    assert seen["headers"] == {AUTHOR_EMAIL_HEADER: ID.email}
+    assert seen["headers"] == upstream_identity_headers(ID)
     assert seen["timeout"] == 25
 
 

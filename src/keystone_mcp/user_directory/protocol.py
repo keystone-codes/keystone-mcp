@@ -50,11 +50,16 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Literal, Protocol, runtime_checkable
 
-from keystone_mcp.user_directory.types import MutationResult, UserRecord, UserResolveResult
+from keystone_mcp.user_directory.types import (
+    MutationResult,
+    ServiceAccountMutation,
+    ServiceAccountRecord,
+    UserRecord,
+    UserResolveResult,
+)
 
-#: What a directory can do beyond reading. X07 adds "service_accounts", X08
-#: adds "api_keys" to this literal's allowed values.
-Capability = Literal["admin"]
+#: What a directory can do beyond reading. X08 adds "api_keys" to this literal.
+Capability = Literal["admin", "service_accounts"]
 
 
 @runtime_checkable
@@ -126,6 +131,32 @@ class UserDirectoryAdmin(UserDirectory, Protocol):
     async def grant_role(self, *, email: str, role: str, actor: str) -> MutationResult: ...
 
     async def revoke_role(self, *, email: str, role: str, actor: str) -> MutationResult: ...
+
+
+@runtime_checkable
+class ServiceAccountDirectory(UserDirectory, Protocol):
+    async def list_service_accounts(
+        self, *, is_blocked: bool | None = False
+    ) -> list[ServiceAccountRecord]: ...
+
+    async def create_service_account(
+        self,
+        *,
+        name: str,
+        description: str | None,
+        roles: Sequence[str],
+        actor: str,
+    ) -> ServiceAccountMutation: ...
+
+    async def update_service_account(
+        self,
+        *,
+        name: str,
+        description: str | None = None,
+        roles: Sequence[str] | None = None,
+        is_blocked: bool | None = None,
+        actor: str,
+    ) -> ServiceAccountMutation: ...
 
 
 @runtime_checkable
