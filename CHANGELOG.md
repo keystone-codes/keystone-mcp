@@ -29,6 +29,7 @@ this project uses [Semantic Versioning](https://semver.org/).
 - Idle HTTP sessions of the handshake protocol now close after 30 minutes
   (FastMCP default); clients reconnect transparently.
 - Developers: the test suite runs without reruns; `pytest-rerunfailures` removed.
+- CI guards against test reruns and forced test ordering.
 
 ### Removed
 
