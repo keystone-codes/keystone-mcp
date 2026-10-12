@@ -137,9 +137,9 @@ one directory round trip per invocation.
 
 The following are **always** critical, whatever the policy says, because the
 core catalog (`src/keystone_mcp/catalog/builtin.py`) registers them as a
-platform primitive: `users_*`, published only when
-`KEYSTONE_MCP_RBAC_MODE=enforce`. It is critical whenever it is published, and
-need not be repeated in `critical_tools`; listing it is harmless.
+platform primitive: `users_*` and `policy_*`, published only when
+`KEYSTONE_MCP_RBAC_MODE=enforce`. They are critical whenever they are published, and
+need not be repeated in `critical_tools`; listing them is harmless.
 
 ### 2.8 `reserved_allow_patterns`
 

@@ -43,8 +43,12 @@ critical_tools: []
 tool_dispositions:
   R:
     - users_list
+    - policy_read
+    - policy_catalog
+    - policy_validate
   D:
     - users_block
+    - policy_role_delete
   W:
     - users_add
     - users_update
@@ -52,3 +56,8 @@ tool_dispositions:
     - users_set_roles
     - users_grant_role
     - users_revoke_role
+    - policy_role_set
+    - policy_allow_add
+    - policy_allow_remove
+    - policy_list_set
+    - policy_rollback

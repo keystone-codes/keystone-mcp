@@ -26,6 +26,7 @@ import logging
 
 from keystone_mcp.adapters.api_keys_admin import ApiKeysAdminAdapter
 from keystone_mcp.adapters.base import Pattern
+from keystone_mcp.adapters.policy_admin import PolicyAdminAdapter
 from keystone_mcp.adapters.service_accounts_admin import ServiceAccountsAdminAdapter
 from keystone_mcp.adapters.users_admin import RoleSource, UsersAdminAdapter
 from keystone_mcp.config import Settings
@@ -53,6 +54,15 @@ BUILTIN_TOOL_NAMES: frozenset[str] = frozenset(
         "api_keys_issue",
         "api_keys_list",
         "api_keys_revoke",
+        "policy_read",
+        "policy_catalog",
+        "policy_validate",
+        "policy_role_set",
+        "policy_role_delete",
+        "policy_allow_add",
+        "policy_allow_remove",
+        "policy_list_set",
+        "policy_rollback",
     }
 )
 
@@ -66,13 +76,7 @@ def register_catalog(
     role_source: RoleSource | None = None,
     policy_store: object | None = None,
 ) -> None:
-    """``policy_store``, when given, is a ``keystone_mcp.rbac.policy_store.PolicyStore``.
-
-    Accepted here (but not yet used) so the server wiring that builds it does
-    not have to change again when a later card registers the ``policy_*``
-    tools over it; typed as ``object`` to avoid importing the RBAC policy
-    package from the catalog module for a parameter nothing here reads yet.
-    """
+    """``policy_store``, when given, is a ``keystone_mcp.rbac.policy_store.PolicyStore``."""
     users_admin = UsersAdminAdapter(
         directory=directory, observability=observability, role_source=role_source
     )
@@ -268,3 +272,108 @@ def register_catalog(
                 mode="live",
                 admin=True,
             )
+
+    if settings.policy_tools != "off" and policy_store is not None:
+        policy_admin = PolicyAdminAdapter(
+            store=policy_store,
+            directory=directory,
+            observability=observability,
+        )
+        _policy_read_tools: list[tuple[str, str, list[Param]]] = [
+            (
+                "policy_read",
+                "Read the RBAC policy file, its hashes, and catalog validation hints.",
+                [],
+            ),
+            (
+                "policy_catalog",
+                "List published tool names from the live catalog and optional snapshot, "
+                "with per-role allow decisions.",
+                [
+                    P("namespace", str, required=False, default=None),
+                    P("role", str, required=False, default=None),
+                ],
+            ),
+            (
+                "policy_validate",
+                "Dry-run structural and catalog validation on the current file or a candidate.",
+                [P("policy", dict, required=False, default=None)],
+            ),
+        ]
+        _policy_write_tools: list[tuple[str, str, list[Param]]] = [
+            (
+                "policy_role_set",
+                "Create or replace a role's allow patterns and description. "
+                "Validated against the live catalog and applied immediately.",
+                [
+                    P("role", str),
+                    P("allow", list),
+                    P("description", str, required=False, default=None),
+                    P("expected_hash", str, required=False, default=None),
+                ],
+            ),
+            (
+                "policy_role_delete",
+                "Delete a role that is not assigned to any active account.",
+                [
+                    P("role", str),
+                    P("expected_hash", str, required=False, default=None),
+                ],
+            ),
+            (
+                "policy_allow_add",
+                "Add allow patterns to a role. Patterns are globs over published tool names "
+                "(namespace prefix included), e.g. files_*. The change is validated against the "
+                "live catalog and applied immediately.",
+                [
+                    P("role", str),
+                    P("patterns", list),
+                    P("expected_hash", str, required=False, default=None),
+                ],
+            ),
+            (
+                "policy_allow_remove",
+                "Remove allow patterns from a role. The role must keep at least one pattern.",
+                [
+                    P("role", str),
+                    P("patterns", list),
+                    P("expected_hash", str, required=False, default=None),
+                ],
+            ),
+            (
+                "policy_list_set",
+                "Replace a global policy list (deny, requires_human_identity, critical_tools, "
+                "or reserved_allow_patterns) wholesale.",
+                [
+                    P("list", str),
+                    P("patterns", list),
+                    P("expected_hash", str, required=False, default=None),
+                ],
+            ),
+            (
+                "policy_rollback",
+                "Restore the previous policy file generation from the one-step backup.",
+                [],
+            ),
+        ]
+        for tool_name, description, params in _policy_read_tools:
+            registry.add_route(
+                tool_name,
+                policy_admin,
+                pattern=Pattern.M_B,
+                params=params,
+                description=description,
+                mode="live",
+                admin=True,
+            )
+        if settings.policy_tools == "full":
+            for tool_name, description, params in _policy_write_tools:
+                registry.add_route(
+                    tool_name,
+                    policy_admin,
+                    pattern=Pattern.M_B,
+                    params=params,
+                    description=description,
+                    mode="live",
+                    admin=True,
+                )

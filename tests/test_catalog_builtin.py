@@ -19,7 +19,10 @@ def _registry(settings: Settings | None = None) -> RouterRegistry:
 
 def _enforce_settings(tmp_path: Path) -> Settings:
     policy = tmp_path / "rbac-policy.yaml"
-    policy.write_text("default_deny: true\nroles: {}\n", encoding="utf-8")
+    policy.write_text(
+        'version: "1"\ndefault_deny: true\nroles:\n  administrator:\n    allow: ["*"]\n',
+        encoding="utf-8",
+    )
     return Settings(
         base_url="http://localhost:8080",
         rbac_mode="enforce",
@@ -94,20 +97,86 @@ def test_catalog_drops_base64_upload_file():
 def test_builtin_tool_names_constant_covers_registered_tools(tmp_path: Path):
     """BUILTIN_TOOL_NAMES (used by P09 namespace validation) matches reality."""
     from keystone_mcp.catalog.builtin import BUILTIN_TOOL_NAMES
+    from keystone_mcp.rbac.loader import RbacPolicyManager
+    from keystone_mcp.rbac.policy_store import PolicyStore
+    from keystone_mcp.server import policy_role_source
     from keystone_mcp.user_directory.local import LocalUserDirectory
     from keystone_mcp.users.factory import build_users_store
 
     settings = Settings(
         **_enforce_settings(tmp_path).__dict__
-        | {"deployment_profile": "local", "users_backend": "local"},
+        | {"deployment_profile": "local", "users_backend": "local", "policy_tools": "full"},
     )
     store = build_users_store(settings)
     reg = _registry(settings)
-    register_catalog(reg, settings, directory=LocalUserDirectory(store))
+    manager = RbacPolicyManager(settings)
+    manager.load_initial(reg)
+    policy_store = PolicyStore(
+        settings=settings,
+        policy_manager=manager,
+        registry=reg,
+        directory=LocalUserDirectory(store),
+    )
+    register_catalog(
+        reg,
+        settings,
+        directory=LocalUserDirectory(store),
+        role_source=policy_role_source(manager),
+        policy_store=policy_store,
+    )
+    manager.reload(reg)
 
     registered = {route.name for route in reg.routes.values() if route.namespace is None}
     assert registered == BUILTIN_TOOL_NAMES
     store.dispose()
+
+
+def test_policy_tools_registered_by_mode(tmp_path: Path):
+    from keystone_mcp.rbac.loader import RbacPolicyManager
+    from keystone_mcp.rbac.policy_store import PolicyStore
+
+    settings = _enforce_settings(tmp_path)
+    reg = _registry(settings)
+    manager = RbacPolicyManager(settings)
+    manager.load_initial(reg)
+    policy_store = PolicyStore(
+        settings=settings,
+        policy_manager=manager,
+        registry=reg,
+        directory=InMemoryUserDirectory(),
+    )
+    register_catalog(reg, settings, directory=InMemoryUserDirectory(), policy_store=policy_store)
+    full_names = {route.name for route in reg.routes.values() if route.name.startswith("policy_")}
+    assert full_names == {
+        "policy_read",
+        "policy_catalog",
+        "policy_validate",
+        "policy_role_set",
+        "policy_role_delete",
+        "policy_allow_add",
+        "policy_allow_remove",
+        "policy_list_set",
+        "policy_rollback",
+    }
+
+    read_only_settings = Settings(**{**settings.__dict__, "policy_tools": "read-only"})
+    reg_ro = _registry(read_only_settings)
+    manager_ro = RbacPolicyManager(read_only_settings)
+    manager_ro.load_initial(reg_ro)
+    store_ro = PolicyStore(
+        settings=read_only_settings,
+        policy_manager=manager_ro,
+        registry=reg_ro,
+        directory=InMemoryUserDirectory(),
+    )
+    register_catalog(
+        reg_ro,
+        read_only_settings,
+        directory=InMemoryUserDirectory(),
+        policy_store=store_ro,
+    )
+    ro_names = {route.name for route in reg_ro.routes.values() if route.name.startswith("policy_")}
+    assert ro_names == {"policy_read", "policy_catalog", "policy_validate"}
 
 
 class _ReadOnlyDirectory:
