@@ -80,6 +80,7 @@ class AuthzAuditRecorder:
         request_id: str | None,
         critical: bool = False,
         login_provider: str | None = None,
+        subject_type: str | None = None,
     ) -> None:
         if not self.should_emit(allowed=allowed, tool_name=tool_name, operation=operation):
             return
@@ -104,6 +105,8 @@ class AuthzAuditRecorder:
             # token separately, e.g. "signed in with api_key".
             "login_provider": login_provider,
         }
+        if subject_type is not None:
+            event["subject_type"] = subject_type
         self._emit(event)
 
     def _emit(self, event: dict[str, Any]) -> None:
@@ -139,6 +142,7 @@ class UsersMutationAuditRecorder:
         blocked_before: bool | None = None,
         blocked_after: bool | None = None,
         role: str | None = None,
+        actor_subject_type: str | None = None,
     ) -> None:
         if not self._enabled:
             return
@@ -161,6 +165,8 @@ class UsersMutationAuditRecorder:
         if blocked_before is not None or blocked_after is not None:
             event["blocked_before"] = blocked_before
             event["blocked_after"] = blocked_after
+        if actor_subject_type is not None:
+            event["actor_subject_type"] = actor_subject_type
         try:
             logger.info(
                 "rbac audit %s",

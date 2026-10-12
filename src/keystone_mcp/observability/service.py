@@ -70,6 +70,7 @@ class RbacObservability:
         operation: str,
         request_id: str | None,
         login_provider: str | None = None,
+        subject_type: str | None = None,
     ) -> None:
         policy = self.active_policy_fields()
         family = tool_family(tool_name)
@@ -89,6 +90,7 @@ class RbacObservability:
                 request_id=request_id,
                 critical=critical,
                 login_provider=login_provider,
+                subject_type=subject_type,
             )
             self.metrics.record_decision(
                 allowed=allowed,
@@ -177,6 +179,7 @@ class RbacObservability:
         blocked_before: bool | None = None,
         blocked_after: bool | None = None,
         role: str | None = None,
+        actor_subject_type: str | None = None,
     ) -> None:
         policy = self.active_policy_fields()
         try:
@@ -193,6 +196,7 @@ class RbacObservability:
                 blocked_before=blocked_before,
                 blocked_after=blocked_after,
                 role=role,
+                actor_subject_type=actor_subject_type,
             )
             self.metrics.record_users_mutation(operation=operation, outcome=outcome)
         except Exception:

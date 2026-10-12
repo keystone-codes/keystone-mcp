@@ -16,6 +16,11 @@ from sqlalchemy import Table, func, select
 from sqlalchemy.dialects import postgresql, sqlite
 from sqlalchemy.orm import Session, selectinload
 
+from keystone_mcp.user_directory.types import (
+    is_valid_service_account_name,
+    parse_service_subject,
+    service_subject,
+)
 from keystone_mcp.users.emails import normalize_email, require_valid_email
 from keystone_mcp.users.errors import (
     ActorEmailRequiredError,
@@ -26,7 +31,13 @@ from keystone_mcp.users.errors import (
     UserAlreadyExistsError,
     UserNotFoundError,
 )
-from keystone_mcp.users.models import UserRoleRow, UserRow, utcnow
+from keystone_mcp.users.models import (
+    ServiceAccountRoleRow,
+    ServiceAccountRow,
+    UserRoleRow,
+    UserRow,
+    utcnow,
+)
 from keystone_mcp.users.records import ImportedUser, ResolvedUser
 from keystone_mcp.users.roles import ROLE_ADMINISTRATOR, check_role_name, normalize_roles
 
@@ -131,8 +142,23 @@ def _ensure_not_self(actor_email: str, target_email: str, *, action: str) -> Non
         raise SelfAdminMutationError(action)
 
 
-def resolve_user(session: Session, email: str) -> ResolvedUser:
-    normalized = normalize_email(email)
+def resolve_user(session: Session, subject: str) -> ResolvedUser:
+    service_name = parse_service_subject(subject)
+    if service_name is not None:
+        account = session.scalar(
+            select(ServiceAccountRow)
+            .options(selectinload(ServiceAccountRow.roles))
+            .where(ServiceAccountRow.name == service_name)
+        )
+        if account is None:
+            return ResolvedUser(exists=False, roles=(), is_blocked=False, subject_type="service")
+        return ResolvedUser(
+            exists=True,
+            roles=tuple(sorted({assignment.role for assignment in account.roles})),
+            is_blocked=account.is_blocked,
+            subject_type="service",
+        )
+    normalized = normalize_email(subject)
     user = session.scalar(
         select(UserRow).options(selectinload(UserRow.roles)).where(UserRow.email == normalized)
     )
@@ -636,3 +662,120 @@ def upsert_imported_user(
         administrator_changed=was_admin != (ROLE_ADMINISTRATOR in next_roles),
         roles_revoked=tuple(sorted(current_roles - next_roles)),
     )
+
+
+@dataclass(frozen=True, slots=True)
+class ServiceAccountMutation:
+    account: ServiceAccountRow
+    changed: bool
+    created: bool = False
+    roles_before: tuple[str, ...] = ()
+    blocked_before: bool = False
+
+
+def _service_role_names(account: ServiceAccountRow) -> list[str]:
+    return sorted({assignment.role for assignment in account.roles})
+
+
+def _load_service_account(session: Session, name: str) -> ServiceAccountRow:
+    account = session.scalar(
+        select(ServiceAccountRow)
+        .options(selectinload(ServiceAccountRow.roles))
+        .where(ServiceAccountRow.name == name)
+    )
+    if account is None:
+        raise UserNotFoundError(
+            service_subject(name),
+            message=f"Service account not found: {service_subject(name)}",
+        )
+    return account
+
+
+def _reject_administrator_for_service(role_list: Sequence[str]) -> None:
+    for role_name in role_list:
+        if role_name == ROLE_ADMINISTRATOR:
+            raise InvalidRoleError(ROLE_ADMINISTRATOR, reason="reserved")
+
+
+def create_service_account(
+    session: Session,
+    *,
+    name: str,
+    description: str | None,
+    roles: Sequence[str],
+    created_by: str | None,
+) -> ServiceAccountMutation:
+    if not is_valid_service_account_name(name):
+        raise InvalidUserFieldError("name", "must match ^[a-z][a-z0-9-]{1,62}$")
+    if session.get(ServiceAccountRow, name) is not None:
+        raise UserAlreadyExistsError(service_subject(name))
+    role_list = normalize_roles(roles, allowed=None)
+    _reject_administrator_for_service(role_list)
+    account = ServiceAccountRow(
+        name=name,
+        description=description,
+        created_by=created_by,
+        is_blocked=False,
+    )
+    session.add(account)
+    for role_name in role_list:
+        account.roles.append(ServiceAccountRoleRow(name=name, role=role_name))
+    session.flush()
+    return ServiceAccountMutation(account=account, changed=True, created=True)
+
+
+def update_service_account(
+    session: Session,
+    *,
+    name: str,
+    description: str | None = None,
+    roles: Sequence[str] | None = None,
+    is_blocked: bool | None = None,
+    actor: str,  # noqa: ARG001
+) -> ServiceAccountMutation:
+    account = _load_service_account(session, name)
+    roles_before = tuple(_service_role_names(account))
+    blocked_before = account.is_blocked
+    changed = False
+    if description is not None and account.description != description:
+        account.description = description
+        changed = True
+    if is_blocked is not None and account.is_blocked != is_blocked:
+        account.is_blocked = is_blocked
+        changed = True
+    if roles is not None:
+        role_list = normalize_roles(roles, allowed=None)
+        _reject_administrator_for_service(role_list)
+        next_roles = set(role_list)
+        if set(roles_before) != next_roles:
+            for assignment in list(account.roles):
+                session.delete(assignment)
+            session.flush()
+            account.roles = [
+                ServiceAccountRoleRow(name=name, role=role_name) for role_name in sorted(next_roles)
+            ]
+            changed = True
+    if changed:
+        account.updated_at = utcnow()
+    session.flush()
+    return ServiceAccountMutation(
+        account=account,
+        changed=changed,
+        roles_before=roles_before,
+        blocked_before=blocked_before,
+    )
+
+
+def list_service_accounts(
+    session: Session,
+    *,
+    is_blocked: bool | None = False,
+) -> list[ServiceAccountRow]:
+    stmt = (
+        select(ServiceAccountRow)
+        .options(selectinload(ServiceAccountRow.roles))
+        .order_by(ServiceAccountRow.name)
+    )
+    if is_blocked is not None:
+        stmt = stmt.where(ServiceAccountRow.is_blocked.is_(is_blocked))
+    return list(session.scalars(stmt).unique().all())

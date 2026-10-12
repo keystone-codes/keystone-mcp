@@ -48,6 +48,7 @@ class ResolutionCache:
             exists=entry.result.exists,
             roles=entry.result.roles,
             is_blocked=entry.result.is_blocked,
+            subject_type=entry.result.subject_type,
             from_cache=True,
             revision=entry.revision,
         )

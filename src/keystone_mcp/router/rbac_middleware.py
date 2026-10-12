@@ -60,6 +60,7 @@ class RbacDenialReason(str, Enum):
     HUMAN_IDENTITY_REQUIRED = "human_identity_required"
     ROLES_UNAVAILABLE = "roles_unavailable"
     POLICY_UNAVAILABLE = "policy_unavailable"
+    SUBJECT_TYPE_MISMATCH = "subject_type_mismatch"
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +78,7 @@ class RbacDecision:
     # happened ("signed in with api_key") without cross-referencing the
     # token store. ``None`` when there is no verified identity at all.
     login_provider: str | None = None
+    subject_type: str | None = None
 
 
 def _request_correlation_id() -> str | None:
@@ -184,14 +186,14 @@ class RbacMiddleware(Middleware):
 
     async def _resolve_user(
         self,
-        email: str,
+        subject: str,
         *,
         critical: bool,
     ) -> UserResolveResult:
         outcome_holder = {"outcome": "miss"}
         started = time.perf_counter()
         try:
-            user = await self._user_resolver.resolve(email, critical=critical)
+            user = await self._user_resolver.resolve(subject, critical=critical)
         except UserDirectoryUnavailableError:
             outcome_holder["outcome"] = "unavailable"
             raise
@@ -241,30 +243,46 @@ class RbacMiddleware(Middleware):
                 active_policy.critical_tool_patterns if active_policy is not None else (),
             )
         try:
-            user = await self._resolve_user(identity.email, critical=critical)
+            user = await self._resolve_user(identity.subject, critical=critical)
         except UserDirectoryUnavailableError:
             decision = RbacDecision(
                 tool_name=tool_name or "",
-                email=identity.email,
+                email=identity.subject,
                 login_provider=login_provider,
                 allowed=False,
                 reason=RbacDenialReason.ROLES_UNAVAILABLE,
+                subject_type=identity.subject_type,
             )
             self._record_decision(decision, operation=operation)
             return decision
         except Exception as exc:
             logger.warning(
                 "rbac user directory resolve failed for %s: %s",
-                hash_subject(identity.email),
+                hash_subject(identity.subject),
                 exc,
                 exc_info=True,
             )
             decision = RbacDecision(
                 tool_name=tool_name or "",
-                email=identity.email,
+                email=identity.subject,
                 login_provider=login_provider,
                 allowed=False,
                 reason=RbacDenialReason.ROLES_UNAVAILABLE,
+                subject_type=identity.subject_type,
+            )
+            self._record_decision(decision, operation=operation)
+            return decision
+
+        if getattr(user, "subject_type", "human") != identity.subject_type:
+            decision = RbacDecision(
+                tool_name=tool_name or "",
+                email=identity.subject,
+                login_provider=login_provider,
+                allowed=False,
+                reason=RbacDenialReason.SUBJECT_TYPE_MISMATCH,
+                roles=frozenset(user.roles),
+                cache_hit=getattr(user, "from_cache", False),
+                subject_type=identity.subject_type,
             )
             self._record_decision(decision, operation=operation)
             return decision
@@ -273,7 +291,8 @@ class RbacMiddleware(Middleware):
         if user.is_blocked:
             decision = RbacDecision(
                 tool_name=tool_name or "",
-                email=identity.email,
+                email=identity.subject,
+                subject_type=identity.subject_type,
                 login_provider=login_provider,
                 allowed=False,
                 reason=RbacDenialReason.USER_BLOCKED,
@@ -286,7 +305,8 @@ class RbacMiddleware(Middleware):
         if not _user_may_access_tools(user):
             decision = RbacDecision(
                 tool_name=tool_name or "",
-                email=identity.email,
+                email=identity.subject,
+                subject_type=identity.subject_type,
                 login_provider=login_provider,
                 allowed=False,
                 reason=RbacDenialReason.NO_ROLES,
@@ -299,7 +319,8 @@ class RbacMiddleware(Middleware):
         if roles_only or tool_name is None:
             decision = RbacDecision(
                 tool_name="",
-                email=identity.email,
+                email=identity.subject,
+                subject_type=identity.subject_type,
                 login_provider=login_provider,
                 allowed=True,
                 roles=roles,
@@ -312,7 +333,8 @@ class RbacMiddleware(Middleware):
         if policy is None:
             decision = RbacDecision(
                 tool_name=tool_name,
-                email=identity.email,
+                email=identity.subject,
+                subject_type=identity.subject_type,
                 login_provider=login_provider,
                 allowed=False,
                 reason=RbacDenialReason.POLICY_UNAVAILABLE,
@@ -327,7 +349,8 @@ class RbacMiddleware(Middleware):
             ):
                 decision = RbacDecision(
                     tool_name=tool_name,
-                    email=identity.email,
+                    email=identity.subject,
+                subject_type=identity.subject_type,
                     login_provider=login_provider,
                     allowed=False,
                     reason=RbacDenialReason.HUMAN_IDENTITY_REQUIRED,
@@ -338,7 +361,8 @@ class RbacMiddleware(Middleware):
                 return decision
             decision = RbacDecision(
                 tool_name=tool_name,
-                email=identity.email,
+                email=identity.subject,
+                subject_type=identity.subject_type,
                 login_provider=login_provider,
                 allowed=True,
                 roles=roles,
@@ -371,6 +395,7 @@ class RbacMiddleware(Middleware):
                 operation=operation,
                 request_id=_request_correlation_id(),
                 login_provider=decision.login_provider,
+                subject_type=decision.subject_type,
             )
             return
         logger.info(

@@ -33,6 +33,8 @@ def has_interactive_human_identity(identity: VerifiedIdentity | None) -> bool:
     """
     if identity is None:
         return False
+    if identity.subject_type == "service":
+        return False
     claims = identity.claims or {}
     if "interactive" in claims:
         return claims["interactive"] is True

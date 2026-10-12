@@ -39,7 +39,7 @@ from fastmcp.exceptions import ToolError
 from fastmcp.tools.base import ToolResult
 from mcp.shared._httpx_utils import McpHttpClientFactory
 
-from keystone_mcp.identity import AUTHOR_EMAIL_HEADER
+from keystone_mcp.identity import upstream_identity_headers
 from keystone_mcp.identity_assertion import IDENTITY_HEADER, IdentityAssertionSigner
 
 if TYPE_CHECKING:
@@ -175,7 +175,7 @@ class McpProxyAdapter:
                 timeout_seconds=timeout,
                 rbac_mode=ctx.settings.rbac_mode,
             )
-        headers[AUTHOR_EMAIL_HEADER] = ctx.verified_identity.email
+        headers.update(upstream_identity_headers(ctx.verified_identity))
 
         if self._client_factory is not None:
             client = self._client_factory(headers=headers, timeout=timeout)
