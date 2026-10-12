@@ -56,7 +56,15 @@ def register_catalog(
     observability: object | None = None,
     directory: UserDirectory | None = None,
     role_source: RoleSource | None = None,
+    policy_store: object | None = None,
 ) -> None:
+    """``policy_store``, when given, is a ``keystone_mcp.rbac.policy_store.PolicyStore``.
+
+    Accepted here (but not yet used) so the server wiring that builds it does
+    not have to change again when a later card registers the ``policy_*``
+    tools over it; typed as ``object`` to avoid importing the RBAC policy
+    package from the catalog module for a parameter nothing here reads yet.
+    """
     users_admin = UsersAdminAdapter(
         directory=directory, observability=observability, role_source=role_source
     )
