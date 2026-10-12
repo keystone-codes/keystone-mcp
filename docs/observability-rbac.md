@@ -62,8 +62,8 @@ Emitted for every `users_*` admin tool attempt, including ambiguous outcomes
 | --- | --- | --- |
 | `keystone_mcp_rbac_decisions_total` | `decision`, `reason`, `tool_family`, `operation` | Allow/deny counts (`operation` = `list_tools` or `call_tool`) |
 | `keystone_mcp_tool_call_attempts_total` | `tool_family`, `namespace`, `tool`, `auth_method`, `oauth_client_id` | Every `call_tool` entering the stack (outer throttle) |
-| `keystone_mcp_tool_invocations_total` | same + `outcome` | Handler reached (`outcome` = `success`, `tool_error`, `error`) |
-| `keystone_mcp_tool_invocation_seconds` | same + `outcome` | Handler latency histogram |
+| `keystone_mcp_tool_invocations_total` | same + `outcome` | Handler reached (`outcome` = `success`, `tool_error`, `error`, `cancelled`) |
+| `keystone_mcp_tool_invocation_seconds` | same + `outcome` | Handler latency histogram (`outcome` includes `cancelled`) |
 | `keystone_mcp_rbac_directory_resolve_total` | `outcome` | `cache_hit`, `miss`, `unavailable`, `error` |
 | `keystone_mcp_rbac_directory_resolve_seconds` | (histogram) | Resolve latency |
 | `keystone_mcp_rbac_policy_reload_total` | `success` | Policy load/reload (`true` / `false`) |

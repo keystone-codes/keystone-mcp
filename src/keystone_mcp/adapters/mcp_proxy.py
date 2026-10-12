@@ -190,7 +190,12 @@ class McpProxyAdapter:
             )
         async with client:
             raw = await call_upstream_tool(
-                client, tool_name, payload, timeout=timeout, downstream=downstream
+                client,
+                tool_name,
+                payload,
+                timeout=timeout,
+                downstream=downstream,
+                log_namespace=route.namespace,
             )
             if self._status_envelope:
                 # Parsed inside the ``async with`` block: _parse_call_tool_result

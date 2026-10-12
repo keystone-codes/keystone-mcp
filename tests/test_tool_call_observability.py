@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -112,6 +113,10 @@ async def _async_tool_error(_context):
 
 async def _async_error(_context):
     raise RuntimeError("unexpected")
+
+
+async def _async_cancelled(_context):
+    raise asyncio.CancelledError
 
 
 def _ctx(tool_name: str = "reports_read"):
@@ -258,6 +263,15 @@ async def test_error_outcome(observability: RbacObservability):
     with pytest.raises(RuntimeError):
         await middleware.on_call_tool(_ctx(), _async_error)
     assert _invocations("reports_read", "error") == before + 1
+
+
+@pytest.mark.asyncio
+async def test_cancelled_call_counts_as_cancelled(observability: RbacObservability):
+    middleware = ToolCallObservabilityMiddleware(observability=observability)
+    before = _invocations("reports_read", "cancelled")
+    with pytest.raises(asyncio.CancelledError):
+        await middleware.on_call_tool(_ctx(), _async_cancelled)
+    assert _invocations("reports_read", "cancelled") == before + 1
 
 
 @pytest.mark.asyncio

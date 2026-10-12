@@ -74,7 +74,11 @@ def test_support_server_does_not_use_fastmcp():
         .parent.joinpath("support", "lowlevel_upstream.py")
         .read_text(encoding="utf-8")
     )
-    assert "fastmcp" not in source
+    # The upstream app itself must stay on the low-level MCP SDK only; Y04 may
+    # import fastmcp's StreamingASGITransport inside asgi_http_client_factory
+    # when streaming=True (cancellation tests), not in the server code path.
+    before_client_factory, _after = source.split("def asgi_http_client_factory", 1)
+    assert "fastmcp" not in before_client_factory
 
 
 async def test_discovery_registers_every_tool_of_a_lowlevel_upstream(stack):

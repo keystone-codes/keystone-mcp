@@ -29,7 +29,10 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+import anyio
 from fastmcp.server.dependencies import get_context
+from mcp.shared.exceptions import MCPError
+from mcp_types.jsonrpc import REQUEST_TIMEOUT
 
 if TYPE_CHECKING:
     import mcp.types
@@ -83,6 +86,7 @@ async def call_upstream_tool(
     timeout: float,
     meta: dict[str, Any] | None = None,
     downstream: DownstreamCall | None = None,
+    log_namespace: str | None = None,
 ) -> "mcp.types.CallToolResult":
     """Call *name* on the upstream *client* is connected to.
 
@@ -123,9 +127,29 @@ async def call_upstream_tool(
             except Exception as exc:  # noqa: BLE001 - the client going away must not fail the call
                 logger.debug("progress forward dropped: %s", type(exc).__name__)
 
-    return await client.call_tool_mcp(
-        name, arguments, progress_handler=forward, timeout=timeout, meta=meta
-    )
+    try:
+        return await client.call_tool_mcp(
+            name, arguments, progress_handler=forward, timeout=timeout, meta=meta
+        )
+    except anyio.get_cancelled_exc_class():
+        # MCP SDK 2 sends notifications/cancelled (legacy handshake) or aborts the
+        # request POST (2026-07-28) when this task is cancelled; we only log.
+        logger.info(
+            "upstream call cancelled namespace=%s tool=%s reason=%s",
+            log_namespace,
+            name,
+            "cancelled by the client",
+        )
+        raise
+    except MCPError as exc:
+        if exc.code == REQUEST_TIMEOUT:
+            logger.info(
+                "upstream call cancelled namespace=%s tool=%s reason=%s",
+                log_namespace,
+                name,
+                "timed out in keystone-mcp",
+            )
+        raise
 
 
 async def parse_for_status_envelope(

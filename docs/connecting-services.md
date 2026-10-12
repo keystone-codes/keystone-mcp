@@ -252,6 +252,13 @@ meaningful update for a tool that may run long, the same way you would for
 any other MCP client — you do not need to (and cannot reliably) guess
 whether anyone downstream is listening.
 
+Your service should treat cancellation like any other MCP server: on the
+handshake protocol the Python SDK delivers it to your handler as
+`asyncio.CancelledError`; on MCP 2026-07-28 it arrives when the client closes
+the request stream. Release resources in `finally` blocks. Keystone-MCP forwards
+a client cancel and applies the same upstream cancellation when a proxied call
+hits the configured per-tool timeout.
+
 ## Tool naming
 
 Client-visible tool names are `<namespace>_<upstream tool name>` (or the name
