@@ -1,4 +1,4 @@
-# 0011 — Prompts are authorised by name with the tool patterns
+# 0011 — Prompts and resources are authorised by name with the tool patterns
 
 ## Status
 
@@ -26,10 +26,14 @@ Published prompt names are already `<namespace>_<upstream prompt name>` (see
 `CONTINUATION`, and the rest) — the policy file format does not gain a prompts
 section.
 
-**Upstream resources** are not published in this release (`resources/*` is still
-marked not implemented in the facade table). When resources ship, they should
-reuse the same name-based RBAC rule; until then, see the release notes for
-their status.
+**Upstream resources and resource templates** use the same allow patterns as
+tools. Published URIs carry the upstream namespace (`scheme://<namespace>/…`);
+RBAC checks `<namespace>_<resource.name>` for static resources and templates
+(the policy file still has no separate resources section). `RbacMiddleware`
+filters `resources/list` and `resources/templates/list` with
+`policy.allows(roles, rbac_name)`; `resources/read` denies unknown URIs that
+do not match a published resource or template. Keystone does not implement
+`resources/subscribe` and does not publish `notifications/resources/updated`.
 
 ## Consequences
 
