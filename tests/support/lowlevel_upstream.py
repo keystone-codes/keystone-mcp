@@ -81,6 +81,16 @@ ODD_NAMES_SCHEMA: dict[str, Any] = {
     "required": ["from"],
 }
 
+#: Y03: a tool that reports progress while it runs, to exercise
+#: ``notifications/progress`` forwarding. ``steps`` is keyword-only from the
+#: caller's point of view (JSON Schema has no positional arguments).
+COUNT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "steps": {"type": "integer", "default": 3},
+    },
+}
+
 _TOOL_DEFINITIONS: dict[str, types.Tool] = {
     "greet": types.Tool(
         name="greet",
@@ -112,25 +122,40 @@ _TOOL_DEFINITIONS: dict[str, types.Tool] = {
         description="Echo arguments whose names are not Python identifiers.",
         inputSchema=ODD_NAMES_SCHEMA,
     ),
+    "count": types.Tool(
+        name="count",
+        description="Count to `steps`, reporting progress along the way.",
+        inputSchema=COUNT_SCHEMA,
+    ),
 }
 
-#: ``list_tools`` publishes tools in this order.
+#: ``list_tools`` publishes tools in this order when all of them are selected.
+#: ``count`` is deliberately excluded from the *default* selection (``tools=None``
+#: below) so the long-standing tool count every existing test asserts does not
+#: shift just because Y03 added a tool; pass it explicitly via ``tools`` or
+#: ``extra_tools`` to include it.
 _TOOL_ORDER: tuple[str, ...] = ("greet", "search", "report", "fail", "whoami", "odd_names")
 
 
 def build_lowlevel_upstream_app(
     *,
     tools: Collection[str] | None = None,
+    extra_tools: Collection[str] | None = None,
     observed: dict[str, Any] | None = None,
     require_bearer: str | None = None,
+    stateless: bool = True,
+    json_response: bool = True,
 ) -> Starlette:
     """Build a Starlette app around a low-level ``mcp.server.lowlevel.Server``.
 
-    ``tools`` restricts which of the five tools are registered (default: all
-    of them), so a test can target one tool without depending on fixes the
-    others still need. ``observed``, when given, receives the last call's
-    request headers (lower-cased keys) under ``observed["headers"]`` — written
-    by the ``whoami`` tool.
+    ``tools`` restricts which tools are registered (default: the original six
+    -- ``count`` is not one of them, see ``_TOOL_ORDER``), so a test can
+    target one tool without depending on fixes the others still need.
+    ``extra_tools`` adds tools on top of the default six without changing it
+    (e.g. ``extra_tools={"count"}``). ``observed``, when given, receives the
+    last call's request headers (lower-cased keys) under
+    ``observed["headers"]`` — written by the ``whoami`` tool — and, for a
+    tokenless ``count`` call, ``observed["progress_token"] = None``.
 
     ``require_bearer``, when given, makes both ``list_tools`` and
     ``call_tool`` reject a request whose ``Authorization`` header is not
@@ -141,11 +166,19 @@ def build_lowlevel_upstream_app(
     call-tool wrapper always turns a raised exception into one, the same way
     the ``fail`` tool below does).
 
+    ``stateless`` and ``json_response`` are passed straight through to
+    ``StreamableHTTPSessionManager`` (default: unchanged from before Y03). A
+    progress notification can only reach the client before the final response
+    when ``json_response=False`` -- a ``json_response=True`` session buffers
+    the whole answer and sends it as one JSON body, on both protocol eras.
+
     ``StreamableHTTPSessionManager.run()`` can only be entered once per
     instance, so call this again to get a fresh app for each test.
     """
     selected = set(_TOOL_ORDER) if tools is None else set(tools)
-    unknown = selected - set(_TOOL_ORDER)
+    if extra_tools:
+        selected |= set(extra_tools)
+    unknown = selected - set(_TOOL_DEFINITIONS)
     if unknown:
         raise ValueError(f"unknown tool(s): {sorted(unknown)}")
 
@@ -169,10 +202,13 @@ def build_lowlevel_upstream_app(
 
     async def _on_list_tools(ctx: Any, _params: Any) -> types.ListToolsResult:
         _check_bearer(ctx)
-        tools = [_TOOL_DEFINITIONS[name] for name in _TOOL_ORDER if name in selected]
+        # Ordered by _TOOL_DEFINITIONS' own (insertion) order, not _TOOL_ORDER,
+        # so an explicitly-selected tool outside the default six (e.g. just
+        # {"count"}) is still found.
+        tools = [_TOOL_DEFINITIONS[name] for name in _TOOL_DEFINITIONS if name in selected]
         return types.ListToolsResult(tools=tools)
 
-    def _run_tool(ctx: Any, name: str, arguments: dict[str, Any]) -> list[types.ContentBlock]:
+    async def _run_tool(ctx: Any, name: str, arguments: dict[str, Any]) -> list[types.ContentBlock]:
         if name == "greet":
             return [types.TextContent(type="text", text=f"Hello, {arguments['name']}!")]
 
@@ -228,12 +264,27 @@ def build_lowlevel_upstream_app(
                 )
             ]
 
+        if name == "count":
+            steps = arguments.get("steps", 3)
+            # ServerRequestContext.meta is the SDK's own RequestParamsMeta --
+            # unlike the client-side request context's raw wire _meta dict,
+            # it is validated and its key is already snake_case regardless of
+            # the wire's camelCase progressToken (mcp_types/_types.py,
+            # RequestParamsMeta).
+            token = ctx.meta.get("progress_token") if ctx.meta else None
+            if token is not None:
+                for i in range(1, steps + 1):
+                    await ctx.session.report_progress(i, steps, f"step {i}")
+            elif observed is not None:
+                observed["progress_token"] = None
+            return [types.TextContent(type="text", text=f"counted {steps}")]
+
         raise ValueError(f"unknown tool: {name}")
 
     async def _on_call_tool(ctx: Any, params: types.CallToolRequestParams) -> types.CallToolResult:
         try:
             _check_bearer(ctx)
-            content = _run_tool(ctx, params.name, params.arguments or {})
+            content = await _run_tool(ctx, params.name, params.arguments or {})
         except Exception as exc:  # noqa: BLE001 — mirrors the old SDK's auto-wrap
             return types.CallToolResult(
                 content=[types.TextContent(type="text", text=str(exc))],
@@ -247,7 +298,9 @@ def build_lowlevel_upstream_app(
         on_call_tool=_on_call_tool,
     )
 
-    manager = StreamableHTTPSessionManager(app=server, stateless=True, json_response=True)
+    manager = StreamableHTTPSessionManager(
+        app=server, stateless=stateless, json_response=json_response
+    )
 
     class _McpEndpoint:
         """Raw ASGI endpoint handing the request straight to the session manager.
