@@ -30,6 +30,7 @@ from keystone_mcp.auth.oauth_store import (
     OAuthStore,
     build_shared_auth_stores,
 )
+from keystone_mcp.auth.sessions import SessionRevoker
 from keystone_mcp.auth.throttle import PerIdentityThrottle
 from keystone_mcp.catalog import register_catalog
 from keystone_mcp.config import (
@@ -101,6 +102,7 @@ _client_sessions_holder: dict[str, ClientSessionRegistry | None] = {"registry": 
 #: wants to reach it outside the return tuple (a later card's policy_* tool
 #: adapter, a CLI). None whenever RBAC does not enforce or POLICY_TOOLS=off.
 _policy_store_holder: dict[str, PolicyStore | None] = {"store": None}
+_session_revoker_holder: dict[str, SessionRevoker | None] = {"revoker": None}
 
 
 @asynccontextmanager
@@ -342,6 +344,9 @@ def build_server(
         policy_manager=policy_manager,
     )
 
+    session_revoker = SessionRevoker(store, pending_store)
+    _session_revoker_holder["revoker"] = session_revoker
+
     oauth = KeystoneOAuthProvider(
         settings,
         store,
@@ -477,6 +482,7 @@ def build_server(
             directory=directory,
             role_source=policy_role_source(policy_manager),
             policy_store=policy_store,
+            session_revoker=session_revoker,
         )
         _warn_if_admin_tools_are_unguarded(registry, settings)
 

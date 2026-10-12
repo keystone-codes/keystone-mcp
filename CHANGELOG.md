@@ -10,6 +10,7 @@ this project uses [Semantic Versioning](https://semver.org/).
 
 - `policy_*` tools (`policy_read`, `policy_catalog`, `policy_validate`, `policy_role_set`, `policy_role_delete`, `policy_allow_add`, `policy_allow_remove`, `policy_list_set`, `policy_rollback`): administrators change the RBAC policy from the agent; every change is validated against the live catalog, written atomically, reloaded in place and audited. Namespace `policy` is reserved.
 - API keys stored in the users directory (hashed, shown once): `api_keys_issue|list|revoke` tools and `keystone-mcp keys` CLI. Service accounts call MCP with `Authorization: Bearer <key>`.
+- `users_logout`; blocking a user revokes all of their tokens immediately.
 - Service accounts (`svc:<name>`) with their own roles; `service_accounts_list|add|update` tools and `keystone-mcp service-accounts` CLI (built-in directory).
 - Upstreams receive `X-Keystone-Subject` and `X-Keystone-Subject-Type`.
 - `docs/adr/`: six architecture decision records (built-in users directory,
@@ -97,6 +98,8 @@ this project uses [Semantic Versioning](https://semver.org/).
 - `requires_human_identity` accepts any interactive sign-in provider, not
   only Google. Access tokens carry an `interactive` claim.
 - Login page error texts are provider-neutral.
+- New Redis keys `km:oauth:subject:<sub>` (set) and `km:oauth:subject_nbf:<sub>`
+  under `KEYSTONE_MCP_REDIS_KEY_PREFIX`; access tokens carry `iat`.
 
 ### Deprecated
 
@@ -169,9 +172,16 @@ this project uses [Semantic Versioning](https://semver.org/).
 - OIDC discovery endpoints must share the configured issuer origin; login
   providers YAML parse errors no longer echo file contents; unverified email
   without domain restriction is rejected at config load.
+- Token rotation and authorization-code exchange refuse credentials issued at
+  or before a subject not-before timestamp, atomically with the write, so a
+  refresh started before session revocation cannot mint a live pair afterward.
+- `users_block` returns `service_unavailable` when session revocation fails
+  after the directory block succeeds, so a retry can revoke tokens.
 
 ### Migration
 
+- Tokens issued before the upgrade are indexed on first use; a block revokes
+  them in any case. If you share Redis, reserve these key patterns.
 - Google users: nothing to do now; when convenient, move the Google settings into
   a login providers file (`type: google`). The Google redirect URI stays
   `<base>/login/google/callback`.

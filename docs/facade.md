@@ -231,8 +231,9 @@ except `/healthz`/`/readyz`, by the `Host` allowlist
 - When RBAC is enabled, startup is refused only if every configured upstream
   is unreachable, not running with an empty live catalog; a single
   unreachable upstream among several is a warning, not a refusal.
-- Access and refresh tokens are opaque and Redis-backed. There is no bulk
-  revocation of every session for one person.
+- Access and refresh tokens are opaque and Redis-backed. Blocking a person or
+  calling `users_logout` revokes every access and refresh token for that
+  person immediately (see [users.md](users.md)).
 - Refresh tokens have an idle TTL (`KEYSTONE_MCP_REFRESH_TOKEN_TTL`): each
   use resets the clock.
 - The policy and catalog snapshot shipped in this repository cover the

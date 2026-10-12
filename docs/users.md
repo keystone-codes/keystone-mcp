@@ -108,6 +108,14 @@ before their own first sign-in.
 | Change the name or the note | `users_update` |
 | Take away access | `users_block` |
 | Give access back | `users_unblock` |
+| End every OAuth session without blocking | `users_logout` |
+
+`users_block` and `users_logout` revoke all access and refresh tokens for
+that person immediately. The response includes `revoked_tokens` (a count, or
+`null` if the token store was unavailable during a block — the block still
+applies). `users_unblock` does not restore old sessions; the person signs in
+again for new tokens. `users_logout` does not require the email to still
+exist in the directory.
 
 There is no delete. Removing a person means `users_block`.
 
@@ -123,7 +131,7 @@ applied. List the person first, then decide.
 The built-in directory and the HTTP directory both support administration.
 A directory that only reads (the deprecated `UserDirectoryBackend` wrapper
 from a 0.4.0 fork, or a read-only plugin directory) publishes `users_list`
-alone — the other seven tools above are not published at all, rather than
+alone — the other eight administration tools above are not published at all, rather than
 answering with an error. See
 [user-directory.md](user-directory.md#writing-your-own-directory) for what a
 directory declares about itself.

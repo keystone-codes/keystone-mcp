@@ -9,8 +9,11 @@ identity, never from tool arguments.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
+
+from redis.exceptions import RedisError
 
 from keystone_mcp.user_directory.errors import UsersError
 from keystone_mcp.user_directory.protocol import UserDirectory, UserDirectoryAdmin
@@ -18,9 +21,12 @@ from keystone_mcp.user_directory.util import normalize_email
 from keystone_mcp.users.roles import check_role_name, normalize_roles
 
 if TYPE_CHECKING:
+    from keystone_mcp.auth.sessions import SessionRevoker
     from keystone_mcp.observability.service import RbacObservability
     from keystone_mcp.router.context import RouteContext
     from keystone_mcp.router.route import Route
+
+logger = logging.getLogger(__name__)
 
 # Returns the role names the active RBAC policy knows about, or ``None`` when
 # no policy check should be performed (RBAC off). Raised exceptions (e.g.
@@ -42,10 +48,12 @@ class UsersAdminAdapter:
         directory: UserDirectory | None = None,
         role_source: RoleSource | None = None,
         observability: RbacObservability | None = None,
+        session_revoker: SessionRevoker | None = None,
     ) -> None:
         self._directory = directory
         self._role_source = role_source
         self._observability = observability
+        self._session_revoker = session_revoker
 
     @staticmethod
     def _error(
@@ -120,6 +128,9 @@ class UsersAdminAdapter:
         if validation_error is not None:
             self._record_mutation_audit(route, ctx, spec, validation_error)
             return validation_error
+
+        if name == "users_logout":
+            return await self._execute_logout(route, ctx, spec)
 
         allowed_roles: frozenset[str] | None = None
         if name in _ROLE_CHECKED_TOOLS:
@@ -199,7 +210,36 @@ class UsersAdminAdapter:
             self._record_mutation_audit(route, ctx, spec, result)
             return result
 
-        result = self._done(route, ctx, user=mutation.user.to_dict())
+        extra: dict[str, Any] = {}
+        if name == "users_block":
+            if self._session_revoker is None:
+                extra["revoked_tokens"] = 0
+            else:
+                try:
+                    extra["revoked_tokens"] = await self._session_revoker.revoke_subject(
+                        str(spec["email"])
+                    )
+                except RedisError:
+                    logger.warning("user blocked but sessions not revoked: token store unavailable")
+                    result = self._error(
+                        route,
+                        ctx,
+                        code="service_unavailable",
+                        message=(
+                            "user is blocked; sessions were not revoked. "
+                            "Call users_block again to retry session revocation."
+                        ),
+                    )
+                    self._record_mutation_audit(
+                        route,
+                        ctx,
+                        spec,
+                        result,
+                        before_roles=mutation.roles_before,
+                        blocked_before=mutation.blocked_before,
+                    )
+                    return result
+        result = self._done(route, ctx, user=mutation.user.to_dict(), **extra)
         self._record_mutation_audit(
             route,
             ctx,
@@ -208,6 +248,32 @@ class UsersAdminAdapter:
             before_roles=mutation.roles_before,
             blocked_before=mutation.blocked_before,
         )
+        return result
+
+    async def _execute_logout(
+        self,
+        route: Route,
+        ctx: RouteContext,
+        spec: dict[str, Any],
+    ) -> dict[str, Any]:
+        email = normalize_email(str(spec["email"]))
+        if self._session_revoker is None:
+            result = self._done(route, ctx, email=email, revoked_tokens=0)
+            self._record_mutation_audit(route, ctx, spec, result, operation_override="logout")
+            return result
+        try:
+            revoked = await self._session_revoker.revoke_subject(email)
+        except RedisError:
+            result = self._error(
+                route,
+                ctx,
+                code="service_unavailable",
+                message="session store is unavailable",
+            )
+            self._record_mutation_audit(route, ctx, spec, result, operation_override="logout")
+            return result
+        result = self._done(route, ctx, email=email, revoked_tokens=revoked)
+        self._record_mutation_audit(route, ctx, spec, result, operation_override="logout")
         return result
 
     @staticmethod
@@ -238,7 +304,7 @@ class UsersAdminAdapter:
             if not has_full_name and not has_note:
                 return err("at least one of full_name or note is required")
             return None
-        if name in ("users_block", "users_unblock"):
+        if name in ("users_block", "users_unblock", "users_logout"):
             if not spec.get("email"):
                 return err("email is required")
             return None
@@ -267,6 +333,7 @@ class UsersAdminAdapter:
         *,
         before_roles: tuple[str, ...] | None = None,
         blocked_before: bool | None = None,
+        operation_override: str | None = None,
     ) -> None:
         if self._observability is None:
             return
@@ -292,7 +359,7 @@ class UsersAdminAdapter:
                 blocked_before = True
                 blocked_after = False if outcome == "done" else blocked_after
         self._observability.record_users_mutation(
-            operation=route.name,
+            operation=operation_override or route.name,
             actor_email=ctx.verified_identity.subject,
             actor_subject_type=ctx.verified_identity.subject_type,
             target_email=str(target_email) if target_email else None,
