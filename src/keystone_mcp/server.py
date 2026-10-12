@@ -320,6 +320,7 @@ def build_server(
         status_envelope=settings.proxy_status_envelope,
         discovery_retries=settings.upstream_discovery_retries,
         refresh_enabled=settings.refresh_interval_seconds > 0,
+        identity_issuer=settings.base_url.rstrip("/"),
     )
     upstreams.observability = rbac_observability
 
@@ -520,6 +521,7 @@ def _register_default_upstreams(upstreams: UpstreamRegistry, settings: Settings)
             discovery_timeout_seconds=cfg.discovery_timeout_seconds,
             tool_timeout_seconds=cfg.tool_timeout_seconds,
             bearer_env=cfg.bearer_env,
+            identity_secret_env=cfg.identity_secret_env,
         )
 
 

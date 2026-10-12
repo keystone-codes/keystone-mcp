@@ -21,6 +21,7 @@ from fastmcp.client.transports import StreamableHttpTransport
 
 from keystone_mcp.adapters.base import Pattern
 from keystone_mcp.adapters.mcp_proxy import HttpClientFactoryBuilder, McpProxyAdapter
+from keystone_mcp.identity_assertion import IdentityAssertionSigner, resolve_identity_secret
 from keystone_mcp.rbac.upstream_state import UpstreamCatalogState
 from keystone_mcp.router.catalog_fingerprint import tool_fingerprint
 from keystone_mcp.router.proxy_schema import PatchTable, apply_proxy_schema_patches
@@ -311,6 +312,10 @@ class UpstreamRegistry:
     # promise one.
     refresh_enabled: bool = True
     observability: "RbacObservability | None" = None
+    # ``iss`` claim for every identity assertion signed by any upstream
+    # registered here (Y01) -- set by ``build_server`` from
+    # ``settings.base_url`` (already stripped of a trailing slash).
+    identity_issuer: str = ""
     _upstreams: list[UpstreamConfig] = field(default_factory=list)
     _sub_servers: dict[str, FastMCP] = field(default_factory=dict)
     _adapters: dict[str, McpProxyAdapter] = field(default_factory=dict)
@@ -341,6 +346,7 @@ class UpstreamRegistry:
         discovery_timeout_seconds: float | None = None,
         tool_timeout_seconds: float | None = None,
         bearer_env: str | None = None,
+        identity_secret_env: str | None = None,
     ) -> UpstreamConfig:
         """Register an upstream MCP API and mount its namespace sub-server.
 
@@ -351,6 +357,16 @@ class UpstreamRegistry:
         other field on this registry ever holds it, so logging or repr'ing
         the registry cannot leak it. A missing or empty variable refuses
         startup with a ``ValueError`` naming the variable, never its value.
+
+        ``identity_secret_env`` names an environment variable holding this
+        upstream's identity-assertion secret (``auth.identity_secret_env``,
+        Y01): when set, every proxied call carries a signed
+        ``X-Keystone-Identity`` JWT (``aud`` = *name*) alongside
+        ``X-Author-Email``. Re-validated and re-read here (never trusted from
+        an earlier parse), and kept only inside the
+        :class:`~keystone_mcp.identity_assertion.IdentityAssertionSigner`
+        handed to this namespace's adapter — never on this registry or on
+        ``UpstreamConfig``.
         """
         if namespace in self._sub_servers:
             raise ValueError(f"upstream namespace already registered: {namespace}")
@@ -371,6 +387,15 @@ class UpstreamRegistry:
                     "use https outside a private network",
                     namespace,
                 )
+
+        identity_signer: IdentityAssertionSigner | None = None
+        if identity_secret_env is not None:
+            secret = resolve_identity_secret(name, identity_secret_env)
+            identity_signer = IdentityAssertionSigner(
+                audience=name,
+                secret=secret,
+                issuer=self.identity_issuer,
+            )
 
         cfg = UpstreamConfig(
             name=name,
@@ -398,6 +423,7 @@ class UpstreamRegistry:
             http_client_factory=self.http_client_factory,
             status_envelope=self.status_envelope,
             extra_headers=self._auth_headers.get(namespace),
+            identity_signer=identity_signer,
         )
         self._status[namespace] = UpstreamStatus(
             available=False, catalog_known=False, last_error="not discovered yet"
