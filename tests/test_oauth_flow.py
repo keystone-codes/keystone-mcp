@@ -98,6 +98,21 @@ async def test_authorization_server_metadata(harness):
     assert "S256" in body.get("code_challenge_methods_supported", [])
 
 
+async def test_metadata_issuer_equals_base_url(harness):
+    """``issuer_url=settings.base_url`` (unchanged across the fastmcp 4 move, X02):
+
+    the authorization server metadata's ``issuer`` must still name the
+    configured base URL, exactly as it did on fastmcp 3.4.4.
+    ``resources_equivalent`` (not plain string equality), because the SDK's
+    URL type always serializes a bare origin with a trailing slash on both
+    versions -- the same normalization the resource indicator already tolerates.
+    """
+    r = await harness.client.get("/.well-known/oauth-authorization-server")
+    assert r.status_code == 200
+    body = r.json()
+    assert resources_equivalent(body["issuer"], harness.settings.base_url)
+
+
 async def test_dynamic_client_registration(harness):
     client_id = await register_client(harness.client)
     assert client_id

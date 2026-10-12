@@ -23,12 +23,13 @@ import logging
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Callable
 
-import httpx
+import httpx2
 import pydantic_core
 from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
 from fastmcp.exceptions import ToolError
 from fastmcp.tools.base import ToolResult
+from mcp.shared._httpx_utils import McpHttpClientFactory
 
 from keystone_mcp.identity import AUTHOR_EMAIL_HEADER
 
@@ -39,13 +40,15 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _http_client_factory(tool_timeout_seconds: float):
+def _http_client_factory(tool_timeout_seconds: float) -> McpHttpClientFactory:
     """Build the transport's HTTP client with the per-tool timeout applied.
 
-    The transport's own ``sse_read_timeout`` argument is deprecated and ignored
-    by the current client, so the read timeout has to be set on the HTTP client
-    instead. Without this the per-tool budget bounded only the MCP request and
-    not the underlying socket.
+    Without this the per-tool budget bounded only the MCP request and not the
+    underlying socket. The transport hands this factory an ``auth`` object
+    built for ``httpx2`` (``fastmcp.client.auth.bearer.BearerAuth``), so the
+    returned client must be an ``httpx2.AsyncClient`` — an ``httpx.AsyncClient``
+    rejects that ``auth`` argument with a ``TypeError``. Our own HTTP code
+    elsewhere in Keystone stays on ``httpx``; only this fastmcp boundary moves.
 
     Matches the MCP HTTP client factory protocol ``(headers, timeout, auth)``;
     the caller's ``timeout`` is deliberately replaced by the per-tool budget.
@@ -56,10 +59,10 @@ def _http_client_factory(tool_timeout_seconds: float):
         timeout: Any = None,  # noqa: ARG001 — superseded by the per-tool budget
         auth: Any = None,
         **_kwargs: Any,
-    ) -> httpx.AsyncClient:
-        return httpx.AsyncClient(
+    ) -> httpx2.AsyncClient:
+        return httpx2.AsyncClient(
             headers=headers,
-            timeout=httpx.Timeout(tool_timeout_seconds),
+            timeout=httpx2.Timeout(tool_timeout_seconds),
             auth=auth,
             follow_redirects=False,
         )
@@ -73,8 +76,9 @@ def _http_client_factory(tool_timeout_seconds: float):
 #: rather than silently dropping them.
 ClientFactory = Callable[..., Client]
 
-#: ``StreamableHttpTransport`` httpx factory for a resolved per-tool timeout.
-HttpClientFactoryBuilder = Callable[[float], Callable[..., httpx.AsyncClient]]
+#: ``StreamableHttpTransport`` http client factory for a resolved per-tool
+#: timeout.
+HttpClientFactoryBuilder = Callable[[float], McpHttpClientFactory]
 
 
 class McpProxyAdapter:
