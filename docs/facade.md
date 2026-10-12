@@ -149,7 +149,9 @@ File transfer is not built in: run a file service as an upstream MCP server
 3. RBAC, when it is on, allows or denies. The catalog filter uses the same decision.
 4. The router dispatches to a built-in tool or to the upstream proxy.
 5. The proxy forwards the call with `X-Author-Email` and the configured timeout.
-6. The upstream's answer goes back unchanged: every content block,
+6. Progress notifications from the upstream are relayed to the client while
+   the call runs, when the client asked for them.
+7. The upstream's answer goes back unchanged: every content block,
    `structuredContent`, `isError`. With `KEYSTONE_MCP_PROXY_STATUS_ENVELOPE=true`
    it is wrapped in `{state, tool, task_id, result}` and a `status` of
    `error`, `refused` or `accepted` is mapped to an error, a rate-limit
@@ -157,6 +159,26 @@ File transfer is not built in: run a file service as an upstream MCP server
 
 `task_id` is derived from the verified identity, the tool name and the
 canonical arguments, so a retry is recognizable as the same task.
+
+## What passes through the door
+
+Keystone-MCP is a full MCP server on both sides, not a dumb pipe: only the
+parts of the protocol listed below cross it. Anything not listed is either
+not implemented yet or deliberately never forwarded.
+
+| Mechanism | Status |
+|---|---|
+| `tools/list`, `tools/call` | yes |
+| `notifications/progress` (upstream → client) | yes, when the client sends a `progressToken`; both protocol eras |
+| `notifications/tools/list_changed` | yes, after a catalog change, an RBAC policy reload or a users-directory change; both protocol eras — see "Discovery" above |
+| `notifications/cancelled` (client → upstream) | not yet |
+| `prompts/*` | not yet |
+| `resources/*` | not yet |
+| `elicitation/create` (upstream → user) | under evaluation |
+| `sampling/createMessage`, `roots/list` | no, by design: needs its own trust model |
+| `notifications/message` (upstream logs) | no: upstream logs stay with the upstream |
+| `completion/complete` | no |
+| MCP tasks (`tasks/*`) | no |
 
 ## Custom routes
 

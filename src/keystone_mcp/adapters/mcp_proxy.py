@@ -17,6 +17,11 @@ true``) the adapter instead reproduces the 0.3.x behaviour: the response is
 wrapped in the Model M ``{"state", "tool", "task_id", "result"}`` envelope and
 a ``status`` field of ``error``/``refused``/``accepted`` is mapped to an
 error, a rate-limit error, or a pending task.
+
+While the call runs, progress notifications the upstream sends are relayed to
+the client, when the client asked for them -- the actual call to the upstream
+and that relaying both go through :mod:`keystone_mcp.router.upstream_call`,
+the one place Keystone talks to an upstream MCP server.
 """
 
 from __future__ import annotations
@@ -134,6 +139,20 @@ class McpProxyAdapter:
         args: dict[str, Any],
         request: Any,
     ) -> dict[str, Any] | ToolResult:
+        # Local import: keystone_mcp.router (via router/__init__.py ->
+        # router.upstream) imports this module, so a module-level import here
+        # would be circular (see the identity_assertion.py note on the same
+        # problem). Captured first, in the request's own task: it is this
+        # call's only chance to see the client request that is waiting on it
+        # (DownstreamCall.current's docstring explains why that matters).
+        from keystone_mcp.router.upstream_call import (
+            DownstreamCall,
+            call_upstream_tool,
+            parse_for_status_envelope,
+        )
+
+        downstream = DownstreamCall.current()
+
         if request is not None:
             payload = request
         else:
@@ -170,17 +189,19 @@ class McpProxyAdapter:
                 timeout=timeout,
             )
         async with client:
-            result = await client.call_tool(tool_name, payload, raise_on_error=False)
+            raw = await call_upstream_tool(
+                client, tool_name, payload, timeout=timeout, downstream=downstream
+            )
+            if self._status_envelope:
+                # Parsed inside the ``async with`` block: _parse_call_tool_result
+                # decodes against the upstream's output schema, cached on the
+                # still-open session.
+                parsed = await parse_for_status_envelope(client, tool_name, raw)
 
         if self._status_envelope:
-            return self._wrap_status_envelope(result, route, ctx)
+            return self._wrap_status_envelope(parsed, route, ctx)
 
-        return ToolResult(
-            content=list(result.content),
-            structured_content=result.structured_content,
-            meta=result.meta,
-            is_error=result.is_error,
-        )
+        return ToolResult.from_mcp_result(raw)
 
     @staticmethod
     def _wrap_status_envelope(result: Any, route: "Route", ctx: "RouteContext") -> dict[str, Any]:
