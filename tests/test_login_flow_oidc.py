@@ -19,14 +19,13 @@ from conftest import (
     make_pkce,
     register_client,
 )
-from keystone_mcp.auth.identity_provider import StaticIdentityProvider
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import Settings
 from keystone_mcp.contract_tests.fake_oidc import FakeOidcIssuer
-from keystone_mcp.login.api_key import ApiKeyLoginProvider
 from keystone_mcp.login.oidc import OidcLoginProvider
 from keystone_mcp.server import build_server
 from keystone_mcp.user_directory.factory import build_in_memory_user_directory_resolver
+from support.login import dev_token_login
 
 pytestmark = pytest.mark.asyncio
 
@@ -54,12 +53,12 @@ async def okta_harness() -> AsyncIterator[dict]:
     settings = _settings()
     resolver, backend, _ = build_in_memory_user_directory_resolver()
     backend.seed("alice@example.com", roles=("operator",))
-    idp = StaticIdentityProvider({VALID_TOKEN})
+    _login = dev_token_login({VALID_TOKEN})
     mcp, _reg, oauth, *_ = build_server(
         settings=settings,
         oauth_store=InMemoryOAuthStore(),
         user_resolver=resolver,
-        login_providers=[provider, ApiKeyLoginProvider(idp)],
+        login_providers=[provider, _login],
     )
     app = mcp.http_app(path=settings.http_path)
     async with LifespanManager(app):

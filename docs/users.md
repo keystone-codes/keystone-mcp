@@ -221,5 +221,38 @@ The CLI mirrors these operations: `keystone-mcp service-accounts add|list|update
 (requires `KEYSTONE_MCP_USERS_BACKEND=local`). HTTP-backed directories do not
 support service accounts yet.
 
-How a service account signs in is covered in the next section (API keys, once
-configured).
+How a service account proves itself is covered in the next section.
+
+## API keys
+
+API keys tie a secret to either a person or a service account. Only the
+built-in users directory (`KEYSTONE_MCP_USERS_BACKEND=local`) can store them;
+an HTTP-backed directory does not support issuing or checking keys.
+
+An administrator issues keys with the `api_keys_issue` tool or with
+`keystone-mcp keys issue` on the server host. The full key string is shown
+**once** in the response or on the terminal; Keystone stores only a SHA-256
+hash of the secret. List and revoke through `api_keys_list` / `api_keys_revoke`
+or `keystone-mcp keys list|revoke`. Revocation takes effect on the next
+request — there is no separate token index for Bearer keys.
+
+Default lifetime is 90 days; the maximum is 365 days. For a key with no
+expiry, use the CLI only: `keystone-mcp keys issue --no-expiry …`.
+
+**People** can paste a key on the sign-in page together with their email
+when API-key login is enabled and no interactive provider blocks it (see
+[login-providers.md](login-providers.md)). **Service accounts** send the key
+on every MCP call: `Authorization: Bearer ksk_<key_id>_<secret>`.
+
+**In production** (`KEYSTONE_MCP_DEPLOYMENT_PROFILE=production`), keys are
+still issued from the server with `keystone-mcp keys issue`, but the
+`api_keys_issue` tool is **not** published — do not rely on an agent to mint
+machine credentials. If an interactive sign-in provider (Google or another
+OIDC entry) is configured, API-key sign-in for people is refused at startup;
+machines still use Bearer keys on the service account they were issued for.
+
+A key created through an agent passes through the chat with the model. For
+keys that only ever live on a worker host, prefer the CLI on that server.
+
+Bearer tokens minted for people after OAuth sign-in are unrelated to API keys;
+human Bearer access is not accepted for directory API keys.

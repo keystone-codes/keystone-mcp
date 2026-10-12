@@ -20,11 +20,11 @@ from conftest import (
     obtain_access_token,
     register_client,
 )
-from keystone_mcp.auth.identity_provider import StaticIdentityProvider
 from keystone_mcp.auth.login_pending_store import RedisLoginPendingStore
 from keystone_mcp.auth.oauth_store import RedisOAuthStore, build_shared_auth_stores
 from keystone_mcp.config import Settings
 from keystone_mcp.server import build_server
+from support.login import dev_token_login
 
 
 def _redis_url() -> str:
@@ -54,9 +54,9 @@ async def redis_harness(redis_url: str):
     assert isinstance(pending_store, RedisLoginPendingStore)
     assert oauth_store.redis is pending_store.redis
 
-    idp = StaticIdentityProvider({VALID_TOKEN})
+    _login = dev_token_login({VALID_TOKEN})
     mcp, registry, oauth, _upstreams, _policy_manager, _observability, _reconciler = build_server(
-        identity_provider=idp,
+        login_providers=[_login],
         settings=settings,
         oauth_store=oauth_store,
         login_pending_store=pending_store,

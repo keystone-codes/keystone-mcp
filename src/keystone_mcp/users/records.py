@@ -12,16 +12,35 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
-from keystone_mcp.user_directory.types import ServiceAccountRecord, UserRecord, service_subject
-from keystone_mcp.users.models import ServiceAccountRow, UserRow
+from keystone_mcp.user_directory.types import (
+    ApiKeyRecord,
+    ServiceAccountRecord,
+    UserRecord,
+    service_subject,
+)
+from keystone_mcp.users.models import ApiKeyRow, ServiceAccountRow, UserRow
 
 __all__ = [
     "ImportedUser",
     "ResolvedUser",
     "UserRecord",
+    "api_key_record_from_row",
     "service_account_record_from_row",
     "user_record_from_row",
 ]
+
+
+def api_key_record_from_row(row: ApiKeyRow) -> ApiKeyRecord:
+    return ApiKeyRecord(
+        key_id=row.key_id,
+        subject=row.subject,
+        label=row.label,
+        created_at=row.created_at,
+        created_by=row.created_by,
+        expires_at=row.expires_at,
+        revoked_at=row.revoked_at,
+        revoked_by=row.revoked_by,
+    )
 
 
 def service_account_record_from_row(row: ServiceAccountRow) -> ServiceAccountRecord:

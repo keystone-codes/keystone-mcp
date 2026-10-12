@@ -225,6 +225,10 @@ def build_lowlevel_upstream_app(
 
     async def _run_tool(ctx: Any, name: str, arguments: dict[str, Any]) -> list[types.ContentBlock]:
         if name == "greet":
+            if observed is not None:
+                request = ctx.request
+                headers = {k.lower(): v for k, v in request.headers.items()} if request else {}
+                observed["headers"] = headers
             return [types.TextContent(type="text", text=f"Hello, {arguments['name']}!")]
 
         if name == "search":

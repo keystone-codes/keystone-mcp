@@ -15,9 +15,10 @@ from typing import TYPE_CHECKING
 from redis.asyncio import Redis
 
 from keystone_mcp.config import ConfigError, Settings
-from keystone_mcp.user_directory.cache import ResolutionCache
+from keystone_mcp.user_directory.cache import ApiKeyVerificationCache, ResolutionCache
 from keystone_mcp.user_directory.circuit_breaker import CircuitBreaker
 from keystone_mcp.user_directory.protocol import (
+    ApiKeyDirectory,
     ServiceAccountDirectory,
     UserDirectory,
     UserDirectoryAdmin,
@@ -54,6 +55,11 @@ def validate_directory_capabilities(directory: UserDirectory) -> UserDirectory:
         raise ConfigError(
             f"users directory {directory.name!r} declares 'service_accounts' but does not "
             "implement ServiceAccountDirectory"
+        )
+    if "api_keys" in directory.capabilities and not isinstance(directory, ApiKeyDirectory):
+        raise ConfigError(
+            f"users directory {directory.name!r} declares 'api_keys' but does not "
+            "implement ApiKeyDirectory"
         )
     return directory
 
@@ -146,10 +152,10 @@ def build_user_directory_resolver(
                 )
             resolved_revision = InMemoryRevisionReader()
 
-    cache = ResolutionCache(
-        allow_ttl_seconds=settings.users_cache_allow_ttl_seconds,
-        deny_ttl_seconds=settings.users_cache_deny_ttl_seconds,
-    )
+    allow_ttl = settings.users_cache_allow_ttl_seconds
+    deny_ttl = settings.users_cache_deny_ttl_seconds
+    cache = ResolutionCache(allow_ttl_seconds=allow_ttl, deny_ttl_seconds=deny_ttl)
+    api_key_cache = ApiKeyVerificationCache(allow_ttl_seconds=allow_ttl, deny_ttl_seconds=deny_ttl)
     circuit = CircuitBreaker(
         failure_threshold=settings.users_circuit_failure_threshold,
         recovery_seconds=float(settings.users_circuit_recovery_seconds),
@@ -159,6 +165,7 @@ def build_user_directory_resolver(
         revision_reader=resolved_revision,
         cache=cache,
         circuit_breaker=circuit,
+        api_key_cache=api_key_cache,
     )
 
 
@@ -174,16 +181,21 @@ def build_in_memory_user_directory_resolver(
 
     directory = InMemoryUserDirectory()
     revision_reader = InMemoryRevisionReader()
+    resolution_cache = ResolutionCache(
+        allow_ttl_seconds=allow_ttl_seconds,
+        deny_ttl_seconds=deny_ttl_seconds,
+    )
     resolver = CachedUserDirectoryResolver(
         directory,
         revision_reader=revision_reader,
-        cache=ResolutionCache(
-            allow_ttl_seconds=allow_ttl_seconds,
-            deny_ttl_seconds=deny_ttl_seconds,
-        ),
+        cache=resolution_cache,
         circuit_breaker=CircuitBreaker(
             failure_threshold=failure_threshold,
             recovery_seconds=recovery_seconds,
+        ),
+        api_key_cache=ApiKeyVerificationCache(
+            allow_ttl_seconds=allow_ttl_seconds,
+            deny_ttl_seconds=deny_ttl_seconds,
         ),
     )
     return resolver, directory, revision_reader

@@ -184,6 +184,38 @@ for. The log shows the host only: if the client's redirect uses a custom
 scheme (not `http`/`https`), the entry must be `scheme://host`, not the
 bare host.
 
+## Machines (service accounts)
+
+Scripts, CI jobs, and other non-interactive callers use a **service account**
+(`svc:<name>`) and an API key issued on the server. Ask an administrator to
+create the account and run `keystone-mcp keys issue` (or use a non-production
+deployment where the `api_keys_issue` tool is available). Store the key like
+any other secret; you cannot retrieve it again from Keystone.
+
+### Python (`fastmcp`)
+
+```python
+from fastmcp import Client
+from fastmcp.client.transports import StreamableHttpTransport
+
+transport = StreamableHttpTransport(
+    "https://mcp.example.com/mcp/",
+    headers={"Authorization": "Bearer ksk_<key_id>_<secret>"},
+)
+async with Client(transport) as client:
+    await client.ping()
+```
+
+### Claude Code (HTTP with a fixed header)
+
+```bash
+claude mcp add --transport http keystone-bot https://mcp.example.com/ \
+  --header "Authorization: Bearer ksk_<key_id>_<secret>"
+```
+
+Use the exact URL and path your operator gave you. The key must belong to the
+service account that holds the roles your automation needs.
+
 ## If sign-in does not work
 
 | Symptom | Fix |

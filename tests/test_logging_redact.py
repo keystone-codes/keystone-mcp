@@ -44,6 +44,15 @@ def test_redact_dict_keystone_identity_header() -> None:
     assert out["path"] == "/mcp"
 
 
+def test_api_key_is_masked_keeping_key_id() -> None:
+    key_id = "a" * 12
+    secret = "A" * 43
+    raw = f"Authorization: Bearer ksk_{key_id}_{secret}"
+    redacted = redact_string(raw)
+    assert secret not in redacted
+    assert f"ksk_{key_id}_***" in redacted
+
+
 def test_redact_bare_jwt_outside_bearer_prefix() -> None:
     """A JWT logged as a raw header value (no "Bearer " prefix, no key=value
 

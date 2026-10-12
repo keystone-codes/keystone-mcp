@@ -8,8 +8,6 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 
-from keystone_mcp.auth.identity_provider import StaticIdentityProvider
-from keystone_mcp.login.api_key import ApiKeyLoginProvider
 from keystone_mcp.login.factory import validate_login_providers
 from keystone_mcp.login.protocol import (
     FormField,
@@ -19,6 +17,7 @@ from keystone_mcp.login.protocol import (
 )
 from support.fake_login import FakeRedirectProvider
 from support.google_oidc_fixtures import build_mock_google_oidc
+from support.login import dev_token_login
 
 pytestmark = pytest.mark.asyncio
 
@@ -44,7 +43,7 @@ def test_google_provider_satisfies_redirect_protocol():
 
 
 def test_api_key_provider_satisfies_form_protocol():
-    provider = ApiKeyLoginProvider(StaticIdentityProvider({"tok"}))
+    provider = dev_token_login({"tok"})
     assert isinstance(provider, FormLoginProvider)
     assert provider.kind == "form"
     assert provider.name == "api_key"
@@ -65,7 +64,7 @@ def test_validate_login_providers_rejects_duplicates_bad_names_and_two_forms():
     with pytest.raises(ValueError, match="form"):
         validate_login_providers(
             [
-                ApiKeyLoginProvider(StaticIdentityProvider(set())),
+                dev_token_login(set()),
                 FakeFormProvider("other_form"),
             ]
         )
@@ -189,7 +188,13 @@ async def test_google_complete_maps_errors():
 
 
 async def test_api_key_verify_lowercases_email_and_rejects_bad_token():
-    provider = ApiKeyLoginProvider(StaticIdentityProvider({"good-token"}))
+    provider = dev_token_login(
+        {"good-token"}
+        if isinstance({"good-token"}, set)
+        else set({"good-token"})
+        if False
+        else {"good-token"}
+    )
 
     identity = await provider.verify({"email": " Alice@Example.COM ", "api_token": "good-token"})
     assert identity.email == "alice@example.com"

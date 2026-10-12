@@ -10,7 +10,6 @@ from fastmcp.exceptions import ToolError
 from fastmcp.server.middleware import MiddlewareContext
 
 from keystone_mcp.adapters.stub import StubAdapter
-from keystone_mcp.auth.identity_provider import StaticIdentityProvider
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import Settings
 from keystone_mcp.identity import VerifiedIdentity, resolve_verified_identity
@@ -30,6 +29,7 @@ from keystone_mcp.user_directory import (
     build_in_memory_user_directory_resolver,
     is_critical_tool,
 )
+from support.login import dev_token_login
 
 MOUNTED_TEST_POLICY = """\
 version: "test-mounted"
@@ -391,7 +391,7 @@ def test_rbac_observe_registers_middleware(tmp_path: Path):
     )
     resolver, _backend, _ = build_in_memory_user_directory_resolver()
     mcp, _registry, _oauth, _upstreams, policy_manager, _observability, _reconciler = build_server(
-        identity_provider=StaticIdentityProvider({"token"}),
+        login_providers=[dev_token_login({"token"})],
         settings=settings,
         oauth_store=InMemoryOAuthStore(),
         user_resolver=resolver,
@@ -407,7 +407,7 @@ def test_rbac_disabled_does_not_register_middleware(tmp_path: Path):
     policy.write_text(default_policy_path().read_text(encoding="utf-8"), encoding="utf-8")
     settings = Settings(base_url="http://localhost:8080", rbac_mode="off")
     mcp, _registry, _oauth, _upstreams, policy_manager, _observability, _reconciler = build_server(
-        identity_provider=StaticIdentityProvider({"token"}),
+        login_providers=[dev_token_login({"token"})],
         settings=settings,
         oauth_store=InMemoryOAuthStore(),
     )
@@ -427,7 +427,7 @@ def test_rbac_enabled_registers_middleware(tmp_path: Path):
     )
     resolver, _backend, _ = build_in_memory_user_directory_resolver()
     mcp, _registry, _oauth, _upstreams, policy_manager, _observability, _reconciler = build_server(
-        identity_provider=StaticIdentityProvider({"token"}),
+        login_providers=[dev_token_login({"token"})],
         settings=settings,
         oauth_store=InMemoryOAuthStore(),
         user_resolver=resolver,

@@ -117,3 +117,19 @@ class ServiceAccountRoleRow(Base):
     role: Mapped[str] = mapped_column(String(64), nullable=False)
 
     account: Mapped[ServiceAccountRow] = relationship(back_populates="roles")
+
+
+class ApiKeyRow(Base):
+    """A hashed API key bound to a human or service-account subject."""
+
+    __tablename__ = "keystone_api_key"
+
+    key_id: Mapped[str] = mapped_column(String(12), primary_key=True)
+    subject: Mapped[str] = mapped_column(String(330), nullable=False, index=True)
+    secret_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    label: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_by: Mapped[str | None] = mapped_column(String(330), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow)
+    expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    revoked_by: Mapped[str | None] = mapped_column(String(330), nullable=True)

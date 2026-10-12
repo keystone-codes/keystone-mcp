@@ -12,12 +12,12 @@ import pytest
 from fastmcp import Client, FastMCP
 from fastmcp.exceptions import ToolError
 
-from keystone_mcp.auth.identity_provider import StaticIdentityProvider
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import Settings
 from keystone_mcp.identity import VerifiedIdentity
 from keystone_mcp.router.throttle_middleware import THROTTLE_MESSAGE
 from keystone_mcp.server import build_server
+from support.login import dev_token_login
 
 SUBJECT = "user@example.com"
 DEFAULT_THROTTLE_MAX = 120
@@ -41,7 +41,7 @@ def _build_app(settings: Settings, **kwargs) -> FastMCP:
     from keystone_mcp.adapters.stub import StubAdapter
 
     mcp, registry, _oauth, _upstreams, policy_manager, _obs, _reconciler = build_server(
-        identity_provider=StaticIdentityProvider({"token"}),
+        login_providers=[dev_token_login({"token"})],
         settings=settings,
         oauth_store=InMemoryOAuthStore(),
         register_builtin_catalog=False,

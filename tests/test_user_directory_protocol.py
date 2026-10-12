@@ -16,7 +16,6 @@ from pathlib import Path
 
 import pytest
 
-from keystone_mcp.auth.identity_provider import StaticIdentityProvider
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import ConfigError, Settings
 from keystone_mcp.server import build_server
@@ -28,6 +27,7 @@ from keystone_mcp.user_directory.http import HttpUserDirectory
 from keystone_mcp.user_directory.local import LocalUserDirectory
 from keystone_mcp.user_directory.protocol import UserDirectoryAdmin
 from keystone_mcp.user_directory.types import UserResolveResult
+from support.login import dev_token_login
 from support.users_store import make_users_store
 
 
@@ -108,7 +108,7 @@ def test_build_server_validates_an_injected_user_directory() -> None:
     settings = Settings(base_url="http://localhost:8080", rbac_mode="off")
     with pytest.raises(ConfigError, match="declares 'admin'"):
         build_server(
-            identity_provider=StaticIdentityProvider({"token"}),
+            login_providers=[dev_token_login({"token"})],
             settings=settings,
             oauth_store=InMemoryOAuthStore(),
             user_directory=_AdminlessDirectory(),
