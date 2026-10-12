@@ -69,6 +69,8 @@ this project uses [Semantic Versioning](https://semver.org/).
   `keystone_mcp.contrib.adapters`. The webhook adapter reads
   `KEYSTONE_MCP_CONTRIB_WEBHOOK_*` when it is constructed; it has no default
   base URL.
+- `requires_human_identity` accepts any interactive sign-in provider, not
+  only Google. Access tokens carry an `interactive` claim.
 
 ### Deprecated
 
@@ -107,6 +109,8 @@ this project uses [Semantic Versioning](https://semver.org/).
   provider, and a custom redirect provider's callback always failed with 503.
 - A redirect provider's `begin()` rejecting or raising now returns a sign-in
   error page (400 or 503) instead of an unhandled 500.
+- Refreshing a session opened through a sign-in provider that is no longer
+  configured is refused.
 
 ### Migration
 
@@ -121,6 +125,8 @@ this project uses [Semantic Versioning](https://semver.org/).
   and rename the variables to `KEYSTONE_MCP_CONTRIB_WEBHOOK_BASE_URL`,
   `_CLIENT`, `_PROJECT`, `_API_TOKEN`, `_LONG_POLL_SECONDS`, or pass
   `WebhookSettings` to the constructor.
+- Sessions opened before the upgrade keep working; a session whose provider
+  was removed from the configuration must sign in again.
 
 ## [0.4.0] - 2026-10-11
 

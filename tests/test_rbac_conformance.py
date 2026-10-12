@@ -22,7 +22,6 @@ from fastmcp.exceptions import ToolError
 from fastmcp.server.middleware import MiddlewareContext
 
 from keystone_mcp.identity import VerifiedIdentity
-from keystone_mcp.rbac.human_identity import INTERACTIVE_AUTH_METHOD
 from keystone_mcp.rbac.loader import assert_live_catalog_validation
 from keystone_mcp.rbac.policy import load_policy
 from keystone_mcp.router.rbac_middleware import CLIENT_DENIAL_MESSAGE, RbacDenialReason
@@ -136,7 +135,7 @@ def patch_identity(monkeypatch):
         "keystone_mcp.router.rbac_middleware.resolve_verified_identity",
         lambda: VerifiedIdentity(
             email=CONFORMANCE_EMAIL,
-            claims={"email": CONFORMANCE_EMAIL, "auth_method": INTERACTIVE_AUTH_METHOD},
+            claims={"email": CONFORMANCE_EMAIL, "auth_method": "google", "interactive": True},
         ),
     )
 

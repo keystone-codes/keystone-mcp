@@ -37,7 +37,10 @@ start. Details, including recovering a lost administrator account, are in
 - **Google** (`KEYSTONE_MCP_ENABLED_LOGIN_METHODS=google`) — the production
   method. The email Google verifies is looked up in the users directory,
   lower-cased first; an email can never carry different directory entries
-  through different casing.
+  through different casing. Google and any other interactive sign-in
+  provider mark the session `interactive`, which is what
+  `requires_human_identity` ([rbac-policy-format.md](rbac-policy-format.md))
+  actually checks — not the provider's name.
 - **DEV token** (`KEYSTONE_MCP_DEV_TOKENS`) — a shared secret for testing
   roles without wiring up Google. A holder signs in as *any* email that
   exists in the directory, so it is accepted only under the `local` profile

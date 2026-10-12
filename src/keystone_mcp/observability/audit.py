@@ -79,6 +79,7 @@ class AuthzAuditRecorder:
         operation: str,
         request_id: str | None,
         critical: bool = False,
+        login_provider: str | None = None,
     ) -> None:
         if not self.should_emit(allowed=allowed, tool_name=tool_name, operation=operation):
             return
@@ -98,6 +99,10 @@ class AuthzAuditRecorder:
             "cache_hit": cache_hit,
             "operation": operation,
             "request_id": request_id,
+            # The sign-in method's name (X05): lets an operator see *why* a
+            # human_identity_required denial happened without looking up the
+            # token separately, e.g. "signed in with api_key".
+            "login_provider": login_provider,
         }
         self._emit(event)
 

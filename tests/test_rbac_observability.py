@@ -183,6 +183,74 @@ async def test_authz_audit_event_fields(
     assert event["operation"] == "call_tool"
 
 
+HUMAN_GATE_POLICY = """\
+version: "audit-human-gate"
+default_deny: true
+roles:
+  administrator:
+    allow: ["*"]
+requires_human_identity: ["ledger_commit"]
+"""
+
+
+@pytest.mark.asyncio
+async def test_human_identity_required_denial_records_login_provider(
+    caplog: pytest.LogCaptureFixture,
+    tmp_path: Path,
+    monkeypatch,
+):
+    """The audit event names the sign-in method behind a human_identity_required
+    denial (X05), so an operator can read "signed in with api_key" straight
+    off the log line instead of cross-referencing the token store.
+    """
+    from keystone_mcp.adapters.stub import StubAdapter
+
+    policy_path = tmp_path / "human-gate-policy.yaml"
+    policy_path.write_text(HUMAN_GATE_POLICY, encoding="utf-8")
+    settings = Settings(
+        base_url="http://localhost:8080",
+        rbac_mode="enforce",
+        rbac_policy_path=str(policy_path),
+        redis_url="redis://localhost:6379/0",
+        rbac_audit_enabled=True,
+        rbac_audit_list_tools_sample_rate=1.0,
+    )
+    caplog.set_level(logging.INFO)
+    manager = RbacPolicyManager(settings)
+    registry = RouterRegistry(RouterEngine(settings), FastMCP("host"))
+    registry.add_route("ledger_commit", StubAdapter(), mode="live")
+    manager.load_initial(registry)
+    observability = RbacObservability(settings, policy_manager=manager)
+
+    monkeypatch.setattr(
+        "keystone_mcp.router.rbac_middleware.resolve_verified_identity",
+        lambda: VerifiedIdentity(
+            email="admin@example.com",
+            claims={
+                "email": "admin@example.com",
+                "auth_method": "api_key",
+                "interactive": False,
+            },
+        ),
+    )
+    middleware = _middleware(
+        settings, observability, email="admin@example.com", roles=("administrator",)
+    )
+    ctx = MiddlewareContext(message=type("Msg", (), {"name": "ledger_commit"})())
+
+    async def call_next(_context):
+        return {"ok": True}
+
+    with pytest.raises(ToolError):
+        await middleware.on_call_tool(ctx, call_next)
+
+    events = [e for e in _parse_audit_records(caplog) if e["event"] == "rbac_authz_decision"]
+    assert len(events) == 1
+    event = events[0]
+    assert event["reason"] == "human_identity_required"
+    assert event["login_provider"] == "api_key"
+
+
 @pytest.mark.asyncio
 async def test_list_tools_deny_always_audited(
     caplog: pytest.LogCaptureFixture,
