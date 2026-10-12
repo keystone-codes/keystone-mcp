@@ -22,6 +22,8 @@ find there, not just the file name.
 - [How sections, discovery and the proxy work](facade.md)
 - [Mount options, timeouts, schema patches, extending a fork](adding-routes.md)
 - [Sample upstream service](../examples/hello-upstream/README.md)
+- [contrib: reference code for forks](contrib/README.md), including the
+  [reference adapters](contrib/adapters.md)
 
 ## I run Keystone-MCP
 

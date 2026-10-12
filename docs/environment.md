@@ -494,19 +494,6 @@ How a service is mounted, filtered and discovered is [facade.md](facade.md).
 | `KEYSTONE_MCP_INTERNAL_ALLOWED_CIDRS` | `127.0.0.1/32,::1/128` | Comma-separated networks allowed to reach `/metrics` and `/internal/*`. These routes carry no credential. |
 | `KEYSTONE_MCP_INTERNAL_ENDPOINTS_ENABLED` | `false` | Enables the live-published-tool-names introspection route. |
 
-## Reference adapters
-
-These apply only when a deployment registers the reference adapters. They are
-not mounted by default. See [facade.md](facade.md).
-
-| Variable | Default | Meaning |
-|---|---|---|
-| `KEYSTONE_MCP_WEBHOOK_BASE_URL` | `http://localhost:8000` | Base URL the reference `webhook` adapter submits to and polls. |
-| `KEYSTONE_MCP_WEBHOOK_CLIENT` | `""` | Webhook route client segment. |
-| `KEYSTONE_MCP_WEBHOOK_PROJECT` | `""` | Webhook route project segment. |
-| `KEYSTONE_MCP_WEBHOOK_API_TOKEN` | `""` | Optional service token forwarded to the webhook. |
-| `KEYSTONE_MCP_LONG_POLL` | `40` | Long-poll budget, seconds, before the webhook adapter returns a pending envelope. |
-
 ## Removed variables
 
 Keystone-MCP refuses to start, or logs a warning, when one of these is still set.
@@ -514,6 +501,11 @@ Keystone-MCP refuses to start, or logs a warning, when one of these is still set
 - `KEYSTONE_MCP_RBAC_ENABLED` — removed in 0.5.0. Use `KEYSTONE_MCP_RBAC_MODE`. Startup is refused while it is set.
 - `KEYSTONE_MCP_DET_INTERNAL_URL` — removed in 0.5.0. Nothing replaces it. A warning is logged while it is set.
 - `KEYSTONE_MCP_FILE_API_URL` — removed in 0.5.0; startup is refused while it is set. File transfer is an upstream service, see [connecting-services.md](connecting-services.md).
+- `KEYSTONE_MCP_WEBHOOK_BASE_URL` — removed in 0.5.0. A warning is logged while it is set. Use `KEYSTONE_MCP_CONTRIB_WEBHOOK_*`, see [contrib/adapters.md](contrib/adapters.md).
+- `KEYSTONE_MCP_WEBHOOK_CLIENT` — removed in 0.5.0. A warning is logged while it is set. Use `KEYSTONE_MCP_CONTRIB_WEBHOOK_*`, see [contrib/adapters.md](contrib/adapters.md).
+- `KEYSTONE_MCP_WEBHOOK_PROJECT` — removed in 0.5.0. A warning is logged while it is set. Use `KEYSTONE_MCP_CONTRIB_WEBHOOK_*`, see [contrib/adapters.md](contrib/adapters.md).
+- `KEYSTONE_MCP_WEBHOOK_API_TOKEN` — removed in 0.5.0. A warning is logged while it is set. Use `KEYSTONE_MCP_CONTRIB_WEBHOOK_*`, see [contrib/adapters.md](contrib/adapters.md).
+- `KEYSTONE_MCP_LONG_POLL` — removed in 0.5.0. A warning is logged while it is set. Use `KEYSTONE_MCP_CONTRIB_WEBHOOK_*`, see [contrib/adapters.md](contrib/adapters.md).
 
 ## Docker
 
