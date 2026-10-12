@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from keystone_mcp.rbac.loader import RbacPolicyManager
     from keystone_mcp.router.registry import RouterRegistry
     from keystone_mcp.router.upstream import UpstreamRegistry
+    from keystone_mcp.surface.client_sessions import ClientSessionRegistry
     from keystone_mcp.user_directory.revision import RevisionReader
 
 logger = logging.getLogger(__name__)
@@ -48,6 +49,7 @@ class SurfaceReconciler:
     policy_manager: RbacPolicyManager | None
     observability: RbacObservability | None
     revision_reader: RevisionReader | None = None
+    client_sessions: ClientSessionRegistry | None = None
 
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
     _policy_reload_event: asyncio.Event = field(
@@ -158,31 +160,51 @@ class SurfaceReconciler:
         if force_policy:
             self._policy_reload_event.clear()
 
+        catalog_changed = False
         try:
-            await self._refresh_catalogs()
+            catalog_changed = await self._refresh_catalogs()
         except asyncio.CancelledError:
             raise
         except Exception:
             logger.exception("surface reconciler step %s failed", "refresh_catalogs")
 
+        policy_reloaded = False
         try:
-            await self._maybe_reload_policy(force=force_policy)
+            policy_reloaded = await self._maybe_reload_policy(force=force_policy)
         except asyncio.CancelledError:
             raise
         except Exception:
             logger.exception("surface reconciler step %s failed", "maybe_reload_policy")
 
+        users_revision_changed = False
         try:
-            await self._observe_users_revision()
+            users_revision_changed = await self._observe_users_revision()
         except asyncio.CancelledError:
             raise
         except Exception:
             logger.exception("surface reconciler step %s failed", "observe_users_revision")
 
-    async def _refresh_catalogs(self) -> None:
+        if (
+            catalog_changed or policy_reloaded or users_revision_changed
+        ) and self.client_sessions is not None:
+            reached = await self.client_sessions.broadcast_list_changed({"tools"})
+            logger.info(
+                "sent tools/list_changed to %d session(s) (catalog=%s policy=%s users=%s)",
+                reached,
+                catalog_changed,
+                policy_reloaded,
+                users_revision_changed,
+            )
+            if self.observability is not None:
+                self.observability.record_list_changed(kind="tools", sessions=reached)
+
+    async def _refresh_catalogs(self) -> bool:
+        """Refresh every configured namespace; return whether any tool list changed."""
+        changed = False
         for cfg in self.upstreams._upstreams:
             try:
-                await self._refresh_namespace(cfg)
+                if await self._refresh_namespace(cfg):
+                    changed = True
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -192,8 +214,10 @@ class SurfaceReconciler:
                     cfg.namespace,
                 )
                 self._record_catalog_outcome(held=True)
+        return changed
 
-    async def _refresh_namespace(self, cfg: object) -> None:
+    async def _refresh_namespace(self, cfg: object) -> bool:
+        """Refresh one namespace's tool catalog; return whether it changed (added/removed/updated)."""
         from keystone_mcp.router.upstream import UpstreamConfig
 
         assert isinstance(cfg, UpstreamConfig)
@@ -224,7 +248,7 @@ class SurfaceReconciler:
                 exc,
             )
             self._record_catalog_outcome(held=True)
-            return
+            return False
 
         became_available = self.upstreams.mark_available(namespace)
         specs = build_upstream_tool_specs(cfg, tools, schema_patches=self.upstreams.schema_patches)
@@ -242,7 +266,7 @@ class SurfaceReconciler:
                 )
                 self._record_catalog_outcome(held=True)
                 self._maybe_log_drift(became_available)
-                return
+                return False
             logger.warning(
                 "upstream refresh namespace=%s empty twice; removing proxy tools",
                 namespace,
@@ -256,7 +280,7 @@ class SurfaceReconciler:
             # empty) catalog unchanged still needs its policy allow patterns
             # re-verified: nothing else triggers that check for it (P06).
             self._maybe_log_drift(became_available)
-            return
+            return False
 
         added, removed, updated, skipped = self._apply_namespace_diff(cfg, specs, previous, desired)
         # Do not cache a fingerprint for a route that was skipped (an
@@ -288,6 +312,7 @@ class SurfaceReconciler:
         else:
             self._record_catalog_outcome(unchanged=True)
         self._maybe_log_drift(became_available, added=added, removed=removed, updated=updated)
+        return bool(added or removed or updated)
 
     def _maybe_log_drift(
         self,
@@ -455,15 +480,16 @@ class SurfaceReconciler:
             )
         return fingerprints
 
-    async def _maybe_reload_policy(self, *, force: bool) -> None:
+    async def _maybe_reload_policy(self, *, force: bool) -> bool:
+        """Reload the RBAC policy if its files changed (or ``force``); return whether it was."""
         if self.policy_manager is None:
-            return
+            return False
         current_policy, current_snapshot = await asyncio.to_thread(
             policy_files_content_hashes, self.settings
         )
         unchanged = current_policy == self._policy_hash and current_snapshot == self._snapshot_hash
         if unchanged and not force:
-            return
+            return False
 
         result = await asyncio.to_thread(self.policy_manager.reload, self.registry)
         if self.observability is not None:
@@ -477,17 +503,19 @@ class SurfaceReconciler:
                 logger.info("rbac policy reloaded after file change")
         else:
             logger.warning("rbac policy reload rejected: %s", result.error)
+        return result.success
 
-    async def _observe_users_revision(self) -> None:
+    async def _observe_users_revision(self) -> bool:
+        """Return whether the users-directory revision changed since the last tick."""
         if self.revision_reader is None:
-            return
+            return False
         try:
             revision = await self.revision_reader.current()
         except Exception:
-            return
+            return False
         if self._last_users_revision is None:
             self._last_users_revision = revision
-            return
+            return False
         if revision != self._last_users_revision:
             logger.info(
                 "users directory revision changed %s -> %s",
@@ -495,6 +523,8 @@ class SurfaceReconciler:
                 revision,
             )
             self._last_users_revision = revision
+            return True
+        return False
 
     def _record_catalog_outcome(
         self,
