@@ -596,6 +596,25 @@ def _register_default_upstreams(upstreams: UpstreamRegistry, settings: Settings)
     for cfg in settings.upstreams:
         if not cfg.enabled:
             continue
+        # TODO(stdio wiring): remove once stdio upstreams are proxied.
+        # The registry (Y08) and the process supervisor already accept and
+        # run `transport: stdio` entries, but nothing yet connects a
+        # supervised process to discovery or the proxy -- that is the next
+        # card. Mounting a stdio entry as an HTTP upstream here would give it
+        # `url=""`, which cannot be reached: discovery would fail, the
+        # namespace would stay unavailable, and with
+        # KEYSTONE_MCP_UPSTREAM_REQUIRE_ALL=true that would refuse to start
+        # anyway, but with a confusing "discovery failed" reason instead of
+        # the real one. A clear refusal at startup is more honest than a
+        # silently broken upstream, and `keystone-mcp upstream validate`
+        # still accepts the entry so an operator can prepare the registry
+        # ahead of the wiring landing.
+        if cfg.transport == "stdio":
+            raise ConfigError(
+                f"upstream {cfg.name!r} (namespace={cfg.namespace}): transport: stdio "
+                "upstreams are declared in the registry but not wired to the proxy yet "
+                "in this build; set enabled: false until stdio proxying is available"
+            )
         upstreams.add_upstream(
             cfg.name,
             cfg.url,

@@ -22,6 +22,8 @@ this project uses [Semantic Versioning](https://semver.org/).
 - Upstream registry: `transport: stdio` with `command`, `args`, `env`
   (names of keystone-mcp variables, never their values) and `cwd`; a
   supervised child process with restart backoff (1 second doubling to 60).
+  Registry and supervisor only in this release — proxying calls to the
+  process lands with the stdio wiring.
 - `notifications/tools/list_changed` is sent to open sessions and
   `subscriptions/listen` streams after a catalog change, a policy reload or
   a users-directory change.
