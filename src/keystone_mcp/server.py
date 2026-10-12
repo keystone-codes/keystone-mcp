@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import signal
+from collections.abc import Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -47,6 +48,8 @@ from keystone_mcp.env_file import load_env_file
 from keystone_mcp.http.access_log import AccessLogMiddleware
 from keystone_mcp.http.host_guard import HostGuardMiddleware
 from keystone_mcp.http.readiness import ReadinessProbe
+from keystone_mcp.login.factory import build_login_providers, validate_login_providers
+from keystone_mcp.login.protocol import LoginProvider
 from keystone_mcp.observability import RbacObservability
 from keystone_mcp.observability.logging import configure_logging
 from keystone_mcp.rbac.catalog import (
@@ -82,6 +85,7 @@ logger = logging.getLogger(__name__)
 
 _reconciler_holder: dict[str, SurfaceReconciler | None] = {"reconciler": None}
 _users_store_holder: dict[str, UsersStore | None] = {"store": None}
+_login_providers_holder: dict[str, list[LoginProvider] | None] = {"providers": None}
 
 
 @asynccontextmanager
@@ -155,6 +159,7 @@ def build_server(
     google_oidc_client: object | None = None,
     observability: RbacObservability | None = None,
     users_store: UsersStore | None = None,
+    login_providers: Sequence[LoginProvider] | None = None,
 ) -> tuple[
     FastMCP,
     RouterRegistry,
@@ -170,8 +175,18 @@ def build_server(
     routes, and seed valid tokens.
     """
     settings = settings or load_settings()
-    if identity_provider is None:
-        identity_provider = build_identity_provider(settings)
+    if login_providers is not None and (
+        identity_provider is not None or google_oidc_client is not None
+    ):
+        raise ValueError("pass either login_providers or identity_provider/google_oidc_client")
+    if login_providers is None:
+        if identity_provider is None:
+            identity_provider = build_identity_provider(settings)
+        login_providers = build_login_providers(
+            settings, identity_provider=identity_provider, google_oidc_client=google_oidc_client
+        )
+    validate_login_providers(login_providers)
+    _login_providers_holder["providers"] = list(login_providers)
 
     if oauth_store is None:
         store, pending_store = build_shared_auth_stores(settings)
@@ -265,18 +280,18 @@ def build_server(
     )
 
     oauth = KeystoneOAuthProvider(
-        identity_provider,
         settings,
         store,
         pending_store,
+        login_providers=login_providers,
         user_resolver=directory_resolver,
-        google_oidc_client=google_oidc_client,
         observability=rbac_observability,
     )
     mcp = FastMCP(name="keystone-mcp", auth=oauth, lifespan=_keystone_lifespan)
 
-    # Login page: GET renders the credential form, POST validates the api_token
-    # and issues the authorization code (no code on failure).
+    # Login page: GET renders the consent screen, POST validates the single
+    # configured form-kind provider's credentials and issues the
+    # authorization code (no code on failure).
     @mcp.custom_route("/login", methods=["GET"])
     async def _login_get(request):  # noqa: ANN001
         return await oauth.render_login(request)
@@ -285,20 +300,39 @@ def build_server(
     async def _login_post(request):  # noqa: ANN001
         return await oauth.handle_login(request)
 
-    @mcp.custom_route("/login/google", methods=["GET"])
-    async def _login_google(request):  # noqa: ANN001
-        return await oauth.start_google_login(request)
+    # One GET/POST/callback trio per configured redirect provider (X03): a
+    # provider that is not configured gets no route at all, so a request for
+    # it 404s from Starlette's own routing rather than a Keystone error page.
+    # The provider named "google" gets exactly the paths it always has
+    # (/login/google, /login/google/callback — S4), since _callback_url()
+    # builds that address from the name the same way for every provider.
+    for _provider in login_providers:
+        if _provider.kind != "redirect":
+            continue
 
-    # Consent screen's "Sign in with Google" button posts here (CSRF-checked)
-    # instead of following a bare link, so the federated-login redirect cannot
-    # be triggered from a cross-site page or an emailed URL (A13).
-    @mcp.custom_route("/login/google", methods=["POST"])
-    async def _login_google_post(request):  # noqa: ANN001
-        return await oauth.start_google_login_post(request)
+        def _make_login_redirect_routes(_name: str = _provider.name):
+            async def _get(request):  # noqa: ANN001
+                return await oauth.start_login_redirect_get(request, _name)
 
-    @mcp.custom_route("/login/google/callback", methods=["GET"])
-    async def _login_google_callback(request):  # noqa: ANN001
-        return await oauth.handle_google_callback(request)
+            async def _post(request):  # noqa: ANN001
+                return await oauth.start_login_redirect(request, _name)
+
+            async def _callback(request):  # noqa: ANN001
+                return await oauth.handle_login_callback(request, _name)
+
+            return _get, _post, _callback
+
+        _login_get_handler, _login_post_handler, _login_callback_handler = (
+            _make_login_redirect_routes()
+        )
+        mcp.custom_route(f"/login/{_provider.name}", methods=["GET"])(_login_get_handler)
+        # Consent screen's provider button posts here (CSRF-checked) instead
+        # of following a bare link, so the redirect sign-in cannot be
+        # triggered from a cross-site page or an emailed URL (A13).
+        mcp.custom_route(f"/login/{_provider.name}", methods=["POST"])(_login_post_handler)
+        mcp.custom_route(f"/login/{_provider.name}/callback", methods=["GET"])(
+            _login_callback_handler
+        )
 
     # Where authorize() sends a request whose redirect_uri host is not on
     # KEYSTONE_MCP_OAUTH_ALLOWED_REDIRECT_HOSTS (A17): a local error page
@@ -646,6 +680,21 @@ def install_policy_reload_signal(
     logger.info("rbac policy SIGHUP hot-reload handler installed")
 
 
+async def _warm_up_login_providers(login_providers: Sequence[LoginProvider]) -> None:
+    """Call ``warm_up()`` on every configured login provider, 5s timeout each.
+
+    A provider that times out or raises does not stop the server from
+    starting (X03): sign-in through it will simply fail until it recovers,
+    the same way an unreachable upstream does not block startup elsewhere in
+    this module.
+    """
+    for provider in login_providers:
+        try:
+            await asyncio.wait_for(provider.warm_up(), timeout=5)
+        except Exception as exc:  # noqa: BLE001 - logged and intentionally swallowed
+            logger.warning("login provider %s is not ready: %s", provider.name, type(exc).__name__)
+
+
 async def bootstrap_platform(
     upstreams: UpstreamRegistry,
     registry: RouterRegistry,
@@ -654,10 +703,13 @@ async def bootstrap_platform(
     *,
     observability: RbacObservability | None = None,
     users_store: UsersStore | None = None,
+    login_providers: Sequence[LoginProvider] | None = None,
 ) -> UpstreamDiscoveryResult:
-    """Migrate/seed the users directory, discover upstreams, then load RBAC policy."""
+    """Migrate/seed the users directory, warm up login providers, discover upstreams, load RBAC policy."""
     if users_store is not None:
         await bootstrap_users_store(users_store, settings)
+    if login_providers:
+        await _warm_up_login_providers(login_providers)
     discovery = await bootstrap_upstreams(upstreams, settings)
     if settings.upstream_require_all and discovery.unavailable:
         raise UpstreamUnavailableError(
@@ -721,6 +773,7 @@ def main() -> None:
         raise SystemExit(1) from exc
 
     users_store = _users_store_holder["store"]
+    login_providers = _login_providers_holder["providers"]
     try:
         asyncio.run(
             bootstrap_platform(
@@ -730,6 +783,7 @@ def main() -> None:
                 policy_manager,
                 observability=observability,
                 users_store=users_store,
+                login_providers=login_providers,
             )
         )
     except UsersBootstrapError as exc:

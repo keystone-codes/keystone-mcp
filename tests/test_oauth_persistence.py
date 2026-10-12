@@ -27,6 +27,7 @@ from keystone_mcp.auth.keystone_oauth_provider import KeystoneOAuthProvider
 from keystone_mcp.auth.login_pending_store import InMemoryLoginPendingStore
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import Settings
+from keystone_mcp.login.api_key import ApiKeyLoginProvider
 from keystone_mcp.server import build_server
 
 
@@ -72,7 +73,9 @@ async def test_tokens_survive_provider_restart(persistence_client):
 
     idp = StaticIdentityProvider({VALID_TOKEN})
     pending = InMemoryLoginPendingStore()
-    oauth2 = KeystoneOAuthProvider(idp, settings, store, pending)
+    oauth2 = KeystoneOAuthProvider(
+        settings, store, pending, login_providers=[ApiKeyLoginProvider(idp)]
+    )
     registered = await oauth2.get_client(client_id)
     assert registered is not None
 
@@ -94,7 +97,9 @@ async def test_pending_txn_survives_shared_store_restart(persistence_client):
     txn = await authorize_to_login(client, client_id, challenge, settings.resource_url)
 
     idp = StaticIdentityProvider({VALID_TOKEN})
-    oauth2 = KeystoneOAuthProvider(idp, settings, store, pending_store)
+    oauth2 = KeystoneOAuthProvider(
+        settings, store, pending_store, login_providers=[ApiKeyLoginProvider(idp)]
+    )
     assert await oauth2._get_pending_txn(txn) is not None
 
 
@@ -172,10 +177,10 @@ async def test_auth_method_marker_ttl_equals_the_refresh_token_lifetime():
     settings = Settings(base_url=BASE_URL, refresh_token_ttl_seconds=1234)
     pending = InMemoryLoginPendingStore()
     provider = KeystoneOAuthProvider(
-        StaticIdentityProvider({VALID_TOKEN}),
         settings,
         InMemoryOAuthStore(),
         pending,
+        login_providers=[ApiKeyLoginProvider(StaticIdentityProvider({VALID_TOKEN}))],
     )
     recorded: list[tuple[str, str, str, int]] = []
     original_put = pending.put
@@ -201,10 +206,10 @@ async def test_expired_refresh_token_is_refused_and_dropped():
     settings = Settings(base_url=BASE_URL, refresh_token_ttl_seconds=30 * 24 * 3600)
     store = InMemoryOAuthStore()
     provider = KeystoneOAuthProvider(
-        StaticIdentityProvider({VALID_TOKEN}),
         settings,
         store,
         InMemoryLoginPendingStore(),
+        login_providers=[ApiKeyLoginProvider(StaticIdentityProvider({VALID_TOKEN}))],
     )
     registered = OAuthClientInformationFull(
         client_id="client-1",
@@ -229,10 +234,10 @@ async def test_live_refresh_token_is_accepted():
     settings = Settings(base_url=BASE_URL)
     store = InMemoryOAuthStore()
     provider = KeystoneOAuthProvider(
-        StaticIdentityProvider({VALID_TOKEN}),
         settings,
         store,
         InMemoryLoginPendingStore(),
+        login_providers=[ApiKeyLoginProvider(StaticIdentityProvider({VALID_TOKEN}))],
     )
     registered = OAuthClientInformationFull(
         client_id="client-1",
@@ -259,10 +264,10 @@ async def test_rotation_persists_the_new_token_before_deleting_the_old():
     settings = Settings(base_url=BASE_URL)
     store = InMemoryOAuthStore()
     provider = KeystoneOAuthProvider(
-        StaticIdentityProvider({VALID_TOKEN}),
         settings,
         store,
         InMemoryLoginPendingStore(),
+        login_providers=[ApiKeyLoginProvider(StaticIdentityProvider({VALID_TOKEN}))],
     )
     registered = OAuthClientInformationFull(
         client_id="client-1",
@@ -306,10 +311,10 @@ async def test_crash_after_minting_leaves_a_usable_refresh_token():
     settings = Settings(base_url=BASE_URL)
     store = InMemoryOAuthStore()
     provider = KeystoneOAuthProvider(
-        StaticIdentityProvider({VALID_TOKEN}),
         settings,
         store,
         InMemoryLoginPendingStore(),
+        login_providers=[ApiKeyLoginProvider(StaticIdentityProvider({VALID_TOKEN}))],
     )
     registered = OAuthClientInformationFull(
         client_id="client-1",
@@ -476,10 +481,10 @@ async def test_client_is_touched_before_refresh_token_is_written():
     settings = Settings(base_url=BASE_URL)
     store = InMemoryOAuthStore()
     provider = KeystoneOAuthProvider(
-        StaticIdentityProvider({VALID_TOKEN}),
         settings,
         store,
         InMemoryLoginPendingStore(),
+        login_providers=[ApiKeyLoginProvider(StaticIdentityProvider({VALID_TOKEN}))],
     )
     client = OAuthClientInformationFull(
         client_id="client-1",
