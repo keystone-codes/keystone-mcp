@@ -1,0 +1,140 @@
+<!doctype html><html lang="en" dir="ltr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Keystone-MCP — Sign in</title><style>
+
+  :root {
+    --bg: #f4f5f7;
+    --card: #ffffff;
+    --text: #1b1f24;
+    --muted: #5b6470;
+    --line: #d9dee5;
+    --accent: #1f5fbf;
+    --accent-text: #ffffff;
+    --accent-soft: #e8f0fc;
+    --warn-bg: #fff7e6;
+    --warn-line: #e6a700;
+    --warn-text: #7a4e00;
+    --error-bg: #fdecec;
+    --error-line: #d93025;
+    --error-text: #8a1c14;
+    --radius: 12px;
+    --shadow: 0 1px 2px rgba(16, 24, 40, .06), 0 8px 24px rgba(16, 24, 40, .08);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1216;
+      --card: #171b21;
+      --text: #e8ecf1;
+      --muted: #9aa5b3;
+      --line: #2a313a;
+      --accent: #6ea0ff;
+      --accent-text: #0f1216;
+      --accent-soft: #1b2a44;
+      --warn-bg: #2a2110;
+      --warn-line: #d9a400;
+      --warn-text: #ffd57a;
+      --error-bg: #2d1614;
+      --error-line: #ff6b61;
+      --error-text: #ffb3ad;
+      --shadow: 0 1px 2px rgba(0,0,0,.5), 0 8px 24px rgba(0,0,0,.45);
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 24px 16px 40px;
+  }
+  main.card {
+    width: 100%;
+    max-width: 440px;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 28px 24px 24px;
+    margin-top: 32px;
+  }
+  .brand {
+    display: flex; align-items: center; gap: 10px;
+    margin-bottom: 4px;
+  }
+  .brand svg { width: 28px; height: 28px; flex: none; }
+  .brand h1 { font-size: 1.25rem; margin: 0; letter-spacing: .01em; }
+  .subtitle { color: var(--muted); margin: 0 0 20px; font-size: .95rem; }
+
+  .consent {
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 16px;
+    margin: 0 0 20px;
+    background: color-mix(in srgb, var(--card) 92%, var(--accent-soft));
+  }
+  .consent h2 { font-size: 1rem; margin: 0 0 12px; }
+  .row { display: grid; grid-template-columns: 1fr; gap: 2px; margin: 0 0 10px; }
+  .row .k { color: var(--muted); font-size: .85rem; }
+  .row .v { font-weight: 600; word-break: break-word; }
+  .chip {
+    display: inline-block; padding: 2px 8px; border-radius: 999px;
+    background: var(--accent-soft); color: var(--text); font-weight: 600; font-size: .95rem;
+  }
+  .host { font-size: 1.15rem; }
+  .url {
+    font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    color: var(--muted); word-break: break-all; margin: 0 0 12px;
+  }
+  .callout {
+    display: flex; gap: 10px; align-items: flex-start;
+    border-inline-start: 4px solid var(--warn-line);
+    background: var(--warn-bg); color: var(--warn-text);
+    border-radius: 8px; padding: 10px 12px; font-size: .92rem; margin: 0;
+  }
+  .callout svg { width: 20px; height: 20px; flex: none; margin-top: 2px; }
+  .alert {
+    display: flex; gap: 10px; align-items: flex-start;
+    border-inline-start: 4px solid var(--error-line);
+    background: var(--error-bg); color: var(--error-text);
+    border-radius: 8px; padding: 10px 12px; font-size: .92rem; margin: 0 0 16px;
+  }
+  .alert svg { width: 20px; height: 20px; flex: none; margin-top: 2px; }
+
+  .btn {
+    display: flex; align-items: center; justify-content: center; gap: 10px;
+    width: 100%; padding: 12px 14px; border-radius: 10px;
+    border: 1px solid var(--line); background: var(--card); color: var(--text);
+    font: inherit; font-weight: 600; cursor: pointer; text-decoration: none;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .btn:focus-visible { outline: 3px solid var(--accent-soft); outline-offset: 1px; border-color: var(--accent); }
+  .btn.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  .btn.primary:hover { filter: brightness(1.05); }
+  .btn svg { width: 18px; height: 18px; }
+  .providers { display: grid; gap: 10px; margin: 0 0 18px; }
+  .or {
+    display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: .85rem; margin: 0 0 16px;
+  }
+  .or::before, .or::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+
+  form.fields { display: grid; gap: 14px; }
+  label { display: grid; gap: 6px; font-size: .9rem; font-weight: 600; }
+  input {
+    font: inherit; padding: 11px 12px; border-radius: 10px;
+    border: 1px solid var(--line); background: var(--card); color: var(--text); width: 100%;
+  }
+  input:focus-visible { outline: 3px solid var(--accent-soft); outline-offset: 0; border-color: var(--accent); }
+  .help { color: var(--muted); font-size: .82rem; font-weight: 400; }
+
+  footer {
+    width: 100%; max-width: 440px; display: flex; justify-content: space-between; align-items: center;
+    color: var(--muted); font-size: .8rem; margin-top: 14px; padding: 0 4px;
+  }
+  footer nav a { color: var(--muted); text-decoration: none; margin-inline-start: 10px; }
+  footer nav a[aria-current="true"] { color: var(--text); font-weight: 600; text-decoration: underline; }
+
+</style></head><body><main class="card"><div class="brand"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 2.5 4 6v6c0 4.6 3.4 8.3 8 9.5 4.6-1.2 8-4.9 8-9.5V6l-8-3.5Z"/><path d="M9.5 12.5h5M12 10v5"/></svg><h1>Keystone-MCP</h1></div><p class="subtitle">Sign in to connect a client to your workspace.</p><section class="consent" aria-labelledby="consent-title"><h2 id="consent-title">Allow access?</h2><div class="row"><span class="k">Application</span><span class="v"><span class="chip">MCP CLI Proxy</span></span></div><div class="row"><span class="k">After sign-in you will be sent to</span><span class="v host">localhost:18198</span></div><p class="url">http://localhost:18198/oauth/callback</p><p class="callout"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 3 2.5 20h19L12 3Z"/><path d="M12 9v5M12 17.5v.5"/></svg><span>Continue only if you started this connection yourself and recognise the address above.</span></p></section><div class="providers"><form method="post" action="/login/google"><input type="hidden" name="txn" value="TXN"><input type="hidden" name="csrf" value="CSRF"><button class="btn" type="submit"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M21.6 12.2c0-.7-.1-1.3-.2-1.9H12v3.7h5.4c-.2 1.2-.9 2.3-2 3v2.5h3.2c1.9-1.7 3-4.3 3-7.3Z"/><path fill="currentColor" d="M12 22c2.7 0 5-.9 6.6-2.4l-3.2-2.5c-.9.6-2 1-3.4 1-2.6 0-4.8-1.8-5.6-4.1H3.1v2.6A10 10 0 0 0 12 22Z"/><path fill="currentColor" d="M6.4 14a6 6 0 0 1 0-3.9V7.5H3.1a10 10 0 0 0 0 9l3.3-2.5Z"/><path fill="currentColor" d="M12 6c1.5 0 2.8.5 3.8 1.5l2.8-2.8A10 10 0 0 0 3.1 7.5L6.4 10C7.2 7.8 9.4 6 12 6Z"/></svg>Sign in with Google</button></form></div><p class="or">or with an API key</p><form class="fields" method="post" action="/login"><input type="hidden" name="txn" value="TXN"><label for="email">Email
+      <input id="email" name="email" type="email" autocomplete="email" required inputmode="email"></label><label for="api_token">API token
+      <input id="api_token" name="api_token" type="password" autocomplete="off" required><span class="help">Your administrator issues the key; it is shown only once when created.</span></label><button class="btn primary" type="submit">Authorize</button></form></main><footer><span>Keystone-MCP</span><nav aria-label="Language"><span aria-current="true">EN</span><a href="/login?txn=TXN&amp;lang=ru">RU</a><a href="/login?txn=TXN&amp;lang=he">HE</a><a href="/login?txn=TXN&amp;lang=ar">AR</a></nav></footer></body></html>

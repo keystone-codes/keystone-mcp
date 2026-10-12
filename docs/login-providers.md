@@ -88,3 +88,10 @@ warning at startup.
 
 Additional `type` values come from packages that declare a
 `keystone_mcp.login_providers` entry point. See [plugins.md](plugins.md).
+
+## What the sign-in page looks like
+
+Keystone renders consent, credential, and error screens with one built-in HTML
+template (no external assets). See
+[`tests/data/login-pages/consent-en.html`](../tests/data/login-pages/consent-en.html)
+for a static example of the consent layout with redirect and API-key sign-in.
