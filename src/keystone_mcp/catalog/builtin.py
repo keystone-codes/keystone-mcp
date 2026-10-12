@@ -12,7 +12,7 @@ are registered only when ``KEYSTONE_MCP_RBAC_MODE=enforce``; authorization is
 RBAC policy plus the RBAC middleware. The ``admin=True`` flag is catalog
 metadata only and enforces nothing. ``users_list`` is published whenever a
 directory is configured; the other seven (administration) are published only
-when that directory declares the ``"admin"`` capability (X06) -- a read-only
+when that directory declares the ``"admin"`` capability -- a read-only
 directory publishes ``users_list`` alone.
 
 Every route here is registered ``mode="live"`` — its adapter is wired and
@@ -71,7 +71,7 @@ def register_catalog(
     # ── ADMIN — user administration over whichever UserDirectory the server
     # was built with. Who may call these tools is decided by the policy file.
     # ``admin=True`` is catalog metadata only. ``users_list`` is published for
-    # any directory; the other seven only when it declares "admin" (X06).
+    # any directory; the other seven only when it declares "admin".
     _read_only_tools: list[tuple[str, str, list[Param]]] = [
         (
             "users_list",

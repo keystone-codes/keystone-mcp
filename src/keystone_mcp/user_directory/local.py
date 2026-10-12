@@ -42,7 +42,13 @@ class LocalUserDirectory:
 
     async def ping(self) -> None:
         """Delegate to :meth:`UsersStore.ping` (``SELECT 1``) for readiness checks."""
-        await self._store.ping()
+        try:
+            await self._store.ping()
+        except UsersStoreUnavailableError as exc:
+            raise UserDirectoryUnavailableError(
+                "users directory is unavailable",
+                code="catalog_unavailable",
+            ) from exc
 
     async def resolve_user(self, subject: str) -> UserResolveResult:
         try:
