@@ -15,7 +15,18 @@ from keystone_mcp.observability.logging.formatters import (
 if TYPE_CHECKING:
     from keystone_mcp.config import Settings
 
-_NOISY_LOGGERS = ("httpx", "httpcore", "uvicorn", "uvicorn.error", "uvicorn.access")
+# fastmcp 4 / mcp SDK 2 moved their own HTTP stack to httpx2/httpcore2 (X02);
+# our own HTTP code still logs under "httpx"/"httpcore", so both pairs are
+# quieted here.
+_NOISY_LOGGERS = (
+    "httpx",
+    "httpcore",
+    "httpx2",
+    "httpcore2",
+    "uvicorn",
+    "uvicorn.error",
+    "uvicorn.access",
+)
 
 
 def configure_logging(settings: Settings) -> None:
