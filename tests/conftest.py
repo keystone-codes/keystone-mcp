@@ -7,21 +7,16 @@ S256 + resource indicator -> login -> code exchange at /token.
 
 from __future__ import annotations
 
-import asyncio
 import base64
 import hashlib
 import secrets
-from collections.abc import Awaitable, Callable
-from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-import httpx
+import httpx2
 import pytest
 import pytest_asyncio
-from asgi_lifespan import LifespanManager
-from fastmcp import Client
+from fastmcp.utilities.tests import ASGIServer, asgi_server
 
 from keystone_mcp.auth.identity_provider import StaticIdentityProvider
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
@@ -31,36 +26,6 @@ from keystone_mcp.server import build_server
 VALID_TOKEN = "valid-test-token"
 BASE_URL = "http://localhost:8080"
 REDIRECT_URI = "http://localhost:9999/callback"
-
-# Streamable-HTTP MCP e2e tests flake when they run late in a long session (httpx
-# ASGITransport + accumulated asyncio state). Run them first while keeping the
-# rest of the suite order stable.
-_EARLY_MCP_HTTP_E2E_TESTS = frozenset(
-    {
-        "test_identity_header_reaches_an_http_upstream_end_to_end",
-        "test_tool_call_over_oauth_bearer",
-        "test_viewer_lists_only_allowed_tools",
-        "test_viewer_call_to_forbidden_tool_is_denied",
-        "test_viewer_call_to_allowed_tool_succeeds",
-        "test_blocked_user_is_denied_with_live_token",
-        "test_fresh_server_admin_adds_member_who_cannot_see_users_tools",
-        "test_nested_object_and_required_are_published_as_is",
-        "test_output_schema_published_only_in_transparent_mode",
-        "test_upstream_annotations_and_title_are_published",
-        "test_proxy_tool_call_round_trip_with_raw_schema",
-    }
-)
-
-
-def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
-    early: list[pytest.Item] = []
-    rest: list[pytest.Item] = []
-    for item in items:
-        if item.name in _EARLY_MCP_HTTP_E2E_TESTS:
-            early.append(item)
-        else:
-            rest.append(item)
-    items[:] = early + rest
 
 
 @pytest.fixture(autouse=True)
@@ -106,82 +71,6 @@ def _disable_dotenv_loading_for_tests(monkeypatch):
     monkeypatch.setenv("KEYSTONE_MCP_ENV_FILE", "")
 
 
-def _transient_mcp_client_error(exc: BaseException) -> bool:
-    """True when a FastMCP client session open looks like a brief transport flake."""
-    if isinstance(exc, httpx.TransportError):
-        return True
-    if isinstance(exc, RuntimeError):
-        msg = str(exc).lower()
-        return any(
-            token in msg
-            for token in (
-                "connect",
-                "connection",
-                "session",
-                "closed",
-                "timeout",
-                "handshake",
-            )
-        )
-    if isinstance(exc, BaseExceptionGroup):
-        return any(_transient_mcp_client_error(sub) for sub in exc.exceptions)
-    return False
-
-
-async def retry_transient_mcp_errors(
-    fn: Callable[[], Awaitable[Any]],
-    *,
-    attempts: int = 8,
-) -> Any:
-    """Run an MCP client operation; retry brief ASGI/HTTP transport flakes."""
-    last_error: BaseException | None = None
-    for attempt in range(attempts):
-        try:
-            return await fn()
-        except BaseExceptionGroup as exc:
-            last_error = exc
-            if attempt + 1 >= attempts or not _transient_mcp_client_error(exc):
-                raise
-        except Exception as exc:
-            last_error = exc
-            if attempt + 1 >= attempts or not _transient_mcp_client_error(exc):
-                raise
-        await asyncio.sleep(0.25 * (attempt + 1))
-    if last_error is not None:
-        raise last_error
-    raise RuntimeError("retry_transient_mcp_errors exhausted without result")
-
-
-@asynccontextmanager
-async def mcp_client_session(
-    transport=None,
-    *,
-    transport_factory: Callable[[], Any] | None = None,
-    attempts: int = 8,
-):
-    """Enter a FastMCP client session; retry brief connect flakes on CI runners."""
-    if transport is None and transport_factory is None:
-        raise TypeError("transport or transport_factory is required")
-    last_error: BaseException | None = None
-    for attempt in range(attempts):
-        active_transport = transport_factory() if transport_factory is not None else transport
-        try:
-            async with Client(active_transport) as client:
-                yield client
-                return
-        except BaseExceptionGroup as exc:
-            last_error = exc
-            if attempt + 1 >= attempts or not _transient_mcp_client_error(exc):
-                raise
-        except Exception as exc:
-            last_error = exc
-            if attempt + 1 >= attempts or not _transient_mcp_client_error(exc):
-                raise
-        await asyncio.sleep(0.25 * (attempt + 1))
-    if last_error is not None:
-        raise last_error
-
-
 def make_pkce() -> tuple[str, str]:
     verifier = secrets.token_urlsafe(48)
     challenge = (
@@ -192,26 +81,19 @@ def make_pkce() -> tuple[str, str]:
 
 @dataclass
 class Harness:
-    app: object
+    running: ASGIServer
     registry: object
     oauth: object
     settings: Settings
-    client: httpx.AsyncClient
+    client: httpx2.AsyncClient
 
     def mcp_client_factory(self):
-        app = self.app
+        """An ``McpHttpClientFactory`` reaching this harness's in-process app.
 
-        def factory(headers=None, timeout=None, auth=None, **_kw):
-            return httpx.AsyncClient(
-                transport=httpx.ASGITransport(app=app),
-                base_url=BASE_URL,
-                headers=headers,
-                timeout=timeout or httpx.Timeout(30.0),
-                auth=auth,
-                follow_redirects=True,
-            )
-
-        return factory
+        ``ASGIServer.http_client`` (``fastmcp.utilities.tests``) already
+        matches that protocol's signature, so no wrapper is needed.
+        """
+        return self.running.http_client
 
 
 @pytest_asyncio.fixture
@@ -222,16 +104,26 @@ async def harness():
     mcp, registry, oauth, _upstreams, _policy_manager, _observability, _reconciler = build_server(
         identity_provider=idp, settings=settings, oauth_store=store
     )
-    app = mcp.http_app(path=settings.http_path)
-    async with LifespanManager(app):
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url=BASE_URL
+    async with asgi_server(mcp, path=settings.http_path) as running:
+        # Not ``running.http_client()``: that client's transport owns an anyio
+        # task group that must be entered and exited by the same asyncio
+        # task, but pytest-asyncio runs an async-generator fixture's setup and
+        # its teardown (after `yield`) as two different tasks, which trips
+        # anyio's "exit cancel scope in a different task" guard. The plain
+        # HTTP OAuth endpoints this client talks to (/register, /authorize,
+        # /login, /token) never stream, so the classic, non-streaming
+        # ``httpx2.ASGITransport`` -- which owns no such task group -- serves
+        # them just as well and survives spanning the fixture's yield.
+        async with httpx2.AsyncClient(
+            transport=httpx2.ASGITransport(app=running.app), base_url=BASE_URL
         ) as client:
-            yield Harness(app=app, registry=registry, oauth=oauth, settings=settings, client=client)
+            yield Harness(
+                running=running, registry=registry, oauth=oauth, settings=settings, client=client
+            )
 
 
 async def refresh_access_token(
-    client: httpx.AsyncClient,
+    client: httpx2.AsyncClient,
     client_id: str,
     refresh_token: str,
     resource: str,
@@ -253,7 +145,7 @@ async def refresh_access_token(
     }
 
 
-async def register_client(client: httpx.AsyncClient, client_name: str | None = None) -> str:
+async def register_client(client: httpx2.AsyncClient, client_name: str | None = None) -> str:
     payload: dict[str, object] = {
         "redirect_uris": [REDIRECT_URI],
         "token_endpoint_auth_method": "none",
@@ -266,7 +158,7 @@ async def register_client(client: httpx.AsyncClient, client_name: str | None = N
 
 
 async def authorize_to_login(
-    client: httpx.AsyncClient, client_id: str, challenge: str, resource: str
+    client: httpx2.AsyncClient, client_id: str, challenge: str, resource: str
 ) -> str:
     """Run /authorize and return the login transaction id from the redirect."""
     r = await client.get(
@@ -286,7 +178,7 @@ async def authorize_to_login(
 
 
 async def obtain_access_token(
-    client: httpx.AsyncClient,
+    client: httpx2.AsyncClient,
     resource: str,
     api_token: str = VALID_TOKEN,
     email: str = "user@example.com",
