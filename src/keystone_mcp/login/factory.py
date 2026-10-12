@@ -19,6 +19,21 @@ from keystone_mcp.login.protocol import FormLoginProvider, LoginProvider, Redire
 
 _PROVIDER_NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 
+# Provider names a deployment may never configure for a custom implementation.
+#
+# - "redirect-not-allowed" is the fixed route authorize() sends a refused
+#   redirect_uri to (server.py registers GET /login/redirect-not-allowed
+#   unconditionally); a provider claiming that name would collide with it.
+# - "google" is reserved for the built-in GoogleLoginProvider itself: nothing
+#   else may claim it, since RBAC's interactive-human check
+#   (rbac/human_identity.py) and _complete_login's provider-name check both
+#   trust the *route* a sign-in came back on, and a custom provider named
+#   "google" would ride on that trust.
+_RESERVED_PROVIDER_NAMES = frozenset({"redirect-not-allowed"})
+
+_FORM_FIELD_NAME_RE = re.compile(r"^[A-Za-z0-9_]+$")
+_VALID_FORM_FIELD_INPUT_TYPES = frozenset({"email", "password", "text"})
+
 
 def build_login_providers(
     settings: Settings,
@@ -47,12 +62,19 @@ def build_login_providers(
 def validate_login_providers(providers: Sequence[LoginProvider]) -> None:
     """Check the configured provider set for the invariants Keystone relies on.
 
-    - Names are unique and match ``^[a-z][a-z0-9_-]{0,31}$`` (safe to use
-      verbatim in a route path).
+    - Names are unique, match ``^[a-z][a-z0-9_-]{0,31}$`` in full (safe to use
+      verbatim in a route path -- ``fullmatch``, not ``match``: a name ending
+      in e.g. ``"\\n"`` must not slip through just because ``$`` also matches
+      right before a trailing newline), and are not one of the names Keystone
+      itself reserves (see ``_RESERVED_PROVIDER_NAMES``, and "google" for
+      anything other than the built-in Google provider).
     - At most one provider declares ``kind == "form"``: the login page has a
       single credential form, posted to ``/login``.
     - Every provider actually implements the protocol its own ``kind``
       promises.
+    - A ``form``-kind provider's fields have a safe ``name``
+      (``^[A-Za-z0-9_]+$``, verbatim in the rendered ``<input name=...>``) and
+      a recognised ``input_type``.
 
     Raises ``ValueError`` naming the offending provider on any violation.
     """
@@ -60,8 +82,14 @@ def validate_login_providers(providers: Sequence[LoginProvider]) -> None:
     form_count = 0
     for provider in providers:
         name = provider.name
-        if not _PROVIDER_NAME_RE.match(name):
+        if not _PROVIDER_NAME_RE.fullmatch(name):
             raise ValueError(f"login provider name is not valid: {name!r}")
+        if name in _RESERVED_PROVIDER_NAMES:
+            raise ValueError(f"login provider name {name!r} is reserved by Keystone")
+        if name == "google" and not isinstance(provider, GoogleLoginProvider):
+            raise ValueError(
+                "login provider name 'google' is reserved for the built-in Google provider"
+            )
         if name in seen:
             raise ValueError(f"duplicate login provider name: {name!r}")
         seen.add(name)
@@ -79,6 +107,17 @@ def validate_login_providers(providers: Sequence[LoginProvider]) -> None:
                     "implement FormLoginProvider (form_fields/verify)"
                 )
             form_count += 1
+            for field in provider.form_fields():
+                if not _FORM_FIELD_NAME_RE.fullmatch(field.name):
+                    raise ValueError(
+                        f"login provider {name!r} has a form field with an unsafe "
+                        f"name: {field.name!r}"
+                    )
+                if field.input_type not in _VALID_FORM_FIELD_INPUT_TYPES:
+                    raise ValueError(
+                        f"login provider {name!r} has a form field {field.name!r} with "
+                        f"an unrecognised input_type: {field.input_type!r}"
+                    )
         else:
             raise ValueError(f"login provider {name!r} has an unknown kind: {provider.kind!r}")
 
