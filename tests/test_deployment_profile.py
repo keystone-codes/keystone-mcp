@@ -432,7 +432,7 @@ def test_local_warnings_exactly_w4_with_dev_tokens_and_enforce(monkeypatch, tmp_
 def test_stage_like_production_configuration_is_accepted(monkeypatch, tmp_path: Path):
     """The planned stage deployment must pass `validate_settings` unchanged.
 
-    `production`, `KEYSTONE_MCP_USERS_BACKEND=http` (mcp-users),
+    `production`, `KEYSTONE_MCP_USERS_BACKEND=http` (HTTP users directory),
     Google sign-in for people, `RBAC_MODE=enforce`, no DEV tokens.
     """
     policy = tmp_path / "rbac-policy.yaml"
