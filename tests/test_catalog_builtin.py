@@ -94,13 +94,20 @@ def test_catalog_drops_base64_upload_file():
 def test_builtin_tool_names_constant_covers_registered_tools(tmp_path: Path):
     """BUILTIN_TOOL_NAMES (used by P09 namespace validation) matches reality."""
     from keystone_mcp.catalog.builtin import BUILTIN_TOOL_NAMES
+    from keystone_mcp.user_directory.local import LocalUserDirectory
+    from keystone_mcp.users.factory import build_users_store
 
-    settings = _enforce_settings(tmp_path)
+    settings = Settings(
+        **_enforce_settings(tmp_path).__dict__
+        | {"deployment_profile": "local", "users_backend": "local"},
+    )
+    store = build_users_store(settings)
     reg = _registry(settings)
-    register_catalog(reg, settings, directory=InMemoryUserDirectory())
+    register_catalog(reg, settings, directory=LocalUserDirectory(store))
 
     registered = {route.name for route in reg.routes.values() if route.namespace is None}
     assert registered == BUILTIN_TOOL_NAMES
+    store.dispose()
 
 
 class _ReadOnlyDirectory:

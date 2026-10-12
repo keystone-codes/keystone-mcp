@@ -185,6 +185,7 @@ class RbacObservability:
         blocked_after: bool | None = None,
         role: str | None = None,
         actor_subject_type: str | None = None,
+        key_id: str | None = None,
     ) -> None:
         policy = self.active_policy_fields()
         try:
@@ -202,6 +203,7 @@ class RbacObservability:
                 blocked_after=blocked_after,
                 role=role,
                 actor_subject_type=actor_subject_type,
+                key_id=key_id,
             )
             self.metrics.record_users_mutation(operation=operation, outcome=outcome)
         except Exception:

@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import logging
 
+from keystone_mcp.adapters.api_keys_admin import ApiKeysAdminAdapter
 from keystone_mcp.adapters.base import Pattern
 from keystone_mcp.adapters.service_accounts_admin import ServiceAccountsAdminAdapter
 from keystone_mcp.adapters.users_admin import RoleSource, UsersAdminAdapter
@@ -49,6 +50,9 @@ BUILTIN_TOOL_NAMES: frozenset[str] = frozenset(
         "service_accounts_list",
         "service_accounts_add",
         "service_accounts_update",
+        "api_keys_issue",
+        "api_keys_list",
+        "api_keys_revoke",
     }
 )
 
@@ -75,6 +79,7 @@ def register_catalog(
     service_accounts_admin = ServiceAccountsAdminAdapter(
         directory=directory, observability=observability, role_source=role_source
     )
+    api_keys_admin = ApiKeysAdminAdapter(directory=directory, observability=observability)
 
     P = Param  # noqa: N806 — local alias for brevity
 
@@ -213,6 +218,50 @@ def register_catalog(
             registry.add_route(
                 tool_name,
                 service_accounts_admin,
+                pattern=Pattern.M_B,
+                params=params,
+                description=description,
+                mode="live",
+                admin=True,
+            )
+
+    if "api_keys" in directory.capabilities:
+        publish_issue = settings.deployment_profile != "production"
+        _api_key_tools: list[tuple[str, str, list[Param]]] = []
+        if publish_issue:
+            _api_key_tools.append(
+                (
+                    "api_keys_issue",
+                    "Issue an API key for a person (sign-in page) or a service account "
+                    "(Bearer header). The key is returned once.",
+                    [
+                        P("subject", str),
+                        P("label", str, required=False, default=None),
+                        P("expires_in_days", int, required=False, default=90),
+                    ],
+                )
+            )
+        _api_key_tools.extend(
+            [
+                (
+                    "api_keys_list",
+                    "List API keys without their secrets.",
+                    [
+                        P("subject", str, required=False, default=None),
+                        P("include_revoked", bool, required=False, default=False),
+                    ],
+                ),
+                (
+                    "api_keys_revoke",
+                    "Revoke an API key; sessions and calls using it stop at once.",
+                    [P("key_id", str)],
+                ),
+            ]
+        )
+        for tool_name, description, params in _api_key_tools:
+            registry.add_route(
+                tool_name,
+                api_keys_admin,
                 pattern=Pattern.M_B,
                 params=params,
                 description=description,
