@@ -95,6 +95,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _reconciler_holder: dict[str, SurfaceReconciler | None] = {"reconciler": None}
+_upstreams_holder: dict[str, UpstreamRegistry | None] = {"upstreams": None}
 _users_store_holder: dict[str, UsersStore | None] = {"store": None}
 _login_providers_holder: dict[str, list[LoginProvider] | None] = {"providers": None}
 _client_sessions_holder: dict[str, ClientSessionRegistry | None] = {"registry": None}
@@ -106,10 +107,15 @@ _policy_store_holder: dict[str, PolicyStore | None] = {"store": None}
 
 @asynccontextmanager
 async def _keystone_lifespan(_server: FastMCP):
+    upstreams = _upstreams_holder.get("upstreams")
     try:
+        if upstreams is not None:
+            await upstreams.start_connections()
         async with surface_reconciler_lifespan(_reconciler_holder.get("reconciler")):
             yield {}
     finally:
+        if upstreams is not None:
+            await upstreams.stop_connections()
         client_sessions = _client_sessions_holder.get("registry")
         if client_sessions is not None:
             client_sessions.close()
@@ -544,6 +550,8 @@ def build_server(
         redis=getattr(store, "redis", None),
         policy_manager=policy_manager,
         users_backend=_readyz_backend,
+        upstreams=upstreams,
+        require_all=settings.upstream_require_all,
     )
 
     @mcp.custom_route("/readyz", methods=["GET"])
@@ -554,6 +562,7 @@ def build_server(
         body: dict[str, object] = {"status": "ok" if report.ready else "degraded"}
         if _is_trusted_internal_caller(request, settings):
             body["checks"] = dict(report.checks)
+            body["upstreams"] = upstreams.upstream_readiness_snapshot()
         return JSONResponse(body, status_code=200 if report.ready else 503)
 
     if settings.metrics_enabled:
@@ -586,6 +595,7 @@ def build_server(
             client_sessions=client_sessions,
         )
     _reconciler_holder["reconciler"] = reconciler
+    _upstreams_holder["upstreams"] = upstreams
 
     return mcp, registry, oauth, upstreams, policy_manager, rbac_observability, reconciler
 
@@ -676,25 +686,6 @@ def _register_default_upstreams(upstreams: UpstreamRegistry, settings: Settings)
     for cfg in settings.upstreams:
         if not cfg.enabled:
             continue
-        # TODO(stdio wiring): remove once stdio upstreams are proxied.
-        # The registry (Y08) and the process supervisor already accept and
-        # run `transport: stdio` entries, but nothing yet connects a
-        # supervised process to discovery or the proxy -- that is the next
-        # card. Mounting a stdio entry as an HTTP upstream here would give it
-        # `url=""`, which cannot be reached: discovery would fail, the
-        # namespace would stay unavailable, and with
-        # KEYSTONE_MCP_UPSTREAM_REQUIRE_ALL=true that would refuse to start
-        # anyway, but with a confusing "discovery failed" reason instead of
-        # the real one. A clear refusal at startup is more honest than a
-        # silently broken upstream, and `keystone-mcp upstream validate`
-        # still accepts the entry so an operator can prepare the registry
-        # ahead of the wiring landing.
-        if cfg.transport == "stdio":
-            raise ConfigError(
-                f"upstream {cfg.name!r} (namespace={cfg.namespace}): transport: stdio "
-                "upstreams are declared in the registry but not wired to the proxy yet "
-                "in this build; set enabled: false until stdio proxying is available"
-            )
         upstreams.add_upstream(
             cfg.name,
             cfg.url,
@@ -707,6 +698,11 @@ def _register_default_upstreams(upstreams: UpstreamRegistry, settings: Settings)
             bearer_env=cfg.bearer_env,
             identity_secret_env=cfg.identity_secret_env,
             identity_alg=cfg.identity_alg,
+            transport=cfg.transport,
+            command=cfg.command,
+            args=cfg.args,
+            env_from=cfg.env_from,
+            cwd=cfg.cwd,
         )
 
 

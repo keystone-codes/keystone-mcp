@@ -10,6 +10,8 @@ API-key sign-in needs an external key-verification service, and a plain
 
 from __future__ import annotations
 
+import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -281,6 +283,47 @@ def test_startup_warns_for_upstream_without_identity_secret(monkeypatch, tmp_pat
     )
 
 
+def test_production_warns_for_stdio_upstream(monkeypatch, tmp_path: Path):
+    _rbac_env(monkeypatch, tmp_path)
+    _production_login_env(monkeypatch)
+    monkeypatch.setenv("KEYSTONE_MCP_DEPLOYMENT_PROFILE", "production")
+    monkeypatch.setenv(
+        "KEYSTONE_MCP_UPSTREAMS",
+        json.dumps(
+            [
+                {
+                    "name": "notes",
+                    "namespace": "notes",
+                    "transport": "stdio",
+                    "command": sys.executable,
+                }
+            ]
+        ),
+    )
+    settings = load_settings()
+    warnings = startup_warnings(settings)
+    assert any("no sandbox" in w and "namespace=notes" in w for w in warnings)
+
+
+def test_local_does_not_warn_for_stdio_upstream(monkeypatch):
+    monkeypatch.setenv("KEYSTONE_MCP_DEPLOYMENT_PROFILE", "local")
+    monkeypatch.setenv(
+        "KEYSTONE_MCP_UPSTREAMS",
+        json.dumps(
+            [
+                {
+                    "name": "notes",
+                    "namespace": "notes",
+                    "transport": "stdio",
+                    "command": sys.executable,
+                }
+            ]
+        ),
+    )
+    settings = load_settings()
+    assert not any("no sandbox" in w for w in startup_warnings(settings))
+
+
 def test_startup_warns_for_stdio_upstream_without_identity_secret(monkeypatch, tmp_path: Path):
     """D8: a stdio upstream never receives X-Author-Email at all (there are no
 
@@ -308,10 +351,9 @@ def test_startup_warns_for_stdio_upstream_without_identity_secret(monkeypatch, t
     )
     settings = load_settings()
     warnings = startup_warnings(settings)
-    matching = [w for w in warnings if "namespace=notes" in w]
+    matching = [w for w in warnings if "namespace=notes" in w and "identity_secret_env" in w]
     assert matching, warnings
     assert "X-Author-Email" not in matching[0]
-    assert "identity_secret_env" in matching[0]
 
 
 def test_startup_warning_absent_with_identity_secret_configured(monkeypatch, tmp_path: Path):

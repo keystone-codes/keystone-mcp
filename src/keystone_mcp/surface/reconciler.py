@@ -17,11 +17,13 @@ from keystone_mcp.rbac.loader import (
     policy_files_content_hashes,
 )
 from keystone_mcp.router.catalog_fingerprint import tool_fingerprint
+from keystone_mcp.router.stdio_process import UpstreamProcessUnavailableError
 from keystone_mcp.router.upstream import (
     UpstreamListToolsError,
     UpstreamToolSpec,
     build_upstream_tool_specs,
     fetch_upstream_tools,
+    list_upstream_tools,
 )
 
 if TYPE_CHECKING:
@@ -230,16 +232,33 @@ class SurfaceReconciler:
             else self.upstreams.discovery_timeout_seconds
         )
         try:
-            tools = await fetch_upstream_tools(
-                cfg.url,
-                timeout_seconds=discovery_timeout,
-                httpx_client_factory=(
-                    self.upstreams.http_client_factory(discovery_timeout)
-                    if self.upstreams.http_client_factory
-                    else None
-                ),
-                headers=self.upstreams.upstream_headers(namespace),
-            )
+            if cfg.transport == "stdio":
+                try:
+                    client = self.upstreams.connection(namespace).catalog_client(
+                        timeout=discovery_timeout
+                    )
+                except UpstreamProcessUnavailableError as exc:
+                    self.upstreams.mark_unavailable(namespace, str(exc))
+                    logger.warning(
+                        "upstream refresh failed namespace=%s: %s; keeping previous catalog",
+                        namespace,
+                        exc,
+                    )
+                    self._record_catalog_outcome(held=True)
+                    return False
+                async with client:
+                    tools = await list_upstream_tools(client, timeout_seconds=discovery_timeout)
+            else:
+                tools = await fetch_upstream_tools(
+                    cfg.url,
+                    timeout_seconds=discovery_timeout,
+                    httpx_client_factory=(
+                        self.upstreams.http_client_factory(discovery_timeout)
+                        if self.upstreams.http_client_factory
+                        else None
+                    ),
+                    headers=self.upstreams.upstream_headers(namespace),
+                )
         except UpstreamListToolsError as exc:
             self.upstreams.mark_unavailable(namespace, str(exc))
             logger.warning(

@@ -11,8 +11,9 @@ import asyncio
 import copy
 import logging
 import os
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import urlparse
 
@@ -33,6 +34,13 @@ from keystone_mcp.router.proxy_schema import PatchTable, apply_proxy_schema_patc
 from keystone_mcp.router.registry import Param
 from keystone_mcp.router.route import Mode
 from keystone_mcp.router.schema import schema_to_params
+from keystone_mcp.router.stdio_process import StdioUpstreamProcess
+from keystone_mcp.router.upstream_connection import (
+    HttpUpstreamConnection,
+    StdioUpstreamConnection,
+    UpstreamConnection,
+    temporary_stdio_client,
+)
 
 if TYPE_CHECKING:
     from mcp.shared._httpx_utils import McpHttpClientFactory
@@ -120,6 +128,35 @@ def resolve_mounted_tool_name(tool_name: str, strip_prefix: str | None) -> str:
     return tool_name
 
 
+async def list_upstream_tools(
+    client: Client,
+    *,
+    timeout_seconds: float,
+    max_pages: int = _AUTO_PAGINATION_MAX_PAGES,
+) -> list[Any]:
+    """Paginated ``list_tools`` on an already-constructed MCP client."""
+    all_tools: list[Any] = []
+    cursor: str | None = None
+    seen_cursors: set[str] = set()
+
+    async def _one_page() -> Any:
+        return await client.list_tools_mcp(cursor=cursor)
+
+    for _ in range(max_pages):
+        try:
+            result = await asyncio.wait_for(_one_page(), timeout=timeout_seconds)
+        except Exception as exc:
+            raise UpstreamListToolsError(str(exc)) from exc
+        all_tools.extend(result.tools)
+        if not result.next_cursor:
+            return all_tools
+        if result.next_cursor in seen_cursors:
+            raise UpstreamListToolsError(f"duplicate pagination cursor {result.next_cursor!r}")
+        seen_cursors.add(result.next_cursor)
+        cursor = result.next_cursor
+    raise UpstreamListToolsError(f"auto-pagination limit ({max_pages} pages) reached")
+
+
 async def fetch_upstream_tools(
     url: str,
     *,
@@ -128,7 +165,7 @@ async def fetch_upstream_tools(
     httpx_client_factory: "McpHttpClientFactory | None" = None,
     headers: Mapping[str, str] | None = None,
 ) -> list[Any]:
-    """Paginated list_tools; refuse incomplete pages (duplicate cursor or limit).
+    """HTTP discovery helper; opens a client and calls :func:`list_upstream_tools`.
 
     ``httpx_client_factory`` lets tests point discovery at an in-process ASGI
     app instead of a real HTTP port; production callers leave it unset and get
@@ -149,34 +186,18 @@ async def fetch_upstream_tools(
             httpx_client_factory=httpx_client_factory,
         )
         async with Client(transport, init_timeout=timeout_seconds) as client:
-            all_tools: list[Any] = []
-            cursor: str | None = None
-            seen_cursors: set[str] = set()
-
-            async def _one_page() -> Any:
-                return await client.list_tools_mcp(cursor=cursor)
-
-            for _ in range(max_pages):
-                try:
-                    result = await asyncio.wait_for(_one_page(), timeout=timeout_seconds)
-                except Exception as exc:
-                    raise UpstreamListToolsError(str(exc)) from exc
-                all_tools.extend(result.tools)
-                if not result.next_cursor:
-                    return all_tools
-                if result.next_cursor in seen_cursors:
-                    raise UpstreamListToolsError(
-                        f"duplicate pagination cursor {result.next_cursor!r}"
-                    )
-                seen_cursors.add(result.next_cursor)
-                cursor = result.next_cursor
-            raise UpstreamListToolsError(
-                f"auto-pagination limit ({max_pages} pages) reached for {url}"
+            return await list_upstream_tools(
+                client, timeout_seconds=timeout_seconds, max_pages=max_pages
             )
     except UpstreamListToolsError:
         raise
     except Exception as exc:
         raise UpstreamListToolsError(f"{type(exc).__name__}: {exc}") from exc
+
+
+def resolve_stdio_child_env(env_from: Sequence[tuple[str, str]]) -> dict[str, str]:
+    """Map registry ``env`` entries to values read from this process's environment."""
+    return {child: os.environ[var] for child, var in env_from}
 
 
 def _normalize_input_schema(schema: dict[str, Any] | None) -> dict[str, Any]:
@@ -286,6 +307,11 @@ class UpstreamConfig:
     strip_prefix: str | None = None
     discovery_timeout_seconds: float | None = None
     tool_timeout_seconds: float | None = None
+    transport: Literal["http", "stdio"] = "http"
+    command: str | None = None
+    args: tuple[str, ...] = ()
+    env_from: tuple[tuple[str, str], ...] = ()
+    cwd: str | None = None
 
 
 @dataclass
@@ -341,6 +367,7 @@ class UpstreamRegistry:
     # so an allow pattern that names exactly this tool is logged as "not
     # verified" rather than refusing the policy as a typo.
     _unpublishable: dict[str, set[str]] = field(default_factory=dict)
+    _connections: dict[str, UpstreamConnection] = field(default_factory=dict, repr=False)
 
     def __post_init__(self) -> None:
         pem = self._identity_signing_key_pem.strip()
@@ -365,6 +392,11 @@ class UpstreamRegistry:
         bearer_env: str | None = None,
         identity_secret_env: str | None = None,
         identity_alg: Literal["ES256"] | None = None,
+        transport: Literal["http", "stdio"] = "http",
+        command: str | None = None,
+        args: tuple[str, ...] = (),
+        env_from: tuple[tuple[str, str], ...] = (),
+        cwd: str | None = None,
     ) -> UpstreamConfig:
         """Register an upstream MCP API and mount its namespace sub-server.
 
@@ -388,6 +420,11 @@ class UpstreamRegistry:
         """
         if namespace in self._sub_servers:
             raise ValueError(f"upstream namespace already registered: {namespace}")
+
+        if transport == "stdio" and bearer_env is not None:
+            raise ValueError(
+                f"upstream {name!r}: auth.bearer_env is not supported with transport: stdio"
+            )
 
         resolved_url = url.rstrip("/")
 
@@ -439,6 +476,11 @@ class UpstreamRegistry:
             strip_prefix=strip_prefix,
             discovery_timeout_seconds=discovery_timeout_seconds,
             tool_timeout_seconds=tool_timeout_seconds,
+            transport=transport,
+            command=command,
+            args=args,
+            env_from=env_from,
+            cwd=cwd,
         )
         self._upstreams.append(cfg)
 
@@ -448,8 +490,45 @@ class UpstreamRegistry:
         resolved_tool_timeout = (
             tool_timeout_seconds if tool_timeout_seconds is not None else self.tool_timeout_seconds
         )
+        discovery_timeout = (
+            discovery_timeout_seconds
+            if discovery_timeout_seconds is not None
+            else self.discovery_timeout_seconds
+        )
+        if transport == "stdio":
+            if not command:
+                raise ValueError(f"upstream {name!r}: command is required for transport: stdio")
+            child_env = resolve_stdio_child_env(env_from)
+            process = StdioUpstreamProcess(
+                namespace=namespace,
+                command=command,
+                args=args,
+                env=child_env,
+                cwd=cwd,
+                init_timeout=discovery_timeout,
+                on_state=self._on_process_state(namespace),
+            )
+            connection: UpstreamConnection = StdioUpstreamConnection(namespace, process)
+            logger.info(
+                "mounted upstream namespace=%s transport=stdio command=%s",
+                namespace,
+                Path(command).name,
+            )
+        else:
+            connection = HttpUpstreamConnection(
+                namespace,
+                resolved_url,
+                auth_headers=self._auth_headers.get(namespace),
+                http_client_factory=self.http_client_factory,
+            )
+            logger.info(
+                "mounted upstream namespace=%s host=%s",
+                namespace,
+                upstream_host_for_log(cfg.url),
+            )
+        self._connections[namespace] = connection
         self._adapters[namespace] = McpProxyAdapter(
-            cfg.url,
+            connection,
             tool_timeout_seconds=resolved_tool_timeout,
             tool_timeout_overrides=self.tool_timeout_overrides,
             http_client_factory=self.http_client_factory,
@@ -462,12 +541,71 @@ class UpstreamRegistry:
         )
         if self.observability is not None:
             self.observability.record_upstream_available(namespace=namespace, available=False)
-        logger.info(
-            "mounted upstream namespace=%s host=%s",
-            namespace,
-            upstream_host_for_log(cfg.url),
-        )
         return cfg
+
+    def connection(self, namespace: str) -> UpstreamConnection:
+        try:
+            return self._connections[namespace]
+        except KeyError:
+            raise KeyError(f"unknown upstream namespace: {namespace}") from None
+
+    def _on_process_state(self, namespace: str) -> Callable[[str, str | None], None]:
+        def _callback(state: str, reason: str | None) -> None:
+            if state == "running":
+                self.mark_available(namespace)
+            elif state == "backoff":
+                self.mark_unavailable(namespace, reason or "process down")
+                if self.observability is not None:
+                    self.observability.record_upstream_process_restart(namespace=namespace)
+
+        return _callback
+
+    async def start_connections(self, *, wait: float | None = None) -> None:
+        for cfg in self._upstreams:
+            if cfg.transport != "stdio":
+                continue
+            conn = self._connections[cfg.namespace]
+            assert isinstance(conn, StdioUpstreamConnection)
+            discovery_wait = (
+                wait
+                if wait is not None
+                else (
+                    cfg.discovery_timeout_seconds
+                    if cfg.discovery_timeout_seconds is not None
+                    else self.discovery_timeout_seconds
+                )
+            )
+            started = await conn.start(wait=discovery_wait)
+            if not started:
+                logger.warning(
+                    "stdio upstream process did not reach running within %ss namespace=%s",
+                    discovery_wait,
+                    cfg.namespace,
+                )
+
+    async def stop_connections(self) -> None:
+        for cfg in self._upstreams:
+            if cfg.transport != "stdio":
+                continue
+            await self._connections[cfg.namespace].stop()
+
+    def upstream_readiness_snapshot(self) -> dict[str, dict[str, object]]:
+        """Per-namespace transport, availability, and stdio process state for /readyz."""
+        snapshot: dict[str, dict[str, object]] = {}
+        for cfg in self._upstreams:
+            status = self._status.get(cfg.namespace)
+            available = status.available if status is not None else False
+            process_state: str | None = None
+            if cfg.transport == "stdio":
+                conn = self._connections[cfg.namespace]
+                if isinstance(conn, StdioUpstreamConnection):
+                    process_state = conn.process.state
+            snapshot[cfg.namespace] = {
+                "transport": cfg.transport,
+                "available": available,
+                "process": process_state,
+            }
+        return snapshot
 
     def mark_available(self, namespace: str) -> bool:
         """Record a successful discovery/refresh. Returns True if it was down before.
@@ -633,14 +771,19 @@ class UpstreamRegistry:
             if cfg.discovery_timeout_seconds is not None
             else self.discovery_timeout_seconds
         )
-        tools = await fetch_upstream_tools(
-            cfg.url,
-            timeout_seconds=discovery_timeout,
-            httpx_client_factory=(
-                self.http_client_factory(discovery_timeout) if self.http_client_factory else None
-            ),
-            headers=self.upstream_headers(cfg.namespace),
-        )
+        if cfg.transport == "stdio":
+            tools = await self._discover_stdio_tools(cfg, discovery_timeout)
+        else:
+            tools = await fetch_upstream_tools(
+                cfg.url,
+                timeout_seconds=discovery_timeout,
+                httpx_client_factory=(
+                    self.http_client_factory(discovery_timeout)
+                    if self.http_client_factory
+                    else None
+                ),
+                headers=self.upstream_headers(cfg.namespace),
+            )
         specs = build_upstream_tool_specs(cfg, tools, schema_patches=self.schema_patches)
         for spec in specs.values():
             route_key = f"{cfg.namespace}:{spec.route_name}"
@@ -702,3 +845,24 @@ class UpstreamRegistry:
             registered,
         )
         return registered
+
+    async def _discover_stdio_tools(
+        self, cfg: UpstreamConfig, discovery_timeout: float
+    ) -> list[Any]:
+        conn = self._connections[cfg.namespace]
+        if isinstance(conn, StdioUpstreamConnection) and conn.process.state == "running":
+            client = conn.catalog_client(timeout=discovery_timeout)
+            async with client:
+                return await list_upstream_tools(client, timeout_seconds=discovery_timeout)
+
+        assert cfg.command is not None
+        child_env = resolve_stdio_child_env(cfg.env_from)
+        client = temporary_stdio_client(
+            command=cfg.command,
+            args=cfg.args,
+            env=child_env,
+            cwd=cfg.cwd,
+            init_timeout=discovery_timeout,
+        )
+        async with client:
+            return await list_upstream_tools(client, timeout_seconds=discovery_timeout)
