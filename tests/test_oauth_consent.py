@@ -18,12 +18,12 @@ import pytest
 from asgi_lifespan import LifespanManager
 
 from conftest import BASE_URL, VALID_TOKEN, authorize_to_login, make_pkce, register_client
-from keystone_mcp.auth.identity_provider import StaticIdentityProvider
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import Settings
 from keystone_mcp.server import build_server
 from keystone_mcp.user_directory.factory import build_in_memory_user_directory_resolver
 from support.google_oidc_fixtures import build_mock_google_oidc
+from support.login import dev_token_login
 
 pytestmark = pytest.mark.asyncio
 
@@ -59,9 +59,9 @@ class _Harness:
 @pytest.fixture
 async def api_key_client():
     settings = _api_key_settings()
-    idp = StaticIdentityProvider({VALID_TOKEN})
+    _login = dev_token_login({VALID_TOKEN})
     mcp, *_rest = build_server(
-        identity_provider=idp, settings=settings, oauth_store=InMemoryOAuthStore()
+        login_providers=[_login], settings=settings, oauth_store=InMemoryOAuthStore()
     )
     app = mcp.http_app(path=settings.http_path)
     async with LifespanManager(app):
@@ -75,15 +75,13 @@ def _google_harness(settings: Settings):
     resolver, backend, _revision = build_in_memory_user_directory_resolver()
     backend.seed("alice@example.com", roles=("operator",))
     mock_google = build_mock_google_oidc(settings.google_redirect_uri)
-    idp = StaticIdentityProvider({VALID_TOKEN})
-    from keystone_mcp.login.api_key import ApiKeyLoginProvider
+    _login = dev_token_login({VALID_TOKEN})
 
     mcp, *_rest = build_server(
-        identity_provider=idp,
         settings=settings,
         oauth_store=InMemoryOAuthStore(),
         user_resolver=resolver,
-        login_providers=[mock_google.provider, ApiKeyLoginProvider(idp)],
+        login_providers=[mock_google.provider, _login],
     )
     return mcp.http_app(path=settings.http_path)
 

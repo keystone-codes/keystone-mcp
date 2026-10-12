@@ -27,12 +27,12 @@ from conftest import (
     make_pkce,
     register_client,
 )
-from keystone_mcp.auth.identity_provider import StaticIdentityProvider
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import Settings
 from keystone_mcp.server import build_server
 from keystone_mcp.user_directory.errors import UserDirectoryUnavailableError
 from keystone_mcp.user_directory.factory import build_in_memory_user_directory_resolver
+from support.login import dev_token_login
 
 
 @contextlib.asynccontextmanager
@@ -40,7 +40,7 @@ async def _login_client(*, user_resolver=None, **setting_overrides):
     """A server with api_key login only, wired to the given (optional) resolver."""
     settings = Settings(base_url=BASE_URL, **setting_overrides)
     mcp, _registry, oauth, _upstreams, _policy, _observability, _reconciler = build_server(
-        identity_provider=StaticIdentityProvider({VALID_TOKEN}),
+        login_providers=[dev_token_login({VALID_TOKEN})],
         settings=settings,
         oauth_store=InMemoryOAuthStore(),
         user_resolver=user_resolver,

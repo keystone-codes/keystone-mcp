@@ -23,11 +23,11 @@ from conftest import (
     obtain_access_token,
     register_client,
 )
-from keystone_mcp.auth.identity_provider import StaticIdentityProvider
 from keystone_mcp.auth.keystone_oauth_provider import TRANSLATIONS
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import Settings, resources_equivalent
 from keystone_mcp.server import build_server
+from support.login import dev_token_login
 
 
 @contextlib.asynccontextmanager
@@ -35,7 +35,7 @@ async def login_page_client(**setting_overrides):
     """A client against a server built with the given Settings overrides."""
     settings = Settings(base_url=BASE_URL, **setting_overrides)
     mcp, *_rest = build_server(
-        identity_provider=StaticIdentityProvider({VALID_TOKEN}),
+        login_providers=[dev_token_login({VALID_TOKEN})],
         settings=settings,
         oauth_store=InMemoryOAuthStore(),
         register_builtin_catalog=False,

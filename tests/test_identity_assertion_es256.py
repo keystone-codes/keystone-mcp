@@ -19,7 +19,6 @@ from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption,
 from fastmcp import Client, FastMCP
 from fastmcp.utilities.tests import asgi_server
 
-from keystone_mcp.auth.identity_provider import StaticIdentityProvider
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import ConfigError, Settings, validate_settings
 from keystone_mcp.identity import VerifiedIdentity
@@ -38,6 +37,7 @@ from keystone_mcp.server import build_server
 from keystone_mcp.upstream_registry.load import parse_upstream_entry
 from keystone_mcp.upstream_registry.policy import UpstreamSecurityPolicy
 from keystone_mcp.upstream_registry.validate import auth_field_errors, validate_upstream_registry
+from support.login import dev_token_login
 from support.lowlevel_upstream import (
     UPSTREAM_MCP_URL,
     asgi_http_client_factory,
@@ -139,10 +139,10 @@ async def test_es256_assertion_verifies_with_published_jwks(
         assert header["typ"] == IDENTITY_TYP
         assert header.get("kid")
 
-    idp = StaticIdentityProvider(set())
+    _login = dev_token_login(set())
     store = InMemoryOAuthStore()
     mcp, *_rest = build_server(
-        identity_provider=idp,
+        login_providers=[_login],
         settings=Settings(
             base_url=BASE_URL,
             refresh_interval_seconds=0,
@@ -187,9 +187,9 @@ async def test_es256_assertion_verifies_with_published_jwks(
 
 async def test_jwks_404_without_key():
     settings = Settings(base_url=BASE_URL, refresh_interval_seconds=0)
-    idp = StaticIdentityProvider(set())
+    _login = dev_token_login(set())
     store = InMemoryOAuthStore()
-    mcp, *_rest = build_server(identity_provider=idp, settings=settings, oauth_store=store)
+    mcp, *_rest = build_server(login_providers=[_login], settings=settings, oauth_store=store)
     async with asgi_server(mcp, path="/") as running:
         async with httpx2.AsyncClient(
             transport=httpx2.ASGITransport(app=running.app),

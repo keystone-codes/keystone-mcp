@@ -15,11 +15,11 @@ import httpx
 import pytest
 from asgi_lifespan import LifespanManager
 
-from keystone_mcp.auth.identity_provider import StaticIdentityProvider
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import ConfigError, Settings, client_address_allowed
 from keystone_mcp.rbac.catalog import LIVE_PUBLISHED_NAMES_PATH
 from keystone_mcp.server import build_server
+from support.login import dev_token_login
 
 BASE_URL = "http://localhost:8080"
 
@@ -104,7 +104,7 @@ def test_malformed_cidr_is_refused_at_startup(monkeypatch, value: str):
 # ── Over the wire ───────────────────────────────────────────────────────────
 async def _client(settings: Settings):
     mcp, *_rest = build_server(
-        identity_provider=StaticIdentityProvider({"token"}),
+        login_providers=[dev_token_login({"token"})],
         settings=settings,
         oauth_store=InMemoryOAuthStore(),
         register_builtin_catalog=False,

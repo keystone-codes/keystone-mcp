@@ -19,11 +19,11 @@ import uvicorn
 from asgi_lifespan import LifespanManager
 from fastmcp import FastMCP
 
-from keystone_mcp.auth.identity_provider import StaticIdentityProvider
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import Settings
 from keystone_mcp.server import bootstrap_platform, build_server
 from keystone_mcp.user_directory import build_in_memory_user_directory_resolver
+from support.login import dev_token_login
 
 REFRESH_SECONDS = 30
 # First reconciler tick waits interval + jitter (up to interval / 4, capped at 15s).
@@ -147,7 +147,7 @@ async def test_live_refresh_picks_up_upstream_and_policy_changes(
     )
 
     mcp, registry, _oauth, upstreams, policy_manager, _obs, reconciler = build_server(
-        identity_provider=StaticIdentityProvider({"integration-token"}),
+        login_providers=[dev_token_login({"integration-token"})],
         settings=settings,
         oauth_store=InMemoryOAuthStore(),
         user_resolver=user_resolver,

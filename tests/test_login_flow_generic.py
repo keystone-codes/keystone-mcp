@@ -18,13 +18,13 @@ import pytest
 from asgi_lifespan import LifespanManager
 
 from conftest import BASE_URL, REDIRECT_URI, authorize_to_login, make_pkce, register_client
-from keystone_mcp.auth.identity_provider import StaticIdentityProvider
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import Settings
 from keystone_mcp.server import bootstrap_platform, build_server
 from keystone_mcp.user_directory.factory import build_in_memory_user_directory_resolver
 from support.fake_login import FakeFormProvider, FakeRedirectProvider
 from support.google_oidc_fixtures import build_mock_google_oidc
+from support.login import dev_token_login
 
 pytestmark = pytest.mark.asyncio
 
@@ -256,14 +256,11 @@ async def test_consent_page_html_unchanged_for_builtin_providers():
         users_service_token="users-token",
     )
     mock_google = build_mock_google_oidc(settings.google_redirect_uri)
-    from keystone_mcp.login.api_key import ApiKeyLoginProvider
-
-    idp = StaticIdentityProvider({"irrelevant-token"})
+    _login = dev_token_login({"irrelevant-token"})
     mcp, *_rest = build_server(
-        identity_provider=idp,
         settings=settings,
         oauth_store=InMemoryOAuthStore(),
-        login_providers=[mock_google.provider, ApiKeyLoginProvider(idp)],
+        login_providers=[mock_google.provider, _login],
         register_builtin_catalog=False,
     )
     app = mcp.http_app(path=settings.http_path)

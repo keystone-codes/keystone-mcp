@@ -45,9 +45,16 @@ def _rbac_env(monkeypatch, tmp_path: Path) -> None:
 
 
 def _production_login_env(monkeypatch) -> None:
-    """Satisfy P3 (api_key sign-in needs an external key-verification service)."""
-    monkeypatch.setenv("KEYSTONE_MCP_AUTH_SERVICE_URL", "http://auth:9000/introspect")
-    monkeypatch.setenv("KEYSTONE_MCP_AUTH_SERVICE_TOKEN", "auth-token")
+    """Satisfy production api_key sign-in with a local Postgres-backed directory."""
+    monkeypatch.delenv("KEYSTONE_MCP_AUTH_SERVICE_URL", raising=False)
+    monkeypatch.delenv("KEYSTONE_MCP_AUTH_SERVICE_TOKEN", raising=False)
+    monkeypatch.delenv("KEYSTONE_MCP_GOOGLE_CLIENT_ID", raising=False)
+    monkeypatch.delenv("KEYSTONE_MCP_GOOGLE_CLIENT_SECRET", raising=False)
+    monkeypatch.setenv("KEYSTONE_MCP_USERS_BACKEND", "local")
+    monkeypatch.setenv(
+        "KEYSTONE_MCP_USERS_DB_URL",
+        "postgresql+psycopg://user:pass@localhost:5432/keystone_users",
+    )
 
 
 # ── Default and parsing ──────────────────────────────────────────────────────
@@ -131,11 +138,12 @@ def test_production_refuses_rbac_observe(monkeypatch, tmp_path: Path):
         load_settings()
 
 
-def test_production_refuses_api_key_without_auth_service(monkeypatch, tmp_path: Path):
+def test_production_refuses_api_key_with_http_users_directory(monkeypatch, tmp_path: Path):
     _rbac_env(monkeypatch, tmp_path)
     monkeypatch.setenv("KEYSTONE_MCP_DEPLOYMENT_PROFILE", "production")
-    monkeypatch.delenv("KEYSTONE_MCP_AUTH_SERVICE_URL", raising=False)
-    monkeypatch.delenv("KEYSTONE_MCP_AUTH_SERVICE_TOKEN", raising=False)
+    monkeypatch.setenv("KEYSTONE_MCP_USERS_BACKEND", "http")
+    monkeypatch.setenv("KEYSTONE_MCP_USERS_SERVICE_URL", "http://users:8080")
+    monkeypatch.setenv("KEYSTONE_MCP_USERS_SERVICE_TOKEN", "token")
     with pytest.raises(ConfigError, match="API-key sign-in in production needs"):
         load_settings()
 
@@ -154,7 +162,7 @@ def test_production_accepts_google_only(monkeypatch, tmp_path: Path):
     assert settings.api_key_login_enabled is False
 
 
-def test_production_accepts_api_key_with_auth_service(monkeypatch, tmp_path: Path):
+def test_production_accepts_api_key_with_local_directory(monkeypatch, tmp_path: Path):
     _rbac_env(monkeypatch, tmp_path)
     _production_login_env(monkeypatch)
     monkeypatch.setenv("KEYSTONE_MCP_DEPLOYMENT_PROFILE", "production")
@@ -229,6 +237,10 @@ def test_production_http_backend_ignores_users_db_url(monkeypatch, tmp_path: Pat
     monkeypatch.setenv("KEYSTONE_MCP_USERS_SERVICE_URL", "http://mcp-users:8000")
     monkeypatch.setenv("KEYSTONE_MCP_USERS_SERVICE_TOKEN", "users-token")
     monkeypatch.setenv("KEYSTONE_MCP_USERS_DB_URL", "sqlite:///./keystone-users.db")
+    monkeypatch.setenv("KEYSTONE_MCP_ENABLED_LOGIN_METHODS", "google")
+    monkeypatch.setenv("KEYSTONE_MCP_PRIMARY_LOGIN_METHOD", "google")
+    monkeypatch.setenv("KEYSTONE_MCP_GOOGLE_CLIENT_ID", "client-id")
+    monkeypatch.setenv("KEYSTONE_MCP_GOOGLE_CLIENT_SECRET", "client-secret")
     settings = load_settings()
     assert settings.users_backend == "http"
 
@@ -377,8 +389,7 @@ def test_stage_like_production_configuration_is_accepted(monkeypatch, tmp_path: 
     """The planned stage deployment must pass `validate_settings` unchanged.
 
     `production`, `KEYSTONE_MCP_USERS_BACKEND=http` (mcp-users),
-    `ENABLED_LOGIN_METHODS=api_key,google`, `AUTH_SERVICE_URL`/`_TOKEN` set,
-    `RBAC_MODE=enforce`, no DEV tokens.
+    Google sign-in for people, `RBAC_MODE=enforce`, no DEV tokens.
     """
     policy = tmp_path / "rbac-policy.yaml"
     policy.write_text("default_deny: true\nroles: {}\n", encoding="utf-8")
@@ -387,12 +398,12 @@ def test_stage_like_production_configuration_is_accepted(monkeypatch, tmp_path: 
     monkeypatch.setenv("KEYSTONE_MCP_USERS_BACKEND", "http")
     monkeypatch.setenv("KEYSTONE_MCP_USERS_SERVICE_URL", "http://mcp-users:8000")
     monkeypatch.setenv("KEYSTONE_MCP_USERS_SERVICE_TOKEN", "users-token")
-    monkeypatch.setenv("KEYSTONE_MCP_ENABLED_LOGIN_METHODS", "api_key,google")
-    monkeypatch.setenv("KEYSTONE_MCP_PRIMARY_LOGIN_METHOD", "api_key")
+    monkeypatch.setenv("KEYSTONE_MCP_ENABLED_LOGIN_METHODS", "google")
+    monkeypatch.setenv("KEYSTONE_MCP_PRIMARY_LOGIN_METHOD", "google")
     monkeypatch.setenv("KEYSTONE_MCP_GOOGLE_CLIENT_ID", "client-id")
     monkeypatch.setenv("KEYSTONE_MCP_GOOGLE_CLIENT_SECRET", "client-secret")
-    monkeypatch.setenv("KEYSTONE_MCP_AUTH_SERVICE_URL", "http://auth:9000/introspect")
-    monkeypatch.setenv("KEYSTONE_MCP_AUTH_SERVICE_TOKEN", "auth-token")
+    monkeypatch.delenv("KEYSTONE_MCP_AUTH_SERVICE_URL", raising=False)
+    monkeypatch.delenv("KEYSTONE_MCP_AUTH_SERVICE_TOKEN", raising=False)
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_MODE", "enforce")
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_POLICY_PATH", str(policy))
     monkeypatch.setenv("KEYSTONE_MCP_REDIS_URL", "redis://localhost:6379/0")
@@ -403,12 +414,12 @@ def test_stage_like_production_configuration_is_accepted(monkeypatch, tmp_path: 
 
     assert settings.deployment_profile == "production"
     assert settings.rbac_enforcing is True
-    assert settings.api_key_login_enabled is True
+    assert settings.api_key_login_enabled is False
     assert settings.google_login_enabled is True
     # The two insecure-upstream warnings are expected here: the autouse fixture
     # `_allow_insecure_upstream_http_for_tests` sets both flags for every test
     # in this suite (unrelated to the deployment profile under test). What
-    # matters is that https + enforce + a configured auth service produce no
+    # matters is that https + enforce + Google-only sign-in produce no
     # *other* warning (e.g. no plain-http-base-url or DEV-token warning).
     warnings = startup_warnings(settings)
     assert all(

@@ -35,10 +35,10 @@ from httpx2 import ASGITransport, AsyncClient
 import keystone_mcp.server as server
 from conftest import BASE_URL, obtain_access_token
 from keystone_mcp.adapters.stub import StubAdapter
-from keystone_mcp.auth.identity_provider import StaticIdentityProvider
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import Settings
 from keystone_mcp.server import bootstrap_platform, build_server
+from support.login import dev_token_login
 
 VALID_TOKEN = "valid-test-token"
 ADMIN_EMAIL = "admin@example.com"
@@ -106,11 +106,11 @@ async def test_fresh_server_admin_adds_member_who_cannot_see_users_tools(
         users_redis_revision_key=f"km:users:revision:test:{uuid4().hex}",
     )
 
-    idp = StaticIdentityProvider({VALID_TOKEN})
+    _login = dev_token_login({VALID_TOKEN})
     oauth_store = InMemoryOAuthStore()
 
     mcp, registry, _oauth, upstreams, policy_manager, observability, _reconciler = build_server(
-        identity_provider=idp,
+        login_providers=[_login],
         settings=settings,
         oauth_store=oauth_store,
     )
