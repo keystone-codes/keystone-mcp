@@ -32,6 +32,8 @@ from keystone_mcp.user_directory.errors import (
 )
 from keystone_mcp.user_directory.types import MutationResult, UserRecord, UserResolveResult
 from keystone_mcp.user_directory.util import normalize_email
+from keystone_mcp.users.errors import InvalidRoleError
+from keystone_mcp.users.roles import check_role_name
 
 #: Header carrying the acting administrator's email on every mutating call.
 ACTOR_EMAIL_HEADER = "X-Actor-Email"
@@ -298,10 +300,17 @@ class HttpUserDirectory:
             raise UsersError(
                 "users directory returned an invalid user response", code="service_error"
             ) from exc
+        changed = True
+        created = False
+        if isinstance(body, dict):
+            if "changed" in body:
+                changed = bool(body["changed"])
+            if "created" in body:
+                created = bool(body["created"])
         return MutationResult(
             user=_parse_user_response_body(body),
-            changed=True,
-            created=False,
+            changed=changed,
+            created=created,
             roles_before=None,
             blocked_before=None,
         )
@@ -397,6 +406,10 @@ class HttpUserDirectory:
         return await self._mutation_response(response)
 
     async def grant_role(self, *, email: str, role: str, actor: str) -> MutationResult:
+        try:
+            check_role_name(role)
+        except InvalidRoleError as exc:
+            raise UsersError(str(exc), code="validation_error") from exc
         response = await self._admin_request(
             "POST",
             f"/v1/users/{self._email_path(email)}/roles/{quote(role, safe='')}",
@@ -405,6 +418,10 @@ class HttpUserDirectory:
         return await self._mutation_response(response)
 
     async def revoke_role(self, *, email: str, role: str, actor: str) -> MutationResult:
+        try:
+            check_role_name(role)
+        except InvalidRoleError as exc:
+            raise UsersError(str(exc), code="validation_error") from exc
         response = await self._admin_request(
             "DELETE",
             f"/v1/users/{self._email_path(email)}/roles/{quote(role, safe='')}",

@@ -52,6 +52,13 @@ def _user_payload(record: Any) -> dict[str, Any]:
     return record.to_dict()
 
 
+def _mutation_payload(mutation: Any) -> dict[str, Any]:
+    payload = _user_payload(mutation.user)
+    payload["changed"] = mutation.changed
+    payload["created"] = mutation.created
+    return payload
+
+
 def _error_response(exc: UsersError) -> JSONResponse:
     code = _LEGACY_CODE_FOR.get(type(exc), exc.code)
     status = _STATUS_FOR_CODE.get(exc.code, 500)
@@ -120,7 +127,7 @@ def build_fake_users_service(store: UsersStore, *, token: str = "test-service-to
             )
         except UsersError as exc:
             return _error_response(exc)
-        return JSONResponse(_user_payload(mutation.user))
+        return JSONResponse(_mutation_payload(mutation))
 
     async def update_user(request: Request) -> JSONResponse:
         if (denied := _require_auth(request)) is not None:
@@ -137,7 +144,7 @@ def build_fake_users_service(store: UsersStore, *, token: str = "test-service-to
             )
         except UsersError as exc:
             return _error_response(exc)
-        return JSONResponse(_user_payload(mutation.user))
+        return JSONResponse(_mutation_payload(mutation))
 
     async def block_user(request: Request) -> JSONResponse:
         if (denied := _require_auth(request)) is not None:
@@ -151,7 +158,7 @@ def build_fake_users_service(store: UsersStore, *, token: str = "test-service-to
             )
         except UsersError as exc:
             return _error_response(exc)
-        return JSONResponse(_user_payload(mutation.user))
+        return JSONResponse(_mutation_payload(mutation))
 
     async def unblock_user(request: Request) -> JSONResponse:
         if (denied := _require_auth(request)) is not None:
@@ -165,7 +172,7 @@ def build_fake_users_service(store: UsersStore, *, token: str = "test-service-to
             )
         except UsersError as exc:
             return _error_response(exc)
-        return JSONResponse(_user_payload(mutation.user))
+        return JSONResponse(_mutation_payload(mutation))
 
     async def replace_roles(request: Request) -> JSONResponse:
         if (denied := _require_auth(request)) is not None:
@@ -183,7 +190,7 @@ def build_fake_users_service(store: UsersStore, *, token: str = "test-service-to
             )
         except UsersError as exc:
             return _error_response(exc)
-        return JSONResponse(_user_payload(mutation.user))
+        return JSONResponse(_mutation_payload(mutation))
 
     async def grant_role(request: Request) -> JSONResponse:
         if (denied := _require_auth(request)) is not None:
@@ -199,7 +206,7 @@ def build_fake_users_service(store: UsersStore, *, token: str = "test-service-to
             )
         except UsersError as exc:
             return _error_response(exc)
-        return JSONResponse(_user_payload(mutation.user))
+        return JSONResponse(_mutation_payload(mutation))
 
     async def revoke_role(request: Request) -> JSONResponse:
         if (denied := _require_auth(request)) is not None:
@@ -215,7 +222,7 @@ def build_fake_users_service(store: UsersStore, *, token: str = "test-service-to
             )
         except UsersError as exc:
             return _error_response(exc)
-        return JSONResponse(_user_payload(mutation.user))
+        return JSONResponse(_mutation_payload(mutation))
 
     return Starlette(
         routes=[

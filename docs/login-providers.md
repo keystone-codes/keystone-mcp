@@ -87,7 +87,9 @@ warning at startup.
 ## Custom provider types from plugins
 
 Additional `type` values come from packages that declare a
-`keystone_mcp.login_providers` entry point. See [plugins.md](plugins.md).
+`keystone_mcp.login_providers` entry point. See [plugins.md](plugins.md) and
+the [contract tests](plugins.md#contract-tests) for validating your
+implementation.
 
 ## What the sign-in page looks like
 
