@@ -13,8 +13,9 @@ working minimal service that meets this contract is
 
 **Serve MCP over Streamable HTTP on `/mcp`, expose `/healthz`, and honour
 `X-Author-Email` on every call.** Keystone-MCP discovers the service's tool catalog at startup and then on a
-live refresh timer (`list_tools()`), re-publishing each tool as
-`<namespace>_<tool>`.
+live refresh timer (`list_tools()` and, when the service advertises prompts,
+`list_prompts()`), re-publishing each tool and prompt as
+`<namespace>_<tool>` / `<namespace>_<prompt>`.
 
 ```
 Claude Desktop / Cursor

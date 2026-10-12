@@ -74,6 +74,18 @@ Start order does not matter. A service that is down at startup is logged as a
 warning and its tools appear on the next refresh
 (`KEYSTONE_MCP_REFRESH_INTERVAL_SECONDS`).
 
+## Prompts and resources
+
+Upstream prompts are published like tools: the client sees them as
+`<namespace>_<name>` and the same RBAC allow patterns apply — there is no
+separate prompts or resources section in the policy file. Upstream resources
+(and resource templates) will follow the same rule; their URIs receive the
+namespace (`scheme://<namespace>/...`, details in Y12).
+
+Stdio upstreams do not receive a signed identity assertion on `prompts/get`
+(HTTP headers are not available on the stdio transport); only the unsigned
+subject headers reach HTTP upstreams as today.
+
 ## Discovery
 
 Keystone-MCP calls `list_tools()` on every enabled upstream and registers a live
@@ -188,7 +200,8 @@ not implemented yet or deliberately never forwarded.
 | `notifications/progress` (upstream → client) | yes, when the client sends a `progressToken`; both protocol eras |
 | `notifications/tools/list_changed` | yes, after a catalog change, an RBAC policy reload or a users-directory change; both protocol eras — see "Discovery" above |
 | `notifications/cancelled` (client → upstream) | yes: a client cancel or a keystone-mcp timeout is forwarded to the upstream request (as `notifications/cancelled` on the handshake protocol, by closing the request stream on MCP 2026-07-28) |
-| `prompts/*` | not yet |
+| `prompts/list`, `prompts/get` | yes |
+| `notifications/prompts/list_changed` | yes, after an upstream prompt catalog change; both protocol eras |
 | `resources/*` | not yet |
 | `elicitation/create` (upstream → user) | under evaluation |
 | `sampling/createMessage`, `roots/list` | no, by design: needs its own trust model |

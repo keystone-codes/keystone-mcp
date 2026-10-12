@@ -8,6 +8,7 @@ this project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Upstream prompts are published as `<namespace>_<name>` under the same RBAC allow patterns as tools; `notifications/prompts/list_changed` after a change.
 - `keystone-policy-admin` skill and `docs/policy-admin.md`: changing roles and allow patterns from the agent.
 - OAuth token revocation endpoint `POST /revoke` (RFC 7009); revoking a refresh token also revokes that client's access tokens for the user. CLI `keystone-mcp users block|unblock|logout`.
 - Plugins: sign-in provider types and users directories are discovered through the `keystone_mcp.login_providers` and `keystone_mcp.user_directories` entry points; built-in implementations use the same mechanism. `keystone-mcp plugins list`. `KEYSTONE_MCP_USERS_BACKEND_CONFIG`.
