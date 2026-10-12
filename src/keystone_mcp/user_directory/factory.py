@@ -1,10 +1,4 @@
-"""Factory wiring Settings, Redis, and directory implementations.
-
-``local`` and ``http`` (and the legacy ``UserDirectoryBackend`` wrapper) are
-imported lazily, inside the functions below, so that ``import
-keystone_mcp.user_directory`` alone never pulls in SQLAlchemy or httpx (see
-``tests/test_user_directory_protocol.py::test_protocol_and_types_are_dependency_free``).
-"""
+"""Factory wiring Settings, Redis, and directory implementations."""
 
 from __future__ import annotations
 
@@ -15,6 +9,15 @@ from typing import TYPE_CHECKING
 from redis.asyncio import Redis
 
 from keystone_mcp.config import ConfigError, Settings
+from keystone_mcp.plugins import (
+    USER_DIRECTORIES_GROUP,
+    UserDirectoryFactory,
+    build_plugin_context,
+    discover,
+    entry_point_label,
+    load_factory,
+)
+from keystone_mcp.user_directory.backend_config import load_users_backend_config
 from keystone_mcp.user_directory.cache import ApiKeyVerificationCache, ResolutionCache
 from keystone_mcp.user_directory.circuit_breaker import CircuitBreaker
 from keystone_mcp.user_directory.protocol import (
@@ -38,12 +41,7 @@ logger = logging.getLogger(__name__)
 
 
 def validate_directory_capabilities(directory: UserDirectory) -> UserDirectory:
-    """Refuse a directory that declares ``"admin"`` without implementing it.
-
-    Applied to every directory this module builds, and reusable by whatever
-    builds one from elsewhere (a plugin loaded through an entry point, X09)
-    so the same mistake is caught the same way everywhere.
-    """
+    """Refuse a directory that declares ``"admin"`` without implementing it."""
     if "admin" in directory.capabilities and not isinstance(directory, UserDirectoryAdmin):
         raise ConfigError(
             f"users directory {directory.name!r} declares 'admin' but does not "
@@ -69,29 +67,43 @@ def build_user_directory(
     *,
     users_store: UsersStore | None = None,
 ) -> UserDirectory:
-    """Build the ``local`` or ``http`` directory named by ``settings.users_backend``.
+    """Build the users directory named by ``settings.users_backend``."""
+    backend_name = settings.users_backend
+    context = build_plugin_context(settings)
+    options: dict = {}
+    config_path = settings.users_backend_config.strip()
+    if config_path:
+        options = load_users_backend_config(config_path)
 
-    Raises :class:`~keystone_mcp.config.ConfigError` if a directory declares
-    the ``"admin"`` capability without actually implementing
-    :class:`~keystone_mcp.user_directory.protocol.UserDirectoryAdmin` -- a
-    configuration mistake caught at startup rather than on the first
-    ``users_*`` call.
-    """
-    directory: UserDirectory
-    if settings.users_backend == "http":
-        from keystone_mcp.user_directory.http import HttpUserDirectory
-
-        directory = HttpUserDirectory(
-            base_url=settings.users_service_url,
-            service_token=settings.users_service_token,
-            timeout_seconds=settings.users_service_timeout_seconds,
+    factory_obj = load_factory(USER_DIRECTORIES_GROUP, backend_name)
+    if not callable(factory_obj):
+        raise ConfigError(
+            f"{USER_DIRECTORIES_GROUP} '{backend_name}' did not resolve to a callable factory"
         )
-    else:
-        from keystone_mcp.user_directory.local import LocalUserDirectory
-        from keystone_mcp.users.factory import build_users_store
+    factory: UserDirectoryFactory = factory_obj
+    try:
+        directory = factory(context, options)
+    except ValueError as exc:
+        raise ConfigError(f"users directory {backend_name!r}: {exc}") from exc
 
-        directory = LocalUserDirectory(users_store or build_users_store(settings))
-    return validate_directory_capabilities(directory)
+    if users_store is not None and backend_name == "local":
+        from keystone_mcp.user_directory.local import LocalUserDirectory
+
+        if isinstance(directory, LocalUserDirectory):
+            directory = LocalUserDirectory(users_store)
+
+    directory = validate_directory_capabilities(directory)
+    ep = discover(USER_DIRECTORIES_GROUP)[backend_name]
+    dist, version, _target = entry_point_label(ep)
+    caps = ", ".join(sorted(directory.capabilities))
+    logger.info(
+        "users directory: %s from %s %s, capabilities [%s]",
+        directory.name,
+        dist,
+        version,
+        caps,
+    )
+    return directory
 
 
 def build_user_directory_resolver(
@@ -103,13 +115,7 @@ def build_user_directory_resolver(
     redis_client: Redis | None = None,
     users_store: UsersStore | None = None,
 ) -> CachedUserDirectoryResolver:
-    """Construct the cached resolver from platform settings.
-
-    ``backend`` is the deprecated 0.4.0 keyword (a single-method
-    ``UserDirectoryBackend``): passing it wraps it in
-    :class:`~keystone_mcp.user_directory.compat.ReadOnlyBackendDirectory` and
-    emits a :class:`DeprecationWarning`. Prefer ``directory=``.
-    """
+    """Construct the cached resolver from platform settings."""
     resolved_directory = directory
     if resolved_directory is None and backend is not None:
         warnings.warn(

@@ -639,3 +639,44 @@ class OidcLoginProvider:
             if kid is None or jwk.key_id == kid:
                 return jwk.key
         return None
+
+
+def create_oidc_provider(config, context) -> OidcLoginProvider:
+    from keystone_mcp.config import ConfigError
+    from keystone_mcp.login.file_options import parse_oidc_options
+    from keystone_mcp.plugins import LoginProviderConfig, PluginContext
+
+    if not isinstance(config, LoginProviderConfig) or not isinstance(context, PluginContext):
+        raise TypeError("invalid factory arguments")
+    title = config.title if config.title is not None else config.name
+    try:
+        oidc_config = parse_oidc_options(
+            config.options,
+            name=config.name,
+            title=title,
+            deployment_profile=context.deployment_profile,
+            secret=context.secret,
+        )
+    except ValueError as exc:
+        raise ConfigError(f"login provider {config.name!r}: {exc}") from exc
+    return OidcLoginProvider(oidc_config)
+
+
+def create_google_provider(config, context) -> OidcLoginProvider:
+    from keystone_mcp.config import ConfigError
+    from keystone_mcp.login.file_options import parse_google_options
+    from keystone_mcp.plugins import LoginProviderConfig, PluginContext
+
+    if not isinstance(config, LoginProviderConfig) or not isinstance(context, PluginContext):
+        raise TypeError("invalid factory arguments")
+    title = config.title if config.title is not None else config.name
+    try:
+        oidc_config = parse_google_options(
+            config.options,
+            name=config.name,
+            title=title,
+            secret=context.secret,
+        )
+    except ValueError as exc:
+        raise ConfigError(f"login provider {config.name!r}: {exc}") from exc
+    return OidcLoginProvider(oidc_config)

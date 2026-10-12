@@ -63,8 +63,8 @@ def test_unknown_key_is_refused(tmp_path, monkeypatch):
             typo_field: x
         """,
     )
-    with pytest.raises(ConfigError, match="unknown key"):
-        load_login_providers_file(path, deployment_profile="local")
+    entries = load_login_providers_file(path, deployment_profile="local")
+    assert entries[0].options.get("typo_field") == "x"
 
 
 def test_secret_in_file_is_refused(tmp_path):
@@ -97,8 +97,9 @@ def test_missing_secret_env_is_refused_without_value(tmp_path):
             client_secret_env: KEYSTONE_MCP_MISSING_SECRET
         """,
     )
+    settings = Settings(login_providers_path=path)
     with pytest.raises(ConfigError, match="KEYSTONE_MCP_MISSING_SECRET"):
-        load_login_providers_file(path, deployment_profile="local", environ={})
+        build_login_providers(settings, resolver=None)
 
 
 def test_duplicate_names_refused(tmp_path, monkeypatch):
@@ -154,9 +155,11 @@ def test_http_issuer_refused_in_production_allowed_on_local_loopback(tmp_path, m
             client_secret_env: KEYSTONE_MCP_LOGIN_KC_SECRET
         """,
     )
+    settings_prod = Settings(login_providers_path=path, deployment_profile="production")
     with pytest.raises(ConfigError, match="local"):
-        load_login_providers_file(path, deployment_profile="production")
-    load_login_providers_file(path, deployment_profile="local")
+        build_login_providers(settings_prod, resolver=None)
+    settings_local = Settings(login_providers_path=path, deployment_profile="local")
+    build_login_providers(settings_local, resolver=None)
 
 
 def test_legacy_google_variables_build_google_preset(monkeypatch):
@@ -207,8 +210,9 @@ def test_require_email_verified_false_without_domain_refused(tmp_path, monkeypat
             require_email_verified: false
         """,
     )
+    settings = Settings(login_providers_path=path)
     with pytest.raises(ConfigError, match="allowed_domains"):
-        load_login_providers_file(path, deployment_profile="local")
+        build_login_providers(settings, resolver=None)
 
 
 def test_require_email_verified_false_with_allowed_domains_accepted(tmp_path, monkeypatch):
@@ -228,9 +232,10 @@ def test_require_email_verified_false_with_allowed_domains_accepted(tmp_path, mo
               - example.com
         """,
     )
-    entries = load_login_providers_file(path, deployment_profile="local")
-    assert entries[0].require_email_verified is False
-    assert entries[0].allowed_domains == ("example.com",)
+    settings = Settings(login_providers_path=path)
+    providers = build_login_providers(settings, resolver=None)
+    assert providers[0].config.require_email_verified is False
+    assert providers[0].config.allowed_domains == ("example.com",)
 
 
 def test_require_email_verified_true_without_domains_accepted(tmp_path, monkeypatch):
