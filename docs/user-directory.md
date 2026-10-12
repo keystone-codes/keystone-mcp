@@ -233,4 +233,4 @@ regardless.
 
 ## Registering a directory from your own package
 
-See [plugins.md](plugins.md).
+See [plugins.md](plugins.md). Why: [ADR 0009](adr/0009-plugins-via-entry-points.md).

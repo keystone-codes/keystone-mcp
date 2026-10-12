@@ -78,7 +78,8 @@ warning and its tools appear on the next refresh
 
 Upstream prompts are published like tools: the client sees them as
 `<namespace>_<name>` and the same RBAC allow patterns apply — there is no
-separate prompts or resources section in the policy file. Upstream resources
+separate prompts or resources section in the policy file. Why:
+[ADR 0011](adr/0011-rbac-by-name-for-prompts-and-resources.md). Upstream resources
 (and resource templates) will follow the same rule; their URIs receive the
 namespace (`scheme://<namespace>/...`, details in Y12).
 

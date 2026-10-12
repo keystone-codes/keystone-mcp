@@ -21,9 +21,11 @@ this project uses [Semantic Versioning](https://semver.org/).
 - `users_logout`; blocking a user revokes all of their tokens immediately.
 - Service accounts (`svc:<name>`) with their own roles; `service_accounts_list|add|update` tools and `keystone-mcp service-accounts` CLI (built-in directory).
 - Upstreams receive `X-Keystone-Subject` and `X-Keystone-Subject-Type`.
-- `docs/adr/`: six architecture decision records (built-in users directory,
-  roles in the policy file, signed identity assertion, Redis, dynamic client
-  registration, no file API in the core).
+- Architecture decision records 0007–0012: login providers, API keys and service
+  accounts, plugins via entry points, fastmcp major version, RBAC for prompts
+  (resources when shipped), unsandboxed stdio upstreams; plus 0001–0006 (built-in
+  users directory, roles in the policy file, signed identity assertion, Redis,
+  dynamic client registration, no file API in the core).
 - Startup refuses a removed variable that would change security behaviour
   if ignored, and warns about other removed variables
   (`docs/environment.md#removed-variables`).
