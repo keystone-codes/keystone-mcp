@@ -20,7 +20,14 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from keystone_mcp.user_directory.errors import UserDirectoryUnavailableError
-from keystone_mcp.user_directory.types import MutationResult, UserRecord, UserResolveResult
+from keystone_mcp.user_directory.types import (
+    MutationResult,
+    ServiceAccountMutation,
+    ServiceAccountRecord,
+    UserRecord,
+    UserResolveResult,
+    parse_service_subject,
+)
 from keystone_mcp.user_directory.util import normalize_email
 from keystone_mcp.users.errors import UsersStoreUnavailableError
 from keystone_mcp.users.store import UsersStore
@@ -38,7 +45,7 @@ class LocalUserDirectory:
 
     @property
     def capabilities(self) -> frozenset[str]:
-        return frozenset({"admin"})
+        return frozenset({"admin", "service_accounts"})
 
     async def ping(self) -> None:
         """Delegate to :meth:`UsersStore.ping` (``SELECT 1``) for readiness checks."""
@@ -51,8 +58,9 @@ class LocalUserDirectory:
             ) from exc
 
     async def resolve_user(self, subject: str) -> UserResolveResult:
+        lookup = subject.strip().lower() if parse_service_subject(subject) else normalize_email(subject)
         try:
-            resolved = await self._store.resolve(normalize_email(subject))
+            resolved = await self._store.resolve(lookup)
         except UsersStoreUnavailableError as exc:
             raise UserDirectoryUnavailableError(
                 "users directory is unavailable",
@@ -62,6 +70,7 @@ class LocalUserDirectory:
             exists=resolved.exists,
             roles=resolved.roles,
             is_blocked=resolved.is_blocked,
+            subject_type=resolved.subject_type,  # type: ignore[arg-type]
         )
 
     async def list_users(
@@ -123,6 +132,45 @@ class LocalUserDirectory:
 
     async def revoke_role(self, *, email: str, role: str, actor: str) -> MutationResult:
         return await self._store.revoke_role(email=email, role=role, actor_email=actor)
+
+    async def list_service_accounts(
+        self,
+        *,
+        is_blocked: bool | None = False,
+    ) -> list[ServiceAccountRecord]:
+        return await self._store.list_service_accounts(is_blocked=is_blocked)
+
+    async def create_service_account(
+        self,
+        *,
+        name: str,
+        description: str | None,
+        roles: Sequence[str],
+        actor: str,
+    ) -> ServiceAccountMutation:
+        return await self._store.create_service_account(
+            name=name,
+            description=description,
+            roles=roles,
+            created_by=actor,
+        )
+
+    async def update_service_account(
+        self,
+        *,
+        name: str,
+        description: str | None = None,
+        roles: Sequence[str] | None = None,
+        is_blocked: bool | None = None,
+        actor: str,
+    ) -> ServiceAccountMutation:
+        return await self._store.update_service_account(
+            name=name,
+            description=description,
+            roles=roles,
+            is_blocked=is_blocked,
+            actor=actor,
+        )
 
     async def aclose(self) -> None:
         # The store's engine is owned by whoever built it (the server), not

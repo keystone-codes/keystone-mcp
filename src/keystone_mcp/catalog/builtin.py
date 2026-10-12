@@ -25,6 +25,7 @@ from __future__ import annotations
 import logging
 
 from keystone_mcp.adapters.base import Pattern
+from keystone_mcp.adapters.service_accounts_admin import ServiceAccountsAdminAdapter
 from keystone_mcp.adapters.users_admin import RoleSource, UsersAdminAdapter
 from keystone_mcp.config import Settings
 from keystone_mcp.router.registry import Param, RouterRegistry
@@ -45,6 +46,9 @@ BUILTIN_TOOL_NAMES: frozenset[str] = frozenset(
         "users_set_roles",
         "users_grant_role",
         "users_revoke_role",
+        "service_accounts_list",
+        "service_accounts_add",
+        "service_accounts_update",
     }
 )
 
@@ -58,6 +62,9 @@ def register_catalog(
     role_source: RoleSource | None = None,
 ) -> None:
     users_admin = UsersAdminAdapter(
+        directory=directory, observability=observability, role_source=role_source
+    )
+    service_accounts_admin = ServiceAccountsAdminAdapter(
         directory=directory, observability=observability, role_source=role_source
     )
 
@@ -164,3 +171,43 @@ def register_catalog(
             "users directory %s is read-only: users_* administration tools are not published",
             directory.name,
         )
+
+    if "service_accounts" in directory.capabilities:
+        _service_tools: list[tuple[str, str, list[Param]]] = [
+            (
+                "service_accounts_list",
+                "List service accounts (machine identities) with their roles.",
+                [P("is_blocked", bool, required=False, default=False)],
+            ),
+            (
+                "service_accounts_add",
+                "Create a service account for a machine caller (CI, scheduler, agent). "
+                "Service accounts are never treated as an interactive human and cannot "
+                "hold the administrator role.",
+                [
+                    P("name", str),
+                    P("roles", list, required=False, default=None),
+                    P("description", str, required=False, default=None),
+                ],
+            ),
+            (
+                "service_accounts_update",
+                "Change a service account's description, replace its roles, or block/unblock it.",
+                [
+                    P("name", str),
+                    P("description", str, required=False, default=None),
+                    P("roles", list, required=False, default=None),
+                    P("is_blocked", bool, required=False, default=None),
+                ],
+            ),
+        ]
+        for tool_name, description, params in _service_tools:
+            registry.add_route(
+                tool_name,
+                service_accounts_admin,
+                pattern=Pattern.M_B,
+                params=params,
+                description=description,
+                mode="live",
+                admin=True,
+            )

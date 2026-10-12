@@ -57,8 +57,8 @@ class UsersError(Exception):
 
 
 class UserNotFoundError(UsersError):
-    def __init__(self, email: str) -> None:
-        super().__init__(f"User not found: {email}", code="user_not_found")
+    def __init__(self, email: str, *, message: str | None = None) -> None:
+        super().__init__(message or f"User not found: {email}", code="user_not_found")
 
 
 class UserAlreadyExistsError(UsersError):
@@ -72,6 +72,8 @@ class InvalidRoleError(UsersError):
         self.reason = reason
         if reason == "unknown":
             message = f"unknown role: {role}"
+        elif reason == "reserved":
+            message = f"{role} is reserved for people"
         else:
             message = f"invalid role name: {role!r}"
         super().__init__(message, code="validation_error")

@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 _CALLER_FORBIDDEN_HEADERS = frozenset({"x-author-email", "authorization"})
 
 
-def _build_headers(extra_headers: dict[str, str], email: str) -> dict[str, str]:
+def _build_headers(extra_headers: dict[str, str], email: str | None) -> dict[str, str]:
     """Merge transform/caller headers under the verified identity.
 
     The identity header is applied last so it cannot be overridden, and any
@@ -43,7 +43,10 @@ def _build_headers(extra_headers: dict[str, str], email: str) -> dict[str, str]:
         for name, value in extra_headers.items()
         if name.strip().lower() not in _CALLER_FORBIDDEN_HEADERS
     }
-    return {**safe, AUTHOR_EMAIL_HEADER: email}
+    headers = dict(safe)
+    if email is not None:
+        headers[AUTHOR_EMAIL_HEADER] = email
+    return headers
 
 
 class ExternalHttpAdapter:

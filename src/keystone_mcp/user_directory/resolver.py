@@ -9,8 +9,14 @@ from keystone_mcp.user_directory.circuit_breaker import CircuitBreaker
 from keystone_mcp.user_directory.errors import UserDirectoryUnavailableError
 from keystone_mcp.user_directory.protocol import UserDirectory
 from keystone_mcp.user_directory.revision import RevisionReader
-from keystone_mcp.user_directory.types import UserResolveResult
+from keystone_mcp.user_directory.types import UserResolveResult, parse_service_subject
 from keystone_mcp.user_directory.util import normalize_email
+
+
+def _normalize_subject(subject: str) -> str:
+    if parse_service_subject(subject) is not None:
+        return subject.strip().lower()
+    return normalize_email(subject)
 
 
 class CachedUserDirectoryResolver:
@@ -36,7 +42,7 @@ class CachedUserDirectoryResolver:
         return self._backend
 
     async def resolve(self, email: str, *, critical: bool = False) -> UserResolveResult:
-        normalized = normalize_email(email)
+        normalized = _normalize_subject(email)
         revision = await self._revision_reader.current()
         await self._sync_revision(revision)
 
@@ -71,6 +77,7 @@ class CachedUserDirectoryResolver:
             exists=result.exists,
             roles=result.roles,
             is_blocked=result.is_blocked,
+            subject_type=result.subject_type,
             from_cache=False,
             revision=revision,
         )

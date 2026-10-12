@@ -22,15 +22,18 @@ Google; the policy lets `analyst` call `reports_*` and nothing else.
 
 ### Who exists: the users directory
 
-Keystone-MCP keeps its own list of people — email, roles, blocked or not. It
-is built in by default, or an external HTTP service for forks (see
+Keystone-MCP keeps its own list of people — email, roles, blocked or not — and,
+in the built-in directory, **service accounts** for machine callers (`svc:<name>`,
+roles, no `administrator`, never treated as an interactive human). It is built
+in by default, or an external HTTP service for forks (see
 [environment.md#users-directory](environment.md#users-directory) for the
 backend switch). **Sign-in works only for an email that
 already exists in the users directory and is not blocked. Signing in never
 creates a person** — someone with access has to add them first with
 `users_add`, or they come from `KEYSTONE_MCP_SUPERADMIN_EMAIL` at the first
-start. Details, including recovering a lost administrator account, are in
-[users.md](users.md).
+start. Service accounts are created with `service_accounts_*` or the CLI; see
+[users.md](users.md). Details, including recovering a lost administrator
+account, are in [users.md](users.md).
 
 ### How they prove it: the sign-in secret
 
