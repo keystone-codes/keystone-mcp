@@ -189,6 +189,7 @@ def build_lowlevel_upstream_app(
     tools: Collection[str] | None = None,
     extra_tools: Collection[str] | None = None,
     prompts: bool = False,
+    resources: bool = False,
     observed: dict[str, Any] | None = None,
     require_bearer: str | None = None,
     stateless: bool = True,
@@ -502,9 +503,74 @@ def build_lowlevel_upstream_app(
         "on_list_tools": _on_list_tools,
         "on_call_tool": _on_call_tool,
     }
+
+    async def _on_list_resources(
+        ctx: Any, _params: types.PaginatedRequestParams | None
+    ) -> types.ListResourcesResult:
+        _check_bearer(ctx)
+        if observed is not None:
+            observed["list_resources_calls"] = observed.get("list_resources_calls", 0) + 1
+        return types.ListResourcesResult(
+            resources=[
+                types.Resource(
+                    uri="file:///handbook.md",
+                    name="handbook",
+                    description="Handbook",
+                    mime_type="text/plain",
+                )
+            ]
+        )
+
+    async def _on_list_resource_templates(
+        ctx: Any, _params: types.PaginatedRequestParams | None
+    ) -> types.ListResourceTemplatesResult:
+        _check_bearer(ctx)
+        return types.ListResourceTemplatesResult(
+            resource_templates=[
+                types.ResourceTemplate(
+                    uri_template="notes://items/{id}",
+                    name="note",
+                    description="Note item",
+                    mime_type="text/plain",
+                )
+            ]
+        )
+
+    async def _on_read_resource(
+        ctx: Any, params: types.ReadResourceRequestParams
+    ) -> types.ReadResourceResult:
+        _check_bearer(ctx)
+        request = ctx.request
+        headers = {k.lower(): v for k, v in request.headers.items()} if request else {}
+        if observed is not None:
+            observed["resource_headers"] = headers
+            meta = getattr(params, "meta", None)
+            observed["resource_meta"] = dict(meta) if meta is not None else {}
+        uri = str(params.uri)
+        if uri == "file:///handbook.md":
+            text = "Handbook"
+        elif uri.startswith("notes://items/"):
+            item_id = uri.rsplit("/", 1)[-1]
+            text = f"Note {item_id}"
+        else:
+            raise ValueError(f"unknown resource: {uri}")
+        return types.ReadResourceResult(
+            contents=[
+                types.TextResourceContents(
+                    uri=uri,
+                    text=text,
+                    mime_type="text/plain",
+                )
+            ]
+        )
+
     if prompts:
         server_kwargs["on_list_prompts"] = _on_list_prompts
         server_kwargs["on_get_prompt"] = _on_get_prompt
+    if resources:
+        server_kwargs["on_list_resources"] = _on_list_resources
+        server_kwargs["on_list_resource_templates"] = _on_list_resource_templates
+        server_kwargs["on_read_resource"] = _on_read_resource
 
     server: Server = Server("hello-upstream", **server_kwargs)
 
