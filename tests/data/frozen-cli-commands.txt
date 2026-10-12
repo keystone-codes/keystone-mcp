@@ -1,0 +1,18 @@
+# Frozen since 0.5.0. Append only. See docs/compatibility.md.
+catalog validate
+catalog diff
+catalog export
+upstream validate
+users grant-admin
+users import
+users block
+users unblock
+users logout
+keys issue
+keys list
+keys revoke
+service-accounts add
+service-accounts list
+service-accounts update
+plugins list
+serve

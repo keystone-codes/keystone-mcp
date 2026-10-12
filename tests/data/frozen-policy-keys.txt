@@ -1,0 +1,9 @@
+# Frozen since 0.5.0. Append only. See docs/compatibility.md.
+critical_tools
+default_deny
+deny
+requires_human_identity
+reserved_allow_patterns
+roles
+tool_dispositions
+version
