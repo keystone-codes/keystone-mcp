@@ -66,9 +66,10 @@ optionally a bearer token to authenticate back to it. Contract:
 A service can also be a local process instead of a network one: a registry
 entry with `transport: stdio` names a `command`, its `args`, and the names
 of the environment variables it needs (never their values) — the shape
-most ready-made MCP servers from npm or pip come in. Keystone-MCP starts
-that process, supervises it, and restarts it with a backoff after a crash
-or a hang.
+most ready-made MCP servers from npm or pip come in. Keystone-MCP's
+registry and supervisor already start that process, keep it alive, and
+restart it with a backoff after a crash or a hang; proxying calls to it
+lands with the stdio wiring.
 
 ## One policy file, reloaded live
 
