@@ -18,9 +18,10 @@ from conftest import (
 from keystone_mcp.auth.identity_provider import StaticIdentityProvider
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import Settings
+from keystone_mcp.login.api_key import ApiKeyLoginProvider
 from keystone_mcp.server import build_server
 from keystone_mcp.user_directory.factory import build_in_memory_user_directory_resolver
-from support.google_oidc_fixtures import build_mock_google_oidc, sign_google_id_token
+from support.google_oidc_fixtures import build_mock_google_oidc
 
 
 def _google_settings(**overrides) -> Settings:
@@ -55,7 +56,7 @@ async def google_harness():
         settings=settings,
         oauth_store=store,
         user_resolver=resolver,
-        google_oidc_client=mock_google.client,
+        login_providers=[mock_google.provider, ApiKeyLoginProvider(idp)],
     )
     app = mcp.http_app(path=settings.http_path)
     async with LifespanManager(app):
@@ -112,9 +113,11 @@ async def _complete_google_callback(
         nonce = parse_qs(parsed.query).get("nonce", [None])[0]
     if nonce is None:
         nonce = mock_google.client.new_nonce()
-    mock_google.set_pending_identity(email=email, nonce=nonce, hd=hd)
-
-    callback_params = {"state": state or google_state, "code": google_code}
+    mock_google.set_pending_identity(email=email, nonce=nonce or "nonce", hd=hd)
+    if google_code == "google-auth-code":
+        callback_params = await mock_google.fake.authorize(redirect_url)
+    else:
+        callback_params = {"state": state or google_state, "code": google_code}
     response = await client.get("/login/google/callback", params=callback_params)
     return response, google_state
 
@@ -128,7 +131,7 @@ async def test_google_login_redirect_includes_state_nonce_pkce(google_harness):
     )
     redirect_url = await _start_google_redirect(client, txn)
     parsed = urlparse(redirect_url)
-    assert parsed.netloc == "mock.google"
+    assert parsed.netloc == "accounts.google.com"
     query = parse_qs(parsed.query)
     assert query["response_type"] == ["code"]
     assert query["code_challenge_method"] == ["S256"]
@@ -188,25 +191,11 @@ async def test_google_callback_invalid_id_token_signature(google_harness):
     txn = await authorize_to_login(client, client_id, challenge, settings.resource_url)
 
     redirect_url = await _start_google_redirect(client, txn)
-    google_state = parse_qs(urlparse(redirect_url).query)["state"][0]
-    mock_google.last_nonce = mock_google.client.new_nonce()
-    bad_token = (
-        sign_google_id_token(
-            mock_google.keys,
-            email="alice@example.com",
-            nonce=mock_google.last_nonce,
-        )
-        + "tampered"
-    )
-
-    async def bad_exchange(code: str, code_verifier: str):
-        return {"id_token": bad_token}
-
-    mock_google.client.exchange_code = bad_exchange  # type: ignore[method-assign]
-    response = await client.get(
-        "/login/google/callback",
-        params={"state": google_state, "code": "code"},
-    )
+    nonce = parse_qs(urlparse(redirect_url).query)["nonce"][0]
+    mock_google.set_pending_identity(email="alice@example.com", nonce=nonce)
+    mock_google.fake.tamper.bad_signature = True
+    callback_params = await mock_google.fake.authorize(redirect_url)
+    response = await client.get("/login/google/callback", params=callback_params)
     assert response.status_code == 400
 
 
@@ -228,14 +217,12 @@ async def test_google_callback_rejects_bad_iss_aud_exp_nonce(google_harness):
     for kwargs in cases:
         txn = await authorize_to_login(client, client_id, challenge, settings.resource_url)
         redirect_url = await _start_google_redirect(client, txn)
-        google_state = parse_qs(urlparse(redirect_url).query)["state"][0]
         nonce = parse_qs(urlparse(redirect_url).query)["nonce"][0]
         mock_google.set_pending_identity(email="alice@example.com", nonce=nonce, **kwargs)
-        response = await client.get(
-            "/login/google/callback",
-            params={"state": google_state, "code": "code"},
-        )
-        assert response.status_code == 400
+        callback_params = await mock_google.fake.authorize(redirect_url)
+        response = await client.get("/login/google/callback", params=callback_params)
+        expected = 403 if kwargs.get("email_verified") is False else 400
+        assert response.status_code == expected
 
 
 async def test_google_state_mismatch_and_single_use(google_harness):
@@ -247,7 +234,6 @@ async def test_google_state_mismatch_and_single_use(google_harness):
     _, challenge = make_pkce()
     txn = await authorize_to_login(client, client_id, challenge, settings.resource_url)
     redirect_url = await _start_google_redirect(client, txn)
-    google_state = parse_qs(urlparse(redirect_url).query)["state"][0]
 
     mismatch = await client.get(
         "/login/google/callback",
@@ -257,17 +243,12 @@ async def test_google_state_mismatch_and_single_use(google_harness):
 
     nonce = parse_qs(urlparse(redirect_url).query)["nonce"][0]
     mock_google.set_pending_identity(email="alice@example.com", nonce=nonce)
-    first = await client.get(
-        "/login/google/callback",
-        params={"state": google_state, "code": "code"},
-    )
+    first_params = await mock_google.fake.authorize(redirect_url)
+    first = await client.get("/login/google/callback", params=first_params)
     assert first.status_code == 302
 
     mock_google.set_pending_identity(email="alice@example.com", nonce=nonce)
-    reuse = await client.get(
-        "/login/google/callback",
-        params={"state": google_state, "code": "code"},
-    )
+    reuse = await client.get("/login/google/callback", params=first_params)
     assert reuse.status_code == 400
 
 
@@ -278,13 +259,16 @@ async def test_google_domain_restriction(google_harness):
 
     resolver, backend, _ = build_in_memory_user_directory_resolver()
     backend.seed("alice@example.com", roles=("operator",))
-    mock_google = build_mock_google_oidc(settings.google_redirect_uri)
+    mock_google = build_mock_google_oidc(settings.google_redirect_uri, allowed_domain="example.com")
     mcp, _, oauth, _, _, _, _ = build_server(
         identity_provider=StaticIdentityProvider({VALID_TOKEN}),
         settings=settings,
         oauth_store=InMemoryOAuthStore(),
         user_resolver=resolver,
-        google_oidc_client=mock_google.client,
+        login_providers=[
+            mock_google.provider,
+            ApiKeyLoginProvider(StaticIdentityProvider({VALID_TOKEN})),
+        ],
     )
     app = mcp.http_app(path=settings.http_path)
     async with LifespanManager(app):
@@ -483,13 +467,10 @@ async def test_google_callback_without_csrf_cookie_is_refused(google_harness):
     # The underlying /authorize transaction is not spent: a fresh, correct
     # Google round trip against the same txn still succeeds.
     redirect_url_2 = await _start_google_redirect(client, txn)
-    google_state_2 = parse_qs(urlparse(redirect_url_2).query)["state"][0]
     nonce_2 = parse_qs(urlparse(redirect_url_2).query)["nonce"][0]
     mock_google.set_pending_identity(email="alice@example.com", nonce=nonce_2)
-    retry = await client.get(
-        "/login/google/callback",
-        params={"state": google_state_2, "code": "google-auth-code"},
-    )
+    retry_params = await mock_google.fake.authorize(redirect_url_2)
+    retry = await client.get("/login/google/callback", params=retry_params)
     assert retry.status_code == 302, retry.text
     assert "code=" in retry.headers["location"]
 
@@ -545,9 +526,7 @@ async def test_google_callback_with_matching_csrf_cookie_succeeds(google_harness
 # being relaxed or bypassed — and checks handle_google_callback's own
 # normalize_email(...) call (matching handle_login, A01) still produces a
 # lower-case, trimmed subject and `email` claim.
-async def test_google_identity_email_is_normalized_defensively(google_harness, monkeypatch):
-    from keystone_mcp.auth.google_oidc import GoogleVerifiedIdentity
-
+async def test_google_identity_email_is_normalized_defensively(google_harness):
     client = google_harness["client"]
     oauth = google_harness["oauth"]
     mock_google = google_harness["mock_google"]
@@ -557,21 +536,11 @@ async def test_google_identity_email_is_normalized_defensively(google_harness, m
     verifier, challenge = make_pkce()
     txn = await authorize_to_login(client, client_id, challenge, settings.resource_url)
     redirect_url = await _start_google_redirect(client, txn)
-    google_state = parse_qs(urlparse(redirect_url).query)["state"][0]
     nonce = parse_qs(urlparse(redirect_url).query)["nonce"][0]
-    # Populates the mock's pending id_token so exchange_code succeeds; its
-    # content is irrelevant since verify_id_token itself is patched below.
-    mock_google.set_pending_identity(email="alice@example.com", nonce=nonce)
-
-    def fake_verify_id_token(_id_token: str, _nonce: str) -> GoogleVerifiedIdentity:
-        return GoogleVerifiedIdentity(email=" Alice@Example.COM ", email_verified=True)
-
-    monkeypatch.setattr(mock_google.client, "verify_id_token", fake_verify_id_token)
-
-    response = await client.get(
-        "/login/google/callback",
-        params={"state": google_state, "code": "whatever"},
-    )
+    mock_google.fake.user.email = " Alice@Example.COM "
+    mock_google.set_pending_identity(email=" Alice@Example.COM ", nonce=nonce)
+    callback_params = await mock_google.fake.authorize(redirect_url)
+    response = await client.get("/login/google/callback", params=callback_params)
     assert response.status_code == 302, response.text
     code = parse_qs(urlparse(response.headers["location"]).query)["code"][0]
 

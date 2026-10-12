@@ -197,7 +197,7 @@ async def test_unexpected_provider_error_is_identity_page(caplog):
                     params={"state": state, "code": "x", "email": "alice@example.com"},
                 )
 
-    assert response.status_code == 400
+    assert response.status_code == 503
     assert "boom - should never be shown" not in response.text
     assert any(
         record.exc_info is not None and "acme" in record.getMessage() for record in caplog.records
@@ -256,11 +256,14 @@ async def test_consent_page_html_unchanged_for_builtin_providers():
         users_service_token="users-token",
     )
     mock_google = build_mock_google_oidc(settings.google_redirect_uri)
+    from keystone_mcp.login.api_key import ApiKeyLoginProvider
+
+    idp = StaticIdentityProvider({"irrelevant-token"})
     mcp, *_rest = build_server(
-        identity_provider=StaticIdentityProvider({"irrelevant-token"}),
+        identity_provider=idp,
         settings=settings,
         oauth_store=InMemoryOAuthStore(),
-        google_oidc_client=mock_google.client,
+        login_providers=[mock_google.provider, ApiKeyLoginProvider(idp)],
         register_builtin_catalog=False,
     )
     app = mcp.http_app(path=settings.http_path)
@@ -345,7 +348,7 @@ async def test_form_provider_claiming_another_name_is_refused():
 # ── begin() is no longer trusted to never raise (finding #2) ───────────────
 
 
-async def test_begin_rejected_is_400():
+async def test_begin_rejected_provider_unavailable_is_503():
     provider = FakeRedirectProvider("acme", begin_rejects="provider_unavailable")
     app, settings, _oauth = _build_app([provider])
 
@@ -359,7 +362,7 @@ async def test_begin_rejected_is_400():
 
             response = await _start_redirect(client, txn, "acme")
 
-    assert response.status_code == 400
+    assert response.status_code == 503
     assert "location" not in response.headers
 
 

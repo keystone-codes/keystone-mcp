@@ -412,7 +412,9 @@ def test_stage_like_production_configuration_is_accepted(monkeypatch, tmp_path: 
     # *other* warning (e.g. no plain-http-base-url or DEV-token warning).
     warnings = startup_warnings(settings)
     assert all(
-        "UPSTREAM_ALLOW_INSECURE_HTTP" in w or "UPSTREAM_EGRESS_ALLOW_PRIVATE" in w
+        "UPSTREAM_ALLOW_INSECURE_HTTP" in w
+        or "UPSTREAM_EGRESS_ALLOW_PRIVATE" in w
+        or "deprecated since 0.5.0" in w
         for w in warnings
     )
 

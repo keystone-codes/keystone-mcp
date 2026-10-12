@@ -1,0 +1,16 @@
+version: 1
+providers:
+  - name: okta
+    type: oidc
+    title: Okta
+    issuer: https://example.okta.com/oauth2/default
+    client_id: 0oa1example
+    client_secret_env: KEYSTONE_MCP_LOGIN_OKTA_SECRET
+    allowed_domains: [example.com]
+  - name: google
+    type: google
+    client_id: 123.apps.googleusercontent.com
+    client_secret_env: KEYSTONE_MCP_LOGIN_GOOGLE_SECRET
+    allowed_domain: example.com
+  - name: api_key
+    type: api_key

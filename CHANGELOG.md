@@ -37,6 +37,8 @@ this project uses [Semantic Versioning](https://semver.org/).
   with the same validation as a hot-reload, an atomic write, one backup
   (`<policy>.bak`), an in-place reload and an `rbac_policy_mutation` audit
   event. `KEYSTONE_MCP_POLICY_TOOLS` (`full` | `read-only` | `off`).
+- Sign-in with any OpenID Connect provider (Okta, Microsoft Entra ID, Keycloak,
+  Google) configured in `KEYSTONE_MCP_LOGIN_PROVIDERS_PATH`.
 
 ### Changed
 
@@ -80,8 +82,13 @@ this project uses [Semantic Versioning](https://semver.org/).
   base URL.
 - `requires_human_identity` accepts any interactive sign-in provider, not
   only Google. Access tokens carry an `interactive` claim.
+- Login page error texts are provider-neutral.
 
 ### Deprecated
+
+- `KEYSTONE_MCP_GOOGLE_*`, `KEYSTONE_MCP_ENABLED_LOGIN_METHODS`,
+  `KEYSTONE_MCP_PRIMARY_LOGIN_METHOD` — deprecated since 0.5.0, kept until the
+  next major version; use a login providers file.
 
 - `UserDirectoryBackend` (single `resolve_user` method) — implement
   `UserDirectory`; deprecated since 0.5.0, removed in 2.0.
@@ -123,6 +130,9 @@ this project uses [Semantic Versioning](https://semver.org/).
 
 ### Migration
 
+- Google users: nothing to do now; when convenient, move the Google settings into
+  a login providers file (`type: google`). The Google redirect URI stays
+  `<base>/login/google/callback`.
 - Replace `KEYSTONE_MCP_RBAC_ENABLED=true` with `KEYSTONE_MCP_RBAC_MODE=enforce`;
   delete the old variable — the server does not start while it is set.
 - A fork that registered `DetInternalAdapter` or `ChatAttachmentAdapter` must

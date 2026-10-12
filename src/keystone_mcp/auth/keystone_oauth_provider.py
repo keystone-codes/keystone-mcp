@@ -335,14 +335,15 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "submit": "אישור",
         "error_invalid": "אסימון API או אימייל שגויים",
         "error_request": "בקשת הרשאה לא חוקית או שפג תוקפה",
-        "google_button": "התחברות עם Google",
-        "error_google_disabled": "התחברות Google לא זמינה",
-        "error_google_domain": "חשבון Google לא שייך לדומיין המורשה",
-        "error_google_identity": "אימות Google נכשל",
-        "error_google_user_denied": "המשתמש לא רשום או חסום",
-        "error_google_unavailable": "שירות המשתמשים לא זמין",
+        "login_with": "התחברות עם {provider}",
+        "error_provider_disabled": "שיטת ההתחברות הזו אינה זמינה",
+        "error_provider_identity": "ההתחברות דרך ספק הזהות נכשלה",
+        "error_provider_domain": "חשבון זה מחוץ לדומיינים המורשים",
+        "error_provider_unverified": 'ספק הזהות לא אישר את כתובת הדוא"ל',
+        "error_provider_unavailable": "ספק הזהות אינו זמין. נסו שוב מאוחר יותר",
+        "error_user_denied": "המשתמש לא רשום או חסום",
+        "error_directory_unavailable": "שירות המשתמשים לא זמין",
         "error_redirect_host": "כתובת החזרה של האפליקציה אינה מורשית",
-        "error_provider_unavailable": "שירות ההתחברות אינו זמין כעת",
         "consent_title": "לאשר גישה?",
         "consent_app": "אפליקציה",
         "consent_redirect": "לאחר ההתחברות תועברו אל",
@@ -357,14 +358,15 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "submit": "Authorize",
         "error_invalid": "Invalid api_token or email",
         "error_request": "Invalid or expired authorization request",
-        "google_button": "Sign in with Google",
-        "error_google_disabled": "Google sign-in is not available",
-        "error_google_domain": "Google account is outside the allowed domain",
-        "error_google_identity": "Google identity verification failed",
-        "error_google_user_denied": "User is not registered or is blocked",
-        "error_google_unavailable": "User directory is unavailable",
+        "login_with": "Sign in with {provider}",
+        "error_provider_disabled": "This sign-in method is not available",
+        "error_provider_identity": "Sign-in with the identity provider failed",
+        "error_provider_domain": "This account is outside the allowed domains",
+        "error_provider_unverified": "The identity provider has not confirmed this e-mail address",
+        "error_provider_unavailable": "The identity provider is unavailable. Try again later",
+        "error_user_denied": "User is not registered or is blocked",
+        "error_directory_unavailable": "User directory is unavailable",
         "error_redirect_host": "This application's redirect address is not allowed",
-        "error_provider_unavailable": "The sign-in service is not available right now",
         "consent_title": "Allow access?",
         "consent_app": "Application",
         "consent_redirect": "After sign-in you will be sent to",
@@ -381,14 +383,15 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "submit": "Авторизовать",
         "error_invalid": "Неверный api_token или email",
         "error_request": "Недействительный или истёкший запрос авторизации",
-        "google_button": "Войти через Google",
-        "error_google_disabled": "Вход через Google недоступен",
-        "error_google_domain": "Аккаунт Google вне разрешённого домена",
-        "error_google_identity": "Проверка Google-идентичности не удалась",
-        "error_google_user_denied": "Пользователь не зарегистрирован или заблокирован",
-        "error_google_unavailable": "Каталог пользователей недоступен",
+        "login_with": "Войти через {provider}",
+        "error_provider_disabled": "Этот способ входа недоступен",
+        "error_provider_identity": "Вход через поставщика идентичности не удался",
+        "error_provider_domain": "Эта учётная запись вне разрешённых доменов",
+        "error_provider_unverified": "Поставщик идентичности не подтвердил адрес электронной почты",
+        "error_provider_unavailable": "Поставщик идентичности недоступен. Попробуйте позже",
+        "error_user_denied": "Пользователь не зарегистрирован или заблокирован",
+        "error_directory_unavailable": "Каталог пользователей недоступен",
         "error_redirect_host": "Адрес возврата этого приложения не разрешён",
-        "error_provider_unavailable": "Служба входа сейчас недоступна",
         "consent_title": "Разрешить доступ?",
         "consent_app": "Приложение",
         "consent_redirect": "После входа вы попадёте на",
@@ -405,14 +408,15 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "submit": "تفويض",
         "error_invalid": "رمز API أو البريد الإلكتروني غير صحيح",
         "error_request": "طلب تفويض غير صالح أو منتهي الصلاحية",
-        "google_button": "تسجيل الدخول عبر Google",
-        "error_google_disabled": "تسجيل الدخول عبر Google غير متاح",
-        "error_google_domain": "حساب Google خارج النطاق المسموح",
-        "error_google_identity": "فشل التحقق من هوية Google",
-        "error_google_user_denied": "المستخدم غير مسجل أو محظور",
-        "error_google_unavailable": "خدمة المستخدمين غير متاحة",
+        "login_with": "تسجيل الدخول عبر {provider}",
+        "error_provider_disabled": "طريقة تسجيل الدخول هذه غير متاحة",
+        "error_provider_identity": "فشل تسجيل الدخول عبر مزود الهوية",
+        "error_provider_domain": "هذا الحساب خارج النطاقات المسموح بها",
+        "error_provider_unverified": "مزود الهوية لم يؤكد عنوان البريد الإلكتروني",
+        "error_provider_unavailable": "مزود الهوية غير متاح. حاول مرة أخرى لاحقًا",
+        "error_user_denied": "المستخدم غير مسجل أو محظور",
+        "error_directory_unavailable": "خدمة المستخدمين غير متاحة",
         "error_redirect_host": "عنوان إعادة التوجيه لهذا التطبيق غير مسموح به",
-        "error_provider_unavailable": "خدمة تسجيل الدخول غير متاحة الآن",
         "consent_title": "السماح بالوصول؟",
         "consent_app": "التطبيق",
         "consent_redirect": "بعد تسجيل الدخول سيتم تحويلك إلى",
@@ -1250,7 +1254,7 @@ class KeystoneOAuthProvider(OAuthProvider):
                     lang,
                     pending,
                     client,
-                    error_key="error_google_unavailable",
+                    error_key="error_directory_unavailable",
                     status_code=503,
                 )
             if not resolved.exists or resolved.is_blocked:
@@ -1264,7 +1268,7 @@ class KeystoneOAuthProvider(OAuthProvider):
                     lang,
                     pending,
                     client,
-                    error_key="error_google_user_denied",
+                    error_key="error_user_denied",
                     status_code=403,
                 )
         # Reachable whenever no directory resolver is wired at all, which is
@@ -1297,7 +1301,9 @@ class KeystoneOAuthProvider(OAuthProvider):
         lang = _pick_language(request, self._settings.login_default_lang)
         provider = self._providers.get(name)
         if provider is None or provider.kind != "redirect":
-            return _html_response(self._error_page(lang, "error_google_disabled"), status_code=404)
+            return _html_response(
+                self._error_page(lang, "error_provider_disabled"), status_code=404
+            )
 
         txn_id = request.query_params.get("txn", "").strip()
         return RedirectResponse(
@@ -1316,7 +1322,9 @@ class KeystoneOAuthProvider(OAuthProvider):
         lang = _pick_language(request, self._settings.login_default_lang)
         provider = self._providers.get(name)
         if provider is None or provider.kind != "redirect":
-            return _html_response(self._error_page(lang, "error_google_disabled"), status_code=404)
+            return _html_response(
+                self._error_page(lang, "error_provider_disabled"), status_code=404
+            )
 
         allowed_ip, retry_ip = self._login_throttle.check_ip(peer_host(request))
         if not allowed_ip:
@@ -1343,6 +1351,10 @@ class KeystoneOAuthProvider(OAuthProvider):
             redirect = await provider.begin(state=state, callback_url=self._callback_url(name))
         except LoginRejected as exc:
             logger.info("login rejected by provider %s: %s", name, exc.reason)
+            if exc.reason == "provider_unavailable":
+                return _html_response(
+                    self._error_page(lang, "error_provider_unavailable"), status_code=503
+                )
             return _html_response(self._error_page(lang, "error_request"), status_code=400)
         except Exception:
             # Mirrors the protocol's own rule, applied at the other end of
@@ -1477,23 +1489,34 @@ class KeystoneOAuthProvider(OAuthProvider):
             logger.info("login rejected by provider %s: %s", name, exc.reason)
             if exc.reason == "domain_not_allowed":
                 return _html_response(
-                    self._error_page(lang, "error_google_domain"), status_code=403
+                    self._error_page(lang, "error_provider_domain"), status_code=403
+                )
+            if exc.reason == "email_unverified":
+                return _html_response(
+                    self._error_page(lang, "error_provider_unverified"), status_code=403
+                )
+            if exc.reason == "provider_unavailable":
+                return _html_response(
+                    self._error_page(lang, "error_provider_unavailable"), status_code=502
                 )
             if exc.reason == "request_invalid":
-                # Preserves handle_google_callback's old distinction: the
-                # provider itself returned an `error=...` (e.g. the person
-                # cancelled on the provider's own consent screen) gets the
-                # identity-failure page; any other malformed callback (a
-                # missing `code`) gets the generic invalid-request page.
                 if "error" in params:
                     return _html_response(
-                        self._error_page(lang, "error_google_identity"), status_code=400
+                        self._error_page(lang, "error_provider_identity"), status_code=400
                     )
                 return _html_response(self._error_page(lang, "error_request"), status_code=400)
-            return _html_response(self._error_page(lang, "error_google_identity"), status_code=400)
+            if exc.reason == "identity_invalid":
+                return _html_response(
+                    self._error_page(lang, "error_provider_identity"), status_code=400
+                )
+            return _html_response(
+                self._error_page(lang, "error_provider_identity"), status_code=400
+            )
         except Exception:
             logger.exception("unexpected error from login provider %s", name)
-            return _html_response(self._error_page(lang, "error_google_identity"), status_code=400)
+            return _html_response(
+                self._error_page(lang, "error_provider_unavailable"), status_code=503
+            )
 
         verified_identity = self._verify_identity_route(identity, name)
         if verified_identity is None:
@@ -1505,20 +1528,18 @@ class KeystoneOAuthProvider(OAuthProvider):
                 "login provider %s enabled but user directory resolver is not configured", name
             )
             return _html_response(
-                self._error_page(lang, "error_google_unavailable"), status_code=503
+                self._error_page(lang, "error_directory_unavailable"), status_code=503
             )
 
         try:
             resolved = await self._user_resolver.resolve(identity.email)
         except UserDirectoryUnavailableError:
             return _html_response(
-                self._error_page(lang, "error_google_unavailable"), status_code=503
+                self._error_page(lang, "error_directory_unavailable"), status_code=503
             )
 
         if not resolved.exists or resolved.is_blocked:
-            return _html_response(
-                self._error_page(lang, "error_google_user_denied"), status_code=403
-            )
+            return _html_response(self._error_page(lang, "error_user_denied"), status_code=403)
 
         return await self._complete_login(
             attempt.txn_id, identity, lang, auth_method=name, interactive=provider.interactive
@@ -1657,7 +1678,7 @@ class KeystoneOAuthProvider(OAuthProvider):
         for provider in self._providers.values():
             if provider.kind == "redirect":
                 button_text = html.escape(
-                    t["google_button"] if provider.name == "google" else provider.title
+                    t["login_with"].format(provider=html.escape(provider.title))
                 )
                 redirect_blocks.append(f"""
   <form method="post" action="/login/{provider.name}">

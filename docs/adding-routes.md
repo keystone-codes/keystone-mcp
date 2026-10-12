@@ -264,7 +264,7 @@ for the field and the header it produces.
 
 - **Sign-in providers: `keystone_mcp.login.LoginProvider` (redirect and form
   kinds).** Configuration of custom providers arrives with OIDC providers;
-  see `docs/login-providers.md` (added in the next change).
+  see [login-providers.md](login-providers.md).
 - **No entry points yet.** Every seam above is wired by editing one factory
   function in the core (`build_identity_provider`,
   `build_user_directory_resolver`, `UsersAdminAdapter`) rather than by
