@@ -37,6 +37,7 @@ find there, not just the file name.
 ## I manage who has access
 
 - [People and roles](users.md)
+- [The `UserDirectory` protocol — writing your own directory](user-directory.md)
 - [Policy file format](rbac-policy-format.md)
 - [Check a policy offline](rbac-catalog-registry.md)
 - [Generated role matrix](rbac-role-matrix-per-tool.md)

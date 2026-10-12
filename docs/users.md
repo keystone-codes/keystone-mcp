@@ -116,6 +116,16 @@ role the person currently has.
 A failed mutation is not retried blindly. A timeout may mean the change was
 applied. List the person first, then decide.
 
+### Directories that cannot be administered
+
+The built-in directory and the HTTP directory both support administration.
+A directory that only reads (the deprecated `UserDirectoryBackend` wrapper
+from a 0.4.0 fork, or a read-only plugin directory) publishes `users_list`
+alone — the other seven tools above are not published at all, rather than
+answering with an error. See
+[user-directory.md](user-directory.md#writing-your-own-directory) for what a
+directory declares about itself.
+
 ## Errors
 
 | Code | What it means |
