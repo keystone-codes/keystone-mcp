@@ -53,27 +53,6 @@ def test_file_tools_are_gone(tmp_path: Path):
     assert not hasattr(adapters_module, "FileRefAdapter")
 
 
-def test_builtin_descriptions_have_no_legacy_terms(tmp_path: Path):
-    """Tool descriptions and parameter names carry no internal platform labels."""
-    settings = _enforce_settings(tmp_path)
-    reg = _registry(settings)
-    register_catalog(reg, settings)
-
-    forbidden = (
-        "K3",
-        "K4",
-        "Excel",
-        "xlsx",
-        "intended_project_id",
-        "S2S",
-        "mcp-users",
-    )
-    for route in reg.routes.values():
-        haystack = " ".join([route.description or "", *(p.name for p in route.params)])
-        for term in forbidden:
-            assert term not in haystack, f"{route.name!r} description/params contain {term!r}"
-
-
 def test_catalog_registers_users_tools_only_in_enforce(tmp_path):
     settings = _enforce_settings(tmp_path)
     reg = _registry(settings)

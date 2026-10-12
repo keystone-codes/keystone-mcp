@@ -33,7 +33,9 @@ def test_factory_builds_local_backend_by_default(monkeypatch) -> None:
 
 def test_factory_builds_http_backend_when_configured(monkeypatch) -> None:
     monkeypatch.setenv("KEYSTONE_MCP_USERS_BACKEND", "http")
-    monkeypatch.setenv("KEYSTONE_MCP_USERS_SERVICE_URL", "http://mcp-users:8080")
+    monkeypatch.setenv(
+        "KEYSTONE_MCP_USERS_SERVICE_URL", "http://users-directory.internal.example:8080"
+    )
     monkeypatch.setenv("KEYSTONE_MCP_USERS_SERVICE_TOKEN", "token")
     settings = Settings()
     resolver = build_user_directory_resolver(settings, revision_reader=InMemoryRevisionReader())

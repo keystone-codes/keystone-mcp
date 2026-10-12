@@ -658,7 +658,7 @@ def _parse_upstream_tool_timeouts(raw: str) -> dict[str, float]:
     """Parse ``KEYSTONE_MCP_UPSTREAM_TOOL_TIMEOUTS`` (per-published-tool overrides).
 
     Format: a JSON object mapping a published tool name to a timeout in seconds,
-    e.g. ``{"catalog_advance": 30, "catalog_record_decision": 30}``. An empty or
+    e.g. ``{"reports_build": 30, "reports_publish": 30}``. An empty or
     unset value means "no overrides" (every proxied call uses
     ``KEYSTONE_MCP_UPSTREAM_TOOL_TIMEOUT_SECONDS``).
     """

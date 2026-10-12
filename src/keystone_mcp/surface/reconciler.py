@@ -418,7 +418,7 @@ class SurfaceReconciler:
                 self.registry.add_route(
                     spec.route_name,
                     adapter,
-                    pattern=Pattern.M_B,
+                    pattern=Pattern.SYNC,
                     params=spec.params,
                     description=spec.description,
                     mode=cfg.route_mode,

@@ -70,7 +70,7 @@ def reconciler_stack(policy_path: Path):
         registry.add_route(
             tool,
             adapter,
-            pattern=Pattern.M_B,
+            pattern=Pattern.SYNC,
             mode="live",
             namespace="reports",
             config_mode="PROXY",
@@ -705,7 +705,7 @@ def _build_docs_reconciler(tmp_path: Path, policy_text: str):
     upstreams.add_upstream("docs", "http://docs:8081/mcp", namespace="docs")
     from keystone_mcp.adapters.stub import StubAdapter
 
-    registry.add_route("reports_read", StubAdapter(), pattern=Pattern.M_B, mode="live")
+    registry.add_route("reports_read", StubAdapter(), pattern=Pattern.SYNC, mode="live")
     policy_manager = RbacPolicyManager(settings, upstream_catalog_state=upstreams.catalog_state)
     policy_manager.load_initial(registry)  # docs is down: docs_* / docs_serch are "not verified"
     reconciler = SurfaceReconciler(

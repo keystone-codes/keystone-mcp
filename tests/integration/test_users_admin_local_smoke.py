@@ -1,7 +1,7 @@
 """End-to-end smoke test for the users_* tools against the built-in directory.
 
 Replaces the old ``test_users_admin_mcp_users_smoke.py``, which drove a live
-external ``mcp-users`` service that is no longer published. This test wires
+external HTTP users directory service that is no longer published. This test wires
 ``register_catalog`` the way ``keystone_mcp.server.build_server`` does —
 against a real (migrated) ``UsersStore`` — and drives the ``users_*`` tools
 through ``RouterEngine.execute`` directly, the same way the legacy

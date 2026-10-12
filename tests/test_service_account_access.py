@@ -188,7 +188,7 @@ async def test_upstream_receives_subject_headers():
             task_id="t_hdr",
             canonical_args="{}",
             tool_name="whoami",
-            pattern=Pattern.M_B,
+            pattern=Pattern.SYNC,
             settings=settings,
         )
         await adapter.execute(route, ctx, {}, None)
@@ -233,7 +233,7 @@ async def test_client_cannot_inject_subject_headers():
         task_id="t_inj",
         canonical_args="{}",
         tool_name="whoami",
-        pattern=Pattern.M_B,
+        pattern=Pattern.SYNC,
         settings=Settings(base_url="http://localhost:8080"),
     )
     await adapter.execute(route, ctx, {}, None)

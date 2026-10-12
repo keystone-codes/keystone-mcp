@@ -1,6 +1,6 @@
 """Persistent OAuth session store (clients, access tokens, refresh tokens).
 
-Production uses shared Redis from the keystone stack; tests inject
+Production uses the deployment's Redis; tests inject
 :class:`InMemoryOAuthStore`.
 """
 

@@ -103,6 +103,7 @@ this project uses [Semantic Versioning](https://semver.org/).
 - Login page error texts are provider-neutral.
 - New Redis keys `km:oauth:subject:<sub>` (set) and `km:oauth:subject_nbf:<sub>`
   under `KEYSTONE_MCP_REDIS_KEY_PREFIX`; access tokens carry `iat`.
+- `Pattern` members renamed: `M_B` → `SYNC`, `M_E` → `CONTINUATION`; `M_D` and `M_U` removed with the file tools. The built-in answer format is called the status envelope throughout the code and docs.
 
 ### Deprecated
 
@@ -187,6 +188,7 @@ this project uses [Semantic Versioning](https://semver.org/).
 
 - Tokens issued before the upgrade are indexed on first use; a block revokes
   them in any case. If you share Redis, reserve these key patterns.
+- Forks that pass `pattern=Pattern.M_B` (and the others) to `add_route`: use the new member names.
 - Google users: nothing to do now; when convenient, move the Google settings into
   a login providers file (`type: google`). The Google redirect URI stays
   `<base>/login/google/callback`.
