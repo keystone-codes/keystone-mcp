@@ -1238,7 +1238,7 @@ def validate_settings(settings: Settings) -> None:
     # (unknown/blocked → deny), independent of rbac_enabled; the RBAC middleware
     # needs the same directory when rbac_enabled=true. The built-in (local)
     # backend needs neither URL nor token: it has its own checks below.
-    from keystone_mcp.login.factory import file_has_interactive_providers
+    from keystone_mcp.login.factory import api_key_login_configured, file_has_interactive_providers
 
     needs_users_for_login = settings.rbac_enabled
     if providers_file:
@@ -1324,7 +1324,7 @@ def validate_settings(settings: Settings) -> None:
                 "KEYSTONE_MCP_DEPLOYMENT_PROFILE=local for off/observe."
             )
         # P3: api_key sign-in in production needs a directory that stores keys.
-        if settings.api_key_login_enabled and settings.users_backend == "http":
+        if api_key_login_configured(settings) and settings.users_backend == "http":
             raise ConfigError(
                 "API-key sign-in in production needs a users directory that stores "
                 "API keys (KEYSTONE_MCP_USERS_BACKEND=local). Remove api_key from "
@@ -1333,7 +1333,7 @@ def validate_settings(settings: Settings) -> None:
         interactive_login = file_has_interactive_providers(settings) or (
             not providers_file and settings.google_login_enabled
         )
-        if settings.api_key_login_enabled and interactive_login:
+        if api_key_login_configured(settings) and interactive_login:
             raise ConfigError(
                 "api_key sign-in for people is not available in the production profile "
                 "when an interactive provider is configured; people sign in through the "
