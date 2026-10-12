@@ -65,14 +65,12 @@ Then connect a client and sign in:
   sections, one per service.
 - **Any users directory.** Built in (SQLite for one host, Postgres for
   production), or your own directory over HTTP.
-- **Any sign-in method.** Google, and DEV tokens for local testing (a
-  deprecated external API-key check remains until 0.4.1); a common
-  interface for your own identity provider is on the roadmap for 0.5.0.
-- **Onboarding and access through the agent.** An administrator adds
-  people, changes roles, and manages access by asking the agent, with the
-  `users_*` tools, the `keystone-user-admin` skill, or
-  `setup.sh --non-interactive`; the access-policy file itself is still
-  edited by hand in 0.4.0.
+- **Any sign-in method.** Google, DEV tokens for local testing (a deprecated
+  API-key check remains until 0.4.1); a common provider interface is on the 0.5.0 roadmap.
+- **Onboarding and access through the agent.** An administrator adds people,
+  changes roles, and manages access by asking the agent — the `users_*`
+  tools, the `keystone-user-admin` skill, or `setup.sh --non-interactive`;
+  the access-policy file itself is still edited by hand in 0.4.0.
 - **Services in any language or SDK.** Each one is a plain MCP server
   behind a transparent proxy; it keeps its own stack and storage.
 - **One policy file, reloaded live.** Access rules live in a single file;
@@ -80,8 +78,7 @@ Then connect a client and sign in:
 - **Services never check roles themselves.** RBAC is decided once, on
   Keystone-MCP, before a call is forwarded.
 - **`production` refuses a weak setup.** DEV tokens, a SQLite users
-  directory, and plain HTTP on a public host all fail startup instead of
-  only logging a warning.
+  directory, and plain HTTP on a public host fail startup, not just a warning.
 - **Metrics and audit included.** Prometheus series and structured
   authorization events ship with the process.
 - **One image, two architectures.** `linux/amd64` and `linux/arm64`.
@@ -89,6 +86,19 @@ Then connect a client and sign in:
 
 Full description of every capability, and what is still 0.5.0:
 [docs/features.md](docs/features.md).
+
+## What it does not do
+
+- **One organization per deployment.** One users directory, one policy file
+  and one upstream registry per Keystone-MCP. For several organizations,
+  run several instances. Multi-tenancy is not planned.
+- **No admin UI.** People and roles are managed with the `users_*` tools from
+  an agent, the `keystone-mcp users` commands and the policy file. A UI
+  could be a separate project on top of the users directory protocol.
+- **No business data.** Keystone-MCP stores people, roles and sessions; your
+  services keep their own data and logic.
+- **No routing by request content.** A call goes to the service that owns the
+  tool name; arguments are not inspected or rewritten.
 
 ## Documentation
 

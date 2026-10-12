@@ -18,6 +18,8 @@ this project uses [Semantic Versioning](https://semver.org/).
   allowlist and /metrics, deployment profile rules P5 and W5, the
   Kubernetes and Prometheus examples, client redirect hosts, host install
   permissions, and the supported-versions table in SECURITY.md.
+- README states what Keystone-MCP does not do: multi-tenancy, an admin UI,
+  storing business data, routing by request content.
 
 ### Removed
 
