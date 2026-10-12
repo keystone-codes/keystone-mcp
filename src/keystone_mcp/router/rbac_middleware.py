@@ -350,7 +350,7 @@ class RbacMiddleware(Middleware):
                 decision = RbacDecision(
                     tool_name=tool_name,
                     email=identity.subject,
-                subject_type=identity.subject_type,
+                    subject_type=identity.subject_type,
                     login_provider=login_provider,
                     allowed=False,
                     reason=RbacDenialReason.HUMAN_IDENTITY_REQUIRED,

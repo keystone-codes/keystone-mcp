@@ -51,7 +51,9 @@ class ServiceAccountsAdminAdapter:
             **payload,
         }
 
-    async def execute(self, route: Route, ctx: RouteContext, args: dict[str, Any]) -> dict[str, Any]:
+    async def execute(
+        self, route: Route, ctx: RouteContext, args: dict[str, Any]
+    ) -> dict[str, Any]:
         name = route.name
         directory = self._directory
         if directory is None or not isinstance(directory, ServiceAccountDirectory):
@@ -186,7 +188,11 @@ class ServiceAccountsAdminAdapter:
             return
         outcome = str(result.get("state", "error"))
         code = result.get("code") if outcome != "done" else None
-        account = result.get("service_account") if isinstance(result.get("service_account"), dict) else None
+        account = (
+            result.get("service_account")
+            if isinstance(result.get("service_account"), dict)
+            else None
+        )
         target_name = spec.get("name")
         target_email = service_subject(str(target_name)) if target_name else None
         if target_email is None and account is not None:

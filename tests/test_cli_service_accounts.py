@@ -17,6 +17,7 @@ def test_cli_add_list_update_block(tmp_path: Path, monkeypatch):
         "KEYSTONE_MCP_RBAC_MODE": "off",
         "KEYSTONE_MCP_REDIS_URL": "redis://localhost:6379/2",
     }
+
     def run(*args: str) -> dict:
         proc = subprocess.run(
             [sys.executable, "-m", "keystone_mcp.cli", "service-accounts", *args],
