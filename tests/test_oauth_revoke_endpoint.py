@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+from unittest.mock import patch
+
 import httpx
 import pytest
 from asgi_lifespan import LifespanManager
@@ -157,3 +160,85 @@ async def test_revoke_is_throttled():
                 data={"token": "km_at_x", "client_id": client_id, "client_secret": ""},
             )
             assert blocked.status_code == 429
+
+
+@pytest.mark.asyncio
+async def test_refresh_commit_after_revoke_is_refused(harness):
+    """A refresh already validated must not commit after POST /revoke returns 200."""
+    res = await obtain_access_token(harness.client, harness.settings.resource_url)
+    client_id = res["client_id"]
+    refresh = res["body"]["refresh_token"]
+    access = res["body"]["access_token"]
+    store = harness.oauth._store
+    commit_gate = asyncio.Event()
+    real_commit = store.commit_token_pair
+
+    async def gated_commit(**kwargs):
+        if kwargs.get("replace_refresh_token"):
+            await commit_gate.wait()
+        return await real_commit(**kwargs)
+
+    with patch.object(store, "commit_token_pair", side_effect=gated_commit):
+        refresh_task = asyncio.create_task(
+            harness.client.post(
+                "/token",
+                data={
+                    "grant_type": "refresh_token",
+                    "refresh_token": refresh,
+                    "client_id": client_id,
+                    "resource": harness.settings.resource_url,
+                },
+            )
+        )
+        await asyncio.sleep(0.05)
+        revoke = await harness.client.post(
+            "/revoke",
+            data={"token": refresh, "client_id": client_id, "client_secret": ""},
+        )
+        assert revoke.status_code == 200
+        commit_gate.set()
+        token_resp = await refresh_task
+
+    assert token_resp.status_code in (400, 401)
+    assert token_resp.json().get("error") == "invalid_grant"
+    assert await _mcp_initialize(harness.client, harness.settings, access) == 401
+    retry = await refresh_access_token(
+        harness.client, client_id, refresh, harness.settings.resource_url
+    )
+    assert retry["status"] in (400, 401)
+    assert retry["body"].get("error") == "invalid_grant"
+
+
+@pytest.mark.asyncio
+async def test_revoke_refresh_retries_when_delete_refresh_fails(harness):
+    """If refresh deletion fails after access tokens are gone, a retry still finishes."""
+    res = await obtain_access_token(harness.client, harness.settings.resource_url)
+    client_id = res["client_id"]
+    refresh = res["body"]["refresh_token"]
+    access = res["body"]["access_token"]
+    store = harness.oauth._store
+    real_delete = store.delete_refresh_token
+    fail_once = True
+
+    async def flaky_delete(token: str) -> None:
+        nonlocal fail_once
+        if fail_once and token == refresh:
+            fail_once = False
+            raise RuntimeError("simulated store failure")
+        await real_delete(token)
+
+    email = "user@example.com"
+    with patch.object(store, "delete_refresh_token", side_effect=flaky_delete):
+        with pytest.raises(RuntimeError, match="simulated store failure"):
+            await store.revoke_refresh_grant(email, client_id, refresh)
+
+    assert await store.get_refresh_token(refresh) is not None
+    assert await _mcp_initialize(harness.client, harness.settings, access) == 401
+
+    second = await harness.client.post(
+        "/revoke",
+        data={"token": refresh, "client_id": client_id, "client_secret": ""},
+    )
+    assert second.status_code == 200
+    assert await store.get_refresh_token(refresh) is None
+    assert await _mcp_initialize(harness.client, harness.settings, access) == 401
