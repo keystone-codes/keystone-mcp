@@ -255,6 +255,16 @@ no resource at all, including one issued before this binding existed.
 
 Why: [ADR 0004](adr/0004-redis-is-required.md).
 
+Clients may call **`POST /revoke`** (RFC 7009) with their own access or
+refresh token and `client_id` to end a session without waiting for TTL.
+Revoking an **access token** drops only that token; other access and refresh
+tokens for the same person stay valid. Revoking a **refresh token** drops
+that refresh token, its login marker, and every **access token** issued to
+the same OAuth client for that person — other registered applications keep
+their tokens. A wrong `client_id` or an unknown token still returns `200`
+(the handler does not reveal whether a token existed). The route is behind
+the same Host/Origin guard and OAuth IP throttle as `/token`.
+
 ## What is protected by default
 
 - Every HTTP route — every OAuth endpoint, discovery metadata, and `/mcp`
@@ -288,8 +298,8 @@ Why: [ADR 0004](adr/0004-redis-is-required.md).
   moment audit is on; without it, subject identifiers in audit records would
   be guessable from an email and not actually pseudonymous.
 - Sign-in attempts are rate-limited per IP and, for failures, per email
-  (`KEYSTONE_MCP_LOGIN_THROTTLE_IP_MAX` / `_EMAIL_MAX`); `/authorize` and
-  `/token` share a separate IP budget
+  (`KEYSTONE_MCP_LOGIN_THROTTLE_IP_MAX` / `_EMAIL_MAX`); `/authorize`,
+  `/token`, and `/revoke` share a separate IP budget
   (`KEYSTONE_MCP_OAUTH_THROTTLE_IP_MAX`).
 - An upstream address is checked before it is used: `https` is required
   unless `KEYSTONE_MCP_UPSTREAM_ALLOW_INSECURE_HTTP=true`, userinfo

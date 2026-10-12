@@ -1,4 +1,4 @@
-"""``keystone-mcp users`` subcommands: ``grant-admin`` and ``import``.
+"""``keystone-mcp users`` subcommands: ``grant-admin``, ``import``, and directory ops.
 
 Both commands open the configured users directory directly — the same
 ``KEYSTONE_MCP_USERS_DB_URL`` a running server uses — rather than going
@@ -26,6 +26,8 @@ import sys
 
 import httpx
 
+from keystone_mcp.auth.oauth_store import build_shared_auth_stores
+from keystone_mcp.auth.sessions import SessionRevoker
 from keystone_mcp.config import Settings
 from keystone_mcp.rbac.policy import PolicyContractError, load_policy_file
 from keystone_mcp.users.db import (
@@ -34,7 +36,7 @@ from keystone_mcp.users.db import (
     describe_db_url,
     sqlite_file_path,
 )
-from keystone_mcp.users.errors import InvalidUserFieldError, UsersError
+from keystone_mcp.users.errors import InvalidUserFieldError, LastAdministratorError, UsersError
 from keystone_mcp.users.factory import build_users_store
 from keystone_mcp.users.importer import ImportSourceError, fetch_source_users
 from keystone_mcp.users.store import MutationResult, UsersStore
@@ -132,6 +134,21 @@ def _open_store(settings: Settings, *, allow_create: bool = True) -> UsersStore:
     return store
 
 
+_CLI_ACTOR = "system:cli"
+
+
+def _revoke_sessions(settings: Settings, email: str) -> int:
+    async def _run() -> int:
+        oauth_store, login_store = build_shared_auth_stores(settings)
+        revoker = SessionRevoker(oauth_store, login_store)
+        try:
+            return await revoker.revoke_subject(email)
+        finally:
+            await oauth_store.aclose()
+
+    return asyncio.run(_run())
+
+
 def _describe_grant_admin(before: MutationResult) -> str:
     was_admin = "administrator" in before.roles_before
     was_blocked = before.blocked_before
@@ -172,6 +189,100 @@ def _cmd_grant_admin(args: argparse.Namespace) -> int:
             return EXIT_STORE
 
         print(_describe_grant_admin(result))
+        return EXIT_OK
+    finally:
+        store.dispose()
+
+
+def _cmd_block(args: argparse.Namespace) -> int:
+    settings = Settings()
+    try:
+        store = _open_store(settings)
+    except _CliExit as exc:
+        return exc.code
+
+    email = (args.email or "").strip()
+    if not email:
+        print("an email is required", file=sys.stderr)
+        return EXIT_USAGE
+
+    try:
+        try:
+            result = asyncio.run(
+                store.set_blocked(email=email, blocked=True, actor_email=_CLI_ACTOR)
+            )
+        except InvalidUserFieldError as exc:
+            print(str(exc), file=sys.stderr)
+            return EXIT_USAGE
+        except LastAdministratorError as exc:
+            print(str(exc), file=sys.stderr)
+            return EXIT_USAGE
+        except UsersError as exc:
+            print(str(exc), file=sys.stderr)
+            return EXIT_STORE
+
+        revoked = 0
+        if settings.redis_url.strip():
+            revoked = _revoke_sessions(settings, email)
+        else:
+            print("sessions not revoked: KEYSTONE_MCP_REDIS_URL is not set", file=sys.stderr)
+
+        if result.blocked_before:
+            print(f"Already blocked {email}; revoked {revoked} token(s)")
+        else:
+            print(f"Blocked {email}; revoked {revoked} token(s)")
+        return EXIT_OK
+    finally:
+        store.dispose()
+
+
+def _cmd_unblock(args: argparse.Namespace) -> int:
+    settings = Settings()
+    try:
+        store = _open_store(settings)
+    except _CliExit as exc:
+        return exc.code
+
+    email = (args.email or "").strip()
+    if not email:
+        print("an email is required", file=sys.stderr)
+        return EXIT_USAGE
+
+    try:
+        try:
+            asyncio.run(store.set_blocked(email=email, blocked=False, actor_email=_CLI_ACTOR))
+        except InvalidUserFieldError as exc:
+            print(str(exc), file=sys.stderr)
+            return EXIT_USAGE
+        except UsersError as exc:
+            print(str(exc), file=sys.stderr)
+            return EXIT_STORE
+
+        print(f"Unblocked {email}")
+        return EXIT_OK
+    finally:
+        store.dispose()
+
+
+def _cmd_logout(args: argparse.Namespace) -> int:
+    settings = Settings()
+    if not settings.redis_url.strip():
+        print("KEYSTONE_MCP_REDIS_URL is not set", file=sys.stderr)
+        return EXIT_USAGE
+
+    try:
+        store = _open_store(settings)
+    except _CliExit as exc:
+        return exc.code
+
+    email = (args.email or "").strip()
+    if not email:
+        print("an email is required", file=sys.stderr)
+        return EXIT_USAGE
+
+    try:
+        revoked = _revoke_sessions(settings, email)
+        print(f"Revoked {revoked} token(s) for {email}")
         return EXIT_OK
     finally:
         store.dispose()
@@ -271,10 +382,17 @@ def _cmd_import(args: argparse.Namespace) -> int:
             )
         )
 
+        revoked_sessions = 0
+        if not args.dry_run and settings.redis_url.strip():
+            for outcome in outcomes:
+                if outcome.status == "updated" and outcome.block_reapplied:
+                    revoked_sessions += _revoke_sessions(settings, outcome.email)
+
         summary = (
             f"created={created} updated={updated} unchanged={unchanged} "
             f"skipped_roles={skipped_role_count} skipped_invalid={len(invalid)} "
-            f"admin_or_block_changes={admin_or_block_changes}"
+            f"admin_or_block_changes={admin_or_block_changes} "
+            f"revoked_sessions={revoked_sessions}"
         )
         if args.dry_run:
             summary += " (dry run, nothing written)"
@@ -376,3 +494,24 @@ def add_users_commands(subparsers: argparse._SubParsersAction) -> None:
         help="Report what would change without writing anything",
     )
     import_cmd.set_defaults(handler=_cmd_import)
+
+    block_cmd = users_sub.add_parser(
+        "block",
+        help="Block a person and revoke their OAuth sessions",
+    )
+    block_cmd.add_argument("--email", required=True, help="Email of the person to block")
+    block_cmd.set_defaults(handler=_cmd_block)
+
+    unblock_cmd = users_sub.add_parser(
+        "unblock",
+        help="Lift a block without restoring old OAuth sessions",
+    )
+    unblock_cmd.add_argument("--email", required=True, help="Email of the person to unblock")
+    unblock_cmd.set_defaults(handler=_cmd_unblock)
+
+    logout_cmd = users_sub.add_parser(
+        "logout",
+        help="Revoke every OAuth session for a person without blocking them",
+    )
+    logout_cmd.add_argument("--email", required=True, help="Email of the person to sign out")
+    logout_cmd.set_defaults(handler=_cmd_logout)

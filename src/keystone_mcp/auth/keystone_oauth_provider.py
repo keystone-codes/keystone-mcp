@@ -42,7 +42,7 @@ from mcp.server.auth.provider import (
     TokenError,
     construct_redirect_uri,
 )
-from mcp.server.auth.settings import ClientRegistrationOptions
+from mcp.server.auth.settings import ClientRegistrationOptions, RevocationOptions
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 from pydantic import ValidationError
 from starlette.requests import Request
@@ -563,6 +563,7 @@ class KeystoneOAuthProvider(OAuthProvider):
             client_registration_options=ClientRegistrationOptions(
                 enabled=settings.oauth_dcr_enabled
             ),
+            revocation_options=RevocationOptions(enabled=True),
             required_scopes=None,
         )
         self._settings = settings
@@ -626,6 +627,14 @@ class KeystoneOAuthProvider(OAuthProvider):
                 )
             elif (
                 route.path == "/token"
+                and "POST" in route_methods
+                and self._oauth_endpoint_throttle.enabled()
+            ):
+                app = wrap_asgi_with_ip_login_throttle(
+                    app, self._oauth_endpoint_throttle, frozenset({"POST"})
+                )
+            elif (
+                route.path == "/revoke"
                 and "POST" in route_methods
                 and self._oauth_endpoint_throttle.enabled()
             ):
@@ -1182,8 +1191,14 @@ class KeystoneOAuthProvider(OAuthProvider):
         )
 
     async def revoke_token(self, token: AccessToken | RefreshToken) -> None:
-        await self._store.delete_access_token(token.token)
+        if isinstance(token, AccessToken):
+            await self._store.delete_access_token(token.token)
+            return
         await self._store.delete_refresh_token(token.token)
+        await self._pending_store.consume(_NS_REFRESH_AUTH, token.token)
+        subject = token.subject or ""
+        if subject:
+            await self._store.revoke_client_tokens(subject, token.client_id)
 
     # ── Login page (custom routes, registered by the server) ──────────────
     async def render_login(self, request: Request) -> Response:
