@@ -325,9 +325,7 @@ async def call_upstream_tool(
     downstream_version = (
         getattr(downstream.session, "protocol_version", None) if downstream is not None else None
     )
-    modern_downstream = (
-        downstream is not None and downstream_version in MODERN_PROTOCOL_VERSIONS
-    )
+    modern_downstream = downstream is not None and downstream_version in MODERN_PROTOCOL_VERSIONS
     upstream_version = getattr(client, "protocol_version", None)
     modern_upstream = (
         upstream_version in MODERN_PROTOCOL_VERSIONS if upstream_version is not None else False
