@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from keystone_mcp.config import ConfigError, Settings, startup_warnings
+from keystone_mcp.config import ConfigError, Settings, load_settings, startup_warnings
 from keystone_mcp.login.config import load_login_providers_file
 from keystone_mcp.login.factory import build_login_providers
 from keystone_mcp.login.oidc import OidcLoginProvider
@@ -274,3 +274,97 @@ def test_legacy_variables_ignored_when_file_set_warns(tmp_path, monkeypatch):
         },
     )
     assert any("ignored because KEYSTONE_MCP_LOGIN_PROVIDERS_PATH is set" in w for w in warnings)
+
+
+def _production_providers_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    policy = tmp_path / "rbac-policy.yaml"
+    policy.write_text("default_deny: true\nroles: {}\n", encoding="utf-8")
+    monkeypatch.setenv("KEYSTONE_MCP_DEPLOYMENT_PROFILE", "production")
+    monkeypatch.setenv("KEYSTONE_MCP_BASE_URL", "https://mcp.example.com")
+    monkeypatch.setenv("KEYSTONE_MCP_RBAC_MODE", "enforce")
+    monkeypatch.setenv("KEYSTONE_MCP_RBAC_POLICY_PATH", str(policy))
+    monkeypatch.setenv("KEYSTONE_MCP_USERS_BACKEND", "local")
+    monkeypatch.setenv(
+        "KEYSTONE_MCP_USERS_DB_URL",
+        "postgresql+psycopg://u:p@db:5432/keystone",
+    )
+    monkeypatch.setenv("KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT", "salt")
+    monkeypatch.setenv("KEYSTONE_MCP_REDIS_URL", "redis://localhost:6379/7")
+
+
+def test_production_providers_file_api_key_with_interactive_refuses_despite_env_methods(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("KEYSTONE_MCP_LOGIN_GOOGLE_SECRET", "google-secret")
+    path = _write(
+        tmp_path,
+        """
+        version: 1
+        providers:
+          - name: google
+            type: google
+            client_id: g-cid
+            client_secret_env: KEYSTONE_MCP_LOGIN_GOOGLE_SECRET
+          - name: api_key
+            type: api_key
+        """,
+    )
+    _production_providers_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("KEYSTONE_MCP_LOGIN_PROVIDERS_PATH", path)
+    monkeypatch.setenv("KEYSTONE_MCP_ENABLED_LOGIN_METHODS", "google")
+    monkeypatch.setenv("KEYSTONE_MCP_PRIMARY_LOGIN_METHOD", "google")
+    with pytest.raises(ConfigError, match="interactive provider"):
+        load_settings()
+
+
+def test_production_providers_file_interactive_only_loads_when_env_defaults_api_key(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("KEYSTONE_MCP_LOGIN_GOOGLE_SECRET", "google-secret")
+    path = _write(
+        tmp_path,
+        """
+        version: 1
+        providers:
+          - name: google
+            type: google
+            client_id: g-cid
+            client_secret_env: KEYSTONE_MCP_LOGIN_GOOGLE_SECRET
+        """,
+    )
+    _production_providers_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("KEYSTONE_MCP_LOGIN_PROVIDERS_PATH", path)
+    monkeypatch.delenv("KEYSTONE_MCP_ENABLED_LOGIN_METHODS", raising=False)
+    monkeypatch.delenv("KEYSTONE_MCP_PRIMARY_LOGIN_METHOD", raising=False)
+    settings = load_settings()
+    assert settings.api_key_login_enabled is True
+
+
+def test_production_providers_file_api_key_with_http_directory_refuses_despite_env_methods(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    path = _write(
+        tmp_path,
+        """
+        version: 1
+        providers:
+          - name: api_key
+            type: api_key
+        """,
+    )
+    policy = tmp_path / "rbac-policy.yaml"
+    policy.write_text("default_deny: true\nroles: {}\n", encoding="utf-8")
+    monkeypatch.setenv("KEYSTONE_MCP_DEPLOYMENT_PROFILE", "production")
+    monkeypatch.setenv("KEYSTONE_MCP_BASE_URL", "https://mcp.example.com")
+    monkeypatch.setenv("KEYSTONE_MCP_RBAC_MODE", "enforce")
+    monkeypatch.setenv("KEYSTONE_MCP_RBAC_POLICY_PATH", str(policy))
+    monkeypatch.setenv("KEYSTONE_MCP_USERS_BACKEND", "http")
+    monkeypatch.setenv("KEYSTONE_MCP_USERS_SERVICE_URL", "http://users:8080")
+    monkeypatch.setenv("KEYSTONE_MCP_USERS_SERVICE_TOKEN", "token")
+    monkeypatch.setenv("KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT", "salt")
+    monkeypatch.setenv("KEYSTONE_MCP_REDIS_URL", "redis://localhost:6379/7")
+    monkeypatch.setenv("KEYSTONE_MCP_LOGIN_PROVIDERS_PATH", path)
+    monkeypatch.setenv("KEYSTONE_MCP_ENABLED_LOGIN_METHODS", "google")
+    monkeypatch.setenv("KEYSTONE_MCP_PRIMARY_LOGIN_METHOD", "google")
+    with pytest.raises(ConfigError, match="API-key sign-in in production needs"):
+        load_settings()

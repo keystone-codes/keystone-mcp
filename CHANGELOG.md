@@ -141,6 +141,12 @@ this project uses [Semantic Versioning](https://semver.org/).
 
 ### Security
 
+- Production startup and server build now treat api_key sign-in as configured only
+  when the login providers file lists `api_key`, not from the deprecated
+  `KEYSTONE_MCP_ENABLED_LOGIN_METHODS` default when a providers file is set.
+- API key verification cache and the login form no longer accept a cached human
+  key after its `expires_at`; positive cache TTL is capped to the key's remaining
+  lifetime.
 - API key secrets are stored and logged only as hashes or redacted forms
   (`ksk_<key_id>_***`); startup refuses legacy `KEYSTONE_MCP_AUTH_SERVICE_*`.
 - Trivy image scan now blocks pull requests and releases on fixable HIGH and

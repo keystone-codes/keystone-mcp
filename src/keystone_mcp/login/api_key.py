@@ -8,6 +8,7 @@ from keystone_mcp.login.protocol import FormField, LoginIdentity, LoginKind, Log
 from keystone_mcp.user_directory.errors import UserDirectoryUnavailableError
 from keystone_mcp.user_directory.protocol import UserDirectoryResolver
 from keystone_mcp.user_directory.util import normalize_email
+from keystone_mcp.users.models import utcnow
 
 
 class ApiKeyLoginProvider:
@@ -74,5 +75,7 @@ class ApiKeyLoginProvider:
             or verification.subject_type != "human"
             or verification.subject != email
         ):
+            raise LoginRejected("invalid_credentials")
+        if verification.expires_at is not None and verification.expires_at <= utcnow():
             raise LoginRejected("invalid_credentials")
         return LoginIdentity(email=email, provider="api_key", interactive=False)
