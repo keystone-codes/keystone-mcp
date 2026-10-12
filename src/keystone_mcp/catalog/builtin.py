@@ -2,14 +2,7 @@
 
 These are the domain-neutral tools the server owns itself, as opposed to the
 tools it proxies from configured upstreams (see
-:mod:`keystone_mcp.router.upstream`). Two groups:
-
-File transfer — keeps large binaries out of MCP tool-call JSON by handing the
-caller a short-lived signed URL instead of bytes. Registered only when
-``KEYSTONE_MCP_FILE_API_URL`` is set:
-  - ``create_upload_url`` mints a signed PUT link plus the ``file_id`` to pass
-    on to whichever import tool consumes the upload.
-  - ``get_download_link`` mints a signed download link for a stored object.
+:mod:`keystone_mcp.router.upstream`).
 
 User administration — administration of the users directory, used to manage
 who may reach this server and with which roles: ``users_list``,
@@ -28,8 +21,6 @@ ready.
 from __future__ import annotations
 
 from keystone_mcp.adapters.base import Pattern
-from keystone_mcp.adapters.file_ref import FileRefAdapter
-from keystone_mcp.adapters.upload_url import UploadUrlAdapter
 from keystone_mcp.adapters.users_admin import RoleSource, UsersAdminAdapter
 from keystone_mcp.config import Settings
 from keystone_mcp.router.registry import Param, RouterRegistry
@@ -40,8 +31,6 @@ from keystone_mcp.users.store import UsersStore
 #: would publish a colliding ``<namespace>_<tool>`` name.
 BUILTIN_TOOL_NAMES: frozenset[str] = frozenset(
     {
-        "create_upload_url",
-        "get_download_link",
         "users_list",
         "users_add",
         "users_update",
@@ -67,39 +56,6 @@ def register_catalog(
     )
 
     P = Param  # noqa: N806 — local alias for brevity
-
-    # ── File transfer (optional): only when KEYSTONE_MCP_FILE_API_URL is set ──
-    if settings.file_tools_enabled:
-        upload_url = UploadUrlAdapter(settings.resolved_file_api_base_url)
-        file_ref = FileRefAdapter(settings.resolved_file_api_base_url)
-
-        registry.add_route(
-            "create_upload_url",
-            upload_url,
-            pattern=Pattern.M_U,
-            params=[
-                P("filename", str, required=False, default=None),
-                P("content_type", str, required=False, default=None),
-            ],
-            description=(
-                "Create a short-lived signed URL for uploading one file. Returns "
-                "upload_url, file_id, expires_at and max_bytes. PUT the file bytes "
-                "to upload_url, then pass file_id to the tool that imports the "
-                "file. Keeps large files out of tool arguments."
-            ),
-            mode="live",
-        )
-        registry.add_route(
-            "get_download_link",
-            file_ref,
-            pattern=Pattern.M_D,
-            params=[P("file_id", str)],
-            description=(
-                "Create a short-lived signed download link for a stored file. "
-                "Returns file_url and expires_at."
-            ),
-            mode="live",
-        )
 
     if not settings.rbac_enforcing:
         return

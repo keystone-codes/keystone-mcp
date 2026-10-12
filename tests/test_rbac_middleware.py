@@ -447,7 +447,7 @@ async def test_critical_tool_uses_synchronous_resolve(
         "keystone_mcp.router.rbac_middleware.resolve_verified_identity",
         lambda: VerifiedIdentity(email=subject_state["email"]),
     )
-    middleware, _ = _make_middleware(mounted_policy_path, roles=("editor",))
+    middleware, _ = _make_middleware(mounted_policy_path, roles=("administrator",))
     seen: dict[str, bool] = {}
 
     async def fake_resolve(email: str, *, critical: bool = False):
@@ -457,13 +457,15 @@ async def test_critical_tool_uses_synchronous_resolve(
             (),
             {
                 "exists": True,
-                "roles": ("editor",),
+                "roles": ("administrator",),
                 "is_blocked": False,
             },
         )()
 
     monkeypatch.setattr(middleware._user_resolver, "resolve", fake_resolve)
-    ctx = MiddlewareContext(message=type("Msg", (), {"name": "create_upload_url"})())
+    # users_list matches CORE_CRITICAL_PATTERNS ("users_*"), so it is resolved
+    # synchronously even though the policy's own critical_tools is ["ledger_*"].
+    ctx = MiddlewareContext(message=type("Msg", (), {"name": "users_list"})())
 
     async def call_next(_context):
         return {"ok": True}
@@ -485,8 +487,6 @@ def test_denial_reason_values_are_stable():
 CORE_CRITICAL_TOOLS = (
     "users_list",
     "users_set_roles",
-    "create_upload_url",
-    "get_download_link",
 )
 
 POLICY_CRITICAL_TOOLS = ("ledger_commit", "ledger_read")

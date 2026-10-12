@@ -457,31 +457,13 @@ not mounted by default. See [facade.md](facade.md).
 | `KEYSTONE_MCP_WEBHOOK_API_TOKEN` | `""` | Optional service token forwarded to the webhook. |
 | `KEYSTONE_MCP_LONG_POLL` | `40` | Long-poll budget, seconds, before the webhook adapter returns a pending envelope. |
 
-## Built-in file tools
-
-Empty (default): `create_upload_url` and `get_download_link` are not
-published. Set `KEYSTONE_MCP_FILE_API_URL` to the base URL of your own file
-API to publish them.
-
-| Variable | Default | Meaning |
-|---|---|---|
-| `KEYSTONE_MCP_FILE_API_URL` | `""` | Base URL of the file API backing `create_upload_url` and `get_download_link`. |
-
-Contract:
-
-- `POST {url}/api/v1/files/upload-link` with JSON `{filename?, content_type?}`
-  returns `{upload_url, file_id, expires_at, max_bytes}`.
-- `POST {url}/api/v1/files/{key}/download-link` returns `{url, expires_at}`
-  (`404` when the file does not exist).
-- Every request carries `X-Author-Email`; if `KEYSTONE_MCP_WEBHOOK_API_TOKEN`
-  is set, it is also sent as `Authorization`.
-
 ## Removed variables
 
 Keystone-MCP refuses to start, or logs a warning, when one of these is still set.
 
 - `KEYSTONE_MCP_RBAC_ENABLED` — removed in 0.5.0. Use `KEYSTONE_MCP_RBAC_MODE`. Startup is refused while it is set.
 - `KEYSTONE_MCP_DET_INTERNAL_URL` — removed in 0.5.0. Nothing replaces it. A warning is logged while it is set.
+- `KEYSTONE_MCP_FILE_API_URL` — removed in 0.5.0; startup is refused while it is set. File transfer is an upstream service, see [connecting-services.md](connecting-services.md).
 
 ## Docker
 

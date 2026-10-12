@@ -110,7 +110,7 @@ A registry entry's `namespace` is validated at load time (startup and
   [rbac-policy-format.md](rbac-policy-format.md)).
 - **No collision with a built-in tool.** A namespace is rejected if
   `<namespace>_` is the start of any built-in tool name — this rules out
-  `users`, `create`, `create_upload`, `get` and `get_download`.
+  `users`.
 - **No collision between namespaces.** Two namespaces `A` and `B` cannot be
   configured together if `B` starts with `A + "_"` (e.g. `billing` and
   `billing_admin`): upstream `A` publishing a tool `x_y` would publish the

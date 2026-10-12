@@ -323,7 +323,7 @@ roles:
     allow: ["*"]
   member:
     description: member
-    allow: ["create_upload_url", "get_download_link"]
+    allow: ["reports_read", "reports_write"]
 """
 
 
@@ -342,8 +342,8 @@ async def test_rbac_denies_users_tools_for_non_administrator(tmp_path):
     backend.seed("operator@example.com", roles=("operator",))
     registry = RouterRegistry(RouterEngine(settings), FastMCP("policy-host"))
     registry.add_route("users_list", UsersAdminAdapter(), mode="live")
-    registry.add_route("create_upload_url", UsersAdminAdapter(), mode="live")
-    registry.add_route("get_download_link", UsersAdminAdapter(), mode="live")
+    registry.add_route("reports_read", UsersAdminAdapter(), mode="live")
+    registry.add_route("reports_write", UsersAdminAdapter(), mode="live")
     manager = RbacPolicyManager(settings)
     manager.load_initial(registry)
     middleware = RbacMiddleware(

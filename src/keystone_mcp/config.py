@@ -97,6 +97,14 @@ REMOVED_VARIABLES: dict[str, RemovedVariable] = {
         replacement="Nothing to set: the placeholder adapter that read it was removed.",
         fatal=False,
     ),
+    "KEYSTONE_MCP_FILE_API_URL": RemovedVariable(
+        removed_in="0.5.0",
+        replacement=(
+            "The built-in file tools were removed. Run your file service as an "
+            "upstream MCP server; see docs/connecting-services.md."
+        ),
+        fatal=True,
+    ),
 }
 
 
@@ -945,29 +953,12 @@ class Settings:
     webhook_project_id: str = field(
         default_factory=lambda: _env("KEYSTONE_MCP_WEBHOOK_PROJECT", "")
     )
-    # Optional token sent as Authorization to the webhook and to the file API.
+    # Optional token sent as Authorization to the webhook.
     webhook_api_token: str = field(
         default_factory=lambda: _env("KEYSTONE_MCP_WEBHOOK_API_TOKEN", "")
     )
     # Long-poll hint for GET /tasks/{id}/result (server-side ~30-50s).
     long_poll_seconds: int = field(default_factory=lambda: _env_int("KEYSTONE_MCP_LONG_POLL", 40))
-
-    # ── Optional file API for the built-in file tools ─────────────────────
-    file_api_base_url: str = field(default_factory=lambda: _env("KEYSTONE_MCP_FILE_API_URL", ""))
-
-    @property
-    def file_tools_enabled(self) -> bool:
-        """Whether ``create_upload_url`` and ``get_download_link`` are published.
-
-        True only when ``KEYSTONE_MCP_FILE_API_URL`` is set; there is no
-        fallback to the webhook base URL.
-        """
-        return bool(self.file_api_base_url.strip())
-
-    @property
-    def resolved_file_api_base_url(self) -> str:
-        """Base URL for POST /api/v1/files (``KEYSTONE_MCP_FILE_API_URL``, no fallback)."""
-        return self.file_api_base_url.strip().rstrip("/")
 
     # ── Upstream MCP proxy ────────────────────────────────────────────────
     upstream_discovery_retries: int = field(

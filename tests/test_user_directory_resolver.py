@@ -48,8 +48,6 @@ class _FakeRedis:
     [
         ("users_list", True),
         ("users_block", True),
-        ("create_upload_url", True),
-        ("get_download_link", True),
         ("reports_read", False),
         ("documents_write", False),
         ("ledger_commit", False),
