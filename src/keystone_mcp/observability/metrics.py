@@ -67,6 +67,11 @@ _CATALOG_CHANGES = Counter(
     "Tools added or removed by catalog reconciliation",
     ["direction"],
 )
+_LIST_CHANGED_SESSIONS = Counter(
+    "keystone_mcp_list_changed_sessions_total",
+    "Sessions notified that a list of tools/prompts/resources changed",
+    ["kind"],
+)
 _RESOLVE_LATENCY = Histogram(
     "keystone_mcp_rbac_directory_resolve_seconds",
     "User-directory resolve latency",
@@ -194,6 +199,11 @@ class RbacMetrics:
             _CATALOG_CHANGES.labels(direction="added").inc(added)
         if removed:
             _CATALOG_CHANGES.labels(direction="removed").inc(removed)
+
+    def record_list_changed(self, *, kind: str, sessions: int) -> None:
+        if not self._enabled or sessions <= 0:
+            return
+        _LIST_CHANGED_SESSIONS.labels(kind=kind).inc(sessions)
 
     def set_upstream_available(self, *, namespace: str, available: bool) -> None:
         if not self._enabled:
