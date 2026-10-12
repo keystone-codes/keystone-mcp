@@ -369,7 +369,6 @@ then this script is the supported path.
 | Variable | Default | Meaning |
 |---|---|---|
 | `KEYSTONE_MCP_RBAC_MODE` | `off` | `off` — no role check. `observe` — evaluate and audit, still allow the call. `enforce` — deny the call and hide the tool from the catalog. |
-| `KEYSTONE_MCP_RBAC_ENABLED` | unset | Deprecated boolean alias for `RBAC_MODE=enforce`; logs a warning when set. |
 | `KEYSTONE_MCP_RBAC_POLICY_PATH` | `""` | Path to the RBAC policy YAML; required when RBAC is `observe` or `enforce`. |
 | `KEYSTONE_MCP_RBAC_CATALOG_SNAPSHOT` | `""` | Optional catalog snapshot YAML (active/reserved/wip tool names) used to validate the policy. |
 | `KEYSTONE_MCP_RBAC_AUDIT_ENABLED` | `true` | Structured audit log events. |
@@ -477,6 +476,12 @@ Contract:
   (`404` when the file does not exist).
 - Every request carries `X-Author-Email`; if `KEYSTONE_MCP_WEBHOOK_API_TOKEN`
   is set, it is also sent as `Authorization`.
+
+## Removed variables
+
+Keystone-MCP refuses to start, or logs a warning, when one of these is still set.
+
+- `KEYSTONE_MCP_RBAC_ENABLED` — removed in 0.5.0. Use `KEYSTONE_MCP_RBAC_MODE`. Startup is refused while it is set.
 
 ## Docker
 
