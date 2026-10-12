@@ -1,0 +1,5 @@
+# Vulnerabilities accepted for a limited time. One ID per line, with a
+# comment above it: why it is accepted, who decided, and the date to review.
+# Example:
+# # glibc in the base image; no fixed Debian package yet; reviewed by @owner; review by 2026-12-01
+# CVE-2026-00000
