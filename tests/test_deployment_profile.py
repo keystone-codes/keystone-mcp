@@ -226,7 +226,9 @@ def test_production_http_backend_ignores_users_db_url(monkeypatch, tmp_path: Pat
     _production_login_env(monkeypatch)
     monkeypatch.setenv("KEYSTONE_MCP_DEPLOYMENT_PROFILE", "production")
     monkeypatch.setenv("KEYSTONE_MCP_USERS_BACKEND", "http")
-    monkeypatch.setenv("KEYSTONE_MCP_USERS_SERVICE_URL", "http://mcp-users:8000")
+    monkeypatch.setenv(
+        "KEYSTONE_MCP_USERS_SERVICE_URL", "http://users-directory.internal.example:8000"
+    )
     monkeypatch.setenv("KEYSTONE_MCP_USERS_SERVICE_TOKEN", "users-token")
     monkeypatch.setenv("KEYSTONE_MCP_USERS_DB_URL", "sqlite:///./keystone-users.db")
     settings = load_settings()
@@ -376,7 +378,7 @@ def test_local_warnings_exactly_w4_with_dev_tokens_and_enforce(monkeypatch, tmp_
 def test_stage_like_production_configuration_is_accepted(monkeypatch, tmp_path: Path):
     """The planned stage deployment must pass `validate_settings` unchanged.
 
-    `production`, `KEYSTONE_MCP_USERS_BACKEND=http` (mcp-users),
+    `production`, `KEYSTONE_MCP_USERS_BACKEND=http` (HTTP users directory),
     `ENABLED_LOGIN_METHODS=api_key,google`, `AUTH_SERVICE_URL`/`_TOKEN` set,
     `RBAC_MODE=enforce`, no DEV tokens.
     """
@@ -385,7 +387,9 @@ def test_stage_like_production_configuration_is_accepted(monkeypatch, tmp_path: 
     monkeypatch.setenv("KEYSTONE_MCP_DEPLOYMENT_PROFILE", "production")
     monkeypatch.setenv("KEYSTONE_MCP_BASE_URL", "https://mcp-stage.keystone.codes")
     monkeypatch.setenv("KEYSTONE_MCP_USERS_BACKEND", "http")
-    monkeypatch.setenv("KEYSTONE_MCP_USERS_SERVICE_URL", "http://mcp-users:8000")
+    monkeypatch.setenv(
+        "KEYSTONE_MCP_USERS_SERVICE_URL", "http://users-directory.internal.example:8000"
+    )
     monkeypatch.setenv("KEYSTONE_MCP_USERS_SERVICE_TOKEN", "users-token")
     monkeypatch.setenv("KEYSTONE_MCP_ENABLED_LOGIN_METHODS", "api_key,google")
     monkeypatch.setenv("KEYSTONE_MCP_PRIMARY_LOGIN_METHOD", "api_key")

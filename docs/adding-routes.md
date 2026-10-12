@@ -138,7 +138,9 @@ class Adapter(Protocol):
 
 `ctx` carries the verified identity, the deterministic `task_id`, the resolved
 `Settings`, and the route's response `pattern` (`Pattern` in
-`src/keystone_mcp/adapters/base.py`). A route is registered with
+`src/keystone_mcp/adapters/base.py`: `Pattern.SYNC` (default),
+`Pattern.CONTINUATION` — it only selects the stub answer while the route is in
+stub mode). A route is registered with
 `RouterRegistry.add_route(name, target, ...)`, which builds the MCP tool
 signature from a list of `Param` objects and publishes it on the FastMCP
 instance — see `src/keystone_mcp/catalog/builtin.py` for the routes the

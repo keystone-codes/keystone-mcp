@@ -1,4 +1,4 @@
-"""A failed downstream HTTP call returns the Model-M error shape, never an exception.
+"""A failed downstream HTTP call returns the status-envelope error shape, never an exception.
 
 external_http and webhook both called raise_for_status() without catching it,
 so a downstream 500 (or a refused connection, or a timeout) escaped the

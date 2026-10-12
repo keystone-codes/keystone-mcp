@@ -199,14 +199,16 @@ def test_users_and_policy_settings_are_readable(monkeypatch, tmp_path: Path):
     # This test is specifically about reading USERS_SERVICE_* back, which only
     # applies to the http backend (local never requires it).
     monkeypatch.setenv("KEYSTONE_MCP_USERS_BACKEND", "http")
-    monkeypatch.setenv("KEYSTONE_MCP_USERS_SERVICE_URL", "http://mcp-users:8080")
+    monkeypatch.setenv(
+        "KEYSTONE_MCP_USERS_SERVICE_URL", "http://users-directory.internal.example:8080"
+    )
     monkeypatch.setenv("KEYSTONE_MCP_USERS_SERVICE_TOKEN", "secret-token")
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_POLICY_PATH", str(policy))
     monkeypatch.setenv("KEYSTONE_MCP_REDIS_URL", "redis://localhost:6379/0")
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT", "test-salt")
     monkeypatch.setenv("KEYSTONE_MCP_GOOGLE_ALLOWED_DOMAIN", "example.com")
     settings = load_settings()
-    assert settings.users_service_url == "http://mcp-users:8080"
+    assert settings.users_service_url == "http://users-directory.internal.example:8080"
     assert settings.users_service_token == "secret-token"
     assert settings.rbac_policy_path == str(policy)
     assert settings.google_allowed_domain == "example.com"
@@ -308,10 +310,10 @@ def test_upstream_tool_timeouts_default_to_empty(monkeypatch):
 def test_upstream_tool_timeouts_parsed_from_json(monkeypatch):
     monkeypatch.setenv(
         "KEYSTONE_MCP_UPSTREAM_TOOL_TIMEOUTS",
-        '{"catalog_advance": 30, "catalog_export": 12.5}',
+        '{"reports_build": 30, "catalog_export": 12.5}',
     )
     timeouts = Settings().upstream_tool_timeouts
-    assert timeouts == {"catalog_advance": 30.0, "catalog_export": 12.5}
+    assert timeouts == {"reports_build": 30.0, "catalog_export": 12.5}
     assert all(isinstance(value, float) for value in timeouts.values())
 
 
@@ -322,15 +324,15 @@ def test_upstream_tool_timeouts_rejects_malformed_json(monkeypatch):
 
 
 def test_upstream_tool_timeouts_rejects_non_object(monkeypatch):
-    monkeypatch.setenv("KEYSTONE_MCP_UPSTREAM_TOOL_TIMEOUTS", '["catalog_advance"]')
+    monkeypatch.setenv("KEYSTONE_MCP_UPSTREAM_TOOL_TIMEOUTS", '["reports_build"]')
     with pytest.raises(ConfigError, match="must be a JSON object"):
         Settings()
 
 
 @pytest.mark.parametrize("value", ['"30"', "null", "true", "-5", "0"])
 def test_upstream_tool_timeouts_rejects_non_positive_numbers(monkeypatch, value: str):
-    monkeypatch.setenv("KEYSTONE_MCP_UPSTREAM_TOOL_TIMEOUTS", '{"catalog_advance": %s}' % value)
-    with pytest.raises(ConfigError, match="catalog_advance"):
+    monkeypatch.setenv("KEYSTONE_MCP_UPSTREAM_TOOL_TIMEOUTS", '{"reports_build": %s}' % value)
+    with pytest.raises(ConfigError, match="reports_build"):
         Settings()
 
 

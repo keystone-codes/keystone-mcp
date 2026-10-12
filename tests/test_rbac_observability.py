@@ -60,7 +60,7 @@ def settings(policy_path: Path) -> Settings:
         rbac_mode="enforce",
         rbac_policy_path=str(policy_path),
         # The HTTP-proxy branch is what test_users_mutation_audited_on_service_timeout
-        # exercises below (a mocked mcp-users client that times out); without this
+        # exercises below (a mocked HTTP users directory client that times out); without this
         # the default built-in (local) backend would hit "service_unconfigured"
         # instead, since no UsersStore is wired up in this fixture.
         users_backend="http",
@@ -321,7 +321,7 @@ def test_users_mutation_audit(
 
     route = Route(
         name="users_grant_role",
-        pattern=Pattern.M_B,
+        pattern=Pattern.SYNC,
         target=adapter,
         mode="live",
     )
@@ -330,7 +330,7 @@ def test_users_mutation_audit(
         task_id="t_abc123",
         canonical_args="",
         tool_name="users_grant_role",
-        pattern=Pattern.M_B,
+        pattern=Pattern.SYNC,
         settings=settings,
     )
     adapter._record_mutation_audit(
@@ -408,11 +408,11 @@ def _http_directory(handler):
 
     client = httpx.AsyncClient(
         transport=httpx.MockTransport(handler),
-        base_url="http://mcp-users:8080",
+        base_url="http://users-directory.internal.example:8080",
         headers={"Authorization": "Bearer service-secret"},
     )
     return HttpUserDirectory(
-        base_url="http://mcp-users:8080",
+        base_url="http://users-directory.internal.example:8080",
         service_token="service-secret",
         timeout_seconds=5.0,
         client=client,

@@ -24,7 +24,7 @@ def _ctx() -> RouteContext:
         task_id="t_test",
         canonical_args="{}",
         tool_name="test_tool",
-        pattern=Pattern.M_B,
+        pattern=Pattern.SYNC,
         settings=Settings(base_url="http://localhost:8080"),
     )
 
