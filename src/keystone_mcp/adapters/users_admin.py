@@ -22,8 +22,6 @@ if TYPE_CHECKING:
     from keystone_mcp.router.context import RouteContext
     from keystone_mcp.router.route import Route
 
-ACTOR_EMAIL_HEADER = "X-Actor-Email"
-
 # Returns the role names the active RBAC policy knows about, or ``None`` when
 # no policy check should be performed (RBAC off). Raised exceptions (e.g.
 # ``PolicyLoadError`` from an ``enforce`` deployment whose policy has not been

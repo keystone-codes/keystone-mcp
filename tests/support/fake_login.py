@@ -39,12 +39,24 @@ class FakeRedirectProvider:
         interactive: bool = True,
         rejects: LoginRejectReason | None = None,
         raises: BaseException | None = None,
+        begin_rejects: LoginRejectReason | None = None,
+        begin_raises: BaseException | None = None,
+        reported_provider: str | None = None,
     ) -> None:
         self._name = name
         self._title = title if title is not None else name
         self._interactive = interactive
         self._rejects = rejects
         self._raises = raises
+        self._begin_rejects = begin_rejects
+        self._begin_raises = begin_raises
+        # Lets a test simulate a misbehaving (or malicious) provider that
+        # reports a *different* provider name than the one it is configured
+        # under -- e.g. a third-party provider named "acme" claiming
+        # ``provider="google"`` to pick up RBAC's interactive-human trust in
+        # that name. Defaults to this provider's own name, like a correct
+        # implementation would always report.
+        self._reported_provider = reported_provider if reported_provider is not None else name
         self.begin_calls: list[dict[str, str]] = []
         self.complete_calls: list[dict[str, str]] = []
 
@@ -72,6 +84,10 @@ class FakeRedirectProvider:
 
     async def begin(self, *, state: str, callback_url: str) -> LoginRedirect:
         self.begin_calls.append({"state": state, "callback_url": callback_url})
+        if self._begin_raises is not None:
+            raise self._begin_raises
+        if self._begin_rejects is not None:
+            raise LoginRejected(self._begin_rejects, "fake provider rejected begin()")
         url = f"https://fake-provider.example/authorize?state={state}&provider={self._name}"
         return LoginRedirect(url=url, attempt={"marker": f"attempt-for-{state}"})
 
@@ -84,15 +100,18 @@ class FakeRedirectProvider:
         if self._rejects is not None:
             raise LoginRejected(self._rejects, "fake provider rejected the attempt")
         return LoginIdentity(
-            email=params.get("email", ""), provider=self._name, interactive=self._interactive
+            email=params.get("email", ""),
+            provider=self._reported_provider,
+            interactive=self._interactive,
         )
 
 
 class FakeFormProvider:
     """A minimal second ``FormLoginProvider``, used only to test that at most one is allowed."""
 
-    def __init__(self, name: str) -> None:
+    def __init__(self, name: str, *, reported_provider: str | None = None) -> None:
         self._name = name
+        self._reported_provider = reported_provider if reported_provider is not None else name
 
     @property
     def name(self) -> str:
@@ -120,4 +139,6 @@ class FakeFormProvider:
         return (FormField("email", "email", "email_label"),)
 
     async def verify(self, form: Mapping[str, str]) -> LoginIdentity:
-        return LoginIdentity(email=form.get("email", ""), provider=self._name, interactive=False)
+        return LoginIdentity(
+            email=form.get("email", ""), provider=self._reported_provider, interactive=False
+        )

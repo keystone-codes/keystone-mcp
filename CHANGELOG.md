@@ -87,6 +87,18 @@ this project uses [Semantic Versioning](https://semver.org/).
 - Trivy image scan now blocks pull requests and releases on fixable HIGH and
   CRITICAL findings; temporary exceptions live in `.trivyignore` with a
   reason and a review date.
+- A sign-in provider's own `provider` claim is no longer trusted for the
+  issued token's `auth_method`: it is taken from the route (or form) the
+  sign-in came back on, and a provider reporting another name is refused.
+  Closes a path where a non-Google provider could report `provider="google"`
+  and pick up the interactive-human gate's trust in that name.
+- A deployment that configures any sign-in provider other than the built-in
+  API-key form now gets the users-directory check wired up automatically, the
+  way Google already did; previously only `google_login_enabled` triggered
+  it, so a custom provider's directory check silently never ran for a form
+  provider, and a custom redirect provider's callback always failed with 503.
+- A redirect provider's `begin()` rejecting or raising now returns a sign-in
+  error page (400 or 503) instead of an unhandled 500.
 
 ## [0.4.0] - 2026-10-11
 
