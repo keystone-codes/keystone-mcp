@@ -179,7 +179,6 @@ def build_server(
     oauth_store: OAuthStore | None = None,
     login_pending_store: LoginPendingStore | None = None,
     user_resolver: UserDirectoryResolver | None = None,
-    google_oidc_client: object | None = None,
     observability: RbacObservability | None = None,
     users_store: UsersStore | None = None,
     login_providers: Sequence[LoginProvider] | None = None,
@@ -199,18 +198,27 @@ def build_server(
     routes, and seed valid tokens.
     """
     settings = settings or load_settings()
-    if login_providers is not None and (
-        identity_provider is not None or google_oidc_client is not None
-    ):
-        raise ValueError("pass either login_providers or identity_provider/google_oidc_client")
     if login_providers is None:
         if identity_provider is None:
             identity_provider = build_identity_provider(settings)
-        login_providers = build_login_providers(
-            settings, identity_provider=identity_provider, google_oidc_client=google_oidc_client
-        )
+        login_providers = build_login_providers(settings, identity_provider=identity_provider)
+    elif identity_provider is None:
+        identity_provider = build_identity_provider(settings)
     validate_login_providers(login_providers)
     _login_providers_holder["providers"] = list(login_providers)
+    for _lp in login_providers:
+        if _lp.kind != "redirect":
+            continue
+        provider_type = "oidc"
+        if _lp.name == "google":
+            provider_type = "google"
+        logger.info(
+            "login provider %s (%s): callback %s/login/%s/callback",
+            _lp.name,
+            provider_type,
+            settings.base_url.rstrip("/"),
+            _lp.name,
+        )
 
     if oauth_store is None:
         store, pending_store = build_shared_auth_stores(settings)
