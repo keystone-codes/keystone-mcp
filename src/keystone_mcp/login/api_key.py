@@ -1,25 +1,34 @@
-"""``ApiKeyLoginProvider`` — the email + api_token form as a ``LoginProvider``.
-
-Wraps an :class:`~keystone_mcp.auth.identity_provider.IdentityProvider`
-(dev-token set or auth-service introspection) behind the ``FormLoginProvider``
-shape: Keystone renders the two fields on its own login page and posts them
-straight back to this provider for verification.
-"""
+"""``ApiKeyLoginProvider`` — the email + api_token form as a ``LoginProvider``."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 
-from keystone_mcp.auth.identity_provider import IdentityProvider
 from keystone_mcp.login.protocol import FormField, LoginIdentity, LoginKind, LoginRejected
+from keystone_mcp.user_directory.errors import UserDirectoryUnavailableError
+from keystone_mcp.user_directory.protocol import UserDirectoryResolver
 from keystone_mcp.user_directory.util import normalize_email
 
 
 class ApiKeyLoginProvider:
     """The api_token + email form as a ``form``-kind ``LoginProvider``."""
 
-    def __init__(self, identity: IdentityProvider) -> None:
-        self._identity = identity
+    def __init__(
+        self,
+        *,
+        resolver: UserDirectoryResolver | None = None,
+        dev_tokens: frozenset[str] = frozenset(),
+        resolve_directory_keys: bool = False,
+        enforce_directory_for_dev_tokens: bool = False,
+    ) -> None:
+        self._resolver = resolver
+        self._dev_tokens = dev_tokens
+        self._resolve_directory_keys = resolve_directory_keys
+        self._enforce_directory_for_dev_tokens = enforce_directory_for_dev_tokens
+
+    @property
+    def wants_directory_resolver(self) -> bool:
+        return self._resolve_directory_keys or self._enforce_directory_for_dev_tokens
 
     @property
     def name(self) -> str:
@@ -52,6 +61,18 @@ class ApiKeyLoginProvider:
     async def verify(self, form: Mapping[str, str]) -> LoginIdentity:
         email = normalize_email(str(form.get("email", "")))
         api_token = str(form.get("api_token", ""))
-        if not await self._identity.verify(api_token, email):
+        if api_token in self._dev_tokens:
+            return LoginIdentity(email=email, provider="api_key", interactive=False)
+        if not self._resolve_directory_keys or self._resolver is None:
+            raise LoginRejected("invalid_credentials")
+        try:
+            verification = await self._resolver.verify_api_key(api_token)
+        except UserDirectoryUnavailableError:
+            raise LoginRejected("provider_unavailable") from None
+        if (
+            verification is None
+            or verification.subject_type != "human"
+            or verification.subject != email
+        ):
             raise LoginRejected("invalid_credentials")
         return LoginIdentity(email=email, provider="api_key", interactive=False)

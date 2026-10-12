@@ -12,7 +12,6 @@ from collections.abc import Callable, Sequence
 
 import httpx
 
-from keystone_mcp.auth.identity_provider import IdentityProvider
 from keystone_mcp.config import Settings
 from keystone_mcp.login.api_key import ApiKeyLoginProvider
 from keystone_mcp.login.config import LoginProviderEntry, load_login_providers_file
@@ -23,6 +22,7 @@ from keystone_mcp.login.oidc import (
     is_builtin_google_provider,
 )
 from keystone_mcp.login.protocol import FormLoginProvider, LoginProvider, RedirectLoginProvider
+from keystone_mcp.user_directory.protocol import UserDirectoryResolver
 
 _PROVIDER_NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 
@@ -70,7 +70,7 @@ def _entry_to_oidc_config(entry: LoginProviderEntry) -> OidcProviderConfig:
 def _build_from_file(
     settings: Settings,
     *,
-    identity_provider: IdentityProvider,
+    resolver: UserDirectoryResolver | None,
     http_client_factory: Callable[[], httpx.AsyncClient] | None,
 ) -> list[LoginProvider]:
     entries = load_login_providers_file(
@@ -81,7 +81,15 @@ def _build_from_file(
     providers: list[LoginProvider] = []
     for entry in entries:
         if entry.type == "api_key":
-            providers.append(ApiKeyLoginProvider(identity_provider))
+            dev_set = frozenset(t for t in settings.dev_tokens.split(",") if t.strip())
+            providers.append(
+                ApiKeyLoginProvider(
+                    resolver=resolver,
+                    dev_tokens=dev_set,
+                    resolve_directory_keys=True,
+                    enforce_directory_for_dev_tokens=bool(dev_set),
+                )
+            )
         else:
             config = _entry_to_oidc_config(entry)
             providers.append(OidcLoginProvider(config, http_client_factory=http_client_factory))
@@ -95,7 +103,7 @@ def _legacy_google_enabled(settings: Settings) -> bool:
 def build_login_providers(
     settings: Settings,
     *,
-    identity_provider: IdentityProvider,
+    resolver: UserDirectoryResolver | None = None,
     http_client_factory: Callable[[], httpx.AsyncClient] | None = None,
 ) -> list[LoginProvider]:
     """Assemble the providers for the login page, in display order."""
@@ -103,7 +111,7 @@ def build_login_providers(
     if path:
         return _build_from_file(
             settings,
-            identity_provider=identity_provider,
+            resolver=resolver,
             http_client_factory=http_client_factory,
         )
 
@@ -116,8 +124,24 @@ def build_login_providers(
         )
         providers.append(OidcLoginProvider(config, http_client_factory=http_client_factory))
     if settings.api_key_login_enabled:
-        providers.append(ApiKeyLoginProvider(identity_provider))
+        dev_set = frozenset(t for t in settings.dev_tokens.split(",") if t.strip())
+        providers.append(
+            ApiKeyLoginProvider(
+                resolver=resolver,
+                dev_tokens=dev_set,
+                resolve_directory_keys=True,
+                enforce_directory_for_dev_tokens=bool(dev_set),
+            )
+        )
     return providers
+
+
+def login_providers_want_directory_resolver(providers: Sequence[LoginProvider]) -> bool:
+    for provider in providers:
+        if provider.name == "api_key" and isinstance(provider, ApiKeyLoginProvider):
+            if provider.wants_directory_resolver:
+                return True
+    return False
 
 
 def file_has_interactive_providers(settings: Settings) -> bool:

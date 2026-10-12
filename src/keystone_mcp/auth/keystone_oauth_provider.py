@@ -1089,6 +1089,8 @@ class KeystoneOAuthProvider(OAuthProvider):
         return await self._store.get_access_token(token)
 
     async def verify_token(self, token: str) -> AccessToken | None:
+        if token.startswith("ksk_"):
+            return await self._verify_service_api_key(token)
         access = await self.load_access_token(token)
         if access is None:
             return None
@@ -1109,6 +1111,50 @@ class KeystoneOAuthProvider(OAuthProvider):
         if not resources_equivalent(access.resource, self._settings.resource_url):
             return None
         return access
+
+    async def _verify_service_api_key(self, token: str) -> AccessToken | None:
+        if self._user_resolver is None:
+            return None
+        try:
+            verification = await self._user_resolver.verify_api_key(token)
+        except UserDirectoryUnavailableError:
+            logger.warning("users directory unavailable while verifying service API key")
+            return None
+        if verification is None:
+            return None
+        if verification.subject_type == "human":
+            logger.info(
+                "refused bearer API key %s: keys of people work only on the sign-in page",
+                verification.key_id,
+            )
+            return None
+        try:
+            resolved = await self._user_resolver.resolve(verification.subject)
+        except UserDirectoryUnavailableError:
+            logger.warning("users directory unavailable while resolving service API key subject")
+            return None
+        if not resolved.exists or resolved.is_blocked:
+            return None
+        expires_at = (
+            int(verification.expires_at.timestamp())
+            if verification.expires_at is not None
+            else None
+        )
+        return AccessToken(
+            token=token,
+            client_id="keystone-service-key",
+            scopes=[],
+            expires_at=expires_at,
+            resource=self._settings.resource_url,
+            subject=verification.subject,
+            claims={
+                "subject": verification.subject,
+                "subject_type": "service",
+                "interactive": False,
+                "auth_method": "service_key",
+                "key_id": verification.key_id,
+            },
+        )
 
     async def revoke_token(self, token: AccessToken | RefreshToken) -> None:
         await self._store.delete_access_token(token.token)
@@ -1183,6 +1229,19 @@ class KeystoneOAuthProvider(OAuthProvider):
         try:
             identity = await form_provider.verify(raw_form)
         except LoginRejected as exc:
+            if exc.reason == "provider_unavailable":
+                client = await self._store.get_client(pending.client_id)
+                if client is None:
+                    return _html_response(self._error_page(lang, "error_request"), status_code=400)
+                return self._render_consent_page(
+                    request,
+                    txn_id,
+                    lang,
+                    pending,
+                    client,
+                    error_key="error_directory_unavailable",
+                    status_code=503,
+                )
             logger.info("login rejected by provider %s: %s", form_provider.name, exc.reason)
             self._login_throttle.record_login_failure(email)
             client = await self._store.get_client(pending.client_id)

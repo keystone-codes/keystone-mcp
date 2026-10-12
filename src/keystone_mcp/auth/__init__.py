@@ -1,10 +1,5 @@
 """OAuth 2.1 authorization- and resource-server layer for keystone-mcp."""
 
-from keystone_mcp.auth.identity_provider import (
-    AuthServiceIdentityProvider,
-    IdentityProvider,
-    StaticIdentityProvider,
-)
 from keystone_mcp.auth.keystone_oauth_provider import KeystoneOAuthProvider
 from keystone_mcp.auth.login_pending_store import (
     InMemoryLoginPendingStore,
@@ -22,9 +17,6 @@ from keystone_mcp.auth.oauth_store import (
 from keystone_mcp.auth.throttle import LoginAttemptThrottle, PerIdentityThrottle
 
 __all__ = [
-    "AuthServiceIdentityProvider",
-    "IdentityProvider",
-    "StaticIdentityProvider",
     "KeystoneOAuthProvider",
     "InMemoryLoginPendingStore",
     "LoginPendingStore",
