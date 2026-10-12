@@ -63,5 +63,5 @@ Keep each record under roughly 80 lines. Use short sentences and present tense.
 | [0008](0008-api-keys-and-service-accounts.md) | API keys are hashed, shown once, and Bearer-only for machines | Accepted (0.5.0) |
 | [0009](0009-plugins-via-entry-points.md) | Extensions are discovered only through entry points; built-ins use the same path | Accepted (0.5.0) |
 | [0010](0010-fastmcp-major-version.md) | Why Keystone runs on fastmcp 4 | Accepted (0.5.0) |
-| [0011](0011-rbac-by-name-for-prompts-and-resources.md) | Prompts are authorised by name with the tool patterns | Accepted (0.5.0) |
+| [0011](0011-rbac-by-name-for-prompts-and-resources.md) | Prompts and resources are authorised by name with the tool patterns | Accepted (0.5.0) |
 | [0012](0012-stdio-upstreams-run-unsandboxed.md) | A stdio upstream is trusted like Keystone itself | Accepted (0.5.0) |
