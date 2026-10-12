@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import TYPE_CHECKING
 
@@ -35,6 +36,9 @@ class ToolCallObservabilityMiddleware(Middleware):
             return result
         except ToolError:
             outcome = "tool_error"
+            raise
+        except asyncio.CancelledError:
+            outcome = "cancelled"
             raise
         except Exception:
             outcome = "error"
