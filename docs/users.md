@@ -255,6 +255,8 @@ How a service account proves itself is covered in the next section.
 
 ## API keys
 
+Why: [ADR 0008](adr/0008-api-keys-and-service-accounts.md).
+
 API keys tie a secret to either a person or a service account. Only the
 built-in users directory (`KEYSTONE_MCP_USERS_BACKEND=local`) can store them;
 an HTTP-backed directory does not support issuing or checking keys.

@@ -59,3 +59,9 @@ Keep each record under roughly 80 lines. Use short sentences and present tense.
 | [0004](0004-redis-is-required.md) | Redis is required | Accepted (0.5.0) |
 | [0005](0005-dynamic-client-registration-on-by-default.md) | Dynamic client registration is on by default | Accepted (0.5.0) |
 | [0006](0006-no-file-api-in-the-core.md) | File transfer is an upstream service; reference adapters live in contrib | Accepted (0.5.0) |
+| [0007](0007-login-providers.md) | Sign-in goes through `LoginProvider`; Google is one OIDC provider | Accepted (0.5.0) |
+| [0008](0008-api-keys-and-service-accounts.md) | API keys are hashed, shown once, and Bearer-only for machines | Accepted (0.5.0) |
+| [0009](0009-plugins-via-entry-points.md) | Extensions are discovered only through entry points; built-ins use the same path | Accepted (0.5.0) |
+| [0010](0010-fastmcp-major-version.md) | Why Keystone runs on fastmcp 4 | Accepted (0.5.0) |
+| [0011](0011-rbac-by-name-for-prompts-and-resources.md) | Prompts and resources are authorised by name with the tool patterns | Accepted (0.5.0) |
+| [0012](0012-stdio-upstreams-run-unsandboxed.md) | A stdio upstream is trusted like Keystone itself | Accepted (0.5.0) |
