@@ -66,12 +66,12 @@ Then connect a client and sign in:
   sections, one per service.
 - **Any users directory.** Built in (SQLite for one host, Postgres for
   production), or your own directory over HTTP.
-- **Any sign-in method.** Google, DEV tokens for local testing (a deprecated
-  API-key check remains until 0.4.1); a common provider interface is on the 0.5.0 roadmap.
+- **Any sign-in method.** Google, DEV tokens for local testing, and a
+  deprecated API-key method — all three behind one `LoginProvider` interface.
 - **Onboarding and access through the agent.** An administrator adds people,
   changes roles, and manages access by asking the agent — the `users_*`
   tools, the `keystone-user-admin` skill, or `setup.sh --non-interactive`;
-  the access-policy file itself is still edited by hand in 0.4.0.
+  the access-policy file itself is still edited by hand.
 - **Services in any language or SDK.** Each one is a plain MCP server
   behind a transparent proxy; it keeps its own stack and storage.
 - **One policy file, reloaded live.** Access rules live in a single file;
@@ -84,7 +84,7 @@ Then connect a client and sign in:
   authorization events ship with the process.
 - **One image, two architectures.** `linux/amd64` and `linux/arm64`.
 
-Full description of every capability, and what is still 0.5.0:
+Full description of every capability, and what is still ahead:
 [docs/features.md](docs/features.md).
 
 ## What it does not do

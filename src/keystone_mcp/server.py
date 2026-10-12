@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import signal
+import sys
 from collections.abc import Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -836,8 +837,16 @@ def _http_asgi_middleware(settings: Settings) -> list:
 
 
 def main() -> None:
-    env_result = load_env_file()
-    settings = load_settings()
+    try:
+        env_result = load_env_file()
+        settings = load_settings()
+    except ConfigError as exc:
+        # No logging configuration exists yet at this point (configure_logging
+        # runs right after), so an uncaught ConfigError would otherwise print a
+        # full Python traceback; a misconfigured .env or environment variable
+        # is an operator mistake, not a bug, and deserves a one-line message.
+        print(f"keystone-mcp: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
     configure_logging(settings)
     logger.info("deployment profile: %s", settings.deployment_profile)
     for warning in startup_warnings(settings):
