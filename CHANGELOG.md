@@ -6,12 +6,27 @@ this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Startup refuses a removed variable that would change security behaviour
+  if ignored, and warns about other removed variables
+  (`docs/environment.md#removed-variables`).
+
 ### Changed
 
 - Documentation brought in line with the 0.4.0 code: the Host/Origin
   allowlist and /metrics, deployment profile rules P5 and W5, the
   Kubernetes and Prometheus examples, client redirect hosts, host install
   permissions, and the supported-versions table in SECURITY.md.
+
+### Removed
+
+- `KEYSTONE_MCP_RBAC_ENABLED`. Use `KEYSTONE_MCP_RBAC_MODE`.
+
+### Migration
+
+- Replace `KEYSTONE_MCP_RBAC_ENABLED=true` with `KEYSTONE_MCP_RBAC_MODE=enforce`;
+  delete the old variable — the server does not start while it is set.
 
 ## [0.4.0] - 2026-10-11
 

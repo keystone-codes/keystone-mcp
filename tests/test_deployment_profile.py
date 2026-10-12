@@ -28,7 +28,6 @@ def _rbac_env(monkeypatch, tmp_path: Path) -> None:
     policy = tmp_path / "rbac-policy.yaml"
     policy.write_text("default_deny: true\nroles: {}\n", encoding="utf-8")
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_MODE", "enforce")
-    monkeypatch.delenv("KEYSTONE_MCP_RBAC_ENABLED", raising=False)
     # The built-in (local, default) users directory needs neither URL nor
     # token; these tests exercise the deployment profile, not the users
     # directory backend, so they leave KEYSTONE_MCP_USERS_BACKEND unset.
@@ -118,7 +117,6 @@ def test_production_refuses_dev_tokens(monkeypatch, tmp_path: Path):
 def test_production_refuses_rbac_off(monkeypatch):
     monkeypatch.setenv("KEYSTONE_MCP_DEPLOYMENT_PROFILE", "production")
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_MODE", "off")
-    monkeypatch.delenv("KEYSTONE_MCP_RBAC_ENABLED", raising=False)
     _production_login_env(monkeypatch)
     with pytest.raises(ConfigError, match="requires KEYSTONE_MCP_RBAC_MODE=enforce"):
         load_settings()
@@ -264,7 +262,6 @@ def test_startup_warnings_for_insecure_upstream_flags(monkeypatch, tmp_path: Pat
 def test_local_warnings_empty_with_rbac_off(monkeypatch, dev_tokens: str):
     monkeypatch.setenv("KEYSTONE_MCP_DEPLOYMENT_PROFILE", "local")
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_MODE", "off")
-    monkeypatch.delenv("KEYSTONE_MCP_RBAC_ENABLED", raising=False)
     monkeypatch.setenv("KEYSTONE_MCP_DEV_TOKENS", dev_tokens)
     settings = load_settings()
     assert startup_warnings(settings) == []
