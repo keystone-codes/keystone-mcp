@@ -7,7 +7,6 @@ from pathlib import Path
 
 import pytest
 
-from keystone_mcp.auth.identity_provider import StaticIdentityProvider
 from keystone_mcp.config import ConfigError, Settings, startup_warnings
 from keystone_mcp.login.config import load_login_providers_file
 from keystone_mcp.login.factory import build_login_providers
@@ -43,7 +42,7 @@ def test_valid_file_builds_providers_in_order(tmp_path, monkeypatch):
         """,
     )
     settings = Settings(login_providers_path=path)
-    providers = build_login_providers(settings, identity_provider=StaticIdentityProvider(set()))
+    providers = build_login_providers(settings, resolver=None)
     assert [p.name for p in providers] == ["okta", "google", "api_key"]
     assert isinstance(providers[0], OidcLoginProvider)
     assert providers[0].title == "Okta"
@@ -166,7 +165,7 @@ def test_legacy_google_variables_build_google_preset(monkeypatch):
     monkeypatch.setenv("KEYSTONE_MCP_GOOGLE_CLIENT_ID", "g-cid")
     monkeypatch.setenv("KEYSTONE_MCP_GOOGLE_CLIENT_SECRET", "g-secret")
     settings = Settings()
-    providers = build_login_providers(settings, identity_provider=StaticIdentityProvider(set()))
+    providers = build_login_providers(settings, resolver=None)
     assert any(p.name == "google" for p in providers)
 
 

@@ -21,7 +21,6 @@ from conftest import (
     obtain_access_token,
     register_client,
 )
-from keystone_mcp.auth.identity_provider import StaticIdentityProvider
 from keystone_mcp.auth.keystone_oauth_provider import KeystoneOAuthProvider
 from keystone_mcp.auth.login_pending_store import InMemoryLoginPendingStore
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
@@ -36,6 +35,7 @@ from keystone_mcp.router.rbac_middleware import RbacDenialReason
 from keystone_mcp.server import build_server
 from keystone_mcp.user_directory import build_in_memory_user_directory_resolver
 from support.fake_login import FakeFormProvider, FakeRedirectProvider
+from support.login import dev_token_login
 from support.rbac_conformance import (
     CONFORMANCE_EMAIL,
     DecisionRecorder,
@@ -313,10 +313,10 @@ async def test_interactive_oidc_provider_opens_human_tools(monkeypatch):
 async def test_api_key_login_does_not_open_human_tools(monkeypatch):
     """A real api_key sign-in's token carries interactive=False and is denied."""
     settings = Settings(base_url=BASE_URL)
-    idp = StaticIdentityProvider({VALID_TOKEN})
+    _login = dev_token_login({VALID_TOKEN})
     store = InMemoryOAuthStore()
     mcp, _registry, oauth, *_rest = build_server(
-        identity_provider=idp, settings=settings, oauth_store=store
+        login_providers=[_login], settings=settings, oauth_store=store
     )
     app = mcp.http_app(path=settings.http_path)
     async with LifespanManager(app):

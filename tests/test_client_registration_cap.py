@@ -18,10 +18,10 @@ from mcp.shared.auth import OAuthClientInformationFull
 from prometheus_client import REGISTRY
 
 from conftest import BASE_URL, REDIRECT_URI
-from keystone_mcp.auth.identity_provider import StaticIdentityProvider
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import ConfigError, Settings, validate_settings
 from keystone_mcp.server import build_server
+from support.login import dev_token_login
 
 VALID_TOKEN = "valid-test-token"
 _REGISTER_PAYLOAD = {"redirect_uris": [REDIRECT_URI], "token_endpoint_auth_method": "none"}
@@ -29,10 +29,10 @@ _REGISTER_PAYLOAD = {"redirect_uris": [REDIRECT_URI], "token_endpoint_auth_metho
 
 def _build_app(*, oauth_store=None, **settings_overrides):
     settings = Settings(base_url=BASE_URL, refresh_interval_seconds=0, **settings_overrides)
-    idp = StaticIdentityProvider({VALID_TOKEN})
+    _login = dev_token_login({VALID_TOKEN})
     store = oauth_store if oauth_store is not None else InMemoryOAuthStore()
     mcp, *_rest = build_server(
-        identity_provider=idp,
+        login_providers=[_login],
         settings=settings,
         oauth_store=store,
         register_builtin_catalog=False,

@@ -21,7 +21,6 @@ from __future__ import annotations
 from mcp.server.auth.provider import AccessToken, AuthorizationParams, RefreshToken
 from mcp.shared.auth import OAuthClientInformationFull
 
-from keystone_mcp.auth.identity_provider import StaticIdentityProvider
 from keystone_mcp.auth.keystone_oauth_provider import (
     KeystoneOAuthProvider,
     _parse_auth_code_envelope,
@@ -30,7 +29,7 @@ from keystone_mcp.auth.keystone_oauth_provider import (
 from keystone_mcp.auth.login_pending_store import InMemoryLoginPendingStore
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import Settings
-from keystone_mcp.login.api_key import ApiKeyLoginProvider
+from support.login import dev_token_login
 
 # Captured on fastmcp 3.4.4 / mcp 1.28.1 -- see the module docstring.
 _CLIENT_RECORD_3X = (
@@ -135,7 +134,15 @@ async def test_refresh_meta_marker_from_3x_is_readable():
         Settings(base_url="http://localhost:8080"),
         InMemoryOAuthStore(),
         pending_store,
-        login_providers=[ApiKeyLoginProvider(StaticIdentityProvider({"valid-test-token"}))],
+        login_providers=[
+            dev_token_login(
+                {"valid-test-token"}
+                if isinstance({"valid-test-token"}, set)
+                else set({"valid-test-token"})
+                if False
+                else {"valid-test-token"}
+            )
+        ],
     )
 
     auth_method, resource, interactive = await provider._read_refresh_meta("km_rt_marker")

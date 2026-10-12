@@ -7,10 +7,10 @@ say so instead of implying open user administration.
 
 from __future__ import annotations
 
-from keystone_mcp.auth.identity_provider import StaticIdentityProvider
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import Settings
 from keystone_mcp.server import build_server
+from support.login import dev_token_login
 
 BASE_URL = "http://localhost:8080"
 
@@ -28,7 +28,7 @@ ADMIN_TOOLS = {
 
 def _build(settings: Settings, **kwargs):
     return build_server(
-        identity_provider=StaticIdentityProvider({"token"}),
+        login_providers=[dev_token_login({"token"})],
         settings=settings,
         oauth_store=InMemoryOAuthStore(),
         **kwargs,

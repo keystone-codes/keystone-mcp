@@ -14,18 +14,18 @@ from conftest import (
     make_pkce,
     register_client,
 )
-from keystone_mcp.auth.identity_provider import StaticIdentityProvider
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import ConfigError, Settings, load_settings, validate_settings
 from keystone_mcp.server import build_server
+from support.login import dev_token_login
 
 
 def _build_app(**settings_overrides):
     settings = Settings(base_url=BASE_URL, refresh_interval_seconds=0, **settings_overrides)
-    idp = StaticIdentityProvider({VALID_TOKEN})
+    _login = dev_token_login({VALID_TOKEN})
     store = InMemoryOAuthStore()
     mcp, *_rest = build_server(
-        identity_provider=idp,
+        login_providers=[_login],
         settings=settings,
         oauth_store=store,
         register_builtin_catalog=False,

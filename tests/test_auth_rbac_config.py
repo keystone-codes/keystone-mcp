@@ -418,16 +418,14 @@ def test_dev_tokens_are_refused_in_production(monkeypatch, tmp_path: Path):
         load_settings()
 
 
-def test_dev_tokens_with_enforce_allowed_when_auth_service_configured(
-    monkeypatch,
-    tmp_path: Path,
-):
+def test_dev_tokens_refused_when_auth_service_env_is_set(monkeypatch, tmp_path: Path):
     _rbac_env(monkeypatch, tmp_path)
     monkeypatch.setenv("KEYSTONE_MCP_DEV_TOKENS", "local-dev-token")
     monkeypatch.setenv("KEYSTONE_MCP_AUTH_SERVICE_URL", "http://auth:9000/introspect")
     monkeypatch.setenv("KEYSTONE_MCP_AUTH_SERVICE_TOKEN", "auth-token")
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT", "test-salt")
-    load_settings()
+    with pytest.raises(ConfigError, match="KEYSTONE_MCP_AUTH_SERVICE_URL"):
+        load_settings()
 
 
 def test_dev_tokens_with_enforce_allowed_in_local(monkeypatch, tmp_path: Path):
