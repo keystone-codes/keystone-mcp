@@ -10,11 +10,19 @@ Format enforced here: every non-empty line that does not start with ``#``
 must be a vulnerability identifier (``CVE-YYYY-NNNN...`` or a ``GHSA-...``
 advisory id), and the line directly above it must be a ``#`` comment that
 contains a date in ``YYYY-MM-DD`` form (the review date). A file containing
-only the header comment (no identifiers) is valid.
+only the header comment (no identifiers) is valid (nothing here loops over
+an identifier, so an empty list trivially satisfies every check below).
+
+The review date is read from that comment line only. Trivy's own inline
+``exp:YYYY-MM-DD`` suffix on the identifier line itself is a different,
+unrelated mechanism that this repository does not use; an identifier line
+carrying one would fail ``test_every_identifier_line_is_a_known_vulnerability_id_format``
+below, since the whole line must match the bare id pattern.
 """
 
 from __future__ import annotations
 
+import datetime
 import re
 from pathlib import Path
 
@@ -32,15 +40,31 @@ def test_trivyignore_file_exists():
     assert TRIVYIGNORE_PATH.is_file(), ".trivyignore must exist at the repository root"
 
 
-def test_empty_trivyignore_with_only_header_comments_is_valid():
+def test_no_review_date_is_overdue():
+    """An accepted exception does not quietly become permanent.
+
+    Every identifier's review date (the ``YYYY-MM-DD`` in the comment line
+    directly above it) must not be in the past; an overdue date means nobody
+    came back to re-review it. Fix by removing the entry (the finding is
+    actually resolved) or by giving it a fresh reason and a new date.
+    """
+    today = datetime.date.today()
     lines = _lines()
-    non_comment_lines = [
-        line for line in lines if line.strip() and not line.strip().startswith("#")
-    ]
-    # The file ships with only a header explaining the format; this is the
-    # expected steady state when there are no accepted findings.
-    if not non_comment_lines:
-        assert all(line.strip() == "" or line.strip().startswith("#") for line in lines)
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        reason_line = lines[index - 1].strip() if index > 0 else ""
+        match = _DATE_RE.search(reason_line)
+        assert match, (
+            f"'{stripped}' has no dated reason comment above it to check a review date against"
+        )
+        review_date = datetime.date.fromisoformat(match.group())
+        assert review_date >= today, (
+            f"'{stripped}': review date {review_date.isoformat()} is overdue "
+            f"(today is {today.isoformat()}); re-review this exception — remove it "
+            "if the finding is resolved, or give it a fresh reason and date"
+        )
 
 
 def test_every_identifier_line_is_a_known_vulnerability_id_format():

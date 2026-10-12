@@ -14,7 +14,7 @@ from fastmcp import FastMCP
 
 from keystone_mcp.adapters.base import Pattern
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
-from keystone_mcp.catalog.builtin import register_catalog
+from keystone_mcp.catalog.builtin import BUILTIN_TOOL_NAMES, register_catalog
 from keystone_mcp.config import Settings
 from keystone_mcp.rbac.catalog import collect_live_tool_names
 from keystone_mcp.rbac.catalog_snapshot import CatalogSnapshot
@@ -935,10 +935,7 @@ def test_build_server_skips_policy_manager_when_rbac_disabled():
 def test_shipped_default_policy_loads_against_the_core_catalog(tmp_path: Path):
     """The default policy validates against the tools the core catalog registers."""
     policy = load_policy_file(default_policy_path())
-    assert_live_catalog_validation(
-        policy,
-        frozenset({"create_upload_url", "get_download_link", "users_list"}),
-    )
+    assert_live_catalog_validation(policy, BUILTIN_TOOL_NAMES)
 
 
 # --- startup with an unreachable upstream (P05) ------------------------------------
