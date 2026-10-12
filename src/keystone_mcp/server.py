@@ -69,8 +69,8 @@ from keystone_mcp.router.tool_call_observability_middleware import (
 )
 from keystone_mcp.router.upstream import UpstreamRegistry, UpstreamUnavailableError
 from keystone_mcp.surface.reconciler import SurfaceReconciler, surface_reconciler_lifespan
-from keystone_mcp.user_directory.factory import build_user_directory_resolver
-from keystone_mcp.user_directory.protocol import UserDirectoryResolver
+from keystone_mcp.user_directory.factory import build_user_directory, build_user_directory_resolver
+from keystone_mcp.user_directory.protocol import UserDirectory, UserDirectoryResolver
 from keystone_mcp.user_directory.revision import InMemoryRevisionReader
 from keystone_mcp.users.bootstrap import UsersBootstrapError, bootstrap_users_store
 from keystone_mcp.users.db import UsersConfigError
@@ -160,6 +160,7 @@ def build_server(
     observability: RbacObservability | None = None,
     users_store: UsersStore | None = None,
     login_providers: Sequence[LoginProvider] | None = None,
+    user_directory: UserDirectory | None = None,
 ) -> tuple[
     FastMCP,
     RouterRegistry,
@@ -246,16 +247,25 @@ def build_server(
         settings.users_backend == "http" and settings.users_service_url.strip()
     )
     directory_resolver: UserDirectoryResolver | None = user_resolver
-    if directory_resolver is None and (
+    resolver_needed = directory_resolver is None and (
         settings.google_login_enabled
         or settings.rbac_enabled
         or (
             settings.api_key_login_enabled and dev_tokens_configured and local_users_directory_ready
         )
-    ):
+    )
+    # Built independently of whether a resolver was injected or auto-built
+    # above (an embedding process, or a test, may supply its own resolver for
+    # login/RBAC while still wanting the catalog's users_* tools wired to the
+    # real directory) -- register_catalog needs this whenever RBAC enforces,
+    # the resolver-building branch below needs it whenever it runs at all.
+    directory: UserDirectory | None = user_directory
+    if directory is None and (resolver_needed or settings.rbac_enforcing):
+        directory = build_user_directory(settings, users_store=users_store)
+    if resolver_needed:
         directory_resolver = build_user_directory_resolver(
             settings,
-            users_store=users_store,
+            directory=directory,
             revision_reader=shared_revision,
         )
 
@@ -375,7 +385,7 @@ def build_server(
             registry,
             settings,
             observability=rbac_observability,
-            users_store=users_store,
+            directory=directory,
             role_source=policy_role_source(policy_manager),
         )
         _warn_if_admin_tools_are_unguarded(registry, settings)
@@ -409,10 +419,18 @@ def build_server(
 
         return JSONResponse({"status": "ok"})
 
+    # The HTTP directory's own availability already fails closed on every
+    # call that needs it (S16, see ReadinessProbe's module docstring): never
+    # poll it from /readyz, whatever object .backend happens to carry (a test
+    # double with no .name attribute is left alone, so it keeps exercising
+    # whatever ping() behavior it defines).
+    _readyz_backend = getattr(directory_resolver, "backend", None)
+    if getattr(_readyz_backend, "name", None) == "http":
+        _readyz_backend = None
     readiness_probe = ReadinessProbe(
         redis=getattr(store, "redis", None),
         policy_manager=policy_manager,
-        users_backend=getattr(directory_resolver, "backend", None),
+        users_backend=_readyz_backend,
     )
 
     @mcp.custom_route("/readyz", methods=["GET"])

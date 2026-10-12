@@ -217,41 +217,17 @@ and return the new class instead of (or alongside) the built-in branches —
 honestly, there is no registration point that avoids touching this one
 function yet.
 
-#### Users directory: `UserDirectoryBackend`
+#### Users directory: `UserDirectory`
 
-`UserDirectoryBackend` (`src/keystone_mcp/user_directory/protocol.py`) is the
-other `runtime_checkable` protocol, with two methods:
-
-```python
-@runtime_checkable
-class UserDirectoryBackend(Protocol):
-    async def resolve_user(self, email: str) -> UserResolveResult: ...
-    async def aclose(self) -> None: ...
-```
-
-`UserResolveResult` (`src/keystone_mcp/user_directory/models.py`) carries
-`exists`, `roles`, `is_blocked` (plus cache bookkeeping the backend does not
-set). The default, `KEYSTONE_MCP_USERS_BACKEND=local`, is
-`LocalUserDirectoryBackend` (`src/keystone_mcp/user_directory/local.py`) over
-the built-in SQLite/PostgreSQL store. `KEYSTONE_MCP_USERS_BACKEND=http` is
-`HttpUserDirectoryBackend` (`src/keystone_mcp/user_directory/http.py`), which
-calls `GET /v1/users/resolve?email=…` on an external service — the contract a
-fork implements when its people already live somewhere else; see
-[below](#the-http-users-directory-contract).
-
-A third kind of backend (LDAP, a different internal service, anything else
-that can answer "does this email exist, what are its roles, is it blocked")
-implements the same two methods and is selected in
-`build_user_directory_resolver`
-(`src/keystone_mcp/user_directory/factory.py`), which today only branches on
-`local`/`http`; a fork adds a third branch there, or passes its instance
-through that function's own `backend=` parameter instead of going through the
-`local`/`http` selection at all. Either way, the caching, the Redis-backed
-revision marker, and the circuit breaker
-(`src/keystone_mcp/user_directory/resolver.py`,
-`CachedUserDirectoryResolver`) wrap *any* backend unchanged — a fork's
-implementation only has to answer `resolve_user` correctly, not implement its
-own cache or failure handling.
+Reading and administering people is one protocol,
+`keystone_mcp.user_directory.UserDirectory` (plus the optional
+`UserDirectoryAdmin` capability) — not something you wire by editing a core
+factory function. Writing your own directory (a dict, a YAML file, LDAP, a
+different internal service), the protocol's rules, the HTTP contract the
+built-in `KEYSTONE_MCP_USERS_BACKEND=http` directory speaks, and how
+`users_*` tool publication depends on what a directory declares: see
+[user-directory.md](user-directory.md). Registering a directory from your own
+package without editing core code is X09 (entry points).
 
 #### Built-in tools: `Adapter` and `RouterRegistry.add_route`
 
@@ -286,55 +262,6 @@ Keystone-MCP request from anything else on the same network. See
 [Authenticating Keystone-MCP to your service](connecting-services.md#authenticating-keystone-mcp-to-your-service)
 for the field and the header it produces.
 
-### The HTTP users directory contract
-
-With `KEYSTONE_MCP_USERS_BACKEND=http`, Keystone-MCP calls the external
-service with `Authorization: Bearer <KEYSTONE_MCP_USERS_SERVICE_TOKEN>`; every
-email in a path or a query parameter is lower-cased first; every
-administration call additionally carries `X-Actor-Email` set to the verified
-email of the signed-in administrator, and the service is responsible for
-checking that this actor is itself allowed to manage users. After any
-mutation, the service must increment the integer at
-`KEYSTONE_MCP_USERS_REDIS_REVISION_KEY` (default `km:users:revision`) in the
-same Redis Keystone-MCP uses — otherwise Keystone-MCP keeps serving a cached,
-stale resolution for up to `KEYSTONE_MCP_USERS_CACHE_ALLOW_TTL_SECONDS`
-(default 60) seconds.
-
-| Method | Path | Body | Response |
-|---|---|---|---|
-| `GET` | `/v1/users/resolve?email=` | — | `{"exists": bool, "roles": [...], "is_blocked": bool}` |
-| `GET` | `/v1/users?is_blocked=&role=&email_contains=` | — | `{"users": [...], "total": N}` |
-| `POST` | `/v1/users` | `{"email", "full_name", "roles": [...], "created_by", "note"?}` | user object |
-| `PATCH` | `/v1/users/{email}` | `{"full_name"?, "note"?}` | user object |
-| `POST` | `/v1/users/{email}/block` | — | user object |
-| `POST` | `/v1/users/{email}/unblock` | — | user object |
-| `PUT` | `/v1/users/{email}/roles` | `{"roles": [...]}` | user object |
-| `POST` | `/v1/users/{email}/roles/{role}` | — | user object (grant) |
-| `DELETE` | `/v1/users/{email}/roles/{role}` | — | user object (revoke) |
-
-(Endpoints and bodies: `src/keystone_mcp/adapters/users_admin.py`; email path
-segments are percent-encoded.)
-
-The administration endpoints' error responses are translated to the `users_*`
-tool error codes an agent sees — the same codes the built-in directory
-returns, so a fork's HTTP service should raise the matching one rather than
-inventing its own:
-
-| Code | Meaning |
-|---|---|
-| `user_not_found` | No such email. |
-| `conflict` | The account, or the role being granted, already exists. |
-| `validation_error` | A required argument is missing, or the role is unknown. |
-| `last_administrator` | The change would leave no active administrator. |
-| `self_admin_mutation_forbidden` | An administrator tried to remove their own `administrator` role. |
-| `forbidden` | The actor named in `X-Actor-Email` may not manage users. |
-| `service_unconfigured` | `KEYSTONE_MCP_USERS_SERVICE_URL` or the token is empty. |
-| `service_timeout` | The request to the service timed out. |
-| `service_unavailable` | The service did not answer. |
-
-See [users.md](users.md#errors) for the same table against the built-in
-directory.
-
 ### Not replaceable yet
 
 - **Sign-in providers: `keystone_mcp.login.LoginProvider` (redirect and form
@@ -346,14 +273,6 @@ directory.
   (`src/keystone_mcp/rbac/human_identity.py`). A different interactive login
   cannot make this true without a core change. Planned for 0.5.0: the login
   provider itself reports whether its sign-in is interactive.
-- **`users_*` knows exactly two directory shapes.** `UsersAdminAdapter`
-  (`src/keystone_mcp/adapters/users_admin.py`) dispatches to the built-in
-  store or to the HTTP contract above — nothing else. A fork with a third
-  kind of directory (LDAP, a different internal service) that also needs
-  administration through `users_*`, not just read access through
-  `UserDirectoryBackend`, has to edit this adapter. Planned for 0.5.0: one
-  `UserDirectory` protocol covering both read and administration, so any
-  backend gets both for free.
 - **No entry points yet.** Every seam above is wired by editing one factory
   function in the core (`build_identity_provider`,
   `build_user_directory_resolver`, `UsersAdminAdapter`) rather than by
