@@ -176,17 +176,6 @@ def test_namespace_users_is_reserved(permissive_policy):
         assert_valid_upstream_registry(document, policy=permissive_policy)
 
 
-def test_namespace_create_is_reserved(permissive_policy):
-    document = {
-        "schema_version": 1,
-        "entries": [
-            {"name": "svc", "url": "https://svc.example/mcp", "namespace": "create"},
-        ],
-    }
-    with pytest.raises(ValidationError, match="built-in tool create_upload_url"):
-        assert_valid_upstream_registry(document, policy=permissive_policy)
-
-
 def test_prefix_namespaces_are_refused(permissive_policy):
     colliding = {
         "schema_version": 1,

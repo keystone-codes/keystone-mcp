@@ -142,9 +142,8 @@ class Adapter(Protocol):
 `RouterRegistry.add_route(name, target, ...)`, which builds the MCP tool
 signature from a list of `Param` objects and publishes it on the FastMCP
 instance — see `src/keystone_mcp/catalog/builtin.py` for the routes the
-platform registers by default: `create_upload_url` and `get_download_link`
-(only when `KEYSTONE_MCP_FILE_API_URL` is set), and the `users_*` admin tools
-(only when `KEYSTONE_MCP_RBAC_MODE=enforce`).
+platform registers by default: the `users_*` admin tools (only when
+`KEYSTONE_MCP_RBAC_MODE=enforce`).
 
 `src/keystone_mcp/adapters/` also ships several **reference adapters that are
 not registered by default** — useful as a starting point for a deployment that
