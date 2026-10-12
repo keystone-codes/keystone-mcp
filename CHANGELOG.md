@@ -6,12 +6,23 @@ this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- `.trivyignore` for temporarily accepted Trivy findings; each entry needs a
+  reason and a review date, checked by `tests/test_trivyignore.py`.
+
 ### Changed
 
 - Documentation brought in line with the 0.4.0 code: the Host/Origin
   allowlist and /metrics, deployment profile rules P5 and W5, the
   Kubernetes and Prometheus examples, client redirect hosts, host install
   permissions, and the supported-versions table in SECURITY.md.
+
+### Security
+
+- Trivy image scan now blocks pull requests and releases on fixable HIGH and
+  CRITICAL findings; temporary exceptions live in `.trivyignore` with a
+  reason and a review date.
 
 ## [0.4.0] - 2026-10-11
 
