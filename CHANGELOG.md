@@ -11,8 +11,6 @@ this project uses [Semantic Versioning](https://semver.org/).
 - Startup refuses a removed variable that would change security behaviour
   if ignored, and warns about other removed variables
   (`docs/environment.md#removed-variables`).
-- `.trivyignore` for temporarily accepted Trivy findings; each entry needs a
-  reason and a review date, checked by `tests/test_trivyignore.py`.
 - `UserDirectory` protocol (`keystone_mcp.user_directory`): one interface for
   reading and administering people; `users_*` tools work over any
   implementation. See `docs/user-directory.md`.
@@ -62,13 +60,16 @@ this project uses [Semantic Versioning](https://semver.org/).
   instead of `users_store=`; `UsersAdminAdapter.__init__` takes `directory=`
   instead of `(client_factory, users_store)`.
 - CI guards against test reruns and forced test ordering.
+- Upstream namespace validation no longer reserves `create` or `get`: with
+  the built-in file tools gone, `users` is the only namespace a new upstream
+  cannot shadow.
 
 ### Deprecated
 
 - `UserDirectoryBackend` (single `resolve_user` method) — implement
   `UserDirectory`; deprecated since 0.5.0, removed in 2.0.
-- `X-Author-Email` is unsigned and deprecated since 0.5.0 (kept until the
-  next major version); verify `X-Keystone-Identity` instead.
+- `X-Author-Email` is unsigned and deprecated since 0.5.0, removed in 2.0;
+  verify `X-Keystone-Identity` instead.
 
 ### Removed
 
@@ -80,21 +81,11 @@ this project uses [Semantic Versioning](https://semver.org/).
   `keystone_mcp.storage`) and `KEYSTONE_MCP_FILE_API_URL` (startup is refused
   while it is set). File transfer is an upstream service like any other.
 
-### Migration
-
-- Replace `KEYSTONE_MCP_RBAC_ENABLED=true` with `KEYSTONE_MCP_RBAC_MODE=enforce`;
-  delete the old variable — the server does not start while it is set.
-- A fork that registered `DetInternalAdapter` or `ChatAttachmentAdapter` must
-  keep its own copy of the class (see the 0.4.x source).
-- If you used the file tools, expose your file service as an MCP server and
-  list it in the upstream registry; remove `KEYSTONE_MCP_FILE_API_URL` from
-  `.env` and the two tool names from your policy file.
-
 ### Security
 
 - Trivy image scan now blocks pull requests and releases on fixable HIGH and
   CRITICAL findings; temporary exceptions live in `.trivyignore` with a
-  reason and a review date.
+  reason and a review date, checked by `tests/test_trivyignore.py`.
 - A sign-in provider's own `provider` claim is no longer trusted for the
   issued token's `auth_method`: it is taken from the route (or form) the
   sign-in came back on, and a provider reporting another name is refused.
@@ -107,6 +98,16 @@ this project uses [Semantic Versioning](https://semver.org/).
   provider, and a custom redirect provider's callback always failed with 503.
 - A redirect provider's `begin()` rejecting or raising now returns a sign-in
   error page (400 or 503) instead of an unhandled 500.
+
+### Migration
+
+- Replace `KEYSTONE_MCP_RBAC_ENABLED=true` with `KEYSTONE_MCP_RBAC_MODE=enforce`;
+  delete the old variable — the server does not start while it is set.
+- A fork that registered `DetInternalAdapter` or `ChatAttachmentAdapter` must
+  keep its own copy of the class (see the 0.4.x source).
+- If you used the file tools, expose your file service as an MCP server and
+  list it in the upstream registry; remove `KEYSTONE_MCP_FILE_API_URL` from
+  `.env` and the two tool names from your policy file.
 
 ## [0.4.0] - 2026-10-11
 
