@@ -3,9 +3,12 @@
 
 Drives the release readiness scenario against a *running* server: DEV-token
 OAuth sign-in (DCR -> authorize -> login -> token, the same sequence a real
-MCP client runs), a call to every ``hello_*`` tool from the sample upstream,
-adding a second user with a role that cannot see ``users_*``, and a check
-that the new role really is denied those tools.
+MCP client runs), a call to every ``hello_*`` tool from the sample upstream, a
+check that ``hello_whoami`` shows the administrator's identity as verified by
+hello-upstream (the demo's ``X-Keystone-Identity`` signing secret, see
+``docker-compose.demo.yml`` and ``examples/demo/upstreams.yaml``), adding a
+second user with a role that cannot see ``users_*``, and a check that the new
+role really is denied those tools.
 
 Usage::
 
@@ -27,6 +30,7 @@ import argparse
 import asyncio
 import base64
 import hashlib
+import json
 import os
 import secrets
 import sys
@@ -396,7 +400,7 @@ async def run(args: argparse.Namespace) -> int:
             log.fail(step, "200 with access_token", repr(exc))
             return 1
 
-        # 8-10 run inside one administrator MCP session.
+        # 8-11 run inside one administrator MCP session.
         try:
             async with Client(StreamableHttpTransport(transport_url, auth=admin_token)) as admin:
                 # 8. Administrator sees hello_* and users_*
@@ -428,7 +432,32 @@ async def run(args: argparse.Namespace) -> int:
                     log.fail(step, "every hello_* call succeeds with non-empty content", repr(exc))
                     return 1
 
-                # 10. users_add for the member
+                # 10. hello_whoami shows the identity Keystone verified
+                step = "hello_whoami shows the verified administrator identity"
+                try:
+                    result = await admin.call_tool("hello_whoami", {})
+                    if result.is_error:
+                        raise SmokeError(f"hello_whoami returned an error: {result.content}")
+                    text = result.content[0].text if result.content else ""
+                    payload = json.loads(text)
+                    roles = payload.get("roles") or []
+                    sub = (payload.get("sub") or "").lower()
+                    if (
+                        not payload.get("verified")
+                        or "administrator" not in roles
+                        or sub != args.admin_email.lower()
+                    ):
+                        raise SmokeError(f"unexpected hello_whoami payload: {payload}")
+                    log.ok(step)
+                except Exception as exc:  # noqa: BLE001
+                    log.fail(
+                        step,
+                        "verified, roles include 'administrator', sub == admin email",
+                        repr(exc),
+                    )
+                    return 1
+
+                # 11. users_add for the member
                 step = "users_add (member)"
                 try:
                     added = await admin.call_tool(
@@ -452,7 +481,7 @@ async def run(args: argparse.Namespace) -> int:
             log.fail(step, "-", repr(exc))
             return 1
 
-        # 11. Repeat steps 4-7 for the member
+        # 12. Repeat steps 4-7 for the member
         step = "Repeat DEV-token login (member)"
         try:
             member_token = await oauth_login(
@@ -463,7 +492,7 @@ async def run(args: argparse.Namespace) -> int:
             log.fail(step, "DCR, authorize, login and token exchange all succeed", repr(exc))
             return 1
 
-        # 12. Member session: hello_* only, no users_*
+        # 13. Member session: hello_* only, no users_*
         step = "Member sees only hello_*, users_* is denied"
         try:
             async with Client(StreamableHttpTransport(transport_url, auth=member_token)) as member:
@@ -497,7 +526,7 @@ async def run(args: argparse.Namespace) -> int:
             )
             return 1
 
-    print(f"{log.passed}/12 steps passed.")
+    print(f"{log.passed}/13 steps passed.")
     return 0
 
 
