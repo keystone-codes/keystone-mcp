@@ -402,3 +402,139 @@ def test_json_upstreams_support_auth(monkeypatch):
     upstreams = settings.upstreams
     assert len(upstreams) == 1
     assert upstreams[0].bearer_env == "KEYSTONE_MCP_UPSTREAM_DOCS_TOKEN"
+
+
+# --- upstream identity assertion secret (Y01) ---------------------------------------
+
+
+def test_registry_accepts_identity_secret_env(monkeypatch, permissive_policy):
+    monkeypatch.setenv("KEYSTONE_MCP_UPSTREAM_DOCS_IDENTITY_SECRET", "x" * 40)
+    document = {
+        "schema_version": 1,
+        "entries": [
+            {
+                "name": "docs-mcp",
+                "url": "https://docs-mcp.example/mcp",
+                "namespace": "docs",
+                "auth": {"identity_secret_env": "KEYSTONE_MCP_UPSTREAM_DOCS_IDENTITY_SECRET"},
+            },
+        ],
+    }
+    assert_valid_upstream_registry(document, policy=permissive_policy)
+
+    cfg = parse_upstream_entry(document["entries"][0], policy=permissive_policy)
+    assert cfg.identity_secret_env == "KEYSTONE_MCP_UPSTREAM_DOCS_IDENTITY_SECRET"
+    assert cfg.bearer_env is None
+    assert "x" * 40 not in repr(cfg)
+
+
+def test_identity_secret_env_must_differ_from_bearer_env(monkeypatch, permissive_policy):
+    monkeypatch.setenv("KEYSTONE_MCP_UPSTREAM_DOCS_TOKEN", "x" * 40)
+    document = {
+        "schema_version": 1,
+        "entries": [
+            {
+                "name": "docs-mcp",
+                "url": "https://docs-mcp.example/mcp",
+                "namespace": "docs",
+                "auth": {
+                    "bearer_env": "KEYSTONE_MCP_UPSTREAM_DOCS_TOKEN",
+                    "identity_secret_env": "KEYSTONE_MCP_UPSTREAM_DOCS_TOKEN",
+                },
+            },
+        ],
+    }
+    with pytest.raises(ValidationError) as exc:
+        assert_valid_upstream_registry(document, policy=permissive_policy)
+    assert any(
+        "identity_secret_env must differ from auth.bearer_env" in message
+        for message in exc.value.messages
+    )
+
+
+def test_load_refuses_missing_identity_secret(tmp_path: Path, monkeypatch, permissive_policy):
+    monkeypatch.delenv("KEYSTONE_MCP_UPSTREAM_DOCS_IDENTITY_SECRET", raising=False)
+    path = tmp_path / "upstreams.yaml"
+    path.write_text(
+        textwrap.dedent(
+            """
+            schema_version: 1
+            entries:
+              - name: docs-mcp
+                url: https://docs-mcp.example/mcp
+                namespace: docs
+                auth:
+                  identity_secret_env: KEYSTONE_MCP_UPSTREAM_DOCS_IDENTITY_SECRET
+            """
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="KEYSTONE_MCP_UPSTREAM_DOCS_IDENTITY_SECRET"):
+        load_upstream_registry_file(path, policy=permissive_policy)
+
+
+def test_load_refuses_short_identity_secret(tmp_path: Path, monkeypatch, permissive_policy):
+    monkeypatch.setenv("KEYSTONE_MCP_UPSTREAM_DOCS_IDENTITY_SECRET", "x" * 31)
+    path = tmp_path / "upstreams.yaml"
+    path.write_text(
+        textwrap.dedent(
+            """
+            schema_version: 1
+            entries:
+              - name: docs-mcp
+                url: https://docs-mcp.example/mcp
+                namespace: docs
+                auth:
+                  identity_secret_env: KEYSTONE_MCP_UPSTREAM_DOCS_IDENTITY_SECRET
+            """
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="at least 32 bytes"):
+        load_upstream_registry_file(path, policy=permissive_policy)
+
+
+def test_cli_validate_does_not_require_identity_secret(tmp_path: Path, monkeypatch):
+    """``keystone-mcp upstream validate`` checks structure, not the real environment."""
+    from keystone_mcp.cli import main
+
+    monkeypatch.delenv("KEYSTONE_MCP_UPSTREAM_DOCS_IDENTITY_SECRET", raising=False)
+    path = tmp_path / "upstreams.yaml"
+    path.write_text(
+        textwrap.dedent(
+            """
+            schema_version: 1
+            entries:
+              - name: docs-mcp
+                url: https://docs-mcp.example/mcp
+                namespace: docs
+                auth:
+                  identity_secret_env: KEYSTONE_MCP_UPSTREAM_DOCS_IDENTITY_SECRET
+            """
+        ),
+        encoding="utf-8",
+    )
+    assert main(["upstream", "validate", "--path", str(path)]) == 0
+
+
+def test_json_upstreams_support_identity_secret_env(monkeypatch):
+    monkeypatch.setenv("KEYSTONE_MCP_UPSTREAM_DOCS_IDENTITY_SECRET", "x" * 40)
+    monkeypatch.setenv(
+        "KEYSTONE_MCP_UPSTREAMS",
+        json.dumps(
+            [
+                {
+                    "name": "docs-mcp",
+                    "url": "https://docs-mcp.example/mcp",
+                    "namespace": "docs",
+                    "auth": {
+                        "identity_secret_env": "KEYSTONE_MCP_UPSTREAM_DOCS_IDENTITY_SECRET",
+                    },
+                }
+            ]
+        ),
+    )
+    settings = load_settings()
+    upstreams = settings.upstreams
+    assert len(upstreams) == 1
+    assert upstreams[0].identity_secret_env == "KEYSTONE_MCP_UPSTREAM_DOCS_IDENTITY_SECRET"

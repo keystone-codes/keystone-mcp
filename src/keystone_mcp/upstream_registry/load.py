@@ -10,6 +10,7 @@ from typing import Any, Literal
 import yaml
 
 from keystone_mcp.config import UpstreamConfig, _parse_prefix_list
+from keystone_mcp.identity_assertion import resolve_identity_secret
 from keystone_mcp.upstream_registry.policy import UpstreamSecurityPolicy
 from keystone_mcp.upstream_registry.validate import (
     assert_valid_upstream_registry,
@@ -48,30 +49,44 @@ def read_registry_document(path: Path) -> dict[str, Any]:
     return data
 
 
-def _parse_auth(item: dict[str, Any], *, name: str) -> str | None:
-    """Validate and resolve an entry's optional ``auth.bearer_env``.
+def _parse_auth(item: dict[str, Any], *, name: str) -> tuple[str | None, str | None]:
+    """Validate and resolve an entry's optional ``auth.bearer_env`` and
+    ``auth.identity_secret_env``.
 
-    Returns the environment variable's *name* (never its value) so that
-    :class:`~keystone_mcp.config.UpstreamConfig` only ever carries a name a
+    Returns ``(bearer_env, identity_secret_env)`` — each the environment
+    variable's *name*, never its value, so that
+    :class:`~keystone_mcp.config.UpstreamConfig` only ever carries names a
     ``repr()`` can safely print. Raises ``ValueError`` if the ``auth`` field
-    is malformed, or if the named variable is unset or empty — this path
-    (unlike :func:`keystone_mcp.upstream_registry.validate.
-    validate_upstream_registry`) runs with the real process environment, so
-    the check here is what makes Keystone refuse to start.
+    is malformed, or if either named variable is unset, empty, or (for
+    ``identity_secret_env``) shorter than :data:`~keystone_mcp.
+    identity_assertion.MIN_SECRET_BYTES` bytes — this path (unlike
+    :func:`keystone_mcp.upstream_registry.validate.validate_upstream_registry`)
+    runs with the real process environment, so the check here is what makes
+    Keystone refuse to start.
     """
     auth = item.get("auth")
     errors = auth_field_errors(auth)
     if errors:
         raise ValueError(f"upstream {name!r}: {errors[0]}")
     if auth is None:
-        return None
+        return None, None
 
-    bearer_env = str(auth["bearer_env"]).strip()
-    if not os.environ.get(bearer_env, "").strip():
-        raise ValueError(
-            f"upstream {name!r}: auth.bearer_env names {bearer_env}, which is not set or empty"
-        )
-    return bearer_env
+    bearer_env: str | None = None
+    if "bearer_env" in auth:
+        bearer_env = str(auth["bearer_env"]).strip()
+        if not os.environ.get(bearer_env, "").strip():
+            raise ValueError(
+                f"upstream {name!r}: auth.bearer_env names {bearer_env}, which is not set or empty"
+            )
+
+    identity_secret_env: str | None = None
+    if "identity_secret_env" in auth:
+        identity_secret_env = str(auth["identity_secret_env"]).strip()
+        # Validates presence and minimum length; the secret value itself is
+        # read again (and actually used) by UpstreamRegistry.add_upstream.
+        resolve_identity_secret(name, identity_secret_env)
+
+    return bearer_env, identity_secret_env
 
 
 def parse_upstream_entry(item: dict[str, Any], *, policy: UpstreamSecurityPolicy) -> UpstreamConfig:
@@ -84,7 +99,7 @@ def parse_upstream_entry(item: dict[str, Any], *, policy: UpstreamSecurityPolicy
     if not name or not url or not namespace:
         raise ValueError("upstream entries require name, url, and namespace")
 
-    bearer_env = _parse_auth(item, name=name)
+    bearer_env, identity_secret_env = _parse_auth(item, name=name)
 
     url_errors = validate_upstream_url(url, policy=policy)
     if url_errors:
@@ -144,6 +159,7 @@ def parse_upstream_entry(item: dict[str, Any], *, policy: UpstreamSecurityPolicy
         discovery_timeout_seconds=discovery_timeout,
         tool_timeout_seconds=tool_timeout,
         bearer_env=bearer_env,
+        identity_secret_env=identity_secret_env,
     )
 
 

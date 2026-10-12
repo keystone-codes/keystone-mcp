@@ -1,10 +1,13 @@
 """MCP proxy adapter — forwards tool calls to a downstream MCP server over HTTP.
 
 Used by upstream ``proxy_1to1`` routes. The verified identity is propagated to
-the upstream as ``X-Author-Email``. When the upstream's registry entry sets
-``auth.bearer_env``, an ``Authorization: Bearer <token>`` header (read from
-that environment variable by :meth:`keystone_mcp.router.upstream.
-UpstreamRegistry.add_upstream`) is sent alongside it on every call.
+the upstream as ``X-Author-Email`` (unsigned, deprecated since 0.5.0). When
+the upstream's registry entry sets ``auth.identity_secret_env``, a signed
+``X-Keystone-Identity`` JWT (see :mod:`keystone_mcp.identity_assertion`) is
+sent as well, carrying the subject, the roles RBAC used, and which tool was
+called. When it sets ``auth.bearer_env``, an ``Authorization: Bearer <token>``
+header (read from that environment variable by :meth:`keystone_mcp.router.
+upstream.UpstreamRegistry.add_upstream`) is sent alongside it on every call.
 
 By default (``status_envelope=False``) the adapter is transparent: the
 upstream's answer — every content block, ``structuredContent``, ``_meta`` and
@@ -32,6 +35,7 @@ from fastmcp.tools.base import ToolResult
 from mcp.shared._httpx_utils import McpHttpClientFactory
 
 from keystone_mcp.identity import AUTHOR_EMAIL_HEADER
+from keystone_mcp.identity_assertion import IDENTITY_HEADER, IdentityAssertionSigner
 
 if TYPE_CHECKING:
     from keystone_mcp.router.context import RouteContext
@@ -94,6 +98,7 @@ class McpProxyAdapter:
         http_client_factory: HttpClientFactoryBuilder | None = None,
         status_envelope: bool = False,
         extra_headers: Mapping[str, str] | None = None,
+        identity_signer: IdentityAssertionSigner | None = None,
     ) -> None:
         self._url = url.rstrip("/")
         self._tool_timeout_seconds = tool_timeout_seconds
@@ -104,6 +109,9 @@ class McpProxyAdapter:
         # e.g. the upstream's ``Authorization: Bearer ...`` (auth.bearer_env).
         # Copied once at construction time, never logged as a whole.
         self._extra_headers = dict(extra_headers or {})
+        # Signs X-Keystone-Identity (Y01); None means this upstream has no
+        # auth.identity_secret_env and gets only the unsigned X-Author-Email.
+        self._identity_signer = identity_signer
 
     @property
     def status_envelope(self) -> bool:
@@ -133,10 +141,22 @@ class McpProxyAdapter:
 
             payload = omit_implicit_null_args(dict(args), route.params)
         tool_name = route.upstream_tool or route.name
-        # AUTHOR_EMAIL_HEADER last: extra_headers (e.g. a bearer token) must
-        # not be able to override the verified identity header.
-        headers = {**self._extra_headers, AUTHOR_EMAIL_HEADER: ctx.verified_identity.email}
         timeout = self._timeout_for(tool_name)
+        # AUTHOR_EMAIL_HEADER last: extra_headers (e.g. a bearer token) must
+        # not be able to override the verified identity header. The signed
+        # assertion is built after extra_headers too, for the same reason —
+        # neither can be overridden by a static header from the registry.
+        headers = {**self._extra_headers}
+        if self._identity_signer is not None:
+            headers[IDENTITY_HEADER] = self._identity_signer.sign(
+                identity=ctx.verified_identity,
+                task_id=ctx.task_id,
+                mcp_method="tools/call",
+                mcp_target=tool_name,
+                timeout_seconds=timeout,
+                rbac_mode=ctx.settings.rbac_mode,
+            )
+        headers[AUTHOR_EMAIL_HEADER] = ctx.verified_identity.email
 
         if self._client_factory is not None:
             client = self._client_factory(headers=headers, timeout=timeout)

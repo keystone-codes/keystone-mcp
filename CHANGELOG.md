@@ -16,6 +16,9 @@ this project uses [Semantic Versioning](https://semver.org/).
 - `UserDirectory` protocol (`keystone_mcp.user_directory`): one interface for
   reading and administering people; `users_*` tools work over any
   implementation. See `docs/user-directory.md`.
+- Signed identity assertion for upstreams: registry `auth.identity_secret_env`;
+  header `X-Keystone-Identity` (JWT HS256, audience = registry entry name)
+  with subject, roles used by RBAC, auth method, OAuth client and task id.
 
 ### Changed
 
@@ -44,6 +47,11 @@ this project uses [Semantic Versioning](https://semver.org/).
 
 - `UserDirectoryBackend` (single `resolve_user` method) — implement
   `UserDirectory`; deprecated since 0.5.0, removed in 2.0.
+
+### Deprecated
+
+- `X-Author-Email` is unsigned and deprecated since 0.5.0 (kept until the
+  next major version); verify `X-Keystone-Identity` instead.
 
 ### Removed
 
