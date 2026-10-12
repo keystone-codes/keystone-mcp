@@ -25,6 +25,8 @@ this project uses [Semantic Versioning](https://semver.org/).
 - `notifications/tools/list_changed` is sent to open sessions and
   `subscriptions/listen` streams after a catalog change, a policy reload or
   a users-directory change.
+- Progress notifications from upstream tools reach the client
+  (`notifications/progress`), when the client asked for progress.
 - Published on PyPI as `keystone-mcp-gateway` (same version as the image);
   `keystone-mcp serve` starts the server; the package ships type information
   (`py.typed`).
