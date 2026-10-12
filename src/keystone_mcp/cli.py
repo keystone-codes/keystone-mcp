@@ -185,6 +185,17 @@ def _cmd_catalog_export(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_serve(_args: argparse.Namespace) -> int:
+    # Imported lazily (and module-qualified, not "from ... import main") so
+    # that `keystone-mcp serve` and `python -m keystone_mcp.server` always
+    # call the same function, and tests can monkeypatch
+    # `keystone_mcp.server.main` directly.
+    import keystone_mcp.server as server_module
+
+    server_module.main()
+    return 0
+
+
 def _cmd_upstream_validate(path: Path) -> int:
     from keystone_mcp.config import _env_bool
     from keystone_mcp.upstream_registry.load import read_registry_document
@@ -269,12 +280,17 @@ def main(argv: list[str] | None = None) -> int:
     )
     upstream_validate.set_defaults(handler=lambda args: _cmd_upstream_validate(args.path))
 
+    serve = subparsers.add_parser("serve", help="Start the Keystone-MCP server")
+    serve.set_defaults(handler=_cmd_serve)
+
     add_users_commands(subparsers)
 
     args = parser.parse_args(argv)
     if args.command == "catalog":
         return args.handler(args)
     if args.command == "upstream":
+        return args.handler(args)
+    if args.command == "serve":
         return args.handler(args)
     if args.command == "users":
         return args.handler(args)
