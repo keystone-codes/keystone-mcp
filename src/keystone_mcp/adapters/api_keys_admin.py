@@ -43,8 +43,13 @@ class ApiKeysAdminAdapter:
         }
 
     async def execute(
-        self, route: Route, ctx: RouteContext, args: dict[str, Any]
+        self,
+        route: Route,
+        ctx: RouteContext,
+        args: dict[str, Any],
+        request: Any,
     ) -> dict[str, Any]:
+        spec = request if isinstance(request, dict) else dict(args)
         name = route.name
         directory = self._directory
         if directory is None or not isinstance(directory, ApiKeyDirectory):
@@ -55,7 +60,6 @@ class ApiKeysAdminAdapter:
                 message="API keys are not available",
             )
 
-        spec = dict(args)
         validation_error = self._validate_args(route, ctx, spec)
         if validation_error is not None:
             self._record_mutation_audit(route, ctx, spec, validation_error)
