@@ -165,14 +165,10 @@ Keystone-MCP itself should execute. Every route goes through the `Adapter`
 protocol in `src/keystone_mcp/adapters/base.py`. The built-in catalog in
 `src/keystone_mcp/catalog/builtin.py` is the pattern.
 
-The repository also ships reference adapters that are not registered until
-something calls `registry.add_route` with one of them:
-
-| Adapter | What it does |
-|---|---|
-| `webhook.WebhookAdapter` | Submit to an async webhook, then long-poll for the result. |
-| `external_http.ExternalHttpAdapter` | Call an external HTTP API. |
-| `stub.StubAdapter` | A stand-in response until the real adapter exists. |
+`stub.StubAdapter` is a stand-in response until the real adapter exists.
+Reference adapters for forks (`WebhookAdapter`, `ExternalHttpAdapter`) live in
+`keystone_mcp.contrib.adapters`: see
+[contrib/adapters.md](contrib/adapters.md).
 
 Register with `mode="stub"` while the target is being built, then
 `registry.set_mode(name, "live")`. Transport, identity and `task_id` stay
