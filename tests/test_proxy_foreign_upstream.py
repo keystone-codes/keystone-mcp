@@ -20,7 +20,6 @@ import pytest
 from asgi_lifespan import LifespanManager
 from fastmcp import Client, FastMCP
 
-from conftest import retry_transient_mcp_errors
 from keystone_mcp.config import Settings
 from keystone_mcp.identity import VerifiedIdentity
 from keystone_mcp.router.engine import RouterEngine
@@ -77,7 +76,7 @@ def test_support_server_does_not_use_fastmcp():
 async def test_discovery_registers_every_tool_of_a_lowlevel_upstream(stack):
     _main, registry, upstreams = stack
 
-    counts = await retry_transient_mcp_errors(upstreams.discover_all)
+    counts = await upstreams.discover_all()
 
     assert counts == {"hello": 6}
     for expected in (
@@ -93,33 +92,33 @@ async def test_discovery_registers_every_tool_of_a_lowlevel_upstream(stack):
 
 async def test_published_search_schema_keeps_required_fields_and_order(stack):
     main, _registry, upstreams = stack
-    await retry_transient_mcp_errors(upstreams.discover_all)
+    await upstreams.discover_all()
 
     async def _list_tools():
         async with Client(main) as client:
             return await client.list_tools()
 
-    tools = await retry_transient_mcp_errors(_list_tools)
+    tools = await _list_tools()
     search_tool = next(t for t in tools if t.name == "hello_search")
 
-    assert search_tool.inputSchema["required"] == ["query", "filter"]
-    assert list(search_tool.inputSchema["properties"]) == ["query", "limit", "filter"]
+    assert search_tool.input_schema["required"] == ["query", "filter"]
+    assert list(search_tool.input_schema["properties"]) == ["query", "limit", "filter"]
 
 
 async def test_published_schema_is_the_upstream_schema(stack):
     """P07: the published ``inputSchema`` is the upstream's own, verbatim --
     descriptions, ``enum``, ``minimum``/``maximum``, ``default`` included."""
     main, _registry, upstreams = stack
-    await retry_transient_mcp_errors(upstreams.discover_all)
+    await upstreams.discover_all()
 
     async def _list_tools():
         async with Client(main) as client:
             return await client.list_tools()
 
-    tools = await retry_transient_mcp_errors(_list_tools)
+    tools = await _list_tools()
     search_tool = next(t for t in tools if t.name == "hello_search")
 
-    assert search_tool.inputSchema == SEARCH_SCHEMA
+    assert search_tool.input_schema == SEARCH_SCHEMA
 
 
 async def test_tool_with_reserved_and_non_identifier_param_names_is_published(stack):
@@ -131,45 +130,45 @@ async def test_tool_with_reserved_and_non_identifier_param_names_is_published(st
     build, so the tool shows up in ``list_tools`` with its real schema.
     """
     main, _registry, upstreams = stack
-    await retry_transient_mcp_errors(upstreams.discover_all)
+    await upstreams.discover_all()
 
     async def _list_tools():
         async with Client(main) as client:
             return await client.list_tools()
 
-    tools = await retry_transient_mcp_errors(_list_tools)
+    tools = await _list_tools()
     odd_tool = next(t for t in tools if t.name == "hello_odd_names")
 
-    assert odd_tool.inputSchema == ODD_NAMES_SCHEMA
+    assert odd_tool.input_schema == ODD_NAMES_SCHEMA
 
 
 async def test_tool_with_reserved_param_name_call_reaches_upstream_verbatim(stack):
     """The call itself must carry the original argument names (``from``,
     ``max-results``) through to the upstream, not a renamed/escaped form."""
     main, _registry, upstreams = stack
-    await retry_transient_mcp_errors(upstreams.discover_all)
+    await upstreams.discover_all()
 
     async def _call():
         async with Client(main) as client:
             return await client.call_tool_mcp("hello_odd_names", {"from": "bob", "max-results": 3})
 
-    result = await retry_transient_mcp_errors(_call)
+    result = await _call()
 
-    assert result.isError is False
+    assert result.is_error is False
     assert result.content[0].text == "from=bob max-results=3"
 
 
 async def test_search_call_reaches_upstream_without_optional_field(stack):
     main, _registry, upstreams = stack
-    await retry_transient_mcp_errors(upstreams.discover_all)
+    await upstreams.discover_all()
 
     async def _call():
         async with Client(main) as client:
             return await client.call_tool_mcp("hello_search", {"query": "q", "filter": "all"})
 
-    result = await retry_transient_mcp_errors(_call)
+    result = await _call()
 
-    assert result.isError is False
+    assert result.is_error is False
     assert "Found 3 documents for 'q'" in result.content[0].text
 
 
@@ -185,15 +184,15 @@ async def test_text_answer_reaches_the_client_as_text():
             http_client_factory=asgi_http_client_factory(app),
         )
         upstreams.add_upstream("hello-upstream", UPSTREAM_MCP_URL, namespace="hello")
-        await retry_transient_mcp_errors(upstreams.discover_all)
+        await upstreams.discover_all()
 
         async def _call():
             async with Client(main) as client:
                 return await client.call_tool_mcp("hello_greet", {"name": "Ann"})
 
-        result = await retry_transient_mcp_errors(_call)
+        result = await _call()
 
-        assert result.isError is False
+        assert result.is_error is False
         assert result.content[0].text == "Hello, Ann!"
 
 
@@ -209,18 +208,18 @@ async def test_all_content_blocks_pass_through():
             http_client_factory=asgi_http_client_factory(app),
         )
         upstreams.add_upstream("hello-upstream", UPSTREAM_MCP_URL, namespace="hello")
-        await retry_transient_mcp_errors(upstreams.discover_all)
+        await upstreams.discover_all()
 
         async def _call():
             async with Client(main) as client:
                 return await client.call_tool_mcp("hello_report", {})
 
-        result = await retry_transient_mcp_errors(_call)
+        result = await _call()
 
         assert [block.type for block in result.content] == ["text", "text", "image"]
         assert result.content[0].text == "Summary: 2 items"
         assert result.content[1].text == "Details: a, b"
-        assert result.content[2].mimeType == "image/png"
+        assert result.content[2].mime_type == "image/png"
 
 
 async def test_upstream_error_is_a_tool_error_with_upstream_text():
@@ -236,15 +235,15 @@ async def test_upstream_error_is_a_tool_error_with_upstream_text():
             http_client_factory=asgi_http_client_factory(app),
         )
         upstreams.add_upstream("hello-upstream", UPSTREAM_MCP_URL, namespace="hello")
-        await retry_transient_mcp_errors(upstreams.discover_all)
+        await upstreams.discover_all()
 
         async def _call():
             async with Client(main) as client:
                 return await client.call_tool_mcp("hello_fail", {})
 
-        result = await retry_transient_mcp_errors(_call)
+        result = await _call()
 
-        assert result.isError is True
+        assert result.is_error is True
         assert "quota exceeded" in result.content[0].text
 
 
@@ -261,13 +260,13 @@ async def test_identity_header_reaches_lowlevel_upstream(patch_verified_identity
             http_client_factory=asgi_http_client_factory(app),
         )
         upstreams.add_upstream("hello-upstream", UPSTREAM_MCP_URL, namespace="hello")
-        await retry_transient_mcp_errors(upstreams.discover_all)
+        await upstreams.discover_all()
 
         async def _call():
             async with Client(main) as client:
                 return await client.call_tool_mcp("hello_whoami", {})
 
-        await retry_transient_mcp_errors(_call)
+        await _call()
 
         assert observed["headers"].get("x-author-email") == ANN.email
 
@@ -294,13 +293,13 @@ async def test_bearer_token_reaches_upstream_on_call(monkeypatch, patch_verified
             namespace="hello",
             bearer_env="KEYSTONE_MCP_UPSTREAM_HELLO_TOKEN",
         )
-        await retry_transient_mcp_errors(upstreams.discover_all)
+        await upstreams.discover_all()
 
         async def _call():
             async with Client(main) as client:
                 return await client.call_tool_mcp("hello_whoami", {})
 
-        await retry_transient_mcp_errors(_call)
+        await _call()
 
         assert observed["headers"].get("authorization") == "Bearer s3cr3t-value"
         assert observed["headers"].get("x-author-email") == ANN.email
@@ -325,7 +324,7 @@ async def test_bearer_token_is_sent_on_discovery(monkeypatch):
             namespace="hello",
             bearer_env="KEYSTONE_MCP_UPSTREAM_HELLO_TOKEN",
         )
-        counts = await retry_transient_mcp_errors(upstreams.discover_all)
+        counts = await upstreams.discover_all()
 
         assert counts == {"hello": 1}
         assert upstreams.unavailable_namespaces() == {}
@@ -343,7 +342,7 @@ async def test_bearer_token_is_sent_on_discovery(monkeypatch):
             http_client_factory=asgi_http_client_factory(app_no_token),
         )
         upstreams2.add_upstream("hello-upstream", UPSTREAM_MCP_URL, namespace="hello")
-        counts2 = await retry_transient_mcp_errors(upstreams2.discover_all)
+        counts2 = await upstreams2.discover_all()
 
         assert counts2 == {}
         assert "hello" in upstreams2.unavailable_namespaces()
@@ -385,13 +384,13 @@ async def test_bearer_token_is_never_logged(monkeypatch, caplog, patch_verified_
             namespace="hello",
             bearer_env="KEYSTONE_MCP_UPSTREAM_HELLO_TOKEN",
         )
-        await retry_transient_mcp_errors(upstreams.discover_all)
+        await upstreams.discover_all()
 
         async def _call():
             async with Client(main) as client:
                 return await client.call_tool_mcp("hello_whoami", {})
 
-        await retry_transient_mcp_errors(_call)
+        await _call()
 
         reconciler = SurfaceReconciler(
             settings=settings,

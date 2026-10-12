@@ -371,7 +371,7 @@ roles:
     upstreams.add_upstream("bad-mcp", "http://unused", namespace="ns")
 
     harmless_schema = {"type": "object", "properties": {}}
-    tools = [SimpleNamespace(name="bad_tool", description="", inputSchema=harmless_schema)]
+    tools = [SimpleNamespace(name="bad_tool", description="", input_schema=harmless_schema)]
 
     original_register_tool = RouterRegistry._register_tool
 
