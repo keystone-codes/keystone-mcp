@@ -50,6 +50,7 @@ reached from outside this machine. Two further rules are warnings — logged by
 | W3 | `production` | `KEYSTONE_MCP_UPSTREAM_EGRESS_ALLOW_PRIVATE=true`. |
 | W4 | `local` | `KEYSTONE_MCP_RBAC_MODE=enforce` and `KEYSTONE_MCP_DEV_TOKENS` is non-empty: a DEV token then signs any directory member in, including administrators. |
 | W5 | `local` | `KEYSTONE_MCP_HOST` is unspecified (`0.0.0.0`, `::`) and `KEYSTONE_MCP_DEV_TOKENS` is non-empty. Not a refusal — the Docker demo's own container legitimately binds `0.0.0.0` internally, relying on its port mapping to restrict reachability — but anyone who *can* reach the port signs in as any directory member. |
+| W7 | both | RBAC is `enforce`, `KEYSTONE_MCP_POLICY_TOOLS=full` (the default) and the policy file is not writable (e.g. mounted `:ro`). Not a refusal — `policy_read`/`policy_validate` still work — but every mutating `policy_*` call refuses with `policy_readonly` until the mount is read-write or this replica is switched to `KEYSTONE_MCP_POLICY_TOOLS=read-only`. |
 
 ## Where settings come from
 
@@ -374,6 +375,7 @@ then this script is the supported path.
 | `KEYSTONE_MCP_RBAC_AUDIT_ENABLED` | `true` | Structured audit log events. |
 | `KEYSTONE_MCP_RBAC_AUDIT_LIST_TOOLS_SAMPLE_RATE` | `0.1` | Sample rate for successful `list_tools` audit events (denials are never sampled). |
 | `KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT` | `""` | Required when RBAC and audit are both on; pseudonymizes subject identifiers in audit records. |
+| `KEYSTONE_MCP_POLICY_TOOLS` | `full` | `full` — the `policy_*` tools may read and change the policy file. `read-only` — they may only read and validate (use this on every replica but one when the policy file is not on a shared volume). `off` — no `policy_*` tools are published. |
 | `KEYSTONE_MCP_REQUIRE_RESOURCE_INDICATOR` | `false` | Refuse an access token that names no RFC 8707 resource at all. |
 | `KEYSTONE_MCP_METRICS_ENABLED` | `false` | Expose the Prometheus metrics endpoint. |
 | `KEYSTONE_MCP_METRICS_PATH` | `/metrics` | Metrics route path. |

@@ -57,6 +57,11 @@ _USERS_MUTATION = Counter(
     "users_* administrative mutations",
     ["operation", "outcome"],
 )
+_POLICY_MUTATION = Counter(
+    "keystone_mcp_policy_mutation_total",
+    "policy_* administrative mutations",
+    ["operation", "outcome"],
+)
 _CATALOG_REFRESH = Counter(
     "keystone_mcp_catalog_refresh_total",
     "Upstream catalog reconciliation outcomes",
@@ -177,6 +182,11 @@ class RbacMetrics:
         if not self._enabled:
             return
         _USERS_MUTATION.labels(operation=operation, outcome=outcome).inc()
+
+    def record_policy_mutation(self, *, operation: str, outcome: str) -> None:
+        if not self._enabled:
+            return
+        _POLICY_MUTATION.labels(operation=operation, outcome=outcome).inc()
 
     def record_catalog_refresh(
         self,

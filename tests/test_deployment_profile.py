@@ -515,3 +515,55 @@ def test_local_no_all_interfaces_warning_for_loopback_host_with_dev_tokens(
     warnings = startup_warnings(settings)
     assert not any("listening on all interfaces" in w for w in warnings)
     assert any("KEYSTONE_MCP_DEV_TOKENS is set" in w for w in warnings)
+
+
+# ── W7: policy file not writable while KEYSTONE_MCP_POLICY_TOOLS=full ───────
+
+
+def test_w7_warns_when_policy_file_is_not_writable(monkeypatch, tmp_path: Path):
+    import os
+
+    _rbac_env(monkeypatch, tmp_path)
+    _production_login_env(monkeypatch)
+    monkeypatch.setenv("KEYSTONE_MCP_DEPLOYMENT_PROFILE", "production")
+    policy_path = Path(os.environ["KEYSTONE_MCP_RBAC_POLICY_PATH"])
+    os.chmod(policy_path, 0o444)
+    try:
+        if os.geteuid() == 0:
+            pytest.skip("root can write a 0o444 file")
+        settings = load_settings()
+        warnings = startup_warnings(settings)
+        assert any(
+            "is not writable" in w and "policy_readonly" in w and str(policy_path) in w
+            for w in warnings
+        )
+    finally:
+        os.chmod(policy_path, 0o644)
+
+
+def test_w7_absent_when_policy_tools_is_not_full(monkeypatch, tmp_path: Path):
+    import os
+
+    _rbac_env(monkeypatch, tmp_path)
+    _production_login_env(monkeypatch)
+    monkeypatch.setenv("KEYSTONE_MCP_DEPLOYMENT_PROFILE", "production")
+    monkeypatch.setenv("KEYSTONE_MCP_POLICY_TOOLS", "read-only")
+    policy_path = Path(os.environ["KEYSTONE_MCP_RBAC_POLICY_PATH"])
+    os.chmod(policy_path, 0o444)
+    try:
+        if os.geteuid() == 0:
+            pytest.skip("root can write a 0o444 file")
+        settings = load_settings()
+        warnings = startup_warnings(settings)
+        assert not any("is not writable" in w for w in warnings)
+    finally:
+        os.chmod(policy_path, 0o644)
+
+
+def test_w7_absent_when_policy_file_is_writable(monkeypatch, tmp_path: Path):
+    _rbac_env(monkeypatch, tmp_path)
+    _production_login_env(monkeypatch)
+    monkeypatch.setenv("KEYSTONE_MCP_DEPLOYMENT_PROFILE", "production")
+    settings = load_settings()
+    warnings = startup_warnings(settings)
+    assert not any("is not writable" in w for w in warnings)

@@ -164,3 +164,57 @@ class UsersMutationAuditRecorder:
             )
         except Exception:
             logger.warning("rbac users mutation audit emit failed", exc_info=True)
+
+
+class PolicyMutationAuditRecorder:
+    """Best-effort audit for ``policy_*`` administrative operations.
+
+    Never includes allow-pattern or other glob text, only role names and
+    pattern counts (see
+    :func:`keystone_mcp.rbac.policy_document.describe_change`), so the audit
+    log cannot leak the shape of a policy an operator wanted kept private.
+    """
+
+    def __init__(self, *, enabled: bool, subject_salt: str = "") -> None:
+        self._enabled = enabled
+        self._subject_salt = subject_salt
+
+    def record_mutation(
+        self,
+        *,
+        operation: str,
+        actor_email: str,
+        outcome: str,
+        code: str | None,
+        task_id: str,
+        policy_version_before: str | None,
+        policy_version_after: str | None,
+        content_hash_before: str | None,
+        content_hash_after: str | None,
+        changes: tuple[str, ...],
+        warnings_count: int,
+    ) -> None:
+        if not self._enabled:
+            return
+        event: dict[str, Any] = {
+            "event": "rbac_policy_mutation",
+            "operation": operation,
+            "actor": hash_subject(actor_email, salt=self._subject_salt),
+            "outcome": outcome,
+            "code": code,
+            "task_id": task_id,
+            "policy_version_before": policy_version_before,
+            "policy_version_after": policy_version_after,
+            "content_hash_before": content_hash_before,
+            "content_hash_after": content_hash_after,
+            "changes": list(changes),
+            "warnings_count": warnings_count,
+        }
+        try:
+            logger.info(
+                "rbac audit %s",
+                json.dumps(event, sort_keys=True, separators=(",", ":")),
+                extra={"stream": "audit"},
+            )
+        except Exception:
+            logger.warning("rbac policy mutation audit emit failed", exc_info=True)

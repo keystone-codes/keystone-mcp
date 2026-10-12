@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from keystone_mcp.observability.audit import (
     AuthzAuditRecorder,
     PolicyAuditFields,
+    PolicyMutationAuditRecorder,
     UsersMutationAuditRecorder,
     policy_fields,
 )
@@ -36,6 +37,10 @@ class RbacObservability:
             subject_salt=settings.rbac_audit_subject_salt,
         )
         self.users_audit = UsersMutationAuditRecorder(
+            enabled=settings.rbac_audit_enabled,
+            subject_salt=settings.rbac_audit_subject_salt,
+        )
+        self.policy_audit = PolicyMutationAuditRecorder(
             enabled=settings.rbac_audit_enabled,
             subject_salt=settings.rbac_audit_subject_salt,
         )
@@ -198,6 +203,43 @@ class RbacObservability:
 
             logging.getLogger(__name__).warning(
                 "rbac users mutation observability failed", exc_info=True
+            )
+
+    def record_policy_mutation(
+        self,
+        *,
+        operation: str,
+        actor_email: str,
+        outcome: str,
+        code: str | None,
+        task_id: str,
+        policy_version_before: str | None = None,
+        policy_version_after: str | None = None,
+        content_hash_before: str | None = None,
+        content_hash_after: str | None = None,
+        changes: tuple[str, ...] = (),
+        warnings_count: int = 0,
+    ) -> None:
+        try:
+            self.policy_audit.record_mutation(
+                operation=operation,
+                actor_email=actor_email,
+                outcome=outcome,
+                code=code,
+                task_id=task_id,
+                policy_version_before=policy_version_before,
+                policy_version_after=policy_version_after,
+                content_hash_before=content_hash_before,
+                content_hash_after=content_hash_after,
+                changes=changes,
+                warnings_count=warnings_count,
+            )
+            self.metrics.record_policy_mutation(operation=operation, outcome=outcome)
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "rbac policy mutation observability failed", exc_info=True
             )
 
     def record_tool_call_attempt(self, *, tool_name: str) -> None:
