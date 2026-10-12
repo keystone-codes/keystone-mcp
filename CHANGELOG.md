@@ -50,9 +50,17 @@ this project uses [Semantic Versioning](https://semver.org/).
 - With `KEYSTONE_MCP_USERS_BACKEND=http`, `users_*` errors use the documented
   codes: `validation_error` instead of `invalid_role`, `conflict` instead of
   `user_already_exists`.
+- With `KEYSTONE_MCP_USERS_BACKEND=http`, the roles passed to `users_add`,
+  `users_set_roles` and `users_grant_role` are checked against the active
+  RBAC policy before the directory is ever called; a directory that cannot
+  be reached reports the fixed message "users directory is unavailable"
+  instead of connection details.
 - A read-only directory publishes only `users_list`.
 - Developers: release workflow builds and checks the wheel and sdist and
   refuses a version already on PyPI.
+- Developers: `register_catalog()` takes `directory=` (a `UserDirectory`)
+  instead of `users_store=`; `UsersAdminAdapter.__init__` takes `directory=`
+  instead of `(client_factory, users_store)`.
 - CI guards against test reruns and forced test ordering.
 
 ### Deprecated

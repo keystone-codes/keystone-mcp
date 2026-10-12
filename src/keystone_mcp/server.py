@@ -74,7 +74,11 @@ from keystone_mcp.surface.client_sessions import (
     SessionTrackingMiddleware,
 )
 from keystone_mcp.surface.reconciler import SurfaceReconciler, surface_reconciler_lifespan
-from keystone_mcp.user_directory.factory import build_user_directory, build_user_directory_resolver
+from keystone_mcp.user_directory.factory import (
+    build_user_directory,
+    build_user_directory_resolver,
+    validate_directory_capabilities,
+)
 from keystone_mcp.user_directory.protocol import UserDirectory, UserDirectoryResolver
 from keystone_mcp.user_directory.revision import InMemoryRevisionReader
 from keystone_mcp.users.bootstrap import UsersBootstrapError, bootstrap_users_store
@@ -293,6 +297,12 @@ def build_server(
     # real directory) -- register_catalog needs this whenever RBAC enforces,
     # the resolver-building branch below needs it whenever it runs at all.
     directory: UserDirectory | None = user_directory
+    if directory is not None:
+        # build_user_directory() already runs this check on the directory it
+        # builds; a directory passed in directly (an embedding process, a
+        # test, a plugin) gets the same refusal for declaring "admin"
+        # without implementing UserDirectoryAdmin.
+        directory = validate_directory_capabilities(directory)
     if directory is None and (resolver_needed or settings.rbac_enforcing):
         directory = build_user_directory(settings, users_store=users_store)
     if resolver_needed:

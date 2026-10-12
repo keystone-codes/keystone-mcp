@@ -227,7 +227,8 @@ different internal service), the protocol's rules, the HTTP contract the
 built-in `KEYSTONE_MCP_USERS_BACKEND=http` directory speaks, and how
 `users_*` tool publication depends on what a directory declares: see
 [user-directory.md](user-directory.md). Registering a directory from your own
-package without editing core code is X09 (entry points).
+package without editing core code is done through a Python entry point; see
+plugins.md.
 
 #### Built-in tools: `Adapter` and `RouterRegistry.add_route`
 

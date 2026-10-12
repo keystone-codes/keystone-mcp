@@ -137,7 +137,7 @@ class UserDirectoryBackend(Protocol):
     :func:`keystone_mcp.user_directory.factory.build_user_directory_resolver`
     (its old ``backend=`` keyword) is still accepted, wrapped in
     :class:`keystone_mcp.user_directory.compat.ReadOnlyBackendDirectory`, with
-    a :class:`DeprecationWarning`. Removed in 0.6.0.
+    a :class:`DeprecationWarning`. Deprecated since 0.5.0, removed in 2.0.
     """
 
     async def resolve_user(self, email: str) -> UserResolveResult: ...
