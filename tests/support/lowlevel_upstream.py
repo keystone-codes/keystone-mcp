@@ -16,12 +16,15 @@ Python framework.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import contextlib
 import json
+import time
 from collections.abc import AsyncIterator, Callable, Collection
 from typing import Any
 
+import anyio
 import httpx2
 from mcp import types
 from mcp.server.lowlevel import Server
@@ -91,6 +94,13 @@ COUNT_SCHEMA: dict[str, Any] = {
     },
 }
 
+SLOW_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "tag": {"type": "string", "default": ""},
+    },
+}
+
 _TOOL_DEFINITIONS: dict[str, types.Tool] = {
     "greet": types.Tool(
         name="greet",
@@ -126,6 +136,11 @@ _TOOL_DEFINITIONS: dict[str, types.Tool] = {
         name="count",
         description="Count to `steps`, reporting progress along the way.",
         inputSchema=COUNT_SCHEMA,
+    ),
+    "slow": types.Tool(
+        name="slow",
+        description="Sleep for a long time; used to exercise cancellation.",
+        inputSchema=SLOW_SCHEMA,
     ),
 }
 
@@ -264,6 +279,25 @@ def build_lowlevel_upstream_app(
                 )
             ]
 
+        if name == "slow":
+            tag = arguments.get("tag", "")
+            if observed is not None:
+                observed["slow_running"] = observed.get("slow_running", 0) + 1
+                started = observed.get("slow_started")
+                if isinstance(started, asyncio.Event):
+                    started.set()
+            try:
+                await anyio.sleep(30)
+            except anyio.get_cancelled_exc_class():
+                if observed is not None:
+                    observed["slow_cancelled_at"] = time.monotonic()
+                    observed.setdefault("slow_cancelled_tags", []).append(tag)
+                raise
+            finally:
+                if observed is not None:
+                    observed["slow_running"] = max(0, observed.get("slow_running", 1) - 1)
+            return [types.TextContent(type="text", text=f"slow done {tag}")]
+
         if name == "count":
             steps = arguments.get("steps", 3)
             # ServerRequestContext.meta is the SDK's own RequestParamsMeta --
@@ -326,6 +360,8 @@ def build_lowlevel_upstream_app(
 
 def asgi_http_client_factory(
     app: Starlette,
+    *,
+    streaming: bool = False,
 ) -> Callable[[float], Callable[..., httpx2.AsyncClient]]:
     """``HttpClientFactoryBuilder`` that routes every request into *app* in-process.
 
@@ -340,17 +376,27 @@ def asgi_http_client_factory(
     """
 
     def builder(timeout_seconds: float) -> Callable[..., httpx2.AsyncClient]:
+        # Keep the socket read budget above the MCP call timeout so courtesy
+        # cancel can be sent before httpx2 gives up (Y04 timeout test).
+        httpx_timeout = timeout_seconds + (5.0 if streaming else 0.0)
+
         def factory(
             headers: dict[str, str] | None = None,
             timeout: Any = None,  # noqa: ARG001 — superseded by timeout_seconds
             auth: Any = None,
             **_kwargs: Any,
         ) -> httpx2.AsyncClient:
+            if streaming:
+                from fastmcp.utilities.asgi_transport import StreamingASGITransport
+
+                transport: httpx2.AsyncBaseTransport = StreamingASGITransport(app=app)
+            else:
+                transport = httpx2.ASGITransport(app=app)
             return httpx2.AsyncClient(
-                transport=httpx2.ASGITransport(app=app),
+                transport=transport,
                 base_url=UPSTREAM_BASE_URL,
                 headers=headers,
-                timeout=httpx2.Timeout(timeout_seconds),
+                timeout=httpx2.Timeout(httpx_timeout),
                 auth=auth,
                 follow_redirects=False,
             )
