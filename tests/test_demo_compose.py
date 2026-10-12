@@ -75,7 +75,27 @@ def test_demo_policy_loads():
     assert not policy.allows_role("member", "users_list")
 
 
-def test_demo_registry_validates():
+def test_demo_hello_uses_identity_secret():
+    demo = _load(DEMO_COMPOSE)
+    registry = _load(DEMO_REGISTRY)
+
+    hello_entry = next(e for e in registry["entries"] if e["name"] == "hello")
+    secret_env = hello_entry["auth"]["identity_secret_env"]
+    assert secret_env.startswith("KEYSTONE_MCP_UPSTREAM_")
+
+    keystone_env = demo["services"]["keystone"]["environment"]
+    hello_env = demo["services"]["hello-upstream"]["environment"]
+    assert secret_env in keystone_env
+    assert keystone_env[secret_env] == hello_env["HELLO_IDENTITY_SECRET"]
+    assert "${KEYSTONE_DEMO_HELLO_SECRET" in keystone_env[secret_env]
+
+
+def test_demo_registry_validates(monkeypatch):
+    # The "hello" entry's auth.identity_secret_env must resolve to a real
+    # value for a (non-strict) load to succeed -- same as at Keystone's own
+    # startup; see test_demo_hello_uses_identity_secret for the name itself.
+    monkeypatch.setenv("KEYSTONE_MCP_UPSTREAM_HELLO_IDENTITY_SECRET", "x" * 32)
+
     permissive = UpstreamSecurityPolicy(allow_insecure_http=True, egress_allow_private=False)
     upstreams = load_upstream_registry_file(DEMO_REGISTRY, policy=permissive)
 

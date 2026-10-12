@@ -7,3 +7,11 @@ entries:
     url: http://hello-upstream:8081/mcp
     namespace: hello
     enabled: true
+    auth:
+      # Name of the env var Keystone reads its X-Keystone-Identity signing
+      # secret from -- must start with the reserved KEYSTONE_MCP_UPSTREAM_
+      # prefix (see upstream_registry/validate.py). docker-compose.demo.yml
+      # sets this same variable on Keystone, and HELLO_IDENTITY_SECRET (hello
+      # -upstream's own setting) to the same value on hello-upstream, both
+      # from the KEYSTONE_DEMO_HELLO_SECRET override.
+      identity_secret_env: KEYSTONE_MCP_UPSTREAM_HELLO_IDENTITY_SECRET

@@ -33,9 +33,8 @@ mysvc-mcp (internal, mcp-upstreams network)   /mcp, /healthz
    MCP method).
 3. Use a stable DNS name on the shared Docker network that the registry
    entry can reach, e.g. `mysvc-mcp`.
-4. Read `X-Author-Email` from every incoming call if the service needs to know
-   who is acting — Keystone-MCP has already verified this identity; the
-   upstream should trust it only over a private network it controls.
+4. Verify `X-Keystone-Identity` on every tool call (examples below).
+   `X-Author-Email` is unsigned and deprecated.
 5. Never expose the MCP port on a public interface; only Keystone-MCP (and
    whatever else legitimately needs direct access) should reach it.
 6. Choose a tool-name prefix convention that plays well with namespace
@@ -141,6 +140,84 @@ otherwise — verification examples: see below. An entry with no
 `auth.identity_secret_env` only ever sends the unsigned, deprecated
 `X-Author-Email`; the `production` deployment profile logs a startup warning
 for each such entry.
+
+### Verifying the identity assertion
+
+Checking the header costs five lines, in any language that has a JWT
+library. What to check:
+
+- **Signature** — HS256, with the exact secret your `auth.identity_secret_env`
+  variable holds. Never read the algorithm from the token itself (classic
+  "`alg: none`" / algorithm-confusion attack) — pin `["HS256"]` on the
+  verify call, the way both reference verifiers below do.
+- **`aud`** — must equal this registry entry's own `name` (not its
+  `namespace`). An assertion signed for a different upstream, even with the
+  same secret by mistake, must be rejected here.
+- **`exp`** — with a small clock-skew allowance (30 seconds is what both
+  reference verifiers below use); it already covers this call's own timeout
+  plus a margin, so a token that has expired really is stale.
+- **`typ`** — the JWT header's `typ` must be `keystone-identity+jwt`; reject
+  anything else outright, so a JWT meant for something else on the same
+  header can never be mistaken for this assertion.
+
+What not to trust:
+
+- Any header on this request that is not independently signed — in
+  particular, a bare `X-Author-Email` with no `X-Keystone-Identity` next to
+  it proves nothing; anything on the same network can send it.
+- `roles`, whenever `rbac` is `"off"` — it is always `[]` in that case, and
+  more generally reflects Keystone-MCP's policy at the moment of the call,
+  not a durable grant your service should cache past this one request.
+
+Reference implementations, with tests pinning them to the exact claim shape
+above:
+
+- **Python** — [`examples/keystone-identity/python/keystone_identity.py`](../examples/keystone-identity/python/keystone_identity.py)
+  (`PyJWT>=2.8`, no other dependency):
+
+  ```python
+  from keystone_identity import IdentityError, verify_keystone_identity
+
+  try:
+      identity = verify_keystone_identity(
+          request.headers.get("x-keystone-identity"),
+          secrets=[os.environ["MYSVC_IDENTITY_SECRET"]],
+          audience="mysvc-mcp",  # this entry's own `name`
+      )
+  except IdentityError as exc:
+      raise ValueError(f"identity rejected: {exc}") from exc
+  ```
+
+- **TypeScript** — [`examples/keystone-identity/typescript/keystoneIdentity.ts`](../examples/keystone-identity/typescript/keystoneIdentity.ts)
+  (`jose`, no other dependency):
+
+  ```ts
+  import { IdentityError, verifyKeystoneIdentity } from "./keystoneIdentity.js";
+
+  try {
+    const identity = await verifyKeystoneIdentity(header, {
+      secrets: [process.env.MYSVC_IDENTITY_SECRET!],
+      audience: "mysvc-mcp", // this entry's own `name`
+    });
+  } catch (err) {
+    if (err instanceof IdentityError) throw new Error(`identity rejected: ${err.message}`);
+    throw err;
+  }
+  ```
+
+[`examples/hello-upstream/`](../examples/hello-upstream/) wires the Python
+verifier into a real service (`HELLO_IDENTITY_SECRET`,
+`HELLO_IDENTITY_AUDIENCE`) and refuses a call with a forged
+`X-Author-Email` once it is configured — see its README for the exact
+command. [`examples/keystone-identity/test-vector.json`](../examples/keystone-identity/test-vector.json)
+is a fixed assertion both reference verifiers accept, for checking a new
+implementation against the same token.
+
+**Rotating the secret** without downtime: configure your service to accept
+two secrets (both reference verifiers take a list, tried in order), restart
+Keystone-MCP with the new `auth.identity_secret_env` value, then drop the old
+secret from your service once you are sure no in-flight call still carries
+an assertion signed with it (within `exp`'s margin of the restart).
 
 ## Long-running tools
 
@@ -249,6 +326,8 @@ to share `mcp-upstreams`.
    refresh.
 5. Smoke test: `list_tools` on Keystone-MCP shows the expected
    `<namespace>_*` tools, and one read-only call succeeds end-to-end.
+6. Verify `X-Keystone-Identity` (section above); set `auth.identity_secret_env`
+   and drop any remaining trust in the unsigned `X-Author-Email`.
 
 See [adding-routes.md](adding-routes.md) for the router-side configuration
 (filters, multi-mounting, timeouts, schema patches) once the upstream meets
