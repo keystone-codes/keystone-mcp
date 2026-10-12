@@ -1409,9 +1409,20 @@ def startup_warnings(settings: Settings, *, environ: Mapping[str, str] | None = 
                 "under operator control"
             )
         # W6 (Y01): an upstream with no identity_secret_env only ever learns
-        # who is calling from the unsigned, deprecated X-Author-Email header.
+        # who is calling from the unsigned, deprecated X-Author-Email header
+        # -- except a stdio upstream (D8), which never receives that header
+        # at all (there are no HTTP headers to a child process), so its
+        # warning must say that instead of naming a header it never gets.
         for cfg in settings.upstreams:
-            if cfg.enabled and cfg.identity_secret_env is None:
+            if not cfg.enabled or cfg.identity_secret_env is not None:
+                continue
+            if cfg.transport == "stdio":
+                warnings.append(
+                    f"upstream namespace={cfg.namespace} (stdio) has no "
+                    "auth.identity_secret_env: the process has no way to verify "
+                    "who is calling it"
+                )
+            else:
                 warnings.append(
                     f"upstream namespace={cfg.namespace} receives only the unsigned "
                     "X-Author-Email header; set auth.identity_secret_env so the "
