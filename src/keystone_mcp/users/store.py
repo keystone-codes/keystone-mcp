@@ -22,6 +22,9 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
 
 from keystone_mcp.user_directory.types import (
+    ApiKeyRecord,
+    ApiKeyVerification,
+    IssuedApiKey,
     MutationResult,
     ServiceAccountMutation,
     ServiceAccountRecord,
@@ -34,10 +37,12 @@ from keystone_mcp.users.migrate import upgrade_to_head
 from keystone_mcp.users.records import (
     ImportedUser,
     ResolvedUser,
+    api_key_record_from_row,
     service_account_record_from_row,
     user_record_from_row,
 )
 from keystone_mcp.users.revision import RevisionWriter
+from keystone_mcp.users.service import ApiKeyMutation as ApiKeyWriteMutation
 from keystone_mcp.users.service import ImportOutcome, Mutation
 from keystone_mcp.users.service import ServiceAccountMutation as ServiceAccountWriteMutation
 
@@ -114,6 +119,84 @@ class UsersStore:
     ) -> list[ServiceAccountRecord]:
         rows = await self._read(service.list_service_accounts, is_blocked=is_blocked)
         return [service_account_record_from_row(row) for row in rows]
+
+    async def issue_api_key(
+        self,
+        *,
+        subject: str,
+        label: str | None,
+        expires_in_days: int | None,
+        created_by: str | None,
+    ) -> IssuedApiKey:
+        def _call() -> tuple[ApiKeyWriteMutation, str]:
+            def _in_session() -> tuple[ApiKeyWriteMutation, str]:
+                with session_scope(self._session_factory) as session:
+                    row, full_key = service.issue_api_key(
+                        session,
+                        subject=subject,
+                        label=label,
+                        expires_in_days=expires_in_days,
+                        created_by=created_by,
+                    )
+                    return ApiKeyWriteMutation(row=row, changed=True), full_key
+
+            if self._write_lock is not None:
+                with self._write_lock:
+                    return _in_session()
+            return _in_session()
+
+        try:
+            mutation, full_key = await asyncio.to_thread(_call)
+        except Exception as exc:
+            raise _wrap_database_errors(exc) from exc
+        try:
+            await self._revision.bump()
+        except _BUMP_FAILURE_TYPES:
+            logger.warning(
+                "users directory revision bump failed; other replicas will "
+                "notice the change after the cache TTL"
+            )
+        record = api_key_record_from_row(mutation.row)
+        return IssuedApiKey(record=record, key=full_key)
+
+    async def list_api_keys(
+        self,
+        *,
+        subject: str | None = None,
+        include_revoked: bool = False,
+    ) -> list[ApiKeyRecord]:
+        rows = await self._read(
+            service.list_api_keys, subject=subject, include_revoked=include_revoked
+        )
+        return [api_key_record_from_row(row) for row in rows]
+
+    async def revoke_api_key(self, *, key_id: str, actor: str) -> tuple[ApiKeyRecord, bool]:
+        def _call() -> ApiKeyWriteMutation:
+            def _in_session() -> ApiKeyWriteMutation:
+                with session_scope(self._session_factory) as session:
+                    return service.revoke_api_key(session, key_id=key_id, actor=actor)
+
+            if self._write_lock is not None:
+                with self._write_lock:
+                    return _in_session()
+            return _in_session()
+
+        try:
+            mutation = await asyncio.to_thread(_call)
+        except Exception as exc:
+            raise _wrap_database_errors(exc) from exc
+        if mutation.changed:
+            try:
+                await self._revision.bump()
+            except _BUMP_FAILURE_TYPES:
+                logger.warning(
+                    "users directory revision bump failed; other replicas will "
+                    "notice the change after the cache TTL"
+                )
+        return api_key_record_from_row(mutation.row), mutation.changed
+
+    async def verify_api_key(self, key: str) -> ApiKeyVerification | None:
+        return await self._read(service.verify_api_key, key=key)
 
     async def create_service_account(
         self,
