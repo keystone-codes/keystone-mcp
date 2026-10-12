@@ -30,7 +30,9 @@ missing from the file — the "last administrator" rule and emergency recovery
 depend on it existing. The shipped policy defines that one role, plus a
 commented-out example of a second one (`member`, limited to a couple of
 tools) to copy and adapt. The format is
-[rbac-policy-format.md](rbac-policy-format.md).
+[rbac-policy-format.md](rbac-policy-format.md). To change roles and allow
+patterns from the agent, see [policy-admin.md](policy-admin.md) and the
+`policy_*` tools.
 
 A change to the policy file takes effect on `SIGHUP` (`kill -HUP <pid>`),
 not a new process and not a new account. Names added this way work on the

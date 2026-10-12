@@ -873,5 +873,6 @@ if [[ "$PROFILE" == "local" ]]; then
 else
   echo "Register ${BASE_URL}/login/google/callback as the Google redirect URI. Sign in with Google as ${ADMIN_EMAIL}."
 fi
+echo "Roles and allow patterns can be changed from the agent (policy_* tools); the file is ${POLICY_PATH}."
 
 exit 0

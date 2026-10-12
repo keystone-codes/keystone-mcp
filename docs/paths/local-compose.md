@@ -164,7 +164,7 @@ Ask your agent: "Add bob@example.com, full name Bob, with role member." It
 calls the built-in `users_add` tool.
 
 `member` comes from the demo's policy file,
-[`examples/demo/rbac-policy.yaml`](../../examples/demo/rbac-policy.yaml):
+[`examples/demo/policy/rbac-policy.yaml`](../../examples/demo/policy/rbac-policy.yaml):
 
 ```yaml
 # Demo policy. Two roles: administrator sees everything,
@@ -214,8 +214,10 @@ docker compose -f docker-compose.demo.yml down       # stop; keep the data
 docker compose -f docker-compose.demo.yml down -v    # stop and wipe the data
 ```
 
-Editing `examples/demo/rbac-policy.yaml` needs no restart: Keystone-MCP
-re-reads it every five minutes on its own, or immediately with:
+The demo mounts `examples/demo/policy/` read-write so `policy_*` tools can
+change `rbac-policy.yaml`; a mutation shows up in `git diff` in your working
+copy. Editing that file by hand also needs no restart: Keystone-MCP re-reads
+it every five minutes on its own, or immediately with:
 
 ```bash
 docker compose -f docker-compose.demo.yml kill -s HUP keystone
@@ -249,7 +251,9 @@ Postgres in production is covered by the [production path](production-docker.md)
 
 - Connect your own service: [../connecting-services.md](../connecting-services.md)
 - Write your own policy: [../rbac-policy-format.md](../rbac-policy-format.md)
-- Manage people: [../users.md](../users.md) and the
-  [`keystone-user-admin`](../../skills/keystone-user-admin/SKILL.md) skill
+- Manage people and policy: [../users.md](../users.md),
+  [../policy-admin.md](../policy-admin.md), and the
+  [`keystone-user-admin`](../../skills/keystone-user-admin/SKILL.md) /
+  [`keystone-policy-admin`](../../skills/keystone-policy-admin/SKILL.md) skills
 - Move to a real host: [production-docker.md](production-docker.md)
 - Every document: [../../README.md](../../README.md)

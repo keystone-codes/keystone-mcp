@@ -67,7 +67,8 @@ services:
     ports:
       - "127.0.0.1:8080:8080"
     volumes:
-      - ./examples/demo:/etc/keystone-mcp:ro
+      - ./examples/demo/upstreams.yaml:/etc/keystone-mcp/upstreams.yaml:ro
+      - ./examples/demo/policy:/etc/keystone-mcp/policy
       - ./examples/hello-stdio:/opt/hello-stdio:ro
       - keystone-data:/data
     environment:
@@ -77,7 +78,7 @@ services:
       KEYSTONE_MCP_PORT: "8080"
       KEYSTONE_MCP_REDIS_URL: redis://redis:6379/0
       KEYSTONE_MCP_RBAC_MODE: enforce
-      KEYSTONE_MCP_RBAC_POLICY_PATH: /etc/keystone-mcp/rbac-policy.yaml
+      KEYSTONE_MCP_RBAC_POLICY_PATH: /etc/keystone-mcp/policy/rbac-policy.yaml
       KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT: demo-salt-not-a-secret
       KEYSTONE_MCP_UPSTREAMS_PATH: /etc/keystone-mcp/upstreams.yaml
       KEYSTONE_MCP_UPSTREAM_ALLOW_INSECURE_HTTP: "true"
