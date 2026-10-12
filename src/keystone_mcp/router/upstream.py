@@ -29,12 +29,10 @@ from keystone_mcp.router.route import Mode
 from keystone_mcp.router.schema import schema_to_params
 
 if TYPE_CHECKING:
-    import httpx
+    from mcp.shared._httpx_utils import McpHttpClientFactory
 
     from keystone_mcp.observability.service import RbacObservability
     from keystone_mcp.router.registry import RouterRegistry
-
-    McpHttpClientFactory = Callable[..., httpx.AsyncClient]
 
 logger = logging.getLogger(__name__)
 
@@ -158,14 +156,14 @@ async def fetch_upstream_tools(
                 except Exception as exc:
                     raise UpstreamListToolsError(str(exc)) from exc
                 all_tools.extend(result.tools)
-                if not result.nextCursor:
+                if not result.next_cursor:
                     return all_tools
-                if result.nextCursor in seen_cursors:
+                if result.next_cursor in seen_cursors:
                     raise UpstreamListToolsError(
-                        f"duplicate pagination cursor {result.nextCursor!r}"
+                        f"duplicate pagination cursor {result.next_cursor!r}"
                     )
-                seen_cursors.add(result.nextCursor)
-                cursor = result.nextCursor
+                seen_cursors.add(result.next_cursor)
+                cursor = result.next_cursor
             raise UpstreamListToolsError(
                 f"auto-pagination limit ({max_pages} pages) reached for {url}"
             )
@@ -214,7 +212,14 @@ def build_upstream_tool_specs(
         if not route_name:
             continue
 
-        raw_schema = getattr(tool, "inputSchema", None) or getattr(tool, "input_schema", None)
+        # Read only the snake_case names MCP SDK v2 actually uses (the
+        # camelCase ones -- inputSchema, outputSchema -- still resolve, via
+        # fastmcp's compatibility shim, but emit a FastMCPDeprecationWarning
+        # that pyproject.toml's filterwarnings turns into a test failure).
+        # ``getattr`` with a default keeps this tolerant of duck-typed
+        # fixtures (tests) that only set the fields they care about, exactly
+        # as it was before the SDK v2 migration.
+        raw_schema = getattr(tool, "input_schema", None)
         patched_schema = apply_proxy_schema_patches(
             cfg.namespace,
             tool_name,
@@ -224,11 +229,18 @@ def build_upstream_tool_specs(
         input_schema = _normalize_input_schema(patched_schema)
         params = schema_to_params(input_schema)
         description = tool.description or ""
-        output_schema = _copy_dict_or_none(getattr(tool, "outputSchema", None))
+        output_schema = _copy_dict_or_none(getattr(tool, "output_schema", None))
         title = getattr(tool, "title", None)
         raw_annotations = getattr(tool, "annotations", None)
+        # Stored in wire form (``readOnlyHint`` etc., via ``by_alias=True``) so
+        # the tool fingerprint and the published annotations do not depend on
+        # how the SDK happens to name fields in Python -- see
+        # ``UpstreamProxyTool.for_route``, which rebuilds ``ToolAnnotations``
+        # with ``model_validate``.
         annotations = (
-            raw_annotations.model_dump(exclude_none=True) if raw_annotations is not None else None
+            raw_annotations.model_dump(by_alias=True, exclude_none=True)
+            if raw_annotations is not None
+            else None
         )
         spec = UpstreamToolSpec(
             route_name=route_name,

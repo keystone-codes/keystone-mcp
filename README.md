@@ -7,7 +7,7 @@
   &nbsp;&nbsp;&nbsp;&nbsp;
   <a href="CHANGELOG.md"><img alt="version 0.4.0" src="https://img.shields.io/badge/version-0.4.0-0f172a"></a>
   &nbsp;&nbsp;&nbsp;&nbsp;
-  <a href="https://github.com/jlowin/fastmcp"><img alt="FastMCP 3.4.4" src="https://img.shields.io/badge/FastMCP-3.4.4-059669"></a>
+  <a href="https://github.com/jlowin/fastmcp"><img alt="FastMCP 4.1" src="https://img.shields.io/badge/FastMCP-4.1-059669"></a>
   &nbsp;&nbsp;&nbsp;&nbsp;
   <a href="https://modelcontextprotocol.io"><img alt="MCP Streamable HTTP" src="https://img.shields.io/badge/MCP-Streamable%20HTTP-0891b2"></a>
   &nbsp;&nbsp;&nbsp;&nbsp;

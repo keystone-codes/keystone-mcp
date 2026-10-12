@@ -43,6 +43,9 @@ def test_configure_logging_caps_noisy_loggers_at_info() -> None:
     settings = replace(Settings(), log_level="INFO")
     configure_logging(settings)
     assert logging.getLogger("httpx").level == logging.WARNING
+    # fastmcp 4 / mcp SDK 2's own HTTP stack logs under httpx2/httpcore2 (X02).
+    assert logging.getLogger("httpx2").level == logging.WARNING
+    assert logging.getLogger("httpcore2").level == logging.WARNING
 
 
 def test_json_formatter_includes_stream_extra() -> None:

@@ -24,14 +24,15 @@ import os
 from pathlib import Path
 from uuid import uuid4
 
-import httpx
+import httpx2
 import pytest
 from asgi_lifespan import LifespanManager
+from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
-from httpx import ASGITransport, AsyncClient
+from httpx2 import ASGITransport, AsyncClient
 
 import keystone_mcp.server as server
-from conftest import BASE_URL, mcp_client_session, obtain_access_token
+from conftest import BASE_URL, obtain_access_token
 from keystone_mcp.adapters.stub import StubAdapter
 from keystone_mcp.auth.identity_provider import StaticIdentityProvider
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
@@ -65,7 +66,7 @@ def _mcp_client_factory(app):
             transport=ASGITransport(app=app),
             base_url=BASE_URL,
             headers=headers,
-            timeout=timeout or httpx.Timeout(30.0),
+            timeout=timeout or httpx2.Timeout(30.0),
             auth=auth,
             follow_redirects=True,
         )
@@ -73,22 +74,12 @@ def _mcp_client_factory(app):
     return factory
 
 
-def _transport_factory_for(app, settings: Settings, token: str):
-    """A factory building a fresh transport per connection attempt.
-
-    ``mcp_client_session`` retries brief transport flakes by calling this
-    again, so it must not hand back an already-used transport instance.
-    """
-    client_factory = _mcp_client_factory(app)
-
-    def factory():
-        return StreamableHttpTransport(
-            settings.transport_url,
-            auth=token,
-            httpx_client_factory=client_factory,
-        )
-
-    return factory
+def _transport_for(app, settings: Settings, token: str) -> StreamableHttpTransport:
+    return StreamableHttpTransport(
+        settings.transport_url,
+        auth=token,
+        httpx_client_factory=_mcp_client_factory(app),
+    )
 
 
 async def test_fresh_server_admin_adds_member_who_cannot_see_users_tools(
@@ -149,9 +140,7 @@ async def test_fresh_server_admin_adds_member_who_cannot_see_users_tools(
             )
             admin_token = admin_token_response["body"]["access_token"]
 
-            async with mcp_client_session(
-                transport_factory=_transport_factory_for(app, settings, admin_token)
-            ) as client:
+            async with Client(_transport_for(app, settings, admin_token)) as client:
                 tools = await client.list_tools()
                 tool_names = {t.name for t in tools}
                 assert "users_add" in tool_names
@@ -182,9 +171,7 @@ async def test_fresh_server_admin_adds_member_who_cannot_see_users_tools(
             )
             member_token = member_token_response["body"]["access_token"]
 
-            async with mcp_client_session(
-                transport_factory=_transport_factory_for(app, settings, member_token)
-            ) as client:
+            async with Client(_transport_for(app, settings, member_token)) as client:
                 tools = await client.list_tools()
                 member_tool_names = {t.name for t in tools}
                 assert not any(name.startswith("users_") for name in member_tool_names)

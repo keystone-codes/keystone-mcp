@@ -108,4 +108,4 @@ jobs:
           -rs
 
       - name: Full test suite
-        run: uv run pytest -q --reruns 2 --reruns-delay 1
+        run: uv run pytest -q

@@ -7,10 +7,10 @@ import json
 import pytest
 from asgi_lifespan import LifespanManager
 from fastmcp import Client, FastMCP
+from fastmcp.client.transports import StreamableHttpTransport
 from fastmcp.exceptions import ToolError
 from fastmcp.tools.base import ToolResult
 
-from conftest import retry_transient_mcp_errors
 from keystone_mcp.adapters.base import Pattern
 from keystone_mcp.adapters.mcp_proxy import McpProxyAdapter
 from keystone_mcp.config import Settings, load_settings
@@ -261,10 +261,9 @@ async def test_identity_header_reaches_an_http_upstream_end_to_end():
     verified identity genuinely travels as a request header rather than being
     asserted on the adapter's own inputs.
     """
-    import httpx
+    import httpx2
     from fastmcp.server.dependencies import get_http_headers
 
-    from conftest import retry_transient_mcp_errors
     from keystone_mcp.adapters.mcp_proxy import _http_client_factory
 
     upstream = FastMCP("reports-upstream")
@@ -285,8 +284,8 @@ async def test_identity_header_reaches_an_http_upstream_end_to_end():
         def factory(headers=None, timeout=None, auth=None, **_kw):
             built = base(headers=headers, timeout=timeout, auth=auth, **_kw)
             captured["timeout"] = built.timeout
-            return httpx.AsyncClient(
-                transport=httpx.ASGITransport(app=upstream_app),
+            return httpx2.AsyncClient(
+                transport=httpx2.ASGITransport(app=upstream_app),
                 base_url="http://upstream.local",
                 headers=headers,
                 timeout=built.timeout,
@@ -315,7 +314,7 @@ async def test_identity_header_reaches_an_http_upstream_end_to_end():
         async def run_proxy_call():
             return await adapter.execute(route, _ctx(), {"report_key": "r1"}, None)
 
-        out = await retry_transient_mcp_errors(run_proxy_call)
+        out = await run_proxy_call()
 
     assert out.is_error is False
     assert out.structured_content["report_key"] == "r1"
@@ -350,7 +349,7 @@ async def test_transparent_mode_returns_text_as_is():
         async def run_call():
             return await adapter.execute(route, _ctx(), {"name": "Ann"}, None)
 
-        out = await retry_transient_mcp_errors(run_call)
+        out = await run_call()
 
     assert out.content[0].text == "Hello, Ann!"
     assert out.structured_content is None
@@ -382,7 +381,7 @@ async def test_transparent_mode_returns_search_text_as_is():
         async def run_call():
             return await adapter.execute(route, _ctx(), {"query": "q", "filter": "all"}, None)
 
-        out = await retry_transient_mcp_errors(run_call)
+        out = await run_call()
 
     assert out.is_error is False
     assert "Found 3 documents for 'q'" in out.content[0].text
@@ -435,10 +434,44 @@ async def test_transparent_mode_reports_upstream_error_flag():
         async def run_call():
             return await adapter.execute(route, _ctx(), {}, None)
 
-        out = await retry_transient_mcp_errors(run_call)
+        out = await run_call()
 
     assert out.is_error is True
     assert "quota exceeded" in out.content[0].text
+
+
+async def test_proxy_call_over_legacy_handshake():
+    """``Client(..., mode="legacy")`` reaches the same upstream, same answer.
+
+    ``McpProxyAdapter`` builds its default client with ``mode="auto"``
+    (X02: no epoch-caching optimisation here, that is left to section Y) --
+    the upstream negotiates the newest protocol epoch it can. This pins the
+    other end of that negotiation range: a client that forces the pre-SDK-v2
+    handshake must still reach the same (SDK v2) upstream and get the exact
+    same answer, confirming the proxy does not depend on auto-negotiation to
+    talk to an older peer.
+    """
+    app = build_lowlevel_upstream_app(tools=["greet"])
+    async with LifespanManager(app):
+        http_client_factory = asgi_http_client_factory(app)
+
+        def legacy_client_factory(headers=None, timeout=None, **_kw):
+            transport = StreamableHttpTransport(
+                UPSTREAM_MCP_URL,
+                headers=headers,
+                httpx_client_factory=http_client_factory(timeout or 30.0),
+            )
+            return Client(transport, timeout=timeout, mode="legacy")
+
+        adapter = McpProxyAdapter(UPSTREAM_MCP_URL, client_factory=legacy_client_factory)
+        route = Route(
+            name="greet", target=adapter, upstream_tool="greet", namespace="hello", mode="live"
+        )
+
+        out = await adapter.execute(route, _ctx(), {"name": "Ann"}, None)
+
+    assert out.is_error is False
+    assert out.content[0].text == "Hello, Ann!"
 
 
 # ── status_envelope=True: 0.3.x envelope, kept for deployments that want it ──
@@ -459,7 +492,7 @@ async def test_status_envelope_wraps_plain_text():
         async def run_call():
             return await adapter.execute(route, _ctx("t_greet"), {"name": "Ann"}, None)
 
-        out = await retry_transient_mcp_errors(run_call)
+        out = await run_call()
 
     assert out == {
         "state": "done",
@@ -484,7 +517,7 @@ async def test_status_envelope_parses_json_text():
         async def run_call():
             return await adapter.execute(route, _ctx(), {}, None)
 
-        out = await retry_transient_mcp_errors(run_call)
+        out = await run_call()
 
     assert out["state"] == "done"
     assert isinstance(out["result"], dict)
@@ -506,7 +539,7 @@ async def test_status_envelope_raises_tool_error_on_upstream_error():
             return await adapter.execute(route, _ctx(), {}, None)
 
         with pytest.raises(ToolError, match="quota exceeded"):
-            await retry_transient_mcp_errors(run_call)
+            await run_call()
 
 
 def test_proxy_status_envelope_env_flag(monkeypatch):

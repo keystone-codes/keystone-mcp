@@ -27,6 +27,9 @@ docker run --rm -p 127.0.0.1:8081:8081 hello-upstream
 MCP is served over Streamable HTTP on `http://127.0.0.1:8081/mcp`; a plain
 health check answers at `GET /healthz`.
 
+This demo upstream intentionally uses MCP Python SDK 1.x, so the demo shows
+Keystone proxying a server that speaks the older handshake protocol.
+
 ## Trusting `X-Author-Email`
 
 The server reads `X-Author-Email` and trusts it outright -- no signature, no
