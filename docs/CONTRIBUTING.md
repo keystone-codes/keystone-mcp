@@ -34,9 +34,10 @@ Dependabot runs weekly on the `uv` ecosystem and only touches `uv.lock`
 (`versioning-strategy: lockfile-only`); it does not raise the lower bounds in
 `pyproject.toml`, since those also constrain whoever installs this package
 elsewhere. Minor and patch updates land together in one grouped PR; major
-updates (other than `fastmcp`) get their own PR. `fastmcp` major updates are
-ignored for the whole 0.4.x line — we stay on `fastmcp==3.4.4`. To update a
-dependency by hand: `uv lock --upgrade-package <name>`.
+updates (other than `fastmcp` and `mcp`) get their own PR. Major upgrades of
+`fastmcp` and `mcp` are ignored by Dependabot and done as planned work (we
+currently run `fastmcp>=4.1,<5`, MCP SDK 2). To update a dependency by hand:
+`uv lock --upgrade-package <name>`.
 
 ## Running the tests
 
