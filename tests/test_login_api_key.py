@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import contextlib
+from datetime import timedelta
+from unittest.mock import patch
 from urllib.parse import parse_qs, urlparse
 
 import httpx
@@ -17,6 +19,7 @@ from keystone_mcp.user_directory.factory import build_user_directory_resolver
 from keystone_mcp.user_directory.local import LocalUserDirectory
 from keystone_mcp.users import service
 from keystone_mcp.users.db import make_session_factory, session_scope
+from keystone_mcp.users.models import utcnow
 from support.users_store import make_users_store
 
 VALID_DEV = "local-dev-token"
@@ -190,3 +193,37 @@ async def test_directory_unavailable_returns_503_and_keeps_transaction(tmp_path)
             data={"txn": txn, "api_token": keys["alice"], "email": "alice@example.com"},
         )
         assert recovered.status_code == 302
+
+
+async def test_form_login_rejects_cached_verification_after_key_expires(tmp_path) -> None:
+    async with _api_key_login_server(tmp_path) as client:
+        store = client.keystone_store  # type: ignore[attr-defined]
+        factory = make_session_factory(store._engine)  # noqa: SLF001
+        with session_scope(factory) as session:
+            service.create_user(
+                session,
+                email="alice@example.com",
+                full_name="Alice",
+                roles=["member"],
+                note=None,
+                created_by="test",
+                allowed_roles=None,
+            )
+            _row, alice_key = service.issue_api_key(
+                session,
+                subject="alice@example.com",
+                label=None,
+                expires_in_days=1,
+                created_by="test",
+            )
+
+        first = await _login_with_key(client, "alice@example.com", alice_key)
+        assert first.status_code == 302
+
+        expired_now = utcnow() + timedelta(days=2)
+        with (
+            patch("keystone_mcp.login.api_key.utcnow", return_value=expired_now),
+            patch("keystone_mcp.user_directory.cache.utcnow", return_value=expired_now),
+        ):
+            second = await _login_with_key(client, "alice@example.com", alice_key)
+        assert second.status_code == 401

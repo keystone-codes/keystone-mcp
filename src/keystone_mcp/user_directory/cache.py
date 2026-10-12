@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 from keystone_mcp.user_directory.models import UserResolveResult
 from keystone_mcp.user_directory.types import ApiKeyVerification
+from keystone_mcp.users.models import utcnow
 
 
 @dataclass(slots=True)
@@ -92,6 +93,10 @@ class ApiKeyVerificationCache:
         if time.monotonic() >= entry.expires_at:
             self._entries.pop(key_digest, None)
             return _MISSING
+        if entry.result is not None and entry.result.expires_at is not None:
+            if entry.result.expires_at <= utcnow():
+                self._entries.pop(key_digest, None)
+                return _MISSING
         return entry.result
 
     def put(
@@ -101,7 +106,16 @@ class ApiKeyVerificationCache:
         *,
         revision: int,
     ) -> None:
-        ttl = self._allow_ttl if result is not None else self._deny_ttl
+        if result is not None:
+            ttl = self._allow_ttl
+            if result.expires_at is not None:
+                now = utcnow()
+                if result.expires_at <= now:
+                    return
+                remaining = (result.expires_at - now).total_seconds()
+                ttl = min(self._allow_ttl, remaining)
+        else:
+            ttl = self._deny_ttl
         self._entries[key_digest] = _ApiKeyCacheEntry(
             result=result,
             expires_at=time.monotonic() + ttl,
