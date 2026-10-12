@@ -53,6 +53,30 @@ jobs:
       - name: Smoke test the installed wheel
         run: bash scripts/smoke_wheel.sh /tmp/venv/bin/keystone-mcp
 
+  plugin-template:
+    name: Plugin template contract tests
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Install Keystone with contract-tests extra
+        run: |
+          uv venv /tmp/tpl --python 3.12
+          uv pip install --python /tmp/tpl/bin/python ".[contract-tests]"
+
+      - name: Install plugin template and run contract tests
+        run: |
+          uv pip install --python /tmp/tpl/bin/python --no-deps ./examples/plugin-template
+          cd examples/plugin-template && /tmp/tpl/bin/python -m pytest -q
+
+      - name: List plugin entry points
+        run: /tmp/tpl/bin/keystone-mcp plugins list | grep -E "static-file|example-oidc"
+
   compose-smoke:
     name: Compose smoke
     runs-on: ubuntu-latest

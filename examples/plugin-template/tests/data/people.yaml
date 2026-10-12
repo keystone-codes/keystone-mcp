@@ -1,0 +1,12 @@
+- email: alice@example.com
+  full_name: Alice Admin
+  roles: [administrator]
+  blocked: false
+- email: bob@example.com
+  full_name: Bob Member
+  roles: [member]
+  blocked: false
+- email: carol@example.com
+  full_name: Carol Blocked
+  roles: [member]
+  blocked: true

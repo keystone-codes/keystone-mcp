@@ -1,0 +1,29 @@
+[project]
+name = "keystone-mcp-plugin-example"
+version = "0.1.0"
+description = "Example Keystone-MCP plugin with contract tests"
+requires-python = ">=3.11"
+dependencies = [
+    "keystone-mcp-gateway>=0.5,<0.6",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+test = ["keystone-mcp-gateway[contract-tests]>=0.5,<0.6"]
+
+[project.entry-points."keystone_mcp.user_directories"]
+static-file = "keystone_plugin_example.directory:create_directory"
+
+[project.entry-points."keystone_mcp.login_providers"]
+example-oidc = "keystone_plugin_example.login:create_provider"
+
+[tool.pytest.ini_options]
+addopts = "-p keystone_mcp.contract_tests"
+testpaths = ["tests"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/keystone_plugin_example"]

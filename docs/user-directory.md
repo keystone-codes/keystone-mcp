@@ -59,8 +59,8 @@ class at startup — a directory that claims `"admin"` without implementing
 every method above is refused rather than failing on the first `users_*`
 call.
 
-**Rules every implementation follows** (checked by the contract tests in
-`keystone_mcp.contract_tests`, see the plugin template):
+**Rules every implementation follows** (checked by the [contract tests](plugins.md#contract-tests)
+in `keystone_mcp.contract_tests` and the [plugin template](plugins.md#plugin-template)):
 
 - Normalize the subject on input (`strip().lower()` for an email); every
   email returned is already lower-cased.
