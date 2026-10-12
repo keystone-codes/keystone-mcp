@@ -13,6 +13,9 @@ this project uses [Semantic Versioning](https://semver.org/).
   (`docs/environment.md#removed-variables`).
 - `.trivyignore` for temporarily accepted Trivy findings; each entry needs a
   reason and a review date, checked by `tests/test_trivyignore.py`.
+- Published on PyPI as `keystone-mcp-gateway` (same version as the image);
+  `keystone-mcp serve` starts the server; the package ships type information
+  (`py.typed`).
 
 ### Changed
 
@@ -29,6 +32,8 @@ this project uses [Semantic Versioning](https://semver.org/).
 - Idle HTTP sessions of the handshake protocol now close after 30 minutes
   (FastMCP default); clients reconnect transparently.
 - Developers: the test suite runs without reruns; `pytest-rerunfailures` removed.
+- Developers: release workflow builds and checks the wheel and sdist and
+  refuses a version already on PyPI.
 
 ### Removed
 

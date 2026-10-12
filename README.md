@@ -58,6 +58,7 @@ Then connect a client and sign in:
 
 - **Local** — [Run Keystone-MCP on your machine](docs/paths/local-compose.md)
 - **Production** — [Deploy with Docker, Postgres and TLS](docs/paths/production-docker.md)
+- **PyPI** — `pip install keystone-mcp-gateway`, then `keystone-mcp serve` ([docs/deploy.md](docs/deploy.md#from-pypi); the package name differs from the command and the image — `keystone-mcp` on PyPI is an unrelated project)
 
 ## Why Keystone-MCP
 
@@ -82,7 +83,6 @@ Then connect a client and sign in:
 - **Metrics and audit included.** Prometheus series and structured
   authorization events ship with the process.
 - **One image, two architectures.** `linux/amd64` and `linux/arm64`.
-- **A working demo in about 15 minutes.** See "Try it locally" above.
 
 Full description of every capability, and what is still 0.5.0:
 [docs/features.md](docs/features.md).
