@@ -26,11 +26,15 @@ this project uses [Semantic Versioning](https://semver.org/).
 ### Removed
 
 - `KEYSTONE_MCP_RBAC_ENABLED`. Use `KEYSTONE_MCP_RBAC_MODE`.
+- The placeholder adapters `det_internal` and `chat_attachment`, and
+  `KEYSTONE_MCP_DET_INTERNAL_URL`. Neither adapter was registered by default.
 
 ### Migration
 
 - Replace `KEYSTONE_MCP_RBAC_ENABLED=true` with `KEYSTONE_MCP_RBAC_MODE=enforce`;
   delete the old variable — the server does not start while it is set.
+- A fork that registered `DetInternalAdapter` or `ChatAttachmentAdapter` must
+  keep its own copy of the class (see the 0.4.x source).
 
 ### Security
 

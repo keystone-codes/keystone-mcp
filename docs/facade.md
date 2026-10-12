@@ -165,8 +165,6 @@ something calls `registry.add_route` with one of them:
 |---|---|
 | `webhook.WebhookAdapter` | Submit to an async webhook, then long-poll for the result. |
 | `external_http.ExternalHttpAdapter` | Call an external HTTP API. |
-| `det_internal.DetInternalAdapter` | Placeholder for a synchronous internal call. |
-| `chat_attachment.ChatAttachmentAdapter` | Signal outbound file delivery. Keystone-MCP itself is session-blind. |
 | `stub.StubAdapter` | A stand-in response until the real adapter exists. |
 
 Register with `mode="stub"` while the target is being built, then

@@ -92,6 +92,11 @@ REMOVED_VARIABLES: dict[str, RemovedVariable] = {
         replacement="Set KEYSTONE_MCP_RBAC_MODE=enforce (or observe, or off).",
         fatal=True,
     ),
+    "KEYSTONE_MCP_DET_INTERNAL_URL": RemovedVariable(
+        removed_in="0.5.0",
+        replacement="Nothing to set: the placeholder adapter that read it was removed.",
+        fatal=False,
+    ),
 }
 
 
@@ -963,11 +968,6 @@ class Settings:
     def resolved_file_api_base_url(self) -> str:
         """Base URL for POST /api/v1/files (``KEYSTONE_MCP_FILE_API_URL``, no fallback)."""
         return self.file_api_base_url.strip().rstrip("/")
-
-    # ── det_internal target (placeholder adapter) ─────────────────────────
-    det_internal_base_url: str = field(
-        default_factory=lambda: _env("KEYSTONE_MCP_DET_INTERNAL_URL", "http://localhost:8000")
-    )
 
     # ── Upstream MCP proxy ────────────────────────────────────────────────
     upstream_discovery_retries: int = field(
