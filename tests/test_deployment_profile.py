@@ -281,6 +281,39 @@ def test_startup_warns_for_upstream_without_identity_secret(monkeypatch, tmp_pat
     )
 
 
+def test_startup_warns_for_stdio_upstream_without_identity_secret(monkeypatch, tmp_path: Path):
+    """D8: a stdio upstream never receives X-Author-Email at all (there are no
+
+    HTTP headers to a child process), so its missing-secret warning must not
+    claim it does.
+    """
+    import json
+    import sys
+
+    _rbac_env(monkeypatch, tmp_path)
+    _production_login_env(monkeypatch)
+    monkeypatch.setenv("KEYSTONE_MCP_DEPLOYMENT_PROFILE", "production")
+    monkeypatch.setenv(
+        "KEYSTONE_MCP_UPSTREAMS",
+        json.dumps(
+            [
+                {
+                    "name": "notes",
+                    "namespace": "notes",
+                    "transport": "stdio",
+                    "command": sys.executable,
+                }
+            ]
+        ),
+    )
+    settings = load_settings()
+    warnings = startup_warnings(settings)
+    matching = [w for w in warnings if "namespace=notes" in w]
+    assert matching, warnings
+    assert "X-Author-Email" not in matching[0]
+    assert "identity_secret_env" in matching[0]
+
+
 def test_startup_warning_absent_with_identity_secret_configured(monkeypatch, tmp_path: Path):
     import json
 

@@ -23,6 +23,11 @@ from keystone_mcp.router.stdio_process import (
 )
 
 STDIO_SERVER = str(Path(__file__).parent / "support" / "stdio_upstream.py")
+NOISY_STDIO_SERVER = str(Path(__file__).parent / "support" / "noisy_stdio_upstream.py")
+CRASH_BEFORE_INIT_SERVER = str(
+    Path(__file__).parent / "support" / "crash_before_init_stdio_upstream.py"
+)
+GIANT_STDERR_LINE_SERVER = str(Path(__file__).parent / "support" / "giant_stderr_line_upstream.py")
 
 
 def _make_proc(
@@ -77,6 +82,64 @@ async def test_start_reaches_running_and_serves_calls():
         async with proc.client() as client:
             result = await client.call_tool("pid", {})
         assert result.content[0].text.isdigit()
+    finally:
+        await proc.stop()
+
+
+async def test_start_reaches_running_despite_noisy_startup_stderr():
+    """A server that floods stderr before answering ``initialize`` must not
+
+    hang: stderr has to be drained from the moment the pipe exists, not only
+    after that answer arrives, or the child blocks on ``write()`` forever.
+    """
+    proc = _make_proc(args=[NOISY_STDIO_SERVER])
+    try:
+        with anyio.fail_after(15):
+            started = await proc.start(wait=15)
+        assert started is True
+        async with proc.client() as client:
+            result = await client.call_tool("pid", {})
+        assert result.content[0].text.isdigit()
+    finally:
+        await proc.stop()
+
+
+async def test_start_failure_stderr_is_logged(caplog):
+    """A server that fails before ``initialize`` still gets its stderr output
+
+    logged, instead of only a generic ``start failed: ...`` with no clue why.
+    """
+    proc = _make_proc(args=[CRASH_BEFORE_INIT_SERVER], init_timeout=3)
+    try:
+        with caplog.at_level(logging.INFO, logger="keystone_mcp.upstream.stderr"):
+            with anyio.fail_after(10):
+                started = await proc.start(wait=3)
+            assert started is False
+            with anyio.fail_after(5):
+                while "CRASH-BEFORE-INIT-MARKER" not in caplog.text:
+                    await anyio.sleep(0.05)
+        assert "CRASH-BEFORE-INIT-MARKER: synthetic startup failure" in caplog.text
+    finally:
+        with anyio.fail_after(5):
+            await proc.stop()
+
+
+async def test_oversized_stderr_line_does_not_crash_supervisor(caplog):
+    """A single stderr line longer than the reader's buffer limit, with no
+
+    newline in sight, must not kill (and misleadingly restart) an otherwise
+    healthy process -- only that one line is lost.
+    """
+    proc = _make_proc(args=[GIANT_STDERR_LINE_SERVER])
+    try:
+        with caplog.at_level(logging.WARNING, logger="keystone_mcp.upstream.stderr"):
+            with anyio.fail_after(15):
+                started = await proc.start(wait=15)
+            assert started is True
+            async with proc.client() as client:
+                result = await client.call_tool("pid", {})
+            assert result.content[0].text.isdigit()
+        assert "stderr line exceeded" in caplog.text
     finally:
         await proc.stop()
 
@@ -167,6 +230,38 @@ async def test_backoff_resets_after_stable_run():
         assert pauses == [1, 1]
     finally:
         await proc.stop()
+
+
+async def test_stop_during_backoff_pause_returns_quickly():
+    """``stop()`` must not wait out the backoff pause (up to 60s) before
+
+    returning: the pause has to be interrupted, not merely outlived.
+    """
+    states: list[tuple[str, str | None]] = []
+    proc = _make_proc(
+        states=states,
+        command=sys.executable,
+        args=["-c", "import sys; sys.exit(1)"],
+        init_timeout=1,
+    )
+    try:
+        await proc.start(wait=2)
+        with anyio.fail_after(5):
+            while _count(states, "backoff") < 1:
+                await anyio.sleep(0.01)
+
+        start = anyio.current_time()
+        with anyio.fail_after(5):
+            await proc.stop()
+        elapsed = anyio.current_time() - start
+    finally:
+        with contextlib.suppress(Exception), anyio.fail_after(5):
+            await proc.stop()
+
+    # The first backoff pause is 1 second (real time, no fake sleep here);
+    # returning well under that proves stop() interrupted it instead of
+    # waiting it out.
+    assert elapsed < 0.5
 
 
 async def test_non_mcp_process_fails_start_and_retries():
