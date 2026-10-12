@@ -5,7 +5,7 @@ Copy this file (or vendor its logic) into your own upstream service; it is
 not published as a package. See ``../../../docs/connecting-services.md``
 (section "Who is calling: X-Keystone-Identity") for the full contract.
 
-Usage::
+Usage (HS256, per-upstream secret)::
 
     from keystone_identity import IdentityError, verify_keystone_identity
 
@@ -17,6 +17,15 @@ Usage::
         )
     except IdentityError as exc:
         raise ValueError(f"identity rejected: {exc}") from exc
+
+Usage (ES256, Keystone JWKS)::
+
+    identity = verify_keystone_identity(
+        request.headers.get("x-keystone-identity"),
+        jwks_url="https://keystone.example/.well-known/keystone-identity-jwks.json",
+        audience="mysvc-mcp",
+        algorithms=["ES256"],
+    )
 """
 
 from __future__ import annotations
@@ -30,11 +39,9 @@ import jwt
 #: it from any other JWT an upstream might otherwise accept on this header.
 IDENTITY_TYP = "keystone-identity+jwt"
 
-#: The only algorithm ever accepted. Never read the algorithm from the token
-#: itself (the classic "alg: none" / algorithm-confusion attack) -- PyJWT's
-#: ``algorithms=`` parameter already enforces this, but it is spelled out
-#: here because it is the one rule that must never be relaxed.
-_ALGORITHMS = ["HS256"]
+#: Default algorithms for each verification mode.
+_HS256_ALGORITHMS = ["HS256"]
+_ES256_ALGORITHMS = ["ES256"]
 
 
 class IdentityError(Exception):
@@ -66,26 +73,36 @@ class KeystoneIdentity:
 def verify_keystone_identity(
     token: str | None,
     *,
-    secrets: Sequence[str],
+    secrets: Sequence[str] | None = None,
+    jwks_url: str | None = None,
     audience: str,
     issuer: str | None = None,
     leeway: int = 30,
+    algorithms: Sequence[str] | None = None,
 ) -> KeystoneIdentity:
     """Verify one ``X-Keystone-Identity`` header; raise :class:`IdentityError` otherwise.
 
-    *secrets* is tried in order, so a secret can be rotated by configuring
-    the new and old value together for one deployment, then dropping the old
-    one once Keystone-MCP has restarted with the new secret.
+    For HS256, pass *secrets* (tried in order so a secret can be rotated without
+    downtime). For ES256, pass *jwks_url* pointing at Keystone's
+    ``/.well-known/keystone-identity-jwks.json`` and set *algorithms* to
+    ``["ES256"]`` (or rely on the default ES256 list when *jwks_url* is set).
+
+    Never read the algorithm from the token itself (the classic "alg: none" /
+    algorithm-confusion attack) -- the caller pins *algorithms* on the verify
+    call.
 
     *audience* is required: it must be this upstream's own registry entry
-    ``name`` (not its ``namespace``) -- the whole point of ``aud`` is that an
-    assertion signed for a different upstream, even with the same secret by
-    mistake, is rejected here. *issuer* is checked only when given.
+    ``name`` (not its ``namespace``). *issuer* is checked only when given.
     """
     if not token:
         raise IdentityError("missing X-Keystone-Identity")
     if not audience:
         raise IdentityError("audience is required")
+    if secrets and jwks_url:
+        raise IdentityError("pass either secrets (HS256) or jwks_url (ES256), not both")
+    if not secrets and not jwks_url:
+        raise IdentityError("secrets or jwks_url is required")
+
     try:
         header = jwt.get_unverified_header(token)
     except jwt.PyJWTError as exc:
@@ -93,13 +110,33 @@ def verify_keystone_identity(
     if header.get("typ") != IDENTITY_TYP:
         raise IdentityError(f"unexpected typ: {header.get('typ')!r}")
 
+    if jwks_url:
+        allowed = list(algorithms) if algorithms is not None else _ES256_ALGORITHMS
+        client = jwt.PyJWKClient(jwks_url, cache_keys=True, lifespan=300)
+        try:
+            signing_key = client.get_signing_key_from_jwt(token)
+            claims = jwt.decode(
+                token,
+                signing_key.key,
+                algorithms=allowed,
+                audience=audience,
+                issuer=issuer,
+                leeway=leeway,
+                options={"require": ["exp", "iat", "aud", "sub"]},
+            )
+        except jwt.PyJWTError as exc:
+            raise IdentityError(f"signature or claims rejected: {exc}") from exc
+        return _identity_from_claims(claims)
+
+    allowed = list(algorithms) if algorithms is not None else _HS256_ALGORITHMS
     last_error: jwt.PyJWTError | None = None
+    assert secrets is not None
     for secret in secrets:
         try:
             claims = jwt.decode(
                 token,
                 secret,
-                algorithms=_ALGORITHMS,
+                algorithms=allowed,
                 audience=audience,
                 issuer=issuer,
                 leeway=leeway,

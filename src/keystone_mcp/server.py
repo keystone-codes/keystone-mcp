@@ -425,6 +425,7 @@ def build_server(
         discovery_retries=settings.upstream_discovery_retries,
         refresh_enabled=settings.refresh_interval_seconds > 0,
         identity_issuer=settings.base_url.rstrip("/"),
+        _identity_signing_key_pem=settings.identity_signing_key,
     )
     upstreams.observability = rbac_observability
 
@@ -478,6 +479,20 @@ def build_server(
     mcp.add_middleware(
         ToolCallObservabilityMiddleware(observability=rbac_observability),
     )
+
+    from keystone_mcp.identity_assertion import IDENTITY_JWKS_PATH, build_identity_jwks
+
+    @mcp.custom_route(IDENTITY_JWKS_PATH, methods=["GET"])
+    async def _identity_jwks(_request):  # noqa: ANN001
+        from starlette.responses import JSONResponse, Response
+
+        private_key = upstreams._identity_es256_private_key
+        if private_key is None:
+            return Response(status_code=404)
+        return JSONResponse(
+            build_identity_jwks(private_key),
+            headers={"Cache-Control": "public, max-age=300"},
+        )
 
     @mcp.custom_route("/healthz", methods=["GET"])
     async def _healthz(_request):  # noqa: ANN001
@@ -659,6 +674,7 @@ def _register_default_upstreams(upstreams: UpstreamRegistry, settings: Settings)
             tool_timeout_seconds=cfg.tool_timeout_seconds,
             bearer_env=cfg.bearer_env,
             identity_secret_env=cfg.identity_secret_env,
+            identity_alg=cfg.identity_alg,
         )
 
 

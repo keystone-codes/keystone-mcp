@@ -4,8 +4,10 @@ Every proxied tool call carries a short-lived JWT, ``X-Keystone-Identity``,
 telling the upstream who is calling: the verified subject, the roles RBAC used
 to allow this call, the auth method, the OAuth client, the task id, and which
 tool was invoked. It is signed HS256 with a secret unique to the upstream
-(``auth.identity_secret_env`` in the registry entry), so compromising one
-upstream's secret never lets it forge an assertion for another.
+(``auth.identity_secret_env`` in the registry entry), or ES256 with a single
+deployment-wide EC P-256 key (``KEYSTONE_MCP_IDENTITY_SIGNING_KEY`` and
+``auth.identity_alg: ES256``), so compromising one upstream's secret never lets
+it forge an assertion for another.
 
 ``X-Author-Email`` (``keystone_mcp.identity.AUTHOR_EMAIL_HEADER``) is still
 sent alongside it, unsigned, deprecated since 0.5.0 (kept until 2.0).
@@ -13,14 +15,22 @@ sent alongside it, unsigned, deprecated since 0.5.0 (kept until 2.0).
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import json
 import os
 import secrets
 import time
 from dataclasses import dataclass, field
 from math import ceil
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import jwt
+from cryptography.hazmat.primitives.asymmetric.ec import (
+    EllipticCurvePrivateKey,
+    EllipticCurvePublicKey,
+)
+from cryptography.hazmat.primitives.serialization import load_pem_private_key
 
 from keystone_mcp.user_directory.util import normalize_email
 
@@ -38,6 +48,9 @@ IDENTITY_TYP = "keystone-identity+jwt"
 #: is carried in instead of an HTTP header (Y09). Defined here, used there.
 IDENTITY_META_KEY = "keystone-mcp/identity"
 
+#: Published JWKS document for ES256 identity assertions (Y11).
+IDENTITY_JWKS_PATH = "/.well-known/keystone-identity-jwks.json"
+
 #: Minimum length, in UTF-8 bytes, of an ``auth.identity_secret_env`` value.
 MIN_SECRET_BYTES = 32
 
@@ -49,6 +62,59 @@ ASSERTION_SKEW_SECONDS = 60
 #: VerifiedIdentity`; anything else (including absent, pre-X07) defaults to
 #: ``"human"``.
 _KNOWN_SUBJECT_TYPES = frozenset({"human", "service"})
+
+
+def normalize_pem_env_value(raw: str) -> str:
+    """Expand a one-line PEM env value (``\\n`` escapes) to a multi-line PEM."""
+    stripped = raw.strip()
+    if "\\n" in stripped and "\n" not in stripped:
+        return stripped.replace("\\n", "\n")
+    return stripped
+
+
+def load_ec_p256_private_key(pem: str) -> EllipticCurvePrivateKey:
+    """Parse a PEM EC P-256 private key; raise ``ValueError`` on failure."""
+    normalized = normalize_pem_env_value(pem)
+    if not normalized:
+        raise ValueError("empty PEM")
+    try:
+        key = load_pem_private_key(normalized.encode("utf-8"), password=None)
+    except (ValueError, TypeError) as exc:
+        raise ValueError("invalid PEM") from exc
+    if not isinstance(key, EllipticCurvePrivateKey):
+        raise ValueError("not an EC private key")
+    if key.curve.name != "secp256r1":
+        raise ValueError("curve is not P-256")
+    return key
+
+
+def ec_public_key_jwk_thumbprint(public_key: EllipticCurvePublicKey) -> str:
+    """RFC 7638 thumbprint for an EC public key (``kid`` for ES256 assertions)."""
+    jwk_dict = json.loads(jwt.algorithms.ECAlgorithm.to_jwk(public_key))
+    canonical = json.dumps(
+        {"crv": jwk_dict["crv"], "kty": jwk_dict["kty"], "x": jwk_dict["x"], "y": jwk_dict["y"]},
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    digest = hashlib.sha256(canonical.encode("utf-8")).digest()
+    return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+
+
+def identity_signing_key_from_env() -> EllipticCurvePrivateKey | None:
+    """Return the deployment ES256 signing key, or ``None`` when unset."""
+    raw = os.environ.get("KEYSTONE_MCP_IDENTITY_SIGNING_KEY", "")
+    if not raw.strip():
+        return None
+    return load_ec_p256_private_key(raw)
+
+
+def build_identity_jwks(private_key: EllipticCurvePrivateKey) -> dict[str, Any]:
+    """Build the JWKS payload served at :data:`IDENTITY_JWKS_PATH`."""
+    public_key = private_key.public_key()
+    jwk_dict = json.loads(jwt.algorithms.ECAlgorithm.to_jwk(public_key))
+    kid = ec_public_key_jwk_thumbprint(public_key)
+    jwk_dict.update({"kid": kid, "alg": "ES256", "use": "sig"})
+    return {"keys": [jwk_dict]}
 
 
 def resolve_identity_secret(name: str, var: str) -> bytes:
@@ -145,10 +211,13 @@ class IdentityAssertionSigner:
     """Signs ``X-Keystone-Identity`` assertions for one upstream registry entry."""
 
     audience: str
+    issuer: str
+    # HS256: ``secret`` is set. ES256: ``private_key`` and ``kid`` are set.
     # Never included in repr() — the registry (and anything that logs it)
     # must stay safe to print as a whole.
-    secret: bytes = field(repr=False)
-    issuer: str
+    secret: bytes | None = field(default=None, repr=False)
+    private_key: EllipticCurvePrivateKey | None = field(default=None, repr=False)
+    kid: str | None = None
 
     def sign(
         self,
@@ -186,4 +255,14 @@ class IdentityAssertionSigner:
             timeout_seconds=timeout_seconds,
             now=now,
         )
-        return jwt.encode(claims, self.secret, algorithm="HS256", headers={"typ": IDENTITY_TYP})
+        headers: dict[str, str] = {"typ": IDENTITY_TYP}
+        if self.private_key is not None:
+            assert self.kid is not None
+            headers["kid"] = self.kid
+            return jwt.encode(claims, self.private_key, algorithm="ES256", headers=headers)
+        assert self.secret is not None
+        return jwt.encode(claims, self.secret, algorithm="HS256", headers=headers)
+
+    @property
+    def algorithm(self) -> Literal["HS256", "ES256"]:
+        return "ES256" if self.private_key is not None else "HS256"
