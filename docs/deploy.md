@@ -82,6 +82,12 @@ Register the Google OAuth redirect URI,
 [google-oauth.md](google-oauth.md). Pre-flight checklist:
 [production-checklist.md](production-checklist.md).
 
+Place the RBAC policy file where `KEYSTONE_MCP_RBAC_POLICY_PATH` points (for
+example `config/rbac-policy.yaml` in the install directory). The file and its
+parent directory must be owned by the `keystone-mcp` service user and writable
+so `policy_*` mutation tools can rotate a `.bak` beside the file. See
+[policy-admin.md](policy-admin.md).
+
 ## 3. Run with systemd
 
 ```ini

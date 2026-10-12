@@ -8,6 +8,7 @@ this project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `keystone-policy-admin` skill and `docs/policy-admin.md`: changing roles and allow patterns from the agent.
 - `policy_*` tools (`policy_read`, `policy_catalog`, `policy_validate`, `policy_role_set`, `policy_role_delete`, `policy_allow_add`, `policy_allow_remove`, `policy_list_set`, `policy_rollback`): administrators change the RBAC policy from the agent; every change is validated against the live catalog, written atomically, reloaded in place and audited. Namespace `policy` is reserved.
 - API keys stored in the users directory (hashed, shown once): `api_keys_issue|list|revoke` tools and `keystone-mcp keys` CLI. Service accounts call MCP with `Authorization: Bearer <key>`.
 - `users_logout`; blocking a user revokes all of their tokens immediately.
@@ -58,6 +59,7 @@ this project uses [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Production and demo compose examples mount the policy file read-write from a `policy/` directory so the `policy_*` tools can write it.
 - `X-Author-Email` is sent only for people.
 - Documentation brought in line with the 0.4.0 code: the Host/Origin
   allowlist and /metrics, deployment profile rules P5 and W5, the
@@ -142,6 +144,7 @@ this project uses [Semantic Versioning](https://semver.org/).
 
 ### Migration
 
+- To use the `policy_*` mutation tools, mount the policy file (and its directory) read-write; otherwise they answer `policy_readonly`. With several replicas and no shared volume, set `KEYSTONE_MCP_POLICY_TOOLS=read-only` on all but one.
 - Database migration `0003_api_keys`. Deployments that checked keys with an
   external service: issue new keys from the built-in directory and remove the
   two variables; external HTTP directories do not support API keys.

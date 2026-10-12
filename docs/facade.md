@@ -150,7 +150,8 @@ Keystone-MCP's own, not proxied:
   `policy_list_set`, `policy_rollback` — change the RBAC policy from the agent.
   Published only when `KEYSTONE_MCP_RBAC_MODE=enforce` and
   `KEYSTONE_MCP_POLICY_TOOLS` is not `off`; mutation tools need `full` and a
-  writable policy file. See [rbac-policy-format.md](rbac-policy-format.md).
+  writable policy file. See [policy-admin.md](policy-admin.md) and
+  [rbac-policy-format.md](rbac-policy-format.md).
 
 File transfer is not built in: run a file service as an upstream MCP server
 (see [connecting-services.md](connecting-services.md)). Why: [ADR 0006](adr/0006-no-file-api-in-the-core.md).
