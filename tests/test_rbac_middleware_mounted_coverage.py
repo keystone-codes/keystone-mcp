@@ -172,7 +172,7 @@ async def _register_production_path_tools(upstreams, downstream_server):
             upstreams.registry.add_route(
                 tool.name,
                 StubAdapter(),
-                params=schema_to_params(tool.inputSchema),
+                params=schema_to_params(tool.input_schema),
                 description=tool.description or "",
                 mode="live",
                 upstream_tool=tool.name,

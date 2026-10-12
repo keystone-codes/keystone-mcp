@@ -201,7 +201,7 @@ async def test_discovery_registers_patched_params(widgets_downstream, patch_file
             input_schema = apply_proxy_schema_patches(
                 cfg.namespace,
                 tool.name,
-                tool.inputSchema if isinstance(tool.inputSchema, dict) else None,
+                tool.input_schema if isinstance(tool.input_schema, dict) else None,
                 patches=upstreams.schema_patches,
             )
             registry.add_route(
@@ -265,7 +265,7 @@ async def test_patched_property_is_published_verbatim() -> None:
         tools = await client.list_tools()
     tool = next(t for t in tools if t.name == "start_batch")
 
-    assert tool.inputSchema["properties"]["priority"] == {
+    assert tool.input_schema["properties"]["priority"] == {
         "type": "string",
         "enum": ["low", "high"],
         "description": "priority level",
