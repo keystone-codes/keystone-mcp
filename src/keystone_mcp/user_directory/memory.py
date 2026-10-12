@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from keystone_mcp.user_directory.errors import (
     LastAdministratorError,
     SelfAdminMutationError,
+    UserAlreadyExistsError,
     UserNotFoundError,
 )
 from keystone_mcp.user_directory.types import MutationResult, UserRecord, UserResolveResult
@@ -156,6 +157,8 @@ class InMemoryUserDirectory:
         actor: str,
     ) -> MutationResult:
         normalized = normalize_email(email)
+        if normalized in self._users:
+            raise UserAlreadyExistsError(normalized)
         role_list = tuple(dict.fromkeys(check_role_name(role) for role in roles))
         entry = _Entry(
             full_name=full_name,

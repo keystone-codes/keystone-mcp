@@ -18,7 +18,7 @@ the full wire contract (paths, bodies, headers, revision).
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import quote
 
@@ -81,7 +81,19 @@ def _parse_resolve_payload(payload: Any) -> UserResolveResult:
 
 
 def _parse_datetime(value: Any) -> datetime:
-    return datetime.fromisoformat(str(value))
+    """Parse an ISO 8601 timestamp, anchoring a naive one to UTC.
+
+    The HTTP contract's timestamps are always UTC (see ``docs/user-directory.md``),
+    but a service that omits the offset would otherwise produce a *naive*
+    ``datetime`` here, which ``UserRecord.to_dict()`` later shifts by the
+    host's own local timezone via ``astimezone`` -- silently corrupting the
+    value. Attaching ``UTC`` directly (rather than converting) keeps the wall-
+    clock time exactly as reported.
+    """
+    parsed = datetime.fromisoformat(str(value))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed
 
 
 def _user_record_from_payload(payload: dict[str, Any]) -> UserRecord:
@@ -95,6 +107,24 @@ def _user_record_from_payload(payload: dict[str, Any]) -> UserRecord:
         created_by=payload.get("created_by"),
         note=payload.get("note"),
     )
+
+
+def _parse_user_response_body(body: Any) -> UserRecord:
+    """Parse one user object from a mutation/list response.
+
+    Raises :class:`UsersError` (``service_error``) for anything this client
+    cannot make sense of -- an empty body, a body that is not the expected
+    shape, or a record missing a required field -- rather than letting a bare
+    ``KeyError``/``ValueError``/``TypeError`` escape past
+    :class:`~keystone_mcp.adapters.users_admin.UsersAdminAdapter`'s error
+    envelope (and, with it, past the audit record it would otherwise write).
+    """
+    try:
+        return _user_record_from_payload(body)
+    except (KeyError, ValueError, TypeError, AttributeError) as exc:
+        raise UsersError(
+            "users directory returned an invalid user response", code="service_error"
+        ) from exc
 
 
 class HttpUserDirectory:
@@ -254,12 +284,22 @@ class HttpUserDirectory:
             raise UsersStoreUnavailableError("users directory is unavailable") from exc
 
     async def _mutation_response(self, response: httpx.Response) -> MutationResult:
+        # The service already applied this mutation once it answers with a
+        # success status: a failure to parse that answer below must not look
+        # like the mutation itself failed (and must not escape as a bare
+        # KeyError/ValueError, which would skip UsersAdminAdapter's audit
+        # write -- see _parse_user_response_body).
         if not response.is_success:
             code, message = self._parse_service_error(response)
             raise UsersError(message, code=code)
-        body = response.json() if response.content else {}
+        try:
+            body = response.json() if response.content else {}
+        except ValueError as exc:
+            raise UsersError(
+                "users directory returned an invalid user response", code="service_error"
+            ) from exc
         return MutationResult(
-            user=_user_record_from_payload(body),
+            user=_parse_user_response_body(body),
             changed=True,
             created=False,
             roles_before=None,
@@ -273,7 +313,9 @@ class HttpUserDirectory:
         role: str | None = None,
         email_contains: str | None = None,
     ) -> list[UserRecord]:
-        params: dict[str, Any] = {"is_blocked": is_blocked if is_blocked is not None else False}
+        params: dict[str, Any] = {}
+        if is_blocked is not None:
+            params["is_blocked"] = is_blocked
         if role:
             params["role"] = role
         if email_contains:
@@ -282,8 +324,14 @@ class HttpUserDirectory:
         if not response.is_success:
             code, message = self._parse_service_error(response)
             raise UsersError(message, code=code)
-        body = response.json() if response.content else {}
-        return [_user_record_from_payload(row) for row in body.get("users", [])]
+        try:
+            body = response.json() if response.content else {}
+            rows = body.get("users", []) if isinstance(body, dict) else body
+            return [_parse_user_response_body(row) for row in rows]
+        except (ValueError, TypeError, AttributeError) as exc:
+            raise UsersError(
+                "users directory returned an invalid list response", code="service_error"
+            ) from exc
 
     async def create_user(
         self,

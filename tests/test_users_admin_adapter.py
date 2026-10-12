@@ -249,6 +249,41 @@ async def test_users_service_errors_are_mapped(status_code, payload, expected_co
     assert "service-secret" not in json.dumps(out)
 
 
+class _RecordingObservability:
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    def record_users_mutation(self, **kwargs) -> None:
+        self.calls.append(kwargs)
+
+
+async def test_audit_is_recorded_when_service_response_cannot_be_parsed():
+    """The service already applied the mutation once it answers 200: a
+
+    malformed response body must still produce an audited error, not a bare
+    exception that skips ``_record_mutation_audit`` entirely (X06 review
+    finding).
+    """
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"not json")
+
+    observability = _RecordingObservability()
+    adapter = UsersAdminAdapter(directory=_http_directory(handler), observability=observability)
+    engine, reg = _registry()
+    route = reg.add_route("users_block", adapter, mode="live")
+
+    out = await engine.execute(route, {"email": "user@example.com"}, identity=ADMIN)
+
+    assert out["state"] == "error"
+    assert out["code"] == "service_error"
+    assert len(observability.calls) == 1
+    call = observability.calls[-1]
+    assert call["operation"] == "users_block"
+    assert call["outcome"] == "error"
+    assert call["code"] == "service_error"
+
+
 async def test_actor_email_not_taken_from_tool_arguments():
     captured: dict[str, str] = {}
 
