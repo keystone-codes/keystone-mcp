@@ -145,6 +145,11 @@ this project uses [Semantic Versioning](https://semver.org/).
 - OIDC discovery endpoints must share the configured issuer origin; login
   providers YAML parse errors no longer echo file contents; unverified email
   without domain restriction is rejected at config load.
+- Token rotation and authorization-code exchange refuse credentials issued at
+  or before a subject not-before timestamp, atomically with the write, so a
+  refresh started before session revocation cannot mint a live pair afterward.
+- `users_block` returns `service_unavailable` when session revocation fails
+  after the directory block succeeds, so a retry can revoke tokens.
 
 ### Migration
 

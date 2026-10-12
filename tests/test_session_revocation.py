@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from pathlib import Path
 from unittest.mock import AsyncMock
@@ -171,6 +172,7 @@ async def test_unblock_does_not_restore_old_tokens(session_harness):
         async with Client(_transport(h["app"], h["settings"], h["victim_access"])) as victim_client:
             await victim_client.call_tool("member_ping", {})
 
+    await asyncio.sleep(1.1)
     new_login = await obtain_access_token(
         h["http_client"], h["settings"].resource_url, email=VICTIM_EMAIL
     )
@@ -193,6 +195,7 @@ async def test_logout_ends_sessions_but_allows_new_sign_in(session_harness):
         async with Client(_transport(h["app"], h["settings"], h["victim_access"])) as victim_client:
             await victim_client.call_tool("member_ping", {})
 
+    await asyncio.sleep(1.1)
     new_login = await obtain_access_token(
         h["http_client"], h["settings"].resource_url, email=VICTIM_EMAIL
     )
@@ -230,10 +233,38 @@ async def test_block_when_token_store_down_still_blocks(tmp_path: Path):
     reg = RouterRegistry(engine)
     route = reg.add_route("users_block", adapter, mode="live")
     out = await engine.execute(route, {"email": VICTIM_EMAIL}, identity=ADMIN)
-    assert out["state"] == "done"
-    assert out["revoked_tokens"] is None
+    assert out["state"] == "error"
+    assert out["code"] == "service_unavailable"
     rows = await store.list_users(is_blocked=True)
     assert any(row.email == VICTIM_EMAIL for row in rows)
+
+
+async def test_users_block_retries_revoke_after_redis_error(tmp_path: Path):
+    store, _ = await make_users_store(tmp_path)
+    await store.create_user(
+        email=VICTIM_EMAIL,
+        full_name="Victim",
+        roles=["member"],
+        note=None,
+        created_by=ADMIN.email,
+        allowed_roles=None,
+    )
+    directory = LocalUserDirectory(store)
+    revoker = AsyncMock(spec=SessionRevoker)
+    revoker.revoke_subject.side_effect = [RedisError("down"), 0]
+    adapter = UsersAdminAdapter(directory=directory, session_revoker=revoker)
+    engine = RouterEngine(Settings(base_url=BASE_URL, users_backend="local", rbac_mode="off"))
+    reg = RouterRegistry(engine)
+    route = reg.add_route("users_block", adapter, mode="live")
+
+    first = await engine.execute(route, {"email": VICTIM_EMAIL}, identity=ADMIN)
+    assert first["state"] == "error"
+    assert first["code"] == "service_unavailable"
+
+    second = await engine.execute(route, {"email": VICTIM_EMAIL}, identity=ADMIN)
+    assert second["state"] == "done"
+    assert second["revoked_tokens"] == 0
+    assert revoker.revoke_subject.await_count == 2
 
 
 async def test_logout_when_token_store_down_is_service_unavailable(tmp_path: Path):

@@ -6,6 +6,7 @@ Production uses shared Redis from the keystone stack; tests inject
 
 from __future__ import annotations
 
+import asyncio
 import time
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
@@ -13,16 +14,22 @@ from typing import Protocol, runtime_checkable
 from mcp.server.auth.provider import AccessToken, RefreshToken
 from mcp.shared.auth import OAuthClientInformationFull
 from redis.asyncio import Redis
+from redis.exceptions import WatchError
 
 from keystone_mcp.user_directory.util import normalize_email
 
 _SUBJECT_INDEX_MAX_MEMBERS = 256
+_COMMIT_MAX_WATCH_RETRIES = 16
 
 
 @dataclass(frozen=True, slots=True)
 class RevokedTokens:
     access: int
     refresh_tokens: tuple[str, ...]
+
+
+class CredentialRevokedError(Exception):
+    """Consumed credential was issued at or before the subject's not-before time."""
 
 
 def _subject_key(subject: str) -> str:
@@ -70,6 +77,18 @@ class OAuthStore(Protocol):
 
     async def subject_not_before(self, subject: str) -> int | None: ...
 
+    def refresh_credential_iat(self, refresh: RefreshToken) -> int | None: ...
+
+    async def commit_token_pair(
+        self,
+        *,
+        subject: str,
+        consumed_iat: int | None,
+        access: AccessToken,
+        refresh: RefreshToken,
+        replace_refresh_token: str | None = None,
+    ) -> None: ...
+
     async def aclose(self) -> None: ...
 
 
@@ -99,6 +118,7 @@ class InMemoryOAuthStore:
         self._subject_index: dict[str, set[str]] = {}
         self._subject_index_expires_at: dict[str, float] = {}
         self._subject_nbf: dict[str, int] = {}
+        self._commit_lock = asyncio.Lock()
 
     async def get_client(self, client_id: str) -> OAuthClientInformationFull | None:
         client = self._clients.get(client_id)
@@ -290,6 +310,39 @@ class InMemoryOAuthStore:
         if not self._subject_index_alive(sub):
             return None
         return self._subject_nbf.get(sub)
+
+    def refresh_credential_iat(self, refresh: RefreshToken) -> int | None:
+        return self._refresh_iat(refresh)
+
+    def _credential_revoked_by_nbf(self, sub: str, consumed_iat: int | None) -> bool:
+        if not self._subject_index_alive(sub):
+            return False
+        nbf = self._subject_nbf.get(sub)
+        if nbf is None:
+            return False
+        if consumed_iat is None:
+            return True
+        return consumed_iat <= nbf
+
+    async def commit_token_pair(
+        self,
+        *,
+        subject: str,
+        consumed_iat: int | None,
+        access: AccessToken,
+        refresh: RefreshToken,
+        replace_refresh_token: str | None = None,
+    ) -> None:
+        sub = _subject_key(subject)
+        async with self._commit_lock:
+            if self._credential_revoked_by_nbf(sub, consumed_iat):
+                if replace_refresh_token is not None:
+                    await self.delete_refresh_token(replace_refresh_token)
+                raise CredentialRevokedError()
+            await self.put_access_token(access)
+            await self.put_refresh_token(refresh)
+            if replace_refresh_token is not None:
+                await self.delete_refresh_token(replace_refresh_token)
 
     async def aclose(self) -> None:
         return None
@@ -582,23 +635,97 @@ class RedisOAuthStore:
         sub = _subject_key(subject)
         idx_key = self._subject_index_key(sub)
         nbf_key = self._subject_nbf_key(sub)
+        await self._redis.set(nbf_key, str(now), ex=self._client_ttl_seconds)
         members = await self._redis.smembers(idx_key)
         access_count = 0
         refresh_tokens: list[str] = []
-        async with self._redis.pipeline(transaction=True) as pipe:
-            pipe.set(nbf_key, str(now), ex=self._client_ttl_seconds)
-            for member in members:
-                if member.startswith("at:"):
-                    tok = member[3:]
-                    pipe.delete(self._access_key(tok))
-                    access_count += 1
-                elif member.startswith("rt:"):
-                    tok = member[3:]
-                    pipe.delete(self._refresh_key(tok))
-                    refresh_tokens.append(tok)
-            pipe.delete(idx_key)
-            await pipe.execute()
+        if members:
+            async with self._redis.pipeline(transaction=True) as pipe:
+                for member in members:
+                    if member.startswith("at:"):
+                        tok = member[3:]
+                        pipe.delete(self._access_key(tok))
+                        access_count += 1
+                    elif member.startswith("rt:"):
+                        tok = member[3:]
+                        pipe.delete(self._refresh_key(tok))
+                        refresh_tokens.append(tok)
+                pipe.delete(idx_key)
+                await pipe.execute()
         return RevokedTokens(access=access_count, refresh_tokens=tuple(refresh_tokens))
+
+    def refresh_credential_iat(self, refresh: RefreshToken) -> int | None:
+        return self._refresh_iat(refresh)
+
+    def _pipe_put_access(self, pipe: object, access: AccessToken) -> None:
+        ttl = self._access_ttl(access)
+        key = self._access_key(access.token)
+        payload = access.model_dump_json()
+        if ttl is None:
+            pipe.set(key, payload)
+        else:
+            pipe.set(key, payload, ex=ttl)
+        if access.subject:
+            sub = _subject_key(access.subject)
+            idx = self._subject_index_key(sub)
+            pipe.sadd(idx, f"at:{access.token}")
+            pipe.expire(idx, self._client_ttl_seconds)
+
+    def _pipe_put_refresh(self, pipe: object, refresh: RefreshToken) -> None:
+        if refresh.expires_at is None:
+            ttl = self._refresh_ttl_seconds
+        else:
+            ttl = int(refresh.expires_at - time.time())
+            ttl = ttl if ttl > 0 else 1
+        key = self._refresh_key(refresh.token)
+        pipe.set(key, refresh.model_dump_json(), ex=ttl)
+        if refresh.subject:
+            sub = _subject_key(refresh.subject)
+            idx = self._subject_index_key(sub)
+            pipe.sadd(idx, f"rt:{refresh.token}")
+            pipe.expire(idx, self._client_ttl_seconds)
+
+    def _pipe_delete_refresh(self, pipe: object, token: str, subject: str | None) -> None:
+        pipe.delete(self._refresh_key(token))
+        if subject:
+            pipe.srem(self._subject_index_key(_subject_key(subject)), f"rt:{token}")
+
+    async def commit_token_pair(
+        self,
+        *,
+        subject: str,
+        consumed_iat: int | None,
+        access: AccessToken,
+        refresh: RefreshToken,
+        replace_refresh_token: str | None = None,
+    ) -> None:
+        sub = _subject_key(subject)
+        nbf_key = self._subject_nbf_key(sub)
+        old_refresh_subject = subject if replace_refresh_token else None
+
+        for _attempt in range(_COMMIT_MAX_WATCH_RETRIES):
+            async with self._redis.pipeline() as pipe:
+                await pipe.watch(nbf_key)
+                nbf_raw = await self._redis.get(nbf_key)
+                nbf = int(nbf_raw) if nbf_raw is not None else None
+                if nbf is not None and (consumed_iat is None or consumed_iat <= nbf):
+                    await pipe.unwatch()
+                    if replace_refresh_token is not None:
+                        await self.delete_refresh_token(replace_refresh_token)
+                    raise CredentialRevokedError()
+                pipe.multi()
+                self._pipe_put_access(pipe, access)
+                self._pipe_put_refresh(pipe, refresh)
+                if replace_refresh_token is not None:
+                    self._pipe_delete_refresh(pipe, replace_refresh_token, old_refresh_subject)
+                try:
+                    await pipe.execute()
+                    return
+                except WatchError:
+                    continue
+        if replace_refresh_token is not None:
+            await self.delete_refresh_token(replace_refresh_token)
+        raise CredentialRevokedError()
 
     async def subject_not_before(self, subject: str) -> int | None:
         return await self._subject_nbf(_subject_key(subject))
