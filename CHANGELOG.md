@@ -19,6 +19,9 @@ this project uses [Semantic Versioning](https://semver.org/).
 - Signed identity assertion for upstreams: registry `auth.identity_secret_env`;
   header `X-Keystone-Identity` (JWT HS256, audience = registry entry name)
   with subject, roles used by RBAC, auth method, OAuth client and task id.
+- ES256 identity assertions (`auth.identity_alg: ES256`,
+  `KEYSTONE_MCP_IDENTITY_SIGNING_KEY`) with the public key at
+  `/.well-known/keystone-identity-jwks.json`.
 - Reference verifiers for `X-Keystone-Identity` (Python, TypeScript) in
   `examples/keystone-identity/`; the demo upstream (`hello-upstream`) verifies
   the assertion and rejects forged headers once `HELLO_IDENTITY_SECRET` is set.

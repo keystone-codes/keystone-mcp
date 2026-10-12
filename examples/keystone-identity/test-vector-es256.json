@@ -1,0 +1,27 @@
+{
+  "_comment": "Fixed ES256 X-Keystone-Identity assertion for reference verifiers; expired by design.",
+  "audience": "hello",
+  "issuer": "http://localhost:8080",
+  "kid": "-qn2Lrjkz9irbI5rft_XNCtt_5gGTKtzmhEGzVokNWA",
+  "now": 1767225600,
+  "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6Ii1xbjJMcmprejlpcmJJNXJmdF9YTkN0dF81Z0dUS3R6bWhFR3pWb2tOV0EiLCJ0eXAiOiJrZXlzdG9uZS1pZGVudGl0eStqd3QifQ.eyJpc3MiOiJodHRwOi8vbG9jYWxob3N0OjgwODAiLCJhdWQiOiJoZWxsbyIsInN1YiI6ImFubkBleGFtcGxlLmNvbSIsInN1Yl90eXBlIjoiaHVtYW4iLCJyb2xlcyI6WyJtZW1iZXIiXSwicmJhYyI6ImVuZm9yY2UiLCJhdXRoX21ldGhvZCI6Imdvb2dsZSIsImludGVyYWN0aXZlIjp0cnVlLCJ0YXNrX2lkIjoidF92ZWN0b3JfZXMyNTYiLCJtY3BfbWV0aG9kIjoidG9vbHMvY2FsbCIsIm1jcF90YXJnZXQiOiJ3aG9hbWkiLCJpYXQiOjE3NjcyMjU2MDAsImV4cCI6MTc2NzIyNTg0MCwianRpIjoidmVjdG9yLWVzMjU2LWZpeGVkLWp0aS0wMDAxIiwiZW1haWwiOiJhbm5AZXhhbXBsZS5jb20ifQ.a6D_ew3iHQN5VqAzGVRVwGiBCQtlp4K8pSUr2JDD5N3ILbrgrqJq3l5fsEms4ME_LE_-V7W5VEuL0Q2bOcUUjQ",
+  "claims": {
+    "iss": "http://localhost:8080",
+    "aud": "hello",
+    "sub": "ann@example.com",
+    "sub_type": "human",
+    "roles": [
+      "member"
+    ],
+    "rbac": "enforce",
+    "auth_method": "google",
+    "interactive": true,
+    "task_id": "t_vector_es256",
+    "mcp_method": "tools/call",
+    "mcp_target": "whoami",
+    "iat": 1767225600,
+    "exp": 1767225840,
+    "jti": "vector-es256-fixed-jti-0001",
+    "email": "ann@example.com"
+  }
+}

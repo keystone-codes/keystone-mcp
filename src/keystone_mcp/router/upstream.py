@@ -21,7 +21,12 @@ from fastmcp.client.transports import StreamableHttpTransport
 
 from keystone_mcp.adapters.base import Pattern
 from keystone_mcp.adapters.mcp_proxy import HttpClientFactoryBuilder, McpProxyAdapter
-from keystone_mcp.identity_assertion import IdentityAssertionSigner, resolve_identity_secret
+from keystone_mcp.identity_assertion import (
+    IdentityAssertionSigner,
+    ec_public_key_jwk_thumbprint,
+    load_ec_p256_private_key,
+    resolve_identity_secret,
+)
 from keystone_mcp.rbac.upstream_state import UpstreamCatalogState
 from keystone_mcp.router.catalog_fingerprint import tool_fingerprint
 from keystone_mcp.router.proxy_schema import PatchTable, apply_proxy_schema_patches
@@ -316,6 +321,10 @@ class UpstreamRegistry:
     # registered here (Y01) -- set by ``build_server`` from
     # ``settings.base_url`` (already stripped of a trailing slash).
     identity_issuer: str = ""
+    # Deployment-wide ES256 signing key (Y11); never logged or repr'd.
+    _identity_signing_key_pem: str = field(default="", repr=False)
+    _identity_es256_private_key: Any = field(default=None, repr=False)
+    _identity_es256_kid: str | None = field(default=None, repr=False)
     _upstreams: list[UpstreamConfig] = field(default_factory=list)
     _sub_servers: dict[str, FastMCP] = field(default_factory=dict)
     _adapters: dict[str, McpProxyAdapter] = field(default_factory=dict)
@@ -333,6 +342,14 @@ class UpstreamRegistry:
     # verified" rather than refusing the policy as a typo.
     _unpublishable: dict[str, set[str]] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        pem = self._identity_signing_key_pem.strip()
+        if not pem:
+            return
+        private_key = load_ec_p256_private_key(pem)
+        self._identity_es256_private_key = private_key
+        self._identity_es256_kid = ec_public_key_jwk_thumbprint(private_key.public_key())
+
     def add_upstream(
         self,
         name: str,
@@ -347,6 +364,7 @@ class UpstreamRegistry:
         tool_timeout_seconds: float | None = None,
         bearer_env: str | None = None,
         identity_secret_env: str | None = None,
+        identity_alg: Literal["ES256"] | None = None,
     ) -> UpstreamConfig:
         """Register an upstream MCP API and mount its namespace sub-server.
 
@@ -389,7 +407,21 @@ class UpstreamRegistry:
                 )
 
         identity_signer: IdentityAssertionSigner | None = None
-        if identity_secret_env is not None:
+        if identity_alg == "ES256":
+            private_key = self._identity_es256_private_key
+            kid = self._identity_es256_kid
+            if private_key is None or kid is None:
+                raise ValueError(
+                    f"upstream {name!r}: auth.identity_alg ES256 needs "
+                    "KEYSTONE_MCP_IDENTITY_SIGNING_KEY"
+                )
+            identity_signer = IdentityAssertionSigner(
+                audience=name,
+                issuer=self.identity_issuer,
+                private_key=private_key,
+                kid=kid,
+            )
+        elif identity_secret_env is not None:
             secret = resolve_identity_secret(name, identity_secret_env)
             identity_signer = IdentityAssertionSigner(
                 audience=name,

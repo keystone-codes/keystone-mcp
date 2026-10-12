@@ -231,6 +231,24 @@ Keystone-MCP with the new `auth.identity_secret_env` value, then drop the old
 secret from your service once you are sure no in-flight call still carries
 an assertion signed with it (within `exp`'s margin of the restart).
 
+### ES256 (many upstreams, no shared secret)
+
+When many services need to verify who is calling and must not hold a signing
+secret, set `KEYSTONE_MCP_IDENTITY_SIGNING_KEY` on Keystone-MCP (one EC P-256
+PEM per deployment) and mark the registry entry with `auth.identity_alg: ES256`
+instead of `auth.identity_secret_env`. Keystone-MCP signs `ES256`; upstreams
+fetch the public key from
+`{KEYSTONE_MCP_BASE_URL}/.well-known/keystone-identity-jwks.json` (same Host
+allowlist as every other route — use a host from `KEYSTONE_MCP_BASE_URL` or
+`KEYSTONE_MCP_ALLOWED_HOSTS`, not an arbitrary IP, or Host/Origin guard
+returns 421). Claim shape and header `typ` are unchanged; only the algorithm
+and verification path differ. HS256 with a per-upstream secret remains the
+simple choice for one or two services. Rotation: replace
+`KEYSTONE_MCP_IDENTITY_SIGNING_KEY` and restart; assertions expire within
+minutes. Reference verifiers accept `jwks_url` / `jwksUrl` with
+`algorithms: ["ES256"]`; see
+[`test-vector-es256.json`](../examples/keystone-identity/test-vector-es256.json).
+
 ## Long-running tools
 
 A tool that takes a while can report progress while it runs: send
