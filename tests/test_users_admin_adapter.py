@@ -1,4 +1,4 @@
-"""users_* builtin admin tools — S2S proxy to mcp-users with actor from identity."""
+"""users_* builtin admin tools — service-to-service proxy to the HTTP users directory."""
 
 from __future__ import annotations
 
@@ -45,7 +45,7 @@ def _settings(tmp_path: Path | None = None) -> Settings:
     base = {
         "base_url": "http://localhost:8080",
         "users_backend": "http",
-        "users_service_url": "http://mcp-users:8080",
+        "users_service_url": "http://users-directory.internal.example:8080",
         "users_service_token": "service-secret",
     }
     if tmp_path is None:
@@ -69,11 +69,11 @@ def _registry(adapter: UsersAdminAdapter | None = None) -> tuple[RouterEngine, R
 def _http_directory(handler) -> HttpUserDirectory:
     client = httpx.AsyncClient(
         transport=httpx.MockTransport(handler),
-        base_url="http://mcp-users:8080",
+        base_url="http://users-directory.internal.example:8080",
         headers={"Authorization": "Bearer service-secret"},
     )
     return HttpUserDirectory(
-        base_url="http://mcp-users:8080",
+        base_url="http://users-directory.internal.example:8080",
         service_token="service-secret",
         timeout_seconds=5.0,
         client=client,
@@ -377,7 +377,7 @@ async def test_rbac_denies_users_tools_for_non_administrator(tmp_path):
         base_url="http://localhost:8080",
         rbac_mode="enforce",
         rbac_policy_path=str(policy),
-        users_service_url="http://mcp-users:8080",
+        users_service_url="http://users-directory.internal.example:8080",
         users_service_token="token",
     )
     resolver, backend, _ = build_in_memory_user_directory_resolver()
@@ -432,7 +432,7 @@ async def test_service_unconfigured_without_token():
     settings = Settings(
         base_url="http://localhost:8080",
         users_backend="http",
-        users_service_url="http://mcp-users:8080",
+        users_service_url="http://users-directory.internal.example:8080",
         users_service_token="",
     )
     engine = RouterEngine(settings)
@@ -455,7 +455,7 @@ async def test_service_timeout_returns_safe_error():
             return None
 
     directory = HttpUserDirectory(
-        base_url="http://mcp-users:8080",
+        base_url="http://users-directory.internal.example:8080",
         service_token="service-secret",
         timeout_seconds=5.0,
         client=_TimeoutClient(),
@@ -480,7 +480,7 @@ async def test_service_unavailable_returns_safe_error():
             return None
 
     directory = HttpUserDirectory(
-        base_url="http://mcp-users:8080",
+        base_url="http://users-directory.internal.example:8080",
         service_token="service-secret",
         timeout_seconds=5.0,
         client=_BrokenClient(),

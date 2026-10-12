@@ -1,4 +1,4 @@
-"""``HttpUserDirectory`` against the fake mcp-users HTTP contract (X06).
+"""``HttpUserDirectory`` against the fake HTTP users directory contract (X06).
 
 Every operation is checked against :class:`LocalUserDirectory` acting on an
 identical, separately-seeded store: both directories must agree on the

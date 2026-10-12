@@ -32,7 +32,7 @@ def _ctx(task_id: str = "t_test") -> RouteContext:
         task_id=task_id,
         canonical_args="{}",
         tool_name="reports_query_totals",
-        pattern=Pattern.M_B,
+        pattern=Pattern.SYNC,
         settings=Settings(base_url="http://localhost:8080"),
     )
 
@@ -140,7 +140,7 @@ async def test_mcp_proxy_maps_accepted_as_pending():
     downstream = FastMCP("catalog-downstream")
 
     @downstream.tool()
-    def catalog_advance(run_id: str) -> dict:
+    def reports_build(run_id: str) -> dict:
         return {
             "status": "accepted",
             "run_id": run_id,
@@ -154,9 +154,9 @@ async def test_mcp_proxy_maps_accepted_as_pending():
     adapter = McpProxyAdapter("http://unused", status_envelope=True)
     adapter._client_factory = lambda **_kw: Client(downstream)  # type: ignore[assignment]
     route = Route(
-        name="catalog_advance",
+        name="reports_build",
         target=adapter,
-        upstream_tool="catalog_advance",
+        upstream_tool="reports_build",
         namespace="catalog",
         mode="live",
     )
@@ -171,18 +171,18 @@ def test_mcp_proxy_per_tool_timeout_override():
         "http://unused",
         tool_timeout_seconds=180,
         tool_timeout_overrides={
-            "catalog_advance": 30,
-            "catalog_record_decision": 30,
+            "reports_build": 30,
+            "reports_publish": 30,
         },
     )
-    assert adapter._timeout_for("catalog_advance") == 30
-    assert adapter._timeout_for("catalog_record_decision") == 30
+    assert adapter._timeout_for("reports_build") == 30
+    assert adapter._timeout_for("reports_publish") == 30
     assert adapter._timeout_for("catalog_status") == 180
 
 
 def test_mcp_proxy_falls_back_to_default_timeout_without_overrides():
     adapter = McpProxyAdapter("http://unused", tool_timeout_seconds=180)
-    assert adapter._timeout_for("catalog_advance") == 180
+    assert adapter._timeout_for("reports_build") == 180
 
 
 def test_mcp_proxy_http_client_disables_redirects():
@@ -200,7 +200,7 @@ def test_configured_tool_timeouts_reach_the_proxy_adapter(monkeypatch):
     from keystone_mcp.router.registry import RouterRegistry
     from keystone_mcp.router.upstream import UpstreamRegistry
 
-    monkeypatch.setenv("KEYSTONE_MCP_UPSTREAM_TOOL_TIMEOUTS", '{"catalog_advance": 25}')
+    monkeypatch.setenv("KEYSTONE_MCP_UPSTREAM_TOOL_TIMEOUTS", '{"reports_build": 25}')
     monkeypatch.setenv("KEYSTONE_MCP_UPSTREAM_TOOL_TIMEOUT_SECONDS", "180")
     settings = Settings(base_url="http://localhost:8080")
 
@@ -215,7 +215,7 @@ def test_configured_tool_timeouts_reach_the_proxy_adapter(monkeypatch):
     upstreams.add_upstream("catalog-mcp", "http://unused", namespace="catalog")
 
     adapter = upstreams._adapters["catalog"]
-    assert adapter._timeout_for("catalog_advance") == 25
+    assert adapter._timeout_for("reports_build") == 25
     assert adapter._timeout_for("catalog_status") == 180
 
 

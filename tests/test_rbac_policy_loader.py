@@ -110,9 +110,9 @@ def _make_registry_with_tools(
     registry = RouterRegistry(engine, mcp)
     adapter = _StubAdapter()
     for name in sorted(tool_names):
-        registry.add_route(name, adapter, pattern=Pattern.M_B, mode="live")
+        registry.add_route(name, adapter, pattern=Pattern.SYNC, mode="live")
     for name in sorted(stub_names):
-        registry.add_route(name, adapter, pattern=Pattern.M_B, mode="stub")
+        registry.add_route(name, adapter, pattern=Pattern.SYNC, mode="stub")
     return registry
 
 
@@ -913,7 +913,7 @@ async def test_bootstrap_platform_loads_policy_after_upstream_discovery(
     async def fake_discover_all() -> dict[str, int]:
         adapter = _StubAdapter()
         for tool in sorted(LIVE_TOOLS):
-            registry.add_route(tool, adapter, pattern=Pattern.M_B, mode="live")
+            registry.add_route(tool, adapter, pattern=Pattern.SYNC, mode="live")
         return {"fixture": len(LIVE_TOOLS)}
 
     monkeypatch.setattr(upstreams, "discover_all", fake_discover_all)
@@ -957,7 +957,7 @@ async def _register_fixed_tools(upstreams, registry, cfg, names: tuple[str, ...]
         registry.add_route(
             name,
             adapter,
-            pattern=Pattern.M_B,
+            pattern=Pattern.SYNC,
             mode="live",
             namespace=cfg.namespace,
             config_mode="PROXY",

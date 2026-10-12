@@ -95,6 +95,7 @@ this project uses [Semantic Versioning](https://semver.org/).
 - `requires_human_identity` accepts any interactive sign-in provider, not
   only Google. Access tokens carry an `interactive` claim.
 - Login page error texts are provider-neutral.
+- `Pattern` members renamed: `M_B` → `SYNC`, `M_E` → `CONTINUATION`; `M_D` and `M_U` removed with the file tools. The built-in answer format is called the status envelope throughout the code and docs.
 
 ### Deprecated
 
@@ -145,6 +146,7 @@ this project uses [Semantic Versioning](https://semver.org/).
 
 ### Migration
 
+- Forks that pass `pattern=Pattern.M_B` (and the others) to `add_route`: use the new member names.
 - Google users: nothing to do now; when convenient, move the Google settings into
   a login providers file (`type: google`). The Google redirect URI stays
   `<base>/login/google/callback`.

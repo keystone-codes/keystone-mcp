@@ -1,4 +1,4 @@
-"""Fake mcp-users HTTP service, for testing :class:`HttpUserDirectory` (X06).
+"""Fake HTTP users directory service, for testing :class:`HttpUserDirectory` (X06).
 
 Implements the external directory's HTTP contract (see
 ``docs/user-directory.md``, "The HTTP directory contract") as a small
