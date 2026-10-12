@@ -53,6 +53,7 @@ this project uses [Semantic Versioning](https://semver.org/).
 - A read-only directory publishes only `users_list`.
 - Developers: release workflow builds and checks the wheel and sdist and
   refuses a version already on PyPI.
+- CI guards against test reruns and forced test ordering.
 
 ### Deprecated
 
