@@ -9,6 +9,7 @@ the timeout/connection-error mapping get their own tests.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +28,17 @@ from support.users_store import make_users_store
 
 TOKEN = "test-service-token"
 ACTOR = "admin@example.com"
+
+
+def _directory_with_handler(handler) -> HttpUserDirectory:
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler),
+        base_url="http://fake-users.test",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+    )
+    return HttpUserDirectory(
+        base_url="http://fake-users.test", service_token=TOKEN, timeout_seconds=1.0, client=client
+    )
 
 
 async def _make_http_directory(tmp_path: Path, name: str) -> HttpUserDirectory:
@@ -276,4 +288,127 @@ async def test_connection_error_is_service_unavailable() -> None:
     with pytest.raises(UsersStoreUnavailableError) as exc_info:
         await directory.list_users()
     assert exc_info.value.code == "service_unavailable"
+    await directory.aclose()
+
+
+# ── Malformed response bodies: must become UsersError, not a bare parsing
+# exception, so UsersAdminAdapter's error envelope (and audit write) still
+# fires even though the service already applied the mutation. ──────────────
+
+
+@pytest.mark.asyncio
+async def test_empty_success_body_is_service_error() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"")
+
+    directory = _directory_with_handler(handler)
+    with pytest.raises(UsersError) as exc_info:
+        await directory.create_user(
+            email="new@example.com", full_name="New", roles=[], note=None, actor=ACTOR
+        )
+    assert exc_info.value.code == "service_error"
+    await directory.aclose()
+
+
+@pytest.mark.asyncio
+async def test_non_json_success_body_is_service_error() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"not json", headers={"content-type": "text/plain"})
+
+    directory = _directory_with_handler(handler)
+    with pytest.raises(UsersError) as exc_info:
+        await directory.create_user(
+            email="new@example.com", full_name="New", roles=[], note=None, actor=ACTOR
+        )
+    assert exc_info.value.code == "service_error"
+    await directory.aclose()
+
+
+@pytest.mark.asyncio
+async def test_record_missing_created_at_is_service_error() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "email": "new@example.com",
+                "full_name": "New",
+                "roles": [],
+                "is_blocked": False,
+                # "created_at" missing entirely.
+                "updated_at": "2026-01-01T00:00:00Z",
+                "created_by": ACTOR,
+                "note": None,
+            },
+        )
+
+    directory = _directory_with_handler(handler)
+    with pytest.raises(UsersError) as exc_info:
+        await directory.create_user(
+            email="new@example.com", full_name="New", roles=[], note=None, actor=ACTOR
+        )
+    assert exc_info.value.code == "service_error"
+    await directory.aclose()
+
+
+@pytest.mark.asyncio
+async def test_malformed_list_body_is_service_error() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"not json")
+
+    directory = _directory_with_handler(handler)
+    with pytest.raises(UsersError) as exc_info:
+        await directory.list_users()
+    assert exc_info.value.code == "service_error"
+    await directory.aclose()
+
+
+@pytest.mark.asyncio
+async def test_naive_timestamp_is_anchored_to_utc_not_host_timezone() -> None:
+    """A service that omits the UTC offset must not have its wall-clock time
+
+    shifted by the host's own local timezone: ``to_dict()`` calls
+    ``astimezone(UTC)``, which is a no-op once the naive value is already
+    tagged ``UTC`` here, but would otherwise silently shift it.
+    """
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "email": "new@example.com",
+                "full_name": "New",
+                "roles": [],
+                "is_blocked": False,
+                "created_at": "2026-01-01T12:00:00",  # no offset
+                "updated_at": "2026-01-01T12:00:00",
+                "created_by": ACTOR,
+                "note": None,
+            },
+        )
+
+    directory = _directory_with_handler(handler)
+    result = await directory.create_user(
+        email="new@example.com", full_name="New", roles=[], note=None, actor=ACTOR
+    )
+    assert result.user.created_at == datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
+    assert result.user.to_dict()["created_at"] == "2026-01-01T12:00:00Z"
+    await directory.aclose()
+
+
+@pytest.mark.asyncio
+async def test_list_users_is_blocked_none_requests_all() -> None:
+    """``is_blocked=None`` means "no filter" on the local directory's own
+
+    store; the HTTP directory used to silently turn it into ``False``
+    (blocked users dropped) instead of passing "all" through.
+    """
+    captured: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["params"] = dict(request.url.params)
+        return httpx.Response(200, json={"users": [], "total": 0})
+
+    directory = _directory_with_handler(handler)
+    await directory.list_users(is_blocked=None)
+    assert "is_blocked" not in captured["params"]
     await directory.aclose()
