@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-pytest_plugins = ["keystone_mcp.contract_tests", "pytester"]
-
 import pytest
+
+pytest_plugins = ["keystone_mcp.contract_tests", "pytester"]
 
 
 def test_broken_directory_fails_resolve_contract(pytester: pytest.Pytester) -> None:

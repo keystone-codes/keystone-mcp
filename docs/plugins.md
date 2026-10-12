@@ -110,12 +110,14 @@ the shared `CONTRACT_DATASET` (Alice, Bob, Carol).
 ```python
 from keystone_mcp.contract_tests import UserDirectoryContract
 
+
 class TestMyDirectory(UserDirectoryContract):
     @pytest.fixture
     def keystone_directory_factory(self):
         async def factory():
             directory = await build_my_directory()
             return directory
+
         return factory
 ```
 
