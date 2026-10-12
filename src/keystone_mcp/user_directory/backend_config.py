@@ -28,15 +28,11 @@ def load_users_backend_config(path: str) -> dict[str, Any]:
     """Parse ``KEYSTONE_MCP_USERS_BACKEND_CONFIG`` as a YAML mapping."""
     file_path = Path(path.strip())
     if not file_path.is_file():
-        raise ConfigError(
-            f"KEYSTONE_MCP_USERS_BACKEND_CONFIG: file not found: {path}"
-        )
+        raise ConfigError(f"KEYSTONE_MCP_USERS_BACKEND_CONFIG: file not found: {path}")
     try:
         raw_text = file_path.read_text(encoding="utf-8")
     except OSError as exc:
-        raise ConfigError(
-            f"KEYSTONE_MCP_USERS_BACKEND_CONFIG: cannot read file: {path}"
-        ) from exc
+        raise ConfigError(f"KEYSTONE_MCP_USERS_BACKEND_CONFIG: cannot read file: {path}") from exc
     try:
         document = yaml.safe_load(raw_text)
     except yaml.YAMLError as exc:

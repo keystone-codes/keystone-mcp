@@ -61,9 +61,7 @@ class PluginContext:
         """Return an environment variable value or raise :class:`ConfigError`."""
         value = os.environ.get(env_name, "").strip()
         if not value:
-            raise ConfigError(
-                f"environment variable {env_name!r} is missing or empty"
-            )
+            raise ConfigError(f"environment variable {env_name!r} is missing or empty")
         return value
 
 
@@ -76,15 +74,11 @@ class LoginProviderConfig:
 
 
 class LoginProviderFactory(Protocol):
-    def __call__(
-        self, config: LoginProviderConfig, context: PluginContext
-    ) -> LoginProvider: ...
+    def __call__(self, config: LoginProviderConfig, context: PluginContext) -> LoginProvider: ...
 
 
 class UserDirectoryFactory(Protocol):
-    def __call__(
-        self, context: PluginContext, options: Mapping[str, Any]
-    ) -> UserDirectory: ...
+    def __call__(self, context: PluginContext, options: Mapping[str, Any]) -> UserDirectory: ...
 
 
 def keystone_distribution() -> str:
@@ -196,8 +190,7 @@ def load_factory(group: str, name: str) -> object:
         return ep.load()
     except ImportError as exc:
         raise ConfigError(
-            f"{group} '{name}' from {dist} failed to import: "
-            f"{type(exc).__name__}: {exc}"
+            f"{group} '{name}' from {dist} failed to import: {type(exc).__name__}: {exc}"
         ) from exc
 
 

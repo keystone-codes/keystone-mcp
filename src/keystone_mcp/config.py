@@ -244,9 +244,7 @@ def _parse_users_backend(
 ) -> UsersBackend:
     value = raw.strip().lower()
     if not _USERS_BACKEND_NAME_RE.fullmatch(value):
-        raise ConfigError(
-            f"{field_name} must match ^[a-z][a-z0-9_-]{{0,31}}$; got {raw!r}"
-        )
+        raise ConfigError(f"{field_name} must match ^[a-z][a-z0-9_-]{{0,31}}$; got {raw!r}")
     return value
 
 

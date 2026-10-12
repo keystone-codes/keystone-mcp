@@ -142,9 +142,7 @@ def test_wheel_without_entry_points_fails(tmp_path: Path) -> None:
     wheel_path = _write_wheel(dist_dir)
     with zipfile.ZipFile(wheel_path, "a") as archive:
         to_remove = [
-            name
-            for name in archive.namelist()
-            if name.endswith(".dist-info/entry_points.txt")
+            name for name in archive.namelist() if name.endswith(".dist-info/entry_points.txt")
         ]
         for name in to_remove:
             pass
