@@ -29,9 +29,33 @@ jobs:
     needs: version-gate
     uses: ./.github/workflows/test-gate.yml
 
+  image-scan:
+    name: Image scan
+    needs: version-gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Build image
+        run: docker build -t keystone-mcp:scan .
+
+      # Same action, pin and parameters as .github/workflows/security.yml's
+      # image-scan job (see the comment there) — the release path must not be
+      # able to publish an image the PR gate would have rejected. A fixable
+      # CRITICAL or HIGH finding fails this job and blocks `publish` below.
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: keystone-mcp:scan
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          format: table
+          exit-code: "1"
+          trivyignores: .trivyignore
+
   publish:
     name: Build and publish image
-    needs: [version-gate, test]
+    needs: [version-gate, test, image-scan]
     runs-on: ubuntu-latest
     permissions:
       contents: read

@@ -26,7 +26,6 @@ jobs:
   image-scan:
     name: Image scan
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
@@ -39,6 +38,11 @@ jobs:
       # own SHA, a different git object from the commit it annotates;
       # dereference it with `git/tags/<tag-object-sha>` -> object.sha to get
       # the commit SHA pinned here).
+      #
+      # This scan blocks: a fixable CRITICAL or HIGH finding fails the job,
+      # which fails the pull request and (via release.yml) the release.
+      # Temporary exceptions go in .trivyignore with a reason and a review
+      # date (see tests/test_trivyignore.py).
       - name: Scan image with Trivy
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
@@ -47,3 +51,4 @@ jobs:
           ignore-unfixed: true
           format: table
           exit-code: "1"
+          trivyignores: .trivyignore
