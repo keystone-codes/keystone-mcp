@@ -123,20 +123,35 @@ more private-network service.
 
 ## What a service behind Keystone-MCP receives
 
-Every proxied call carries `X-Author-Email` — the verified email of the
-signed-in person, lower-cased. It carries no roles: RBAC is decided on
-Keystone-MCP before the call is forwarded, not re-checked by the upstream.
-By itself, that header only proves a sender knows the right string; an
-upstream should trust it only on a network Keystone-MCP alone controls. An
-upstream registry entry can additionally set `auth.bearer_env` to a variable
-holding a token; Keystone-MCP then sends `Authorization: Bearer <value>` on
-every discovery and proxied call to that entry, so the upstream can check
-that header *first*, before trusting `X-Author-Email` at all — see
-[Connecting services](connecting-services.md#authenticating-keystone-mcp-to-your-service).
-Without `auth.bearer_env` configured, network isolation is the only control:
-plan the upstream's address with `KEYSTONE_MCP_UPSTREAM_ALLOW_INSECURE_HTTP`
-and `KEYSTONE_MCP_UPSTREAM_EGRESS_ALLOW_PRIVATE` in mind (below). The proxy
-itself never follows a redirect an upstream sends back.
+A proxied call can carry up to three headers, each proving something
+different; an upstream should check them in this order, trusting a weaker one
+only once the stronger ones configured for it have passed.
+
+1. **`Authorization: Bearer <value>`** — proves the call came from Keystone-MCP
+   itself. Set only when the registry entry's `auth.bearer_env` names an
+   environment variable holding a token; Keystone-MCP then sends it on every
+   discovery and proxied call to that entry — see
+   [Connecting services](connecting-services.md#authenticating-keystone-mcp-to-your-service).
+   Without it, network isolation is the only control: plan the upstream's
+   address with `KEYSTONE_MCP_UPSTREAM_ALLOW_INSECURE_HTTP` and
+   `KEYSTONE_MCP_UPSTREAM_EGRESS_ALLOW_PRIVATE` in mind (below).
+2. **`X-Keystone-Identity`** — proves *who is behind* the call Keystone-MCP
+   just authenticated: a signed (`HS256`, per-upstream secret) JWT carrying
+   the subject, the roles RBAC used, the auth method, the OAuth client and
+   the tool called. Set only when the registry entry's
+   `auth.identity_secret_env` names the signing secret; see
+   [Connecting services](connecting-services.md#who-is-calling-x-keystone-identity)
+   for the field list and how to verify it.
+3. **`X-Author-Email`** — the verified email of the signed-in person,
+   lower-cased, always sent. Unsigned: by itself it only proves a sender
+   knows the right string, so an upstream should trust it only on a network
+   Keystone-MCP alone controls, and only after checking the two headers
+   above when they are configured. It carries no roles: RBAC is decided on
+   Keystone-MCP before the call is forwarded, not re-checked by the
+   upstream. **Deprecated since 0.5.0** (kept until the next major version)
+   — prefer `X-Keystone-Identity`.
+
+The proxy itself never follows a redirect an upstream sends back.
 
 ## RBAC modes
 
