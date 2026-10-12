@@ -45,6 +45,7 @@ from keystone_mcp.http.access_log import AccessLogMiddleware
 from keystone_mcp.http.host_guard import HostGuardMiddleware
 from keystone_mcp.http.readiness import ReadinessProbe
 from keystone_mcp.login.factory import (
+    api_key_login_configured,
     build_login_providers,
     login_providers_want_directory_resolver,
     validate_login_providers,
@@ -296,7 +297,7 @@ def build_server(
         validate_login_providers(login_providers)
 
     if (
-        settings.api_key_login_enabled
+        api_key_login_configured(settings)
         and directory is not None
         and "api_keys" not in directory.capabilities
     ):

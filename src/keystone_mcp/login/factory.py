@@ -157,6 +157,26 @@ def file_has_interactive_providers(settings: Settings) -> bool:
     return any(entry.type in ("oidc", "google") for entry in entries)
 
 
+def file_has_api_key_provider(settings: Settings) -> bool:
+    """True when the providers file lists api_key sign-in."""
+    path = settings.login_providers_path.strip()
+    if not path:
+        return False
+    entries = load_login_providers_file(
+        path,
+        deployment_profile=settings.deployment_profile,
+        environ=os.environ,
+    )
+    return any(entry.type == "api_key" for entry in entries)
+
+
+def api_key_login_configured(settings: Settings) -> bool:
+    """Whether api_key sign-in is configured (providers file or legacy env)."""
+    if settings.login_providers_path.strip():
+        return file_has_api_key_provider(settings)
+    return settings.api_key_login_enabled
+
+
 def validate_login_providers(providers: Sequence[LoginProvider]) -> None:
     """Check the configured provider set for the invariants Keystone relies on."""
     seen: set[str] = set()
