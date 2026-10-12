@@ -6,8 +6,8 @@ built this way?*
 
 ## When to add a record
 
-Write a new ADR when a change would update `docs/compatibility.md` (once that
-file exists) or otherwise alters a frozen contract: environment variables,
+Write a new ADR when a change would update [docs/compatibility.md](../compatibility.md)
+or otherwise alters a frozen contract: environment variables,
 policy keys, HTTP headers, tool names, registry fields, or behaviour operators
 depend on.
 

@@ -1,5 +1,7 @@
 # Environment variables
 
+Every variable here is a public contract; see [compatibility.md](compatibility.md).
+
 Every setting is one `KEYSTONE_MCP_*` environment variable with a documented
 default (`src/keystone_mcp/config.py`). Copy [`.env.example`](../.env.example)
 to `.env` and fill in the secrets. Do not commit `.env`.

@@ -4,10 +4,13 @@ All notable changes to this project are documented in this file. The format
 is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project uses [Semantic Versioning](https://semver.org/).
 
+Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatibility.md).
+
 ## [Unreleased]
 
 ### Added
 
+- `docs/compatibility.md`: public contracts frozen since 0.5.0, what counts as a breaking change, deprecation rule, supported versions.
 - Upstream resources and resource templates are published (URIs get the namespace, `scheme://<namespace>/...`) and authorized by `<namespace>_<name>` with the same allow patterns as tools.
 - Contract tests for sign-in providers and users directories (`pytest -p keystone_mcp.contract_tests`, extra `contract-tests`) and a plugin template in `examples/plugin-template`.
 - HTTP upstream elicitation forwarding (`KEYSTONE_MCP_PROXY_ELICITATION`, default
