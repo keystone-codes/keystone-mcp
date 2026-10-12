@@ -23,7 +23,7 @@ from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import Settings
 from keystone_mcp.server import bootstrap_platform, build_server
 from keystone_mcp.user_directory.factory import build_in_memory_user_directory_resolver
-from support.fake_login import FakeRedirectProvider
+from support.fake_login import FakeFormProvider, FakeRedirectProvider
 from support.google_oidc_fixtures import build_mock_google_oidc
 
 pytestmark = pytest.mark.asyncio
@@ -166,6 +166,12 @@ async def test_callback_for_other_provider_is_refused():
             # (state is single-use), so completing it under "acme" now also
             # fails rather than silently succeeding under the wrong name.
             assert len(other.complete_calls) == 0
+            retry = await client.get(
+                "/login/acme/callback",
+                params={"state": state, "code": "x", "email": "alice@example.com"},
+            )
+            assert retry.status_code == 400
+            assert len(acme.complete_calls) == 0
 
 
 async def test_unexpected_provider_error_is_identity_page(caplog):
@@ -275,3 +281,188 @@ async def test_consent_page_html_unchanged_for_builtin_providers():
     assert 'action="/login"' in page.text
     assert 'name="api_token"' in page.text
     assert 'name="email"' in page.text
+
+
+# ── a provider must not be able to claim another provider's identity ───────
+#
+# auth_method (the issued token's claim, and the value RBAC's interactive-
+# human gate checks against "google") must come from *which route the
+# sign-in came back on*, never from the provider's own self-reported
+# LoginIdentity.provider -- otherwise a third-party redirect or form
+# provider, configured under any name, could report provider="google" and
+# pick up the interactive-human trust that name carries.
+
+
+async def test_redirect_provider_claiming_another_name_is_refused(caplog):
+    resolver, backend, _revision = build_in_memory_user_directory_resolver()
+    backend.seed("alice@example.com", roles=("operator",))
+    provider = FakeRedirectProvider("acme", reported_provider="google")
+    app, settings, _oauth = _build_app([provider], user_resolver=resolver)
+
+    async with LifespanManager(app):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url=BASE_URL
+        ) as client:
+            client_id = await register_client(client)
+            _verifier, challenge = make_pkce()
+            txn = await authorize_to_login(client, client_id, challenge, settings.resource_url)
+
+            redirect_response = await _start_redirect(client, txn, "acme")
+            state = parse_qs(urlparse(redirect_response.headers["location"]).query)["state"][0]
+
+            with caplog.at_level(
+                logging.WARNING, logger="keystone_mcp.auth.keystone_oauth_provider"
+            ):
+                response = await client.get(
+                    "/login/acme/callback",
+                    params={"state": state, "code": "x", "email": "alice@example.com"},
+                )
+
+    assert response.status_code == 400
+    assert any(
+        "acme" in record.getMessage() and "google" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+async def test_form_provider_claiming_another_name_is_refused():
+    provider = FakeFormProvider("acme_form", reported_provider="google")
+    app, settings, _oauth = _build_app([provider])
+
+    async with LifespanManager(app):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url=BASE_URL
+        ) as client:
+            client_id = await register_client(client)
+            _verifier, challenge = make_pkce()
+            txn = await authorize_to_login(client, client_id, challenge, settings.resource_url)
+
+            response = await client.post("/login", data={"txn": txn, "email": "alice@example.com"})
+
+    assert response.status_code == 401
+
+
+# ── begin() is no longer trusted to never raise (finding #2) ───────────────
+
+
+async def test_begin_rejected_is_400():
+    provider = FakeRedirectProvider("acme", begin_rejects="provider_unavailable")
+    app, settings, _oauth = _build_app([provider])
+
+    async with LifespanManager(app):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url=BASE_URL
+        ) as client:
+            client_id = await register_client(client)
+            _verifier, challenge = make_pkce()
+            txn = await authorize_to_login(client, client_id, challenge, settings.resource_url)
+
+            response = await _start_redirect(client, txn, "acme")
+
+    assert response.status_code == 400
+    assert "location" not in response.headers
+
+
+async def test_begin_unexpected_error_is_503(caplog):
+    provider = FakeRedirectProvider("acme", begin_raises=RuntimeError("boom - should not show"))
+    app, settings, _oauth = _build_app([provider])
+
+    async with LifespanManager(app):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url=BASE_URL
+        ) as client:
+            client_id = await register_client(client)
+            _verifier, challenge = make_pkce()
+            txn = await authorize_to_login(client, client_id, challenge, settings.resource_url)
+
+            with caplog.at_level(logging.ERROR, logger="keystone_mcp.auth.keystone_oauth_provider"):
+                response = await _start_redirect(client, txn, "acme")
+
+    assert response.status_code == 503
+    assert "boom - should not show" not in response.text
+    assert any(
+        record.exc_info is not None and "acme" in record.getMessage() for record in caplog.records
+    )
+
+
+# ── the callback is bound to the browser that started it, for any provider ─
+# (mirrors test_google_oidc_login.py::test_google_callback_without_csrf_cookie_is_refused)
+
+
+async def test_acme_callback_without_csrf_cookie_is_refused():
+    resolver, backend, _revision = build_in_memory_user_directory_resolver()
+    backend.seed("alice@example.com", roles=("operator",))
+    provider = FakeRedirectProvider("acme")
+    app, settings, _oauth = _build_app([provider], user_resolver=resolver)
+
+    async with LifespanManager(app):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url=BASE_URL
+        ) as client:
+            client_id = await register_client(client)
+            _verifier, challenge = make_pkce()
+            txn = await authorize_to_login(client, client_id, challenge, settings.resource_url)
+
+            redirect_response = await _start_redirect(client, txn, "acme")
+            state = parse_qs(urlparse(redirect_response.headers["location"]).query)["state"][0]
+
+            # The victim's browser: never visited /login or POSTed
+            # /login/acme, so it never received the km_login_csrf cookie.
+            saved_cookies = httpx.Cookies(client.cookies)
+            client.cookies.clear()
+            try:
+                response = await client.get(
+                    "/login/acme/callback",
+                    params={"state": state, "code": "x", "email": "alice@example.com"},
+                )
+            finally:
+                client.cookies = httpx.Cookies(saved_cookies)
+
+    assert response.status_code == 400
+    assert "location" not in response.headers
+
+
+# ── finding #3: a resolver is built whenever any provider other than the
+#    built-in api_key form alone is configured, not only for Google ────────
+
+
+async def test_custom_provider_alone_gets_an_auto_built_resolver(tmp_path):
+    """``build_server(login_providers=[a custom provider])`` with no injected resolver.
+
+    Before this fix, the resolver gate keyed off ``settings.google_login_enabled``
+    specifically, so a deployment configuring only a custom provider got no
+    resolver at all: the directory check silently never ran for a form
+    provider, and a custom redirect provider's callback hard-503'd on every
+    sign-in. Here nobody seeds the directory with "alice@example.com", so a
+    correct resolver must refuse her.
+
+    ``users_store`` is a migrated local SQLite store (as in
+    ``test_login_directory_check.py``'s dev-token-directory regression test),
+    so this exercises ``build_server``'s own automatic resolver construction
+    rather than Redis plumbing unrelated to this finding.
+    """
+    from support.users_store import make_users_store
+
+    store, _revision = await make_users_store(tmp_path)
+    provider = FakeFormProvider("acme_form")
+    settings = _settings()
+    mcp, *_rest = build_server(
+        settings=settings,
+        oauth_store=InMemoryOAuthStore(),
+        login_providers=[provider],
+        register_builtin_catalog=False,
+        users_store=store,
+    )
+    app = mcp.http_app(path=settings.http_path)
+
+    async with LifespanManager(app):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url=BASE_URL
+        ) as client:
+            client_id = await register_client(client)
+            _verifier, challenge = make_pkce()
+            txn = await authorize_to_login(client, client_id, challenge, settings.resource_url)
+
+            response = await client.post("/login", data={"txn": txn, "email": "nobody@example.com"})
+
+    assert response.status_code == 403
