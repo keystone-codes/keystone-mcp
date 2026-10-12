@@ -75,6 +75,8 @@ class OAuthStore(Protocol):
 
     async def revoke_subject(self, subject: str, *, now: int) -> RevokedTokens: ...
 
+    async def revoke_client_tokens(self, subject: str, client_id: str) -> int: ...
+
     async def subject_not_before(self, subject: str) -> int | None: ...
 
     def refresh_credential_iat(self, refresh: RefreshToken) -> int | None: ...
@@ -304,6 +306,22 @@ class InMemoryOAuthStore:
                 refresh_tokens.append(tok)
         self._subject_index.pop(sub, None)
         return RevokedTokens(access=access_count, refresh_tokens=tuple(refresh_tokens))
+
+    async def revoke_client_tokens(self, subject: str, client_id: str) -> int:
+        sub = _subject_key(subject)
+        if not self._subject_index_alive(sub):
+            return 0
+        count = 0
+        for member in list(self._subject_index.get(sub, ())):
+            if not member.startswith("at:"):
+                continue
+            tok = member[3:]
+            access = self._access_tokens.get(tok)
+            if access is None or access.client_id != client_id:
+                continue
+            await self.delete_access_token(tok)
+            count += 1
+        return count
 
     async def subject_not_before(self, subject: str) -> int | None:
         sub = _subject_key(subject)
@@ -653,6 +671,31 @@ class RedisOAuthStore:
                 pipe.delete(idx_key)
                 await pipe.execute()
         return RevokedTokens(access=access_count, refresh_tokens=tuple(refresh_tokens))
+
+    async def revoke_client_tokens(self, subject: str, client_id: str) -> int:
+        sub = _subject_key(subject)
+        idx_key = self._subject_index_key(sub)
+        members = await self._redis.smembers(idx_key)
+        to_delete: list[tuple[str, str]] = []
+        for member in members:
+            if not member.startswith("at:"):
+                continue
+            tok = member[3:]
+            raw = await self._redis.get(self._access_key(tok))
+            if raw is None:
+                continue
+            access = AccessToken.model_validate_json(raw)
+            if access.client_id != client_id:
+                continue
+            to_delete.append((tok, member))
+        if not to_delete:
+            return 0
+        async with self._redis.pipeline(transaction=True) as pipe:
+            for tok, member in to_delete:
+                pipe.delete(self._access_key(tok))
+                pipe.srem(idx_key, member)
+            await pipe.execute()
+        return len(to_delete)
 
     def refresh_credential_iat(self, refresh: RefreshToken) -> int | None:
         return self._refresh_iat(refresh)
