@@ -46,7 +46,7 @@ data:
     requires_human_identity: []
 
     # Tools whose role resolution must bypass the allow cache. The platform
-    # always treats users_* and, when published, the file tools as critical.
+    # always treats users_* as critical.
     # This list adds to that set.
     critical_tools: []
 

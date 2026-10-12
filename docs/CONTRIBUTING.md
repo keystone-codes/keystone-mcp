@@ -136,15 +136,17 @@ image unless all three (plus the tag itself) agree
    sync. Pre-release tags (`vX.Y.Z-rc1`) are not supported.
 
 Once the tag is pushed, the `release.yml` workflow (`version-gate` → `test` →
-`build-dist` → `wheel-smoke` → `publish` → `pypi` → `github-release`) builds
-the image for both `linux/amd64` and `linux/arm64`, starts the
-`linux/amd64` build against Redis and checks it over HTTP
-(`scripts/smoke_image.sh`: `/healthz`, `/readyz`, the container
-`HEALTHCHECK` status, and the non-root uid) before publishing anything,
-pushes both platforms to GHCR, builds the wheel and sdist with `uv build`,
-checks them against the same version with `scripts/check_version.py
---dist-dir` and installs the wheel into a clean virtualenv for a second
-`/healthz`/`/readyz` smoke test (`scripts/smoke_wheel.sh`), publishes the
+`build-dist` → `wheel-smoke` → `image-scan` → `publish` → `pypi` →
+`github-release`) builds the image for both `linux/amd64` and `linux/arm64`,
+runs the same Trivy scan as the pull-request gate against it — a fixable
+HIGH or CRITICAL finding blocks `publish` — starts the `linux/amd64` build
+against Redis and checks it over HTTP (`scripts/smoke_image.sh`:
+`/healthz`, `/readyz`, the container `HEALTHCHECK` status, and the non-root
+uid) before publishing anything, pushes both platforms to GHCR, builds the
+wheel and sdist with `uv build`, checks them against the same version with
+`scripts/check_version.py --dist-dir` and installs the wheel into a clean
+virtualenv for a second `/healthz`/`/readyz` smoke test
+(`scripts/smoke_wheel.sh`), publishes the
 package to PyPI as `keystone-mcp-gateway` via trusted publishing (no API
 token in secrets; `pypa/gh-action-pypi-publish`) once the image is
 published, and creates a GitHub Release whose notes are the matching
