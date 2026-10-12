@@ -27,7 +27,9 @@ directory that cannot administer still publishes `users_list`. Either way,
 the rest of Keystone-MCP (sign-in, RBAC, the `users_*` tools) works the
 same. Details: [users.md](users.md) and, for the protocol itself and the
 HTTP contract a fork's own directory must meet,
-[user-directory.md](user-directory.md).
+[user-directory.md](user-directory.md). Additional directory implementations
+install as packages that declare a `keystone_mcp.user_directories` entry point;
+see [plugins.md](plugins.md).
 
 ## Any sign-in method
 
@@ -35,8 +37,8 @@ People sign in through **LoginProvider** implementations listed in a YAML
 file (`KEYSTONE_MCP_LOGIN_PROVIDERS_PATH`): Google, any OpenID Connect issuer
 (Okta, Microsoft Entra ID, Keycloak), and the built-in API-key form. Setup for
 each provider is in [login-providers.md](login-providers.md). DEV tokens remain
-a local-profile shortcut. Third-party packages will register additional
-providers via entry points in a later release.
+a local-profile shortcut. Additional provider types install as packages that
+declare a `keystone_mcp.login_providers` entry point; see [plugins.md](plugins.md).
 
 ## Onboarding and access management through the agent
 

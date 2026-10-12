@@ -32,6 +32,7 @@ find there, not just the file name.
 - [Every `KEYSTONE_MCP_*` setting](environment.md)
 - [Before going live](production-checklist.md)
 - [Sign-in providers (Google, OIDC)](login-providers.md)
+- [Plugins (entry points)](plugins.md)
 - [Google sign-in (legacy page)](google-oauth.md)
 - [Logs](observability-logging.md)
 - [Metrics and audit](observability-rbac.md)

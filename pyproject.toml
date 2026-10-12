@@ -35,6 +35,15 @@ dependencies = [
 [project.scripts]
 keystone-mcp = "keystone_mcp.cli:main"
 
+[project.entry-points."keystone_mcp.login_providers"]
+oidc = "keystone_mcp.login.oidc:create_oidc_provider"
+google = "keystone_mcp.login.oidc:create_google_provider"
+api_key = "keystone_mcp.login.api_key:create_api_key_provider"
+
+[project.entry-points."keystone_mcp.user_directories"]
+local = "keystone_mcp.user_directory.local:create_local_directory"
+http = "keystone_mcp.user_directory.http:create_http_directory"
+
 [project.urls]
 Homepage = "https://github.com/keystone-codes/keystone-mcp"
 Source = "https://github.com/keystone-codes/keystone-mcp"

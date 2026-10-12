@@ -8,6 +8,7 @@ this project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Plugins: sign-in provider types and users directories are discovered through the `keystone_mcp.login_providers` and `keystone_mcp.user_directories` entry points; built-in implementations use the same mechanism. `keystone-mcp plugins list`. `KEYSTONE_MCP_USERS_BACKEND_CONFIG`.
 - `policy_*` tools (`policy_read`, `policy_catalog`, `policy_validate`, `policy_role_set`, `policy_role_delete`, `policy_allow_add`, `policy_allow_remove`, `policy_list_set`, `policy_rollback`): administrators change the RBAC policy from the agent; every change is validated against the live catalog, written atomically, reloaded in place and audited. Namespace `policy` is reserved.
 - API keys stored in the users directory (hashed, shown once): `api_keys_issue|list|revoke` tools and `keystone-mcp keys` CLI. Service accounts call MCP with `Authorization: Bearer <key>`.
 - `users_logout`; blocking a user revokes all of their tokens immediately.
