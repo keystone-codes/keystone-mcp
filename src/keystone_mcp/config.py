@@ -50,14 +50,6 @@ _VALID_POLICY_TOOLS_MODES = frozenset({"full", "read-only", "off"})
 # cycle; a test pins this set to the provider's translation table.
 LOGIN_LANGS = frozenset({"ar", "en", "he", "ru"})
 
-# Shared between validate_settings and server.build_identity_provider so the
-# startup refusal and the defence-in-depth check say exactly the same thing.
-AUTH_SERVICE_URL_WITHOUT_TOKEN_ERROR = (
-    "KEYSTONE_MCP_AUTH_SERVICE_URL is set but KEYSTONE_MCP_AUTH_SERVICE_TOKEN is empty. "
-    "Set both to verify API keys with an external service, or clear "
-    "KEYSTONE_MCP_AUTH_SERVICE_URL to use KEYSTONE_MCP_DEV_TOKENS."
-)
-
 
 def _env(name: str, default: str) -> str:
     return os.environ.get(name, default)
@@ -147,6 +139,16 @@ REMOVED_VARIABLES: dict[str, RemovedVariable] = {
             "docs/contrib/adapters.md."
         ),
         fatal=False,
+    ),
+    "KEYSTONE_MCP_AUTH_SERVICE_URL": RemovedVariable(
+        removed_in="0.5.0",
+        replacement="API keys are issued and checked by the users directory; see docs/users.md.",
+        fatal=True,
+    ),
+    "KEYSTONE_MCP_AUTH_SERVICE_TOKEN": RemovedVariable(
+        removed_in="0.5.0",
+        replacement="API keys are issued and checked by the users directory; see docs/users.md.",
+        fatal=True,
     ),
 }
 
@@ -851,13 +853,7 @@ class Settings:
         default_factory=lambda: _env_int("KEYSTONE_MCP_LOGIN_PENDING_TXN_TTL", 600)
     )
 
-    # ── Auth-service introspection (production) ───────────────────────────
-    auth_service_url: str = field(default_factory=lambda: _env("KEYSTONE_MCP_AUTH_SERVICE_URL", ""))
-    auth_service_token: str = field(
-        default_factory=lambda: _env("KEYSTONE_MCP_AUTH_SERVICE_TOKEN", "")
-    )
-    # Comma-separated api_tokens accepted without an auth service (local dev).
-    # Ignored once auth_service_url is set.
+    # Comma-separated api_tokens accepted on the sign-in page (local profile only).
     dev_tokens: str = field(default_factory=lambda: _env("KEYSTONE_MCP_DEV_TOKENS", ""))
 
     # ── Login methods and RBAC ────────────────────────────────────────────
@@ -1295,13 +1291,7 @@ def validate_settings(settings: Settings) -> None:
             f"KEYSTONE_MCP_PROXY_SCHEMA_PATCHES does not exist or is not a file: {patches_path_raw}"
         )
 
-    if settings.auth_service_url.strip() and not settings.auth_service_token.strip():
-        raise ConfigError(AUTH_SERVICE_URL_WITHOUT_TOKEN_ERROR)
-
     dev_token_set = {t for t in settings.dev_tokens.split(",") if t.strip()}
-    auth_service_configured = bool(
-        settings.auth_service_url.strip() and settings.auth_service_token.strip()
-    )
 
     # ── Deployment profile (local | production, §4) ───────────────────────
     base_host = (urlparse(settings.base_url).hostname or "").lower()
@@ -1333,15 +1323,21 @@ def validate_settings(settings: Settings) -> None:
                 f"KEYSTONE_MCP_RBAC_MODE=enforce; got {settings.rbac_mode!r}. Use "
                 "KEYSTONE_MCP_DEPLOYMENT_PROFILE=local for off/observe."
             )
-        # P3: api_key sign-in needs an external key-verification service in
-        # production; an empty KEYSTONE_MCP_ENABLED_LOGIN_METHODS defaults to
-        # api_key (_parse_enabled_login_methods), so a production deployment
-        # with no explicit sign-in configuration is refused here too.
-        if settings.api_key_login_enabled and not auth_service_configured:
+        # P3: api_key sign-in in production needs a directory that stores keys.
+        if settings.api_key_login_enabled and settings.users_backend == "http":
             raise ConfigError(
-                "API-key sign-in in production needs KEYSTONE_MCP_AUTH_SERVICE_URL "
-                "and _TOKEN; DEV tokens are local-only. Remove api_key from "
-                "KEYSTONE_MCP_ENABLED_LOGIN_METHODS or configure the service."
+                "API-key sign-in in production needs a users directory that stores "
+                "API keys (KEYSTONE_MCP_USERS_BACKEND=local). Remove api_key from "
+                "the login providers or switch the directory."
+            )
+        interactive_login = file_has_interactive_providers(settings) or (
+            not providers_file and settings.google_login_enabled
+        )
+        if settings.api_key_login_enabled and interactive_login:
+            raise ConfigError(
+                "api_key sign-in for people is not available in the production profile "
+                "when an interactive provider is configured; people sign in through the "
+                "provider, machines use Bearer keys"
             )
         # P4: no unencrypted OAuth traffic to a publicly reachable host. This
         # also refuses an internal-looking name such as `*.svc.cluster.local`

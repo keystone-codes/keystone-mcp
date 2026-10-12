@@ -8,6 +8,7 @@ this project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- API keys stored in the users directory (hashed, shown once): `api_keys_issue|list|revoke` tools and `keystone-mcp keys` CLI. Service accounts call MCP with `Authorization: Bearer <key>`.
 - Service accounts (`svc:<name>`) with their own roles; `service_accounts_list|add|update` tools and `keystone-mcp service-accounts` CLI (built-in directory).
 - Upstreams receive `X-Keystone-Subject` and `X-Keystone-Subject-Type`.
 - `docs/adr/`: six architecture decision records (built-in users directory,
@@ -119,9 +120,28 @@ this project uses [Semantic Versioning](https://semver.org/).
 - `KEYSTONE_MCP_WEBHOOK_BASE_URL`, `KEYSTONE_MCP_WEBHOOK_CLIENT`,
   `KEYSTONE_MCP_WEBHOOK_PROJECT`, `KEYSTONE_MCP_WEBHOOK_API_TOKEN`,
   `KEYSTONE_MCP_LONG_POLL`.
+- `KEYSTONE_MCP_AUTH_SERVICE_URL`, `KEYSTONE_MCP_AUTH_SERVICE_TOKEN` and the
+  external key check; startup refuses while they are set.
+- `keystone_mcp.auth.IdentityProvider` and `build_server(identity_provider=...)`;
+  use `keystone_mcp.login` providers.
+
+### Changed
+
+- Production profile: service accounts authenticate with Bearer API keys issued
+  on the server (`keystone-mcp keys issue`); the `api_keys_issue` tool is not
+  published, and API-key sign-in for people is refused while an interactive
+  login provider is configured.
+
+### Migration
+
+- Database migration `0003_api_keys`. Deployments that checked keys with an
+  external service: issue new keys from the built-in directory and remove the
+  two variables; external HTTP directories do not support API keys.
 
 ### Security
 
+- API key secrets are stored and logged only as hashes or redacted forms
+  (`ksk_<key_id>_***`); startup refuses legacy `KEYSTONE_MCP_AUTH_SERVICE_*`.
 - Trivy image scan now blocks pull requests and releases on fixable HIGH and
   CRITICAL findings; temporary exceptions live in `.trivyignore` with a
   reason and a review date, checked by `tests/test_trivyignore.py`.

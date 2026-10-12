@@ -8,6 +8,8 @@ happened, so the caller knows whether a revision bump is warranted.
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -17,9 +19,13 @@ from sqlalchemy.dialects import postgresql, sqlite
 from sqlalchemy.orm import Session, selectinload
 
 from keystone_mcp.user_directory.types import (
+    ApiKeyVerification,
+    generate_api_key_material,
     is_valid_service_account_name,
+    parse_api_key,
     parse_service_subject,
     service_subject,
+    subject_type_of,
 )
 from keystone_mcp.users.emails import normalize_email, require_valid_email
 from keystone_mcp.users.errors import (
@@ -32,6 +38,7 @@ from keystone_mcp.users.errors import (
     UserNotFoundError,
 )
 from keystone_mcp.users.models import (
+    ApiKeyRow,
     ServiceAccountRoleRow,
     ServiceAccountRow,
     UserRoleRow,
@@ -779,3 +786,128 @@ def list_service_accounts(
     if is_blocked is not None:
         stmt = stmt.where(ServiceAccountRow.is_blocked.is_(is_blocked))
     return list(session.scalars(stmt).unique().all())
+
+
+MAX_API_KEY_LABEL_LENGTH = 255
+
+
+@dataclass(frozen=True, slots=True)
+class ApiKeyMutation:
+    row: ApiKeyRow
+    changed: bool
+
+
+def _secret_hash(secret: str) -> str:
+    return hashlib.sha256(secret.encode("utf-8")).hexdigest()
+
+
+def _load_api_key_row(session: Session, key_id: str) -> ApiKeyRow:
+    row = session.get(ApiKeyRow, key_id)
+    if row is None:
+        raise UserNotFoundError(key_id, message=f"API key not found: {key_id}")
+    return row
+
+
+def _ensure_api_key_subject_active(session: Session, subject: str) -> None:
+    service_name = parse_service_subject(subject)
+    if service_name is not None:
+        account = session.get(ServiceAccountRow, service_name)
+        if account is None:
+            raise UserNotFoundError(subject)
+        if account.is_blocked:
+            raise InvalidUserFieldError("subject", "subject is blocked")
+        return
+    normalized = normalize_email(subject)
+    user = session.get(UserRow, normalized)
+    if user is None:
+        raise UserNotFoundError(normalized)
+    if user.is_blocked:
+        raise InvalidUserFieldError("subject", "subject is blocked")
+
+
+def issue_api_key(
+    session: Session,
+    *,
+    subject: str,
+    label: str | None,
+    expires_in_days: int | None,
+    created_by: str | None,
+) -> tuple[ApiKeyRow, str]:
+    lookup_subject = (
+        subject.strip().lower() if parse_service_subject(subject) else normalize_email(subject)
+    )
+    _ensure_api_key_subject_active(session, lookup_subject)
+    if expires_in_days is not None and not (1 <= expires_in_days <= 365):
+        raise InvalidUserFieldError("expires_in_days", "must be between 1 and 365 inclusive")
+    if label is not None and len(label) > MAX_API_KEY_LABEL_LENGTH:
+        raise InvalidUserFieldError(
+            "label", f"must be at most {MAX_API_KEY_LABEL_LENGTH} characters"
+        )
+    key_id, secret, full_key = generate_api_key_material()
+    now = utcnow()
+    expires_at = None
+    if expires_in_days is not None:
+        from datetime import timedelta
+
+        expires_at = now + timedelta(days=expires_in_days)
+    row = ApiKeyRow(
+        key_id=key_id,
+        subject=lookup_subject,
+        secret_hash=_secret_hash(secret),
+        label=label,
+        created_by=created_by,
+        created_at=now,
+        expires_at=expires_at,
+    )
+    session.add(row)
+    session.flush()
+    return row, full_key
+
+
+def list_api_keys(
+    session: Session,
+    *,
+    subject: str | None = None,
+    include_revoked: bool = False,
+) -> list[ApiKeyRow]:
+    stmt = select(ApiKeyRow).order_by(ApiKeyRow.created_at.desc())
+    if subject is not None:
+        lookup = (
+            subject.strip().lower() if parse_service_subject(subject) else normalize_email(subject)
+        )
+        stmt = stmt.where(ApiKeyRow.subject == lookup)
+    if not include_revoked:
+        stmt = stmt.where(ApiKeyRow.revoked_at.is_(None))
+    return list(session.scalars(stmt).all())
+
+
+def revoke_api_key(session: Session, *, key_id: str, actor: str) -> ApiKeyMutation:
+    row = _load_api_key_row(session, key_id)
+    if row.revoked_at is not None:
+        return ApiKeyMutation(row=row, changed=False)
+    row.revoked_at = utcnow()
+    row.revoked_by = actor
+    session.flush()
+    return ApiKeyMutation(row=row, changed=True)
+
+
+def verify_api_key(session: Session, key: str) -> ApiKeyVerification | None:
+    parsed = parse_api_key(key)
+    if parsed is None:
+        return None
+    key_id, secret = parsed
+    row = session.get(ApiKeyRow, key_id)
+    if row is None or row.revoked_at is not None:
+        return None
+    now = utcnow()
+    if row.expires_at is not None and row.expires_at <= now:
+        return None
+    expected = row.secret_hash
+    if not hmac.compare_digest(expected, _secret_hash(secret)):
+        return None
+    return ApiKeyVerification(
+        key_id=row.key_id,
+        subject=row.subject,
+        subject_type=subject_type_of(row.subject),
+        expires_at=row.expires_at,
+    )

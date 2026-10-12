@@ -14,7 +14,6 @@ from fastmcp.tools.base import ToolResult
 from mcp.types import TextContent
 from prometheus_client import REGISTRY
 
-from keystone_mcp.auth.identity_provider import StaticIdentityProvider
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.auth.throttle import PerIdentityThrottle
 from keystone_mcp.config import Settings
@@ -29,6 +28,7 @@ from keystone_mcp.router.tool_call_observability_middleware import (
 )
 from keystone_mcp.server import build_server
 from keystone_mcp.user_directory import build_in_memory_user_directory_resolver
+from support.login import dev_token_login
 
 ALLOW_POLICY = """\
 version: "tool-obs"
@@ -277,7 +277,7 @@ async def test_cancelled_call_counts_as_cancelled(observability: RbacObservabili
 @pytest.mark.asyncio
 async def test_metrics_endpoint_lists_tool_call_metrics(metrics_settings: Settings):
     mcp, *_rest = build_server(
-        identity_provider=StaticIdentityProvider({"token"}),
+        login_providers=[dev_token_login({"token"})],
         settings=metrics_settings,
         oauth_store=InMemoryOAuthStore(),
         register_builtin_catalog=False,

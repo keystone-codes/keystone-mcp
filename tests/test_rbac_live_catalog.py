@@ -13,7 +13,6 @@ from asgi_lifespan import LifespanManager
 from fastmcp import FastMCP
 
 from keystone_mcp.adapters.base import Pattern
-from keystone_mcp.auth.identity_provider import StaticIdentityProvider
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import Settings
 from keystone_mcp.rbac.catalog import (
@@ -29,6 +28,7 @@ from keystone_mcp.rbac.catalog import (
 from keystone_mcp.router.engine import RouterEngine
 from keystone_mcp.router.registry import RouterRegistry
 from keystone_mcp.server import build_server
+from support.login import dev_token_login
 
 BASE_URL = "http://localhost:8080"
 _COLLIDING_PUBLISHED = "reports_present_release"
@@ -130,7 +130,7 @@ async def live_names_client():
     # The route is off by default; this fixture exercises it, so turn it on.
     settings = Settings(base_url=BASE_URL, rbac_mode="off", internal_endpoints_enabled=True)
     mcp, registry, *_rest = build_server(
-        identity_provider=StaticIdentityProvider({"token"}),
+        login_providers=[dev_token_login({"token"})],
         settings=settings,
         oauth_store=InMemoryOAuthStore(),
         register_builtin_catalog=False,

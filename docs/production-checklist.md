@@ -23,7 +23,8 @@ Keystone-MCP.
 
 - [ ] Google OAuth redirect URI registered: `{BASE_URL}/login/google/callback`.
 - [ ] Startup refuses DEV tokens in production (`KEYSTONE_MCP_DEPLOYMENT_PROFILE=production` always rejects a non-empty `KEYSTONE_MCP_DEV_TOKENS`).
-- [ ] API-key sign-in, if enabled, has `KEYSTONE_MCP_AUTH_SERVICE_URL` and `_TOKEN` both set — this login method is deprecated and moves into the users directory in 0.4.1; Google is the recommended method in production.
+- [ ] API keys are issued from the server (`keystone-mcp keys issue`); the `api_keys_issue` tool is not published in production.
+- [ ] Service accounts that call MCP over HTTP use Bearer API keys (`Authorization: Bearer ksk_…`), not a person's OAuth access token.
 - [ ] A decision was made on dynamic client registration: left on (`KEYSTONE_MCP_OAUTH_DCR_ENABLED=true`, the default) or off with every client registered by hand (see [environment.md](environment.md#registering-a-client-manually)).
 - [ ] If only specific client applications are expected, `KEYSTONE_MCP_OAUTH_ALLOWED_REDIRECT_HOSTS` lists their hosts.
 

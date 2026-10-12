@@ -21,12 +21,12 @@ import pytest
 from asgi_lifespan import LifespanManager
 
 from keystone_mcp.adapters.stub import StubAdapter
-from keystone_mcp.auth.identity_provider import StaticIdentityProvider
 from keystone_mcp.auth.login_pending_store import InMemoryLoginPendingStore
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import Settings
 from keystone_mcp.http.readiness import ReadinessProbe
 from keystone_mcp.server import bootstrap_rbac_policy, build_server
+from support.login import dev_token_login
 
 BASE_URL = "http://localhost:8080"
 
@@ -60,7 +60,7 @@ async def _get(app, path: str, *, client_host: str, headers=None):
 
 def _app(settings: Settings, **build_kwargs):
     mcp, *_rest = build_server(
-        identity_provider=StaticIdentityProvider({"token"}),
+        login_providers=[dev_token_login({"token"})],
         settings=settings,
         register_builtin_catalog=False,
         **build_kwargs,
@@ -179,7 +179,7 @@ def _rbac_settings(tmp_path: Path) -> Settings:
 async def test_readyz_rbac_policy_not_loaded_is_503(tmp_path: Path):
     settings = _rbac_settings(tmp_path)
     mcp, registry, _oauth, _upstreams, _policy_manager, _observability, _reconciler = build_server(
-        identity_provider=StaticIdentityProvider({"token"}),
+        login_providers=[dev_token_login({"token"})],
         settings=settings,
         oauth_store=InMemoryOAuthStore(),
         register_builtin_catalog=False,
@@ -195,7 +195,7 @@ async def test_readyz_rbac_policy_not_loaded_is_503(tmp_path: Path):
 async def test_readyz_rbac_policy_loaded_is_ok(tmp_path: Path):
     settings = _rbac_settings(tmp_path)
     mcp, registry, _oauth, _upstreams, policy_manager, _observability, _reconciler = build_server(
-        identity_provider=StaticIdentityProvider({"token"}),
+        login_providers=[dev_token_login({"token"})],
         settings=settings,
         oauth_store=InMemoryOAuthStore(),
         register_builtin_catalog=False,
@@ -239,7 +239,7 @@ class _StubDirectoryResolver:
 async def _rbac_app_with_backend(tmp_path: Path, backend: object):
     settings = _rbac_settings(tmp_path)
     mcp, registry, _oauth, _upstreams, policy_manager, _observability, _reconciler = build_server(
-        identity_provider=StaticIdentityProvider({"token"}),
+        login_providers=[dev_token_login({"token"})],
         settings=settings,
         oauth_store=InMemoryOAuthStore(),
         user_resolver=_StubDirectoryResolver(backend),

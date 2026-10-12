@@ -143,6 +143,7 @@ class UsersMutationAuditRecorder:
         blocked_after: bool | None = None,
         role: str | None = None,
         actor_subject_type: str | None = None,
+        key_id: str | None = None,
     ) -> None:
         if not self._enabled:
             return
@@ -167,6 +168,8 @@ class UsersMutationAuditRecorder:
             event["blocked_after"] = blocked_after
         if actor_subject_type is not None:
             event["actor_subject_type"] = actor_subject_type
+        if key_id is not None:
+            event["key_id"] = key_id
         try:
             logger.info(
                 "rbac audit %s",

@@ -28,24 +28,23 @@ from conftest import (
     refresh_access_token,
     register_client,
 )
-from keystone_mcp.auth.identity_provider import StaticIdentityProvider
 from keystone_mcp.auth.keystone_oauth_provider import KeystoneOAuthProvider
 from keystone_mcp.auth.login_pending_store import InMemoryLoginPendingStore
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import Settings
-from keystone_mcp.login.api_key import ApiKeyLoginProvider
 from keystone_mcp.server import build_server
 from support.fake_login import FakeRedirectProvider
+from support.login import dev_token_login
 
 
 @pytest_asyncio.fixture
 async def persistence_client():
     """ASGI client backed by a shared InMemoryOAuthStore for restart tests."""
     settings = Settings(base_url=BASE_URL)
-    idp = StaticIdentityProvider({VALID_TOKEN})
+    _login = dev_token_login({VALID_TOKEN})
     store = InMemoryOAuthStore()
     mcp, _registry, oauth, _upstreams, _policy_manager, _observability, _reconciler = build_server(
-        identity_provider=idp, settings=settings, oauth_store=store
+        login_providers=[_login], settings=settings, oauth_store=store
     )
     app = mcp.http_app(path=settings.http_path)
     async with LifespanManager(app):
@@ -78,11 +77,9 @@ async def test_tokens_survive_provider_restart(persistence_client):
     refresh = res["body"]["refresh_token"]
     client_id = res["client_id"]
 
-    idp = StaticIdentityProvider({VALID_TOKEN})
+    _login = dev_token_login({VALID_TOKEN})
     pending = InMemoryLoginPendingStore()
-    oauth2 = KeystoneOAuthProvider(
-        settings, store, pending, login_providers=[ApiKeyLoginProvider(idp)]
-    )
+    oauth2 = KeystoneOAuthProvider(settings, store, pending, login_providers=[_login])
     registered = await oauth2.get_client(client_id)
     assert registered is not None
 
@@ -103,10 +100,8 @@ async def test_pending_txn_survives_shared_store_restart(persistence_client):
     _verifier, challenge = make_pkce()
     txn = await authorize_to_login(client, client_id, challenge, settings.resource_url)
 
-    idp = StaticIdentityProvider({VALID_TOKEN})
-    oauth2 = KeystoneOAuthProvider(
-        settings, store, pending_store, login_providers=[ApiKeyLoginProvider(idp)]
-    )
+    _login = dev_token_login({VALID_TOKEN})
+    oauth2 = KeystoneOAuthProvider(settings, store, pending_store, login_providers=[_login])
     assert await oauth2._get_pending_txn(txn) is not None
 
 
@@ -187,7 +182,15 @@ async def test_auth_method_marker_ttl_equals_the_refresh_token_lifetime():
         settings,
         InMemoryOAuthStore(),
         pending,
-        login_providers=[ApiKeyLoginProvider(StaticIdentityProvider({VALID_TOKEN}))],
+        login_providers=[
+            dev_token_login(
+                {VALID_TOKEN}
+                if isinstance({VALID_TOKEN}, set)
+                else set({VALID_TOKEN})
+                if False
+                else {VALID_TOKEN}
+            )
+        ],
     )
     recorded: list[tuple[str, str, str, int]] = []
     original_put = pending.put
@@ -218,7 +221,15 @@ async def test_expired_refresh_token_is_refused_and_dropped():
         settings,
         store,
         InMemoryLoginPendingStore(),
-        login_providers=[ApiKeyLoginProvider(StaticIdentityProvider({VALID_TOKEN}))],
+        login_providers=[
+            dev_token_login(
+                {VALID_TOKEN}
+                if isinstance({VALID_TOKEN}, set)
+                else set({VALID_TOKEN})
+                if False
+                else {VALID_TOKEN}
+            )
+        ],
     )
     registered = OAuthClientInformationFull(
         client_id="client-1",
@@ -246,7 +257,15 @@ async def test_live_refresh_token_is_accepted():
         settings,
         store,
         InMemoryLoginPendingStore(),
-        login_providers=[ApiKeyLoginProvider(StaticIdentityProvider({VALID_TOKEN}))],
+        login_providers=[
+            dev_token_login(
+                {VALID_TOKEN}
+                if isinstance({VALID_TOKEN}, set)
+                else set({VALID_TOKEN})
+                if False
+                else {VALID_TOKEN}
+            )
+        ],
     )
     registered = OAuthClientInformationFull(
         client_id="client-1",
@@ -276,7 +295,15 @@ async def test_rotation_persists_the_new_token_before_deleting_the_old():
         settings,
         store,
         InMemoryLoginPendingStore(),
-        login_providers=[ApiKeyLoginProvider(StaticIdentityProvider({VALID_TOKEN}))],
+        login_providers=[
+            dev_token_login(
+                {VALID_TOKEN}
+                if isinstance({VALID_TOKEN}, set)
+                else set({VALID_TOKEN})
+                if False
+                else {VALID_TOKEN}
+            )
+        ],
     )
     registered = OAuthClientInformationFull(
         client_id="client-1",
@@ -323,7 +350,15 @@ async def test_crash_after_minting_leaves_a_usable_refresh_token():
         settings,
         store,
         InMemoryLoginPendingStore(),
-        login_providers=[ApiKeyLoginProvider(StaticIdentityProvider({VALID_TOKEN}))],
+        login_providers=[
+            dev_token_login(
+                {VALID_TOKEN}
+                if isinstance({VALID_TOKEN}, set)
+                else set({VALID_TOKEN})
+                if False
+                else {VALID_TOKEN}
+            )
+        ],
     )
     registered = OAuthClientInformationFull(
         client_id="client-1",
@@ -508,7 +543,15 @@ async def test_client_is_touched_before_refresh_token_is_written():
         settings,
         store,
         InMemoryLoginPendingStore(),
-        login_providers=[ApiKeyLoginProvider(StaticIdentityProvider({VALID_TOKEN}))],
+        login_providers=[
+            dev_token_login(
+                {VALID_TOKEN}
+                if isinstance({VALID_TOKEN}, set)
+                else set({VALID_TOKEN})
+                if False
+                else {VALID_TOKEN}
+            )
+        ],
     )
     client = OAuthClientInformationFull(
         client_id="client-1",
@@ -633,7 +676,15 @@ async def test_refresh_marker_from_0_4_is_read():
         settings,
         store,
         pending,
-        login_providers=[ApiKeyLoginProvider(StaticIdentityProvider({VALID_TOKEN}))],
+        login_providers=[
+            dev_token_login(
+                {VALID_TOKEN}
+                if isinstance({VALID_TOKEN}, set)
+                else set({VALID_TOKEN})
+                if False
+                else {VALID_TOKEN}
+            )
+        ],
     )
 
     await pending.put(
@@ -662,7 +713,15 @@ async def test_refresh_for_removed_provider_is_refused():
         settings,
         store,
         pending,
-        login_providers=[ApiKeyLoginProvider(StaticIdentityProvider({VALID_TOKEN}))],
+        login_providers=[
+            dev_token_login(
+                {VALID_TOKEN}
+                if isinstance({VALID_TOKEN}, set)
+                else set({VALID_TOKEN})
+                if False
+                else {VALID_TOKEN}
+            )
+        ],
     )
     client = OAuthClientInformationFull(
         client_id="client-1",

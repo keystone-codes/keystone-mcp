@@ -26,12 +26,12 @@ from mcp.client.subscriptions import listen as listen_subscriptions
 
 import keystone_mcp.surface.reconciler as reconciler_module
 from conftest import BASE_URL, VALID_TOKEN, obtain_access_token
-from keystone_mcp.auth.identity_provider import StaticIdentityProvider
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import Settings
 from keystone_mcp.server import build_server
 from keystone_mcp.surface.client_sessions import ClientSessionRegistry
 from keystone_mcp.user_directory.revision import InMemoryRevisionReader
+from support.login import dev_token_login
 from support.lowlevel_upstream import (
     UPSTREAM_MCP_URL,
     asgi_http_client_factory,
@@ -55,7 +55,7 @@ def _settings(**overrides) -> Settings:
 async def _build_with_upstream(settings: Settings, app):
     """Build the server, mount ``app`` (P01) as the ``hello`` upstream, discover it once."""
     mcp, registry, oauth, upstreams, policy_manager, observability, reconciler = build_server(
-        identity_provider=StaticIdentityProvider({VALID_TOKEN}),
+        login_providers=[dev_token_login({VALID_TOKEN})],
         settings=settings,
         oauth_store=InMemoryOAuthStore(),
         register_builtin_catalog=False,
@@ -273,7 +273,7 @@ async def test_policy_reload_sends_list_changed(tmp_path: Path):
 
     settings = _settings(rbac_mode="enforce", rbac_policy_path=str(policy_path))
     mcp, registry, _oauth, _upstreams, policy_manager, _observability, reconciler = build_server(
-        identity_provider=StaticIdentityProvider({VALID_TOKEN}),
+        login_providers=[dev_token_login({VALID_TOKEN})],
         settings=settings,
         oauth_store=InMemoryOAuthStore(),
         register_builtin_catalog=False,
@@ -304,7 +304,7 @@ async def test_policy_reload_sends_list_changed(tmp_path: Path):
 async def test_users_revision_change_sends_list_changed():
     settings = _settings()
     mcp, _registry, _oauth, _upstreams, _policy_manager, _observability, reconciler = build_server(
-        identity_provider=StaticIdentityProvider({VALID_TOKEN}),
+        login_providers=[dev_token_login({VALID_TOKEN})],
         settings=settings,
         oauth_store=InMemoryOAuthStore(),
         register_builtin_catalog=False,
@@ -338,7 +338,7 @@ async def test_users_revision_change_sends_list_changed():
 async def test_closed_connection_is_dropped():
     settings = _settings()
     mcp, _registry, _oauth, _upstreams, _policy_manager, _observability, reconciler = build_server(
-        identity_provider=StaticIdentityProvider({VALID_TOKEN}),
+        login_providers=[dev_token_login({VALID_TOKEN})],
         settings=settings,
         oauth_store=InMemoryOAuthStore(),
         register_builtin_catalog=False,
@@ -394,7 +394,7 @@ async def test_session_is_tracked_even_when_rbac_denies(tmp_path: Path):
 
     settings = _settings(rbac_mode="enforce", rbac_policy_path=str(policy_path))
     mcp, registry, _oauth, _upstreams, policy_manager, _observability, reconciler = build_server(
-        identity_provider=StaticIdentityProvider({VALID_TOKEN}),
+        login_providers=[dev_token_login({VALID_TOKEN})],
         settings=settings,
         oauth_store=InMemoryOAuthStore(),
         register_builtin_catalog=False,
@@ -443,7 +443,7 @@ async def test_modern_requests_are_not_tracked():
 async def test_list_changed_is_advertised_on_both_eras():
     settings = _settings()
     mcp, _registry, _oauth, _upstreams, _policy_manager, _observability, _reconciler = build_server(
-        identity_provider=StaticIdentityProvider({VALID_TOKEN}),
+        login_providers=[dev_token_login({VALID_TOKEN})],
         settings=settings,
         oauth_store=InMemoryOAuthStore(),
         register_builtin_catalog=False,
@@ -467,7 +467,7 @@ async def test_list_changed_is_advertised_on_both_eras():
 async def test_registry_reaches_connection_via_private_field():
     settings = _settings()
     mcp, _registry, _oauth, _upstreams, _policy_manager, _observability, reconciler = build_server(
-        identity_provider=StaticIdentityProvider({VALID_TOKEN}),
+        login_providers=[dev_token_login({VALID_TOKEN})],
         settings=settings,
         oauth_store=InMemoryOAuthStore(),
         register_builtin_catalog=False,

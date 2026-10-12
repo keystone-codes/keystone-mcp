@@ -23,11 +23,11 @@ from httpx2 import ASGITransport, AsyncClient
 
 from conftest import BASE_URL, obtain_access_token
 from keystone_mcp.adapters.stub import StubAdapter
-from keystone_mcp.auth.identity_provider import StaticIdentityProvider
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import Settings
 from keystone_mcp.server import bootstrap_rbac_policy, build_server
 from keystone_mcp.user_directory import build_in_memory_user_directory_resolver
+from support.login import dev_token_login
 
 VALID_TOKEN = "valid-test-token"
 VIEWER_EMAIL = "viewer@example.com"
@@ -112,11 +112,11 @@ async def enforce_harness(tmp_path: Path):
     resolver, backend, revision = build_in_memory_user_directory_resolver()
     backend.seed(VIEWER_EMAIL, roles=("viewer",))
 
-    idp = StaticIdentityProvider({VALID_TOKEN})
+    _login = dev_token_login({VALID_TOKEN})
     store = InMemoryOAuthStore()
 
     mcp, registry, _oauth, _upstreams, policy_manager, _observability, _reconciler = build_server(
-        identity_provider=idp,
+        login_providers=[_login],
         settings=settings,
         oauth_store=store,
         user_resolver=resolver,

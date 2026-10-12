@@ -15,13 +15,12 @@ from conftest import (
     make_pkce,
     register_client,
 )
-from keystone_mcp.auth.identity_provider import StaticIdentityProvider
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import Settings
-from keystone_mcp.login.api_key import ApiKeyLoginProvider
 from keystone_mcp.server import build_server
 from keystone_mcp.user_directory.factory import build_in_memory_user_directory_resolver
 from support.google_oidc_fixtures import build_mock_google_oidc
+from support.login import dev_token_login
 
 
 def _google_settings(**overrides) -> Settings:
@@ -49,14 +48,13 @@ async def google_harness():
     backend.seed("blocked@example.com", roles=("operator",), is_blocked=True)
 
     mock_google = build_mock_google_oidc(settings.google_redirect_uri)
-    idp = StaticIdentityProvider({VALID_TOKEN})
+    _login = dev_token_login({VALID_TOKEN})
     store = InMemoryOAuthStore()
     mcp, registry, oauth, _upstreams, _policy, _observability, _reconciler = build_server(
-        identity_provider=idp,
         settings=settings,
         oauth_store=store,
         user_resolver=resolver,
-        login_providers=[mock_google.provider, ApiKeyLoginProvider(idp)],
+        login_providers=[mock_google.provider, _login],
     )
     app = mcp.http_app(path=settings.http_path)
     async with LifespanManager(app):
@@ -261,14 +259,10 @@ async def test_google_domain_restriction(google_harness):
     backend.seed("alice@example.com", roles=("operator",))
     mock_google = build_mock_google_oidc(settings.google_redirect_uri, allowed_domain="example.com")
     mcp, _, oauth, _, _, _, _ = build_server(
-        identity_provider=StaticIdentityProvider({VALID_TOKEN}),
         settings=settings,
         oauth_store=InMemoryOAuthStore(),
         user_resolver=resolver,
-        login_providers=[
-            mock_google.provider,
-            ApiKeyLoginProvider(StaticIdentityProvider({VALID_TOKEN})),
-        ],
+        login_providers=[mock_google.provider, dev_token_login({VALID_TOKEN})],
     )
     app = mcp.http_app(path=settings.http_path)
     async with LifespanManager(app):
@@ -343,7 +337,6 @@ async def test_google_disabled_hides_route(google_harness):
 
     settings = Settings(base_url=BASE_URL)
     mcp, _, oauth, _, _, _, _ = build_server(
-        identity_provider=StaticIdentityProvider({VALID_TOKEN}),
         settings=settings,
         oauth_store=InMemoryOAuthStore(),
     )
@@ -566,7 +559,6 @@ async def test_login_page_shows_form_when_api_key_primary():
     import httpx
     from asgi_lifespan import LifespanManager
 
-    from keystone_mcp.auth.identity_provider import StaticIdentityProvider
     from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
     from keystone_mcp.server import build_server
     from keystone_mcp.user_directory.factory import build_in_memory_user_directory_resolver
@@ -574,10 +566,11 @@ async def test_login_page_shows_form_when_api_key_primary():
     settings = _google_settings(primary_login_method="api_key")
     resolver, backend, _revision = build_in_memory_user_directory_resolver()
     backend.seed("alice@example.com", roles=("operator",))
+    mock_google = build_mock_google_oidc(settings.google_redirect_uri)
     oauth_store = InMemoryOAuthStore()
     mcp, *_rest = build_server(
         settings=settings,
-        identity_provider=StaticIdentityProvider({VALID_TOKEN}),
+        login_providers=[mock_google.provider, dev_token_login({VALID_TOKEN})],
         oauth_store=oauth_store,
         user_resolver=resolver,
     )

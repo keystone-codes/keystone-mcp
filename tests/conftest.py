@@ -18,10 +18,10 @@ import pytest
 import pytest_asyncio
 from fastmcp.utilities.tests import ASGIServer, asgi_server
 
-from keystone_mcp.auth.identity_provider import StaticIdentityProvider
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import Settings
 from keystone_mcp.server import build_server
+from support.login import dev_token_login
 
 VALID_TOKEN = "valid-test-token"
 BASE_URL = "http://localhost:8080"
@@ -99,10 +99,11 @@ class Harness:
 @pytest_asyncio.fixture
 async def harness():
     settings = Settings(base_url=BASE_URL, refresh_interval_seconds=0)
-    idp = StaticIdentityProvider({VALID_TOKEN})
     store = InMemoryOAuthStore()
     mcp, registry, oauth, _upstreams, _policy_manager, _observability, _reconciler = build_server(
-        identity_provider=idp, settings=settings, oauth_store=store
+        settings=settings,
+        oauth_store=store,
+        login_providers=[dev_token_login({VALID_TOKEN})],
     )
     async with asgi_server(mcp, path=settings.http_path) as running:
         # Not ``running.http_client()``: that client's transport owns an anyio
