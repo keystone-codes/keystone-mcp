@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING
 
-from fastmcp.exceptions import ToolError
+from fastmcp.exceptions import PromptError, ToolError
 from fastmcp.server.middleware import Middleware, MiddlewareContext
 
 from keystone_mcp.config import Settings
@@ -35,7 +35,12 @@ from keystone_mcp.user_directory.protocol import UserDirectoryResolver
 
 if TYPE_CHECKING:
     from fastmcp.tools.base import Tool
-    from mcp.types import CallToolRequestParams, ListToolsRequest
+    from mcp.types import (
+        CallToolRequestParams,
+        GetPromptRequestParams,
+        ListPromptsRequest,
+        ListToolsRequest,
+    )
 
     from keystone_mcp.observability.service import RbacObservability
 
@@ -127,7 +132,7 @@ class RbacMiddleware(Middleware):
         tools = list(await call_next(context))
         decision = await self._evaluate(
             context,
-            tool_name=None,
+            name=None,
             roles_only=True,
             operation="list_tools",
         )
@@ -148,7 +153,7 @@ class RbacMiddleware(Middleware):
         tool_name = context.message.name
         decision = await self._evaluate(
             context,
-            tool_name=tool_name,
+            name=tool_name,
             roles_only=False,
             operation="call_tool",
         )
@@ -160,6 +165,47 @@ class RbacMiddleware(Middleware):
         # exactly the roles RBAC used to allow it. Not set at all when the
         # decision denied the call in enforce mode, since execution never
         # reaches `call_next`.
+        token = current_call_decision.set(decision)
+        try:
+            return await call_next(context)
+        finally:
+            current_call_decision.reset(token)
+
+    async def on_list_prompts(
+        self,
+        context: MiddlewareContext[ListPromptsRequest],
+        call_next,
+    ):
+        prompts = list(await call_next(context))
+        decision = await self._evaluate(
+            context,
+            name=None,
+            roles_only=True,
+            operation="list_prompts",
+        )
+        if not self._enforce:
+            return prompts
+        if not decision.allowed:
+            return []
+        policy = self._load_policy(operation="list_prompts")
+        if policy is None:
+            return []
+        return [prompt for prompt in prompts if policy.allows(decision.roles, prompt.name)]
+
+    async def on_get_prompt(
+        self,
+        context: MiddlewareContext[GetPromptRequestParams],
+        call_next,
+    ):
+        prompt_name = context.message.name
+        decision = await self._evaluate(
+            context,
+            name=prompt_name,
+            roles_only=False,
+            operation="get_prompt",
+        )
+        if not decision.allowed and self._enforce:
+            raise PromptError(CLIENT_DENIAL_MESSAGE)
         token = current_call_decision.set(decision)
         try:
             return await call_next(context)
@@ -216,14 +262,14 @@ class RbacMiddleware(Middleware):
         self,
         context: MiddlewareContext,
         *,
-        tool_name: str | None,
+        name: str | None,
         roles_only: bool,
         operation: str,
     ) -> RbacDecision:
         identity = resolve_verified_identity()
         if identity is None:
             decision = RbacDecision(
-                tool_name=tool_name or "",
+                tool_name=name or "",
                 email=None,
                 allowed=False,
                 reason=RbacDenialReason.NO_IDENTITY,
@@ -234,19 +280,19 @@ class RbacMiddleware(Middleware):
         login_provider = (identity.claims or {}).get("auth_method")
 
         critical = False
-        if tool_name:
+        if name:
             # Critical-tool globs live in the active policy; the core built-ins
             # apply even before a policy is loaded.
             active_policy = self._active_policy()
             critical = is_critical_tool(
-                tool_name,
+                name,
                 active_policy.critical_tool_patterns if active_policy is not None else (),
             )
         try:
             user = await self._resolve_user(identity.subject, critical=critical)
         except UserDirectoryUnavailableError:
             decision = RbacDecision(
-                tool_name=tool_name or "",
+                tool_name=name or "",
                 email=identity.subject,
                 login_provider=login_provider,
                 allowed=False,
@@ -263,7 +309,7 @@ class RbacMiddleware(Middleware):
                 exc_info=True,
             )
             decision = RbacDecision(
-                tool_name=tool_name or "",
+                tool_name=name or "",
                 email=identity.subject,
                 login_provider=login_provider,
                 allowed=False,
@@ -275,7 +321,7 @@ class RbacMiddleware(Middleware):
 
         if getattr(user, "subject_type", "human") != identity.subject_type:
             decision = RbacDecision(
-                tool_name=tool_name or "",
+                tool_name=name or "",
                 email=identity.subject,
                 login_provider=login_provider,
                 allowed=False,
@@ -290,7 +336,7 @@ class RbacMiddleware(Middleware):
         roles = frozenset(user.roles)
         if user.is_blocked:
             decision = RbacDecision(
-                tool_name=tool_name or "",
+                tool_name=name or "",
                 email=identity.subject,
                 subject_type=identity.subject_type,
                 login_provider=login_provider,
@@ -304,7 +350,7 @@ class RbacMiddleware(Middleware):
 
         if not _user_may_access_tools(user):
             decision = RbacDecision(
-                tool_name=tool_name or "",
+                tool_name=name or "",
                 email=identity.subject,
                 subject_type=identity.subject_type,
                 login_provider=login_provider,
@@ -316,7 +362,7 @@ class RbacMiddleware(Middleware):
             self._record_decision(decision, operation=operation)
             return decision
 
-        if roles_only or tool_name is None:
+        if roles_only or name is None:
             decision = RbacDecision(
                 tool_name="",
                 email=identity.subject,
@@ -332,7 +378,7 @@ class RbacMiddleware(Middleware):
         policy = self._load_policy(operation=operation)
         if policy is None:
             decision = RbacDecision(
-                tool_name=tool_name,
+                tool_name=name,
                 email=identity.subject,
                 subject_type=identity.subject_type,
                 login_provider=login_provider,
@@ -343,12 +389,12 @@ class RbacMiddleware(Middleware):
             self._record_decision(decision, operation=operation)
             return decision
 
-        if policy.allows(roles, tool_name):
-            if requires_human_identity(tool_name, policy) and not has_interactive_human_identity(
+        if policy.allows(roles, name):
+            if requires_human_identity(name, policy) and not has_interactive_human_identity(
                 identity
             ):
                 decision = RbacDecision(
-                    tool_name=tool_name,
+                    tool_name=name,
                     email=identity.subject,
                     subject_type=identity.subject_type,
                     login_provider=login_provider,
@@ -360,7 +406,7 @@ class RbacMiddleware(Middleware):
                 self._record_decision(decision, operation=operation)
                 return decision
             decision = RbacDecision(
-                tool_name=tool_name,
+                tool_name=name,
                 email=identity.subject,
                 subject_type=identity.subject_type,
                 login_provider=login_provider,
@@ -372,7 +418,7 @@ class RbacMiddleware(Middleware):
             return decision
 
         decision = RbacDecision(
-            tool_name=tool_name,
+            tool_name=name,
             email=identity.email,
             login_provider=login_provider,
             allowed=False,

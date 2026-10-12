@@ -67,7 +67,9 @@ the administrative tools into a separate registry entry with their own
 namespace (not starting with `billing_`) using `include_prefixes`/
 `strip_prefix`.
 
-
+Allow patterns match tools, prompts and resources by their published name
+(`<namespace>_<name>` for tools and prompts; resources use the resource name or
+template name with the namespace inserted into the URI — see the facade docs).
 
 ### 2.2 `version`
 

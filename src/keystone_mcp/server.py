@@ -328,7 +328,11 @@ def build_server(
     # populated), so the forward reference to a not-yet-assigned local is safe
     # (P06).
     policy_manager = (
-        RbacPolicyManager(settings, upstream_catalog_state=lambda: upstreams.catalog_state())
+        RbacPolicyManager(
+            settings,
+            upstream_catalog_state=lambda: upstreams.catalog_state(),
+            extra_catalog_names=lambda: upstreams.content.rbac_names(),
+        )
         if settings.rbac_enabled
         else None
     )
@@ -435,6 +439,7 @@ def build_server(
         _identity_signing_key_pem=settings.identity_signing_key,
     )
     upstreams.observability = rbac_observability
+    upstreams.rbac_mode = settings.rbac_mode
 
     # Core of changing the RBAC policy through the agent instead of a server
     # login: lets a later release's policy_* tools read and change the policy

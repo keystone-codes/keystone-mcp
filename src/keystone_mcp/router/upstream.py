@@ -29,7 +29,8 @@ from keystone_mcp.identity_assertion import (
     resolve_identity_secret,
 )
 from keystone_mcp.rbac.upstream_state import UpstreamCatalogState
-from keystone_mcp.router.catalog_fingerprint import tool_fingerprint
+from keystone_mcp.router.catalog_fingerprint import prompt_fingerprint, tool_fingerprint
+from keystone_mcp.router.proxy_components import UpstreamProxyPrompt
 from keystone_mcp.router.proxy_schema import PatchTable, apply_proxy_schema_patches
 from keystone_mcp.router.registry import Param
 from keystone_mcp.router.route import Mode
@@ -41,6 +42,7 @@ from keystone_mcp.router.upstream_connection import (
     UpstreamConnection,
     temporary_stdio_client,
 )
+from keystone_mcp.router.upstream_content import UpstreamContentCatalog, UpstreamPromptSpec
 
 if TYPE_CHECKING:
     from mcp.shared._httpx_utils import McpHttpClientFactory
@@ -157,6 +159,39 @@ async def list_upstream_tools(
     raise UpstreamListToolsError(f"auto-pagination limit ({max_pages} pages) reached")
 
 
+async def list_upstream_prompts(
+    client: Client,
+    *,
+    timeout_seconds: float,
+    max_pages: int = _AUTO_PAGINATION_MAX_PAGES,
+) -> list[Any]:
+    """Paginated ``list_prompts`` on an already-constructed MCP client."""
+    caps = client.server_capabilities
+    if caps is None or caps.prompts is None:
+        return []
+
+    all_prompts: list[Any] = []
+    cursor: str | None = None
+    seen_cursors: set[str] = set()
+
+    async def _one_page() -> Any:
+        return await client.list_prompts_mcp(cursor=cursor)
+
+    for _ in range(max_pages):
+        try:
+            result = await asyncio.wait_for(_one_page(), timeout=timeout_seconds)
+        except Exception as exc:
+            raise UpstreamListToolsError(str(exc)) from exc
+        all_prompts.extend(result.prompts)
+        if not result.next_cursor:
+            return all_prompts
+        if result.next_cursor in seen_cursors:
+            raise UpstreamListToolsError(f"duplicate pagination cursor {result.next_cursor!r}")
+        seen_cursors.add(result.next_cursor)
+        cursor = result.next_cursor
+    raise UpstreamListToolsError(f"auto-pagination limit ({max_pages} pages) reached")
+
+
 async def fetch_upstream_tools(
     url: str,
     *,
@@ -187,6 +222,31 @@ async def fetch_upstream_tools(
         )
         async with Client(transport, init_timeout=timeout_seconds) as client:
             return await list_upstream_tools(
+                client, timeout_seconds=timeout_seconds, max_pages=max_pages
+            )
+    except UpstreamListToolsError:
+        raise
+    except Exception as exc:
+        raise UpstreamListToolsError(f"{type(exc).__name__}: {exc}") from exc
+
+
+async def fetch_upstream_prompts(
+    url: str,
+    *,
+    timeout_seconds: float,
+    max_pages: int = _AUTO_PAGINATION_MAX_PAGES,
+    httpx_client_factory: "McpHttpClientFactory | None" = None,
+    headers: Mapping[str, str] | None = None,
+) -> list[Any]:
+    """HTTP discovery helper for prompts; mirrors :func:`fetch_upstream_tools`."""
+    try:
+        transport = StreamableHttpTransport(
+            url.rstrip("/"),
+            headers=dict(headers or {}),
+            httpx_client_factory=httpx_client_factory,
+        )
+        async with Client(transport, init_timeout=timeout_seconds) as client:
+            return await list_upstream_prompts(
                 client, timeout_seconds=timeout_seconds, max_pages=max_pages
             )
     except UpstreamListToolsError:
@@ -296,6 +356,50 @@ def build_upstream_tool_specs(
     return {route_name: spec for route_name, (_tool, spec) in winners.items()}
 
 
+def _prompt_arguments_fingerprint(prompt: Any) -> list[dict[str, Any]]:
+    raw_args = getattr(prompt, "arguments", None) or []
+    payload: list[dict[str, Any]] = []
+    for arg in raw_args:
+        payload.append(
+            {
+                "name": getattr(arg, "name", ""),
+                "description": getattr(arg, "description", None) or "",
+                "required": bool(getattr(arg, "required", False)),
+            }
+        )
+    return sorted(payload, key=lambda item: item["name"])
+
+
+def build_upstream_prompt_specs(
+    cfg: UpstreamConfig,
+    prompts: Iterable[Any],
+) -> dict[str, UpstreamPromptSpec]:
+    """Map upstream prompt names to specs after the same filters as tools."""
+    specs: dict[str, UpstreamPromptSpec] = {}
+    for prompt in prompts:
+        prompt_name = prompt.name
+        if cfg.tool_filter is not None and not cfg.tool_filter(prompt_name):
+            continue
+        route_name = resolve_mounted_tool_name(prompt_name, cfg.strip_prefix)
+        if not route_name:
+            continue
+        title = getattr(prompt, "title", None)
+        description = getattr(prompt, "description", None) or ""
+        arg_fp = _prompt_arguments_fingerprint(prompt)
+        published = f"{cfg.namespace}_{route_name}"
+        specs[route_name] = UpstreamPromptSpec(
+            name=prompt_name,
+            published_name=published,
+            fingerprint=prompt_fingerprint(
+                name=prompt_name,
+                title=title,
+                description=description,
+                arguments=arg_fp,
+            ),
+        )
+    return specs
+
+
 @dataclass
 class UpstreamConfig:
     name: str
@@ -320,6 +424,7 @@ class UpstreamRegistry:
 
     main_mcp: FastMCP
     registry: "RouterRegistry"
+    content: UpstreamContentCatalog = field(default_factory=UpstreamContentCatalog)
     tool_timeout_seconds: float = 180.0
     discovery_timeout_seconds: float = 10.0
     tool_timeout_overrides: dict[str, float] = field(default_factory=dict)
@@ -347,6 +452,7 @@ class UpstreamRegistry:
     # registered here (Y01) -- set by ``build_server`` from
     # ``settings.base_url`` (already stripped of a trailing slash).
     identity_issuer: str = ""
+    rbac_mode: str = "off"
     # Deployment-wide ES256 signing key (Y11); never logged or repr'd.
     _identity_signing_key_pem: str = field(default="", repr=False)
     _identity_es256_private_key: Any = field(default=None, repr=False)
@@ -758,6 +864,110 @@ class UpstreamRegistry:
             )
         return None
 
+    def _tool_timeout_for(self, cfg: UpstreamConfig) -> float:
+        if cfg.tool_timeout_seconds is not None:
+            return cfg.tool_timeout_seconds
+        return self.tool_timeout_seconds
+
+    async def _list_prompts_for_config(
+        self,
+        cfg: UpstreamConfig,
+        discovery_timeout: float,
+        *,
+        catalog_client: Client | None = None,
+    ) -> list[Any]:
+        if catalog_client is not None:
+            return await list_upstream_prompts(catalog_client, timeout_seconds=discovery_timeout)
+        if cfg.transport == "stdio":
+            conn = self._connections[cfg.namespace]
+            if isinstance(conn, StdioUpstreamConnection) and conn.process.state == "running":
+                client = conn.catalog_client(timeout=discovery_timeout)
+                async with client:
+                    return await list_upstream_prompts(client, timeout_seconds=discovery_timeout)
+            assert cfg.command is not None
+            child_env = resolve_stdio_child_env(cfg.env_from)
+            client = temporary_stdio_client(
+                command=cfg.command,
+                args=cfg.args,
+                env=child_env,
+                cwd=cfg.cwd,
+                init_timeout=discovery_timeout,
+            )
+            async with client:
+                return await list_upstream_prompts(client, timeout_seconds=discovery_timeout)
+        return await fetch_upstream_prompts(
+            cfg.url,
+            timeout_seconds=discovery_timeout,
+            httpx_client_factory=(
+                self.http_client_factory(discovery_timeout) if self.http_client_factory else None
+            ),
+            headers=self.upstream_headers(cfg.namespace),
+        )
+
+    def _apply_prompt_specs(
+        self,
+        cfg: UpstreamConfig,
+        specs: dict[str, UpstreamPromptSpec],
+        raw_prompts: dict[str, Any],
+    ) -> bool:
+        """Mount prompt proxies on the namespace sub-server; return whether anything changed."""
+        namespace = cfg.namespace
+        sub = self._sub_servers[namespace]
+        adapter = self._adapters[namespace]
+        previous = self.content.prompts(namespace)
+        desired_fp = {name: spec.fingerprint for name, spec in specs.items()}
+        previous_fp = {name: spec.fingerprint for name, spec in previous.items()}
+        if desired_fp == previous_fp:
+            return False
+
+        changed = False
+        prev_names = set(previous_fp)
+        new_names = set(desired_fp)
+
+        for route_name in sorted(prev_names - new_names):
+            sub._local_provider.remove_prompt(route_name)
+            changed = True
+
+        tool_timeout = self._tool_timeout_for(cfg)
+        for route_name in sorted(new_names):
+            spec = specs[route_name]
+            if route_name in prev_names and previous_fp.get(route_name) == spec.fingerprint:
+                continue
+
+            owner = self.content.owner_of_published_prompt(spec.published_name)
+            owner_key = f"{namespace}:{spec.name}"
+            if owner is not None and owner != owner_key:
+                logger.error(
+                    "upstream prompts refused namespace=%s prompt=%s: "
+                    "published name %s already owned by %s",
+                    namespace,
+                    spec.name,
+                    spec.published_name,
+                    owner,
+                )
+                continue
+
+            if route_name in prev_names:
+                sub._local_provider.remove_prompt(route_name)
+
+            mcp_prompt = raw_prompts[route_name]
+            proxy = UpstreamProxyPrompt.from_upstream_prompt(
+                registry=self,
+                namespace=namespace,
+                mcp_prompt=mcp_prompt,
+                backend_name=spec.name,
+                identity_signer=adapter._identity_signer,
+                extra_headers=dict(self.upstream_headers(namespace)),
+                tool_timeout=tool_timeout,
+                rbac_mode=self.rbac_mode,
+                transport=self.connection(namespace).transport,
+            )
+            sub.add_prompt(proxy)
+            changed = True
+
+        self.content.set_prompts(namespace, specs)
+        return changed
+
     async def _discover_one(self, cfg: UpstreamConfig) -> int:
         if cfg.mode != "proxy_1to1":
             raise ValueError(f"unsupported upstream mode: {cfg.mode}")
@@ -771,8 +981,34 @@ class UpstreamRegistry:
             if cfg.discovery_timeout_seconds is not None
             else self.discovery_timeout_seconds
         )
+        prompts_raw: list[Any] = []
         if cfg.transport == "stdio":
-            tools = await self._discover_stdio_tools(cfg, discovery_timeout)
+            conn = self._connections[cfg.namespace]
+            if isinstance(conn, StdioUpstreamConnection) and conn.process.state == "running":
+                client = conn.catalog_client(timeout=discovery_timeout)
+                async with client:
+                    tools = await list_upstream_tools(client, timeout_seconds=discovery_timeout)
+                    try:
+                        prompts_raw = await list_upstream_prompts(
+                            client, timeout_seconds=discovery_timeout
+                        )
+                    except UpstreamListToolsError as exc:
+                        logger.warning(
+                            "upstream prompts refresh failed namespace=%s: %s; "
+                            "keeping previous prompts",
+                            cfg.namespace,
+                            exc,
+                        )
+            else:
+                tools = await self._discover_stdio_tools(cfg, discovery_timeout)
+                try:
+                    prompts_raw = await self._list_prompts_for_config(cfg, discovery_timeout)
+                except UpstreamListToolsError as exc:
+                    logger.warning(
+                        "upstream prompts refresh failed namespace=%s: %s; keeping previous prompts",
+                        cfg.namespace,
+                        exc,
+                    )
         else:
             tools = await fetch_upstream_tools(
                 cfg.url,
@@ -784,6 +1020,23 @@ class UpstreamRegistry:
                 ),
                 headers=self.upstream_headers(cfg.namespace),
             )
+            try:
+                prompts_raw = await fetch_upstream_prompts(
+                    cfg.url,
+                    timeout_seconds=discovery_timeout,
+                    httpx_client_factory=(
+                        self.http_client_factory(discovery_timeout)
+                        if self.http_client_factory
+                        else None
+                    ),
+                    headers=self.upstream_headers(cfg.namespace),
+                )
+            except UpstreamListToolsError as exc:
+                logger.warning(
+                    "upstream prompts refresh failed namespace=%s: %s; keeping previous prompts",
+                    cfg.namespace,
+                    exc,
+                )
         specs = build_upstream_tool_specs(cfg, tools, schema_patches=self.schema_patches)
         for spec in specs.values():
             route_key = f"{cfg.namespace}:{spec.route_name}"
@@ -837,6 +1090,14 @@ class UpstreamRegistry:
                 continue
             self.clear_unpublishable(cfg.namespace, spec.route_name)
             registered += 1
+
+        prompt_specs = build_upstream_prompt_specs(cfg, prompts_raw)
+        raw_by_route = {
+            resolve_mounted_tool_name(p.name, cfg.strip_prefix): p
+            for p in prompts_raw
+            if resolve_mounted_tool_name(p.name, cfg.strip_prefix)
+        }
+        self._apply_prompt_specs(cfg, prompt_specs, raw_by_route)
 
         logger.info(
             "discovered upstream=%s namespace=%s tools=%d",
