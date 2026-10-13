@@ -397,7 +397,7 @@ services:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/healthz')"]
 
   keystone-mcp:
-    image: ghcr.io/keystone-codes/keystone-mcp:0.4.0
+    image: ghcr.io/keystone-codes/keystone-mcp:0.5.0
     environment:
       KEYSTONE_MCP_UPSTREAMS_PATH: /etc/keystone-mcp/upstreams.yaml
       # Plain http is fine on this internal Docker network, which is not

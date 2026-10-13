@@ -62,7 +62,7 @@ def test_deployment_pins_the_image_tag():
 
     assert ":" in image
     assert not image.endswith(":latest"), f"must not use :latest, got {image!r}"
-    assert image.endswith(":0.4.0"), f"expected the 0.4.0 tag, got {image!r}"
+    assert image.endswith(":0.5.0"), f"expected the 0.5.0 tag, got {image!r}"
 
 
 def test_deployment_probes_target_the_right_endpoints():

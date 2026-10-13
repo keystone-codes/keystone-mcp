@@ -12,7 +12,7 @@ find there, not just the file name.
 - [Kubernetes example](paths/kubernetes.md) — the same settings, packaged
   for a cluster (not a Helm chart)
 - [What Keystone-MCP does](features.md) — every capability in depth, and
-  what is still 0.5.0
+  every capability
 
 ## I build an agent application or a service behind Keystone-MCP
 

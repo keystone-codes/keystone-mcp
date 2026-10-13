@@ -8,6 +8,8 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-13
+
 ### Added
 
 - CI: contract freeze gate — a frozen environment variable, policy key or CLI command cannot disappear without a `Removed` entry in the changelog.
@@ -122,6 +124,10 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 - New Redis keys `km:oauth:subject:<sub>` (set) and `km:oauth:subject_nbf:<sub>`
   under `KEYSTONE_MCP_REDIS_KEY_PREFIX`; access tokens carry `iat`.
 - `Pattern` members renamed: `M_B` → `SYNC`, `M_E` → `CONTINUATION`; `M_D` and `M_U` removed with the file tools. The built-in answer format is called the status envelope throughout the code and docs.
+- Production profile: service accounts authenticate with Bearer API keys issued
+  on the server (`keystone-mcp keys issue`); the `api_keys_issue` tool is not
+  published, and API-key sign-in for people is refused while an interactive
+  login provider is configured.
 
 ### Deprecated
 
@@ -150,20 +156,6 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
   external key check; startup refuses while they are set.
 - `keystone_mcp.auth.IdentityProvider` and `build_server(identity_provider=...)`;
   use `keystone_mcp.login` providers.
-
-### Changed
-
-- Production profile: service accounts authenticate with Bearer API keys issued
-  on the server (`keystone-mcp keys issue`); the `api_keys_issue` tool is not
-  published, and API-key sign-in for people is refused while an interactive
-  login provider is configured.
-
-### Migration
-
-- To use the `policy_*` mutation tools, mount the policy file (and its directory) read-write; otherwise they answer `policy_readonly`. With several replicas and no shared volume, set `KEYSTONE_MCP_POLICY_TOOLS=read-only` on all but one.
-- Database migration `0003_api_keys`. Deployments that checked keys with an
-  external service: issue new keys from the built-in directory and remove the
-  two variables; external HTTP directories do not support API keys.
 
 ### Security
 
@@ -205,6 +197,10 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ### Migration
 
+- To use the `policy_*` mutation tools, mount the policy file (and its directory) read-write; otherwise they answer `policy_readonly`. With several replicas and no shared volume, set `KEYSTONE_MCP_POLICY_TOOLS=read-only` on all but one.
+- Database migration `0003_api_keys`. Deployments that checked keys with an
+  external service: issue new keys from the built-in directory and remove the
+  two variables; external HTTP directories do not support API keys.
 - Tokens issued before the upgrade are indexed on first use; a block revokes
   them in any case. If you share Redis, reserve these key patterns.
 - Forks that pass `pattern=Pattern.M_B` (and the others) to `add_route`: use the new member names.

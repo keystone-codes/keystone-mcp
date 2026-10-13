@@ -5,7 +5,7 @@ jobs: it is the **facade** the client talks to, the **router** that
 forwards each call to the service that owns it, and the **authorization**
 layer that decides what the signed-in person may see and call. This page
 goes one level deeper than the README on every capability that supports
-that, and says plainly which parts are still ahead, in 0.5.0.
+that.
 
 ## One facade
 

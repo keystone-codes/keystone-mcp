@@ -17,7 +17,7 @@ from keystone_mcp.users.db import (
     redact_db_url,
 )
 from keystone_mcp.users.migrate import HEAD_REVISION, current_revision, upgrade_to_head
-from support.users_db import POSTGRES_URL_ENV_VAR, sqlite_url
+from support.users_db import POSTGRES_URL_ENV_VAR, reset_postgres_schema, sqlite_url
 
 
 def test_upgrade_on_empty_database_creates_tables(tmp_path: Path) -> None:
@@ -43,10 +43,7 @@ def test_concurrent_upgrades_on_postgres() -> None:
         pytest.skip(f"{POSTGRES_URL_ENV_VAR} is not set; skipping Postgres migration test")
 
     engine = create_users_engine(postgres_url)
-    with engine.begin() as conn:
-        conn.execute(text("DROP TABLE IF EXISTS keystone_user_role CASCADE"))
-        conn.execute(text("DROP TABLE IF EXISTS keystone_user CASCADE"))
-        conn.execute(text("DROP TABLE IF EXISTS keystone_users_alembic_version CASCADE"))
+    reset_postgres_schema(engine)
 
     errors: list[BaseException] = []
 
@@ -67,10 +64,7 @@ def test_concurrent_upgrades_on_postgres() -> None:
         rows = conn.execute(text("SELECT version_num FROM keystone_users_alembic_version")).all()
     assert len(rows) == 1
 
-    with engine.begin() as conn:
-        conn.execute(text("DROP TABLE IF EXISTS keystone_user_role CASCADE"))
-        conn.execute(text("DROP TABLE IF EXISTS keystone_user CASCADE"))
-        conn.execute(text("DROP TABLE IF EXISTS keystone_users_alembic_version CASCADE"))
+    reset_postgres_schema(engine)
     engine.dispose()
 
 

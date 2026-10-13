@@ -19,11 +19,28 @@ def sqlite_url(tmp_path: Path) -> str:
     return f"sqlite:///{tmp_path}/keystone-users.db"
 
 
-def _reset_postgres(engine) -> None:  # noqa: ANN001
+# Every table the users-directory migrations create, children first. The
+# shared CI database is reused across tests; dropping only the 0001 tables
+# leaves later revisions in place, and the next upgrade then fails with
+# DuplicateTable.
+_POSTGRES_TABLES = (
+    "keystone_api_key",
+    "keystone_service_account_role",
+    "keystone_service_account",
+    "keystone_user_role",
+    "keystone_user",
+    "keystone_users_alembic_version",
+)
+
+
+def reset_postgres_schema(engine) -> None:  # noqa: ANN001
     with engine.begin() as conn:
-        conn.execute(text("DROP TABLE IF EXISTS keystone_user_role CASCADE"))
-        conn.execute(text("DROP TABLE IF EXISTS keystone_user CASCADE"))
-        conn.execute(text("DROP TABLE IF EXISTS keystone_users_alembic_version CASCADE"))
+        for table in _POSTGRES_TABLES:
+            conn.execute(text(f"DROP TABLE IF EXISTS {table} CASCADE"))
+
+
+def _reset_postgres(engine) -> None:  # noqa: ANN001
+    reset_postgres_schema(engine)
 
 
 @pytest.fixture(params=["sqlite", "postgres"])
