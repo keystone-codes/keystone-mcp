@@ -163,58 +163,21 @@ between the two modes.
 ## Extending Keystone-MCP in a fork
 
 A team that forks Keystone-MCP to front its own agentic application can
-already swap several of these seams for its own code, each described below
-with the file it edits. A few others still need a core change; 0.5.0 plans to
-turn those into the same kind of pluggable interface.
+already swap several of these seams for its own code, each described below.
+Sign-in providers and users directories are packages discovered through entry
+points; see [plugins.md](plugins.md).
 
 ### Replaceable today
 
-#### Sign-in secret check: `IdentityProvider`
+#### Sign-in: `LoginProvider`
 
-`IdentityProvider` (`src/keystone_mcp/auth/identity_provider.py`) checks the
-credential a client presents when it signs in with a DEV token or an API key
-— the api-key page, not the Google button — and binds the asserted email to
-the issued access token when the check passes. It is one `runtime_checkable`
-protocol with one method:
-
-```python
-@runtime_checkable
-class IdentityProvider(Protocol):
-    async def verify(self, api_token: str, email: str) -> bool: ...
-```
-
-Google sign-in never calls this protocol: it goes through
-`KeystoneOAuthProvider` and `GoogleOidcClient`
-(`src/keystone_mcp/auth/keystone_oauth_provider.py`,
-`src/keystone_mcp/auth/google_oidc.py`) instead.
-
-The shipped implementations are `StaticIdentityProvider` (a fixed set of DEV
-tokens) and `AuthServiceIdentityProvider` (deprecated HTTP introspection
-against `KEYSTONE_MCP_AUTH_SERVICE_*`, removed in 0.4.1). A fork checking its
-own credential store writes a class with the same method, for example:
-
-```python
-class MyKeyStoreIdentityProvider:
-    """Looks up api_token in our own table and compares its bound email."""
-
-    def __init__(self, pool: "asyncpg.Pool") -> None:
-        self._pool = pool
-
-    async def verify(self, api_token: str, email: str) -> bool:
-        if not api_token or not email or "@" not in email:
-            return False
-        async with self._pool.acquire() as conn:
-            row = await conn.fetchrow(
-                "SELECT email FROM api_keys WHERE token = $1 AND revoked_at IS NULL",
-                api_token,
-            )
-        return row is not None and row["email"].strip().lower() == email.strip().lower()
-```
-
-To wire it in, edit `build_identity_provider` in `src/keystone_mcp/server.py`
-and return the new class instead of (or alongside) the built-in branches —
-honestly, there is no registration point that avoids touching this one
-function yet.
+Sign-in providers implement `keystone_mcp.login.LoginProvider` and are
+discovered through the `keystone_mcp.login_providers` entry point. Google,
+generic OpenID Connect, and the API-key form ship that way. A fork adds a
+provider type by publishing a package. See
+[login-providers.md](login-providers.md) and [plugins.md](plugins.md).
+`IdentityProvider` and `build_server(identity_provider=...)` were removed in
+0.5.0.
 
 #### Users directory: `UserDirectory`
 
@@ -262,16 +225,8 @@ Keystone-MCP request from anything else on the same network. See
 [Authenticating Keystone-MCP to your service](connecting-services.md#authenticating-keystone-mcp-to-your-service)
 for the field and the header it produces.
 
-### Not replaceable yet
-
-- **Sign-in providers: `keystone_mcp.login.LoginProvider` (redirect and form
-  kinds).** Configuration of custom providers arrives with OIDC providers;
-  see [login-providers.md](login-providers.md).
-- **No entry points yet.** Every seam above is wired by editing one factory
-  function in the core (`build_identity_provider`,
-  `build_user_directory_resolver`, `UsersAdminAdapter`) rather than by
-  registering a package. Planned for 0.5.0, alongside publishing
-  `keystone-mcp-gateway` on PyPI: `keystone_mcp.login_providers` and
-  `keystone_mcp.user_directories` entry points a fork's own package declares,
-  plus contract tests it can run against its implementation before deploying
-  it.
+Custom built-in tools (`Adapter` and `RouterRegistry.add_route`) are still
+registered in the fork's own code. Sign-in providers and users directories
+are entry points, and a fork can run the contract tests against its own
+implementation (`pytest -p keystone_mcp.contract_tests`) before deploying it.
+See [plugins.md](plugins.md).

@@ -326,10 +326,10 @@ the same Host/Origin guard and OAuth IP throttle as `/token`.
   every OAuth access and refresh token for that person immediately. The next
   request with an old token is rejected; unblocking does not bring old
   sessions back.
-- Interactive sign-in is Google only; a general OIDC provider is planned
-  for 0.5.0. The deprecated API-key method
-  (`KEYSTONE_MCP_AUTH_SERVICE_URL`) is still accepted under `production`
-  until 0.4.1.
+- Interactive sign-in is any provider in the login providers file (Google
+  and other OpenID Connect issuers). In production, API-key sign-in for
+  people is refused while an interactive provider is configured. The old
+  `KEYSTONE_MCP_AUTH_SERVICE_*` variables are removed; startup refuses them.
 - `HostGuardMiddleware` exempts only `/healthz` and `/readyz`, not
   `/metrics` or `/internal/*`. By default the allowlist holds only
   `KEYSTONE_MCP_BASE_URL`'s host (plus `localhost`/`127.0.0.1`/`[::1]` when
@@ -338,7 +338,7 @@ the same Host/Origin guard and OAuth IP throttle as `/token`.
   IP is refused with `421`. Add the exact name the scraper uses to
   `KEYSTONE_MCP_ALLOWED_HOSTS` (e.g. `127.0.0.1:8080` for a scraper on the
   same host). A pod IP assigned at pod start cannot be listed in advance,
-  so scraping each pod by IP is not supported in 0.4.0.
+  so scraping each pod by IP is not supported.
 
 ## Checklist by profile
 

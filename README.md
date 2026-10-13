@@ -5,7 +5,7 @@
   &nbsp;&nbsp;&nbsp;&nbsp;
   <a href="pyproject.toml"><img alt="Python 3.11, 3.12, 3.13" src="https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-3776AB?logo=python&logoColor=white"></a>
   &nbsp;&nbsp;&nbsp;&nbsp;
-  <a href="CHANGELOG.md"><img alt="version 0.4.0" src="https://img.shields.io/badge/version-0.4.0-0f172a"></a>
+  <a href="CHANGELOG.md"><img alt="version 0.5.0" src="https://img.shields.io/badge/version-0.5.0-0f172a"></a>
   &nbsp;&nbsp;&nbsp;&nbsp;
   <a href="https://github.com/jlowin/fastmcp"><img alt="FastMCP 4.1" src="https://img.shields.io/badge/FastMCP-4.1-059669"></a>
   &nbsp;&nbsp;&nbsp;&nbsp;
@@ -84,7 +84,7 @@ Then connect a client and sign in:
   authorization events ship with the process.
 - **One image, two architectures.** `linux/amd64` and `linux/arm64`.
 
-Full description of every capability, and what is still ahead:
+Full description of every capability:
 [docs/features.md](docs/features.md).
 
 ## What it does not do
