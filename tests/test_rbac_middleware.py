@@ -10,7 +10,6 @@ from fastmcp.exceptions import ToolError
 from fastmcp.server.middleware import MiddlewareContext
 
 from keystone_mcp.adapters.stub import StubAdapter
-from keystone_mcp.auth.identity_provider import StaticIdentityProvider
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import Settings
 from keystone_mcp.identity import VerifiedIdentity, resolve_verified_identity
@@ -30,6 +29,7 @@ from keystone_mcp.user_directory import (
     build_in_memory_user_directory_resolver,
     is_critical_tool,
 )
+from support.login import dev_token_login
 
 MOUNTED_TEST_POLICY = """\
 version: "test-mounted"
@@ -391,7 +391,7 @@ def test_rbac_observe_registers_middleware(tmp_path: Path):
     )
     resolver, _backend, _ = build_in_memory_user_directory_resolver()
     mcp, _registry, _oauth, _upstreams, policy_manager, _observability, _reconciler = build_server(
-        identity_provider=StaticIdentityProvider({"token"}),
+        login_providers=[dev_token_login({"token"})],
         settings=settings,
         oauth_store=InMemoryOAuthStore(),
         user_resolver=resolver,
@@ -407,7 +407,7 @@ def test_rbac_disabled_does_not_register_middleware(tmp_path: Path):
     policy.write_text(default_policy_path().read_text(encoding="utf-8"), encoding="utf-8")
     settings = Settings(base_url="http://localhost:8080", rbac_mode="off")
     mcp, _registry, _oauth, _upstreams, policy_manager, _observability, _reconciler = build_server(
-        identity_provider=StaticIdentityProvider({"token"}),
+        login_providers=[dev_token_login({"token"})],
         settings=settings,
         oauth_store=InMemoryOAuthStore(),
     )
@@ -427,7 +427,7 @@ def test_rbac_enabled_registers_middleware(tmp_path: Path):
     )
     resolver, _backend, _ = build_in_memory_user_directory_resolver()
     mcp, _registry, _oauth, _upstreams, policy_manager, _observability, _reconciler = build_server(
-        identity_provider=StaticIdentityProvider({"token"}),
+        login_providers=[dev_token_login({"token"})],
         settings=settings,
         oauth_store=InMemoryOAuthStore(),
         user_resolver=resolver,
@@ -447,7 +447,7 @@ async def test_critical_tool_uses_synchronous_resolve(
         "keystone_mcp.router.rbac_middleware.resolve_verified_identity",
         lambda: VerifiedIdentity(email=subject_state["email"]),
     )
-    middleware, _ = _make_middleware(mounted_policy_path, roles=("editor",))
+    middleware, _ = _make_middleware(mounted_policy_path, roles=("administrator",))
     seen: dict[str, bool] = {}
 
     async def fake_resolve(email: str, *, critical: bool = False):
@@ -457,13 +457,15 @@ async def test_critical_tool_uses_synchronous_resolve(
             (),
             {
                 "exists": True,
-                "roles": ("editor",),
+                "roles": ("administrator",),
                 "is_blocked": False,
             },
         )()
 
     monkeypatch.setattr(middleware._user_resolver, "resolve", fake_resolve)
-    ctx = MiddlewareContext(message=type("Msg", (), {"name": "create_upload_url"})())
+    # users_list matches CORE_CRITICAL_PATTERNS ("users_*"), so it is resolved
+    # synchronously even though the policy's own critical_tools is ["ledger_*"].
+    ctx = MiddlewareContext(message=type("Msg", (), {"name": "users_list"})())
 
     async def call_next(_context):
         return {"ok": True}
@@ -485,8 +487,6 @@ def test_denial_reason_values_are_stable():
 CORE_CRITICAL_TOOLS = (
     "users_list",
     "users_set_roles",
-    "create_upload_url",
-    "get_download_link",
 )
 
 POLICY_CRITICAL_TOOLS = ("ledger_commit", "ledger_read")

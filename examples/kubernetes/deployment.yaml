@@ -24,7 +24,7 @@ spec:
         fsGroup: 10001
       containers:
         - name: keystone
-          image: ghcr.io/keystone-codes/keystone-mcp:0.4.0
+          image: ghcr.io/keystone-codes/keystone-mcp:0.5.0
           ports:
             - name: http
               containerPort: 8080
@@ -106,7 +106,7 @@ spec:
           configMap:
             name: keystone-config
         # readOnlyRootFilesystem needs a writable /tmp; verified against the
-        # 0.4.0 image (see docs/paths/kubernetes.md). The built-in SQLite
+        # published image (see docs/paths/kubernetes.md). The built-in SQLite
         # path under /data is not exercised in this example -- production
         # requires Postgres (KEYSTONE_MCP_USERS_DB_URL in the Secret).
         - name: tmp

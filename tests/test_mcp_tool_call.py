@@ -9,9 +9,10 @@ unauthenticated client is rejected.
 from __future__ import annotations
 
 import pytest
+from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
 
-from conftest import mcp_client_session, obtain_access_token
+from conftest import obtain_access_token
 
 
 async def test_tool_call_over_oauth_bearer(harness):
@@ -30,14 +31,13 @@ async def test_tool_call_over_oauth_bearer(harness):
     res = await obtain_access_token(harness.client, harness.settings.resource_url)
     token = res["body"]["access_token"]
 
-    def transport_factory():
-        return StreamableHttpTransport(
-            harness.settings.transport_url,
-            auth=token,
-            httpx_client_factory=harness.mcp_client_factory(),
-        )
+    transport = StreamableHttpTransport(
+        harness.settings.transport_url,
+        auth=token,
+        httpx_client_factory=harness.mcp_client_factory(),
+    )
 
-    async with mcp_client_session(transport_factory=transport_factory) as client:
+    async with Client(transport) as client:
         tools = await client.list_tools()
         names = {t.name for t in tools}
         assert "ping" in names
@@ -53,5 +53,5 @@ async def test_tool_call_without_token_is_rejected(harness):
         httpx_client_factory=harness.mcp_client_factory(),
     )
     with pytest.raises(Exception):
-        async with mcp_client_session(transport) as client:
+        async with Client(transport) as client:
             await client.list_tools()

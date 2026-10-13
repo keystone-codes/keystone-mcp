@@ -45,7 +45,9 @@ subject identifiers that are guessable from an email address — see
 
 Emitted on RBAC middleware allow/deny (list-tools and call-tool). Subject is
 `sub_<16 hex>` (never raw email). Includes `policy_version`, `policy_content_hash`,
-`reason`, `cache_hit`, `operation`.
+`reason`, `cache_hit`, `operation`, `login_provider` (the sign-in method's
+name, e.g. `google` or `api_key` — lets a `human_identity_required` denial be
+read without a separate token lookup).
 
 ### `rbac_users_mutation`
 
@@ -60,14 +62,16 @@ Emitted for every `users_*` admin tool attempt, including ambiguous outcomes
 | --- | --- | --- |
 | `keystone_mcp_rbac_decisions_total` | `decision`, `reason`, `tool_family`, `operation` | Allow/deny counts (`operation` = `list_tools` or `call_tool`) |
 | `keystone_mcp_tool_call_attempts_total` | `tool_family`, `namespace`, `tool`, `auth_method`, `oauth_client_id` | Every `call_tool` entering the stack (outer throttle) |
-| `keystone_mcp_tool_invocations_total` | same + `outcome` | Handler reached (`outcome` = `success`, `tool_error`, `error`) |
-| `keystone_mcp_tool_invocation_seconds` | same + `outcome` | Handler latency histogram |
+| `keystone_mcp_tool_invocations_total` | same + `outcome` | Handler reached (`outcome` = `success`, `tool_error`, `error`, `cancelled`) |
+| `keystone_mcp_tool_invocation_seconds` | same + `outcome` | Handler latency histogram (`outcome` includes `cancelled`) |
 | `keystone_mcp_rbac_directory_resolve_total` | `outcome` | `cache_hit`, `miss`, `unavailable`, `error` |
 | `keystone_mcp_rbac_directory_resolve_seconds` | (histogram) | Resolve latency |
 | `keystone_mcp_rbac_policy_reload_total` | `success` | Policy load/reload (`true` / `false`) |
 | `keystone_mcp_catalog_refresh_total` | `outcome` | Upstream catalog refresh (`unchanged` / `held` / `applied`) |
 | `keystone_mcp_catalog_refresh_changes_total` | `direction` | Tools added or removed (`added` / `removed`; counts only, no tool names) |
-| `keystone_mcp_upstream_available` | `namespace` | 1 if the last discovery or refresh of this upstream succeeded, else 0 |
+| `keystone_mcp_upstream_available` | `namespace` | 1 if the upstream is considered available, else 0. For HTTP: last discovery or refresh succeeded. **For stdio: the supervised process is running** (not in `backoff` / `stopped`). |
+| `keystone_mcp_upstream_process_restarts_total` | `namespace` | Cumulative restarts of a stdio upstream child after crash, hang, or failed start |
+| `keystone_mcp_list_changed_sessions_total` | `kind` | Sessions notified that a list of tools/prompts/resources changed. A "session" is a handshake-era connection or an open `subscriptions/listen` stream |
 | `keystone_mcp_users_mutation_total` | `operation`, `outcome` | Admin mutation attempts |
 | `keystone_mcp_oauth_client_registrations_total` | `outcome` | `POST /register` outcomes (`created`, `rejected_limit`, `rejected_redirect_host`) |
 | `keystone_mcp_oauth_clients` | (gauge) | Live registered OAuth clients, refreshed on every registration attempt on this replica |

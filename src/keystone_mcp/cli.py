@@ -14,6 +14,7 @@ import yaml
 from keystone_mcp.config import Settings
 from keystone_mcp.env_file import load_env_file
 from keystone_mcp.observability.logging import configure_logging
+from keystone_mcp.plugins_cli import add_plugins_commands
 from keystone_mcp.rbac.catalog import (
     DuplicateLivePublishedNameError,
     assert_loopback_live_catalog_url,
@@ -33,7 +34,9 @@ from keystone_mcp.rbac.policy import (
     load_policy_file,
     validate_policy_against_catalog,
 )
+from keystone_mcp.users.api_keys_cli import add_api_keys_commands
 from keystone_mcp.users.cli import add_users_commands
+from keystone_mcp.users.service_accounts_cli import add_service_accounts_commands
 
 _EXIT_VALIDATION = 1
 _EXIT_LIVE_URL = 3
@@ -185,6 +188,17 @@ def _cmd_catalog_export(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_serve(_args: argparse.Namespace) -> int:
+    # Imported lazily (and module-qualified, not "from ... import main") so
+    # that `keystone-mcp serve` and `python -m keystone_mcp.server` always
+    # call the same function, and tests can monkeypatch
+    # `keystone_mcp.server.main` directly.
+    import keystone_mcp.server as server_module
+
+    server_module.main()
+    return 0
+
+
 def _cmd_upstream_validate(path: Path) -> int:
     from keystone_mcp.config import _env_bool
     from keystone_mcp.upstream_registry.load import read_registry_document
@@ -269,14 +283,28 @@ def main(argv: list[str] | None = None) -> int:
     )
     upstream_validate.set_defaults(handler=lambda args: _cmd_upstream_validate(args.path))
 
+    serve = subparsers.add_parser("serve", help="Start the Keystone-MCP server")
+    serve.set_defaults(handler=_cmd_serve)
+
     add_users_commands(subparsers)
+    add_api_keys_commands(subparsers)
+    add_service_accounts_commands(subparsers)
+    add_plugins_commands(subparsers)
 
     args = parser.parse_args(argv)
     if args.command == "catalog":
         return args.handler(args)
     if args.command == "upstream":
         return args.handler(args)
+    if args.command == "serve":
+        return args.handler(args)
     if args.command == "users":
+        return args.handler(args)
+    if args.command == "keys":
+        return args.handler(args)
+    if args.command == "service-accounts":
+        return args.handler(args)
+    if args.command == "plugins":
         return args.handler(args)
     parser.error(f"unknown command: {args.command}")
     return _EXIT_VALIDATION

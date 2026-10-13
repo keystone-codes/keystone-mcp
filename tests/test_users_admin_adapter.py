@@ -1,4 +1,4 @@
-"""users_* builtin admin tools — S2S proxy to mcp-users with actor from identity."""
+"""users_* builtin admin tools — service-to-service proxy to the HTTP users directory."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 from fastmcp.server.middleware import MiddlewareContext
 
-from keystone_mcp.adapters.users_admin import ACTOR_EMAIL_HEADER, UsersAdminAdapter
+from keystone_mcp.adapters.users_admin import UsersAdminAdapter
 from keystone_mcp.catalog.builtin import register_catalog
 from keystone_mcp.config import Settings
 from keystone_mcp.identity import VerifiedIdentity
@@ -20,7 +20,11 @@ from keystone_mcp.rbac.policy import default_policy_path, load_policy
 from keystone_mcp.router.engine import RouterEngine
 from keystone_mcp.router.rbac_middleware import RbacMiddleware
 from keystone_mcp.router.registry import Param, RouterRegistry
-from keystone_mcp.user_directory import build_in_memory_user_directory_resolver
+from keystone_mcp.user_directory import (
+    build_in_memory_user_directory_resolver,
+    build_user_directory,
+)
+from keystone_mcp.user_directory.http import ACTOR_EMAIL_HEADER, HttpUserDirectory
 
 ADMIN = VerifiedIdentity(email="admin@example.com")
 OPERATOR = VerifiedIdentity(email="operator@example.com")
@@ -41,7 +45,7 @@ def _settings(tmp_path: Path | None = None) -> Settings:
     base = {
         "base_url": "http://localhost:8080",
         "users_backend": "http",
-        "users_service_url": "http://mcp-users:8080",
+        "users_service_url": "http://users-directory.internal.example:8080",
         "users_service_token": "service-secret",
     }
     if tmp_path is None:
@@ -62,15 +66,18 @@ def _registry(adapter: UsersAdminAdapter | None = None) -> tuple[RouterEngine, R
     return engine, RouterRegistry(engine)
 
 
-def _mock_client_factory(handler):
-    def factory(_ctx=None):
-        return httpx.AsyncClient(
-            transport=httpx.MockTransport(handler),
-            base_url="http://mcp-users:8080",
-            headers={"Authorization": "Bearer service-secret"},
-        )
-
-    return factory
+def _http_directory(handler) -> HttpUserDirectory:
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler),
+        base_url="http://users-directory.internal.example:8080",
+        headers={"Authorization": "Bearer service-secret"},
+    )
+    return HttpUserDirectory(
+        base_url="http://users-directory.internal.example:8080",
+        service_token="service-secret",
+        timeout_seconds=5.0,
+        client=client,
+    )
 
 
 @pytest.mark.parametrize(
@@ -150,7 +157,7 @@ async def test_users_tools_proxy_expected_endpoint(
             return httpx.Response(200, json={"users": [USER_SUMMARY], "total": 1})
         return httpx.Response(200, json=USER_SUMMARY)
 
-    adapter = UsersAdminAdapter(client_factory=_mock_client_factory(handler))
+    adapter = UsersAdminAdapter(directory=_http_directory(handler))
     engine, reg = _registry()
     route = reg.add_route(tool_name, adapter, mode="live", params=[Param("x", str, required=False)])
 
@@ -179,7 +186,7 @@ async def test_users_list_defaults_to_non_blocked_filter():
         captured["params"] = dict(request.url.params)
         return httpx.Response(200, json={"users": [], "total": 0})
 
-    adapter = UsersAdminAdapter(client_factory=_mock_client_factory(handler))
+    adapter = UsersAdminAdapter(directory=_http_directory(handler))
     engine, reg = _registry()
     route = reg.add_route("users_list", adapter, mode="live")
 
@@ -194,7 +201,7 @@ async def test_users_list_can_request_blocked_users():
         captured["params"] = dict(request.url.params)
         return httpx.Response(200, json={"users": [], "total": 0})
 
-    adapter = UsersAdminAdapter(client_factory=_mock_client_factory(handler))
+    adapter = UsersAdminAdapter(directory=_http_directory(handler))
     engine, reg = _registry()
     route = reg.add_route("users_list", adapter, mode="live")
 
@@ -231,7 +238,7 @@ async def test_users_service_errors_are_mapped(status_code, payload, expected_co
     def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(status_code, json=payload)
 
-    adapter = UsersAdminAdapter(client_factory=_mock_client_factory(handler))
+    adapter = UsersAdminAdapter(directory=_http_directory(handler))
     engine, reg = _registry()
     route = reg.add_route("users_block", adapter, mode="live")
 
@@ -242,6 +249,41 @@ async def test_users_service_errors_are_mapped(status_code, payload, expected_co
     assert "service-secret" not in json.dumps(out)
 
 
+class _RecordingObservability:
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    def record_users_mutation(self, **kwargs) -> None:
+        self.calls.append(kwargs)
+
+
+async def test_audit_is_recorded_when_service_response_cannot_be_parsed():
+    """The service already applied the mutation once it answers 200: a
+
+    malformed response body must still produce an audited error, not a bare
+    exception that skips ``_record_mutation_audit`` entirely (X06 review
+    finding).
+    """
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"not json")
+
+    observability = _RecordingObservability()
+    adapter = UsersAdminAdapter(directory=_http_directory(handler), observability=observability)
+    engine, reg = _registry()
+    route = reg.add_route("users_block", adapter, mode="live")
+
+    out = await engine.execute(route, {"email": "user@example.com"}, identity=ADMIN)
+
+    assert out["state"] == "error"
+    assert out["code"] == "service_error"
+    assert len(observability.calls) == 1
+    call = observability.calls[-1]
+    assert call["operation"] == "users_block"
+    assert call["outcome"] == "error"
+    assert call["code"] == "service_error"
+
+
 async def test_actor_email_not_taken_from_tool_arguments():
     captured: dict[str, str] = {}
 
@@ -249,7 +291,7 @@ async def test_actor_email_not_taken_from_tool_arguments():
         captured["actor"] = request.headers.get(ACTOR_EMAIL_HEADER.lower(), "")
         return httpx.Response(200, json=USER_SUMMARY)
 
-    adapter = UsersAdminAdapter(client_factory=_mock_client_factory(handler))
+    adapter = UsersAdminAdapter(directory=_http_directory(handler))
     engine, reg = _registry()
     route = reg.add_route("users_block", adapter, mode="live")
 
@@ -269,7 +311,7 @@ def test_catalog_registers_all_users_tools(tmp_path: Path):
     settings = _settings(tmp_path)
     engine = RouterEngine(settings)
     reg = RouterRegistry(engine)
-    register_catalog(reg, settings)
+    register_catalog(reg, settings, directory=build_user_directory(settings))
 
     expected = {
         "users_list",
@@ -280,6 +322,7 @@ def test_catalog_registers_all_users_tools(tmp_path: Path):
         "users_set_roles",
         "users_grant_role",
         "users_revoke_role",
+        "users_logout",
     }
     for name in expected:
         route = reg.get(name)
@@ -295,7 +338,7 @@ def test_policy_loader_accepts_live_users_tools_in_catalog(tmp_path: Path):
     settings = _settings(tmp_path)
     engine = RouterEngine(settings)
     reg = RouterRegistry(engine)
-    register_catalog(reg, settings)
+    register_catalog(reg, settings, directory=build_user_directory(settings))
     policy = load_policy(default_policy_path())
     live = {route.published_name for route in reg.routes.values() if route.mode == "live"}
     users_tools = {name for name in live if name.startswith("users_")}
@@ -305,6 +348,7 @@ def test_policy_loader_accepts_live_users_tools_in_catalog(tmp_path: Path):
         "users_update",
         "users_block",
         "users_unblock",
+        "users_logout",
         "users_set_roles",
         "users_grant_role",
         "users_revoke_role",
@@ -323,7 +367,7 @@ roles:
     allow: ["*"]
   member:
     description: member
-    allow: ["create_upload_url", "get_download_link"]
+    allow: ["reports_read", "reports_write"]
 """
 
 
@@ -335,15 +379,15 @@ async def test_rbac_denies_users_tools_for_non_administrator(tmp_path):
         base_url="http://localhost:8080",
         rbac_mode="enforce",
         rbac_policy_path=str(policy),
-        users_service_url="http://mcp-users:8080",
+        users_service_url="http://users-directory.internal.example:8080",
         users_service_token="token",
     )
     resolver, backend, _ = build_in_memory_user_directory_resolver()
     backend.seed("operator@example.com", roles=("operator",))
     registry = RouterRegistry(RouterEngine(settings), FastMCP("policy-host"))
     registry.add_route("users_list", UsersAdminAdapter(), mode="live")
-    registry.add_route("create_upload_url", UsersAdminAdapter(), mode="live")
-    registry.add_route("get_download_link", UsersAdminAdapter(), mode="live")
+    registry.add_route("reports_read", UsersAdminAdapter(), mode="live")
+    registry.add_route("reports_write", UsersAdminAdapter(), mode="live")
     manager = RbacPolicyManager(settings)
     manager.load_initial(registry)
     middleware = RbacMiddleware(
@@ -390,7 +434,7 @@ async def test_service_unconfigured_without_token():
     settings = Settings(
         base_url="http://localhost:8080",
         users_backend="http",
-        users_service_url="http://mcp-users:8080",
+        users_service_url="http://users-directory.internal.example:8080",
         users_service_token="",
     )
     engine = RouterEngine(settings)
@@ -405,17 +449,20 @@ async def test_service_unconfigured_without_token():
 
 
 async def test_service_timeout_returns_safe_error():
-    def factory(_ctx=None):
-        class _TimeoutClient:
-            async def get(self, *_args, **_kwargs):
-                raise httpx.TimeoutException("timed out")
+    class _TimeoutClient:
+        async def request(self, *_args, **_kwargs):
+            raise httpx.TimeoutException("timed out")
 
-            async def aclose(self):
-                return None
+        async def aclose(self):
+            return None
 
-        return _TimeoutClient()
-
-    adapter = UsersAdminAdapter(client_factory=factory)
+    directory = HttpUserDirectory(
+        base_url="http://users-directory.internal.example:8080",
+        service_token="service-secret",
+        timeout_seconds=5.0,
+        client=_TimeoutClient(),
+    )
+    adapter = UsersAdminAdapter(directory=directory)
     engine, reg = _registry()
     route = reg.add_route("users_list", adapter, mode="live")
 
@@ -427,17 +474,20 @@ async def test_service_timeout_returns_safe_error():
 
 
 async def test_service_unavailable_returns_safe_error():
-    def factory(_ctx=None):
-        class _BrokenClient:
-            async def get(self, *_args, **_kwargs):
-                raise httpx.ConnectError("connection refused")
+    class _BrokenClient:
+        async def request(self, *_args, **_kwargs):
+            raise httpx.ConnectError("connection refused")
 
-            async def aclose(self):
-                return None
+        async def aclose(self):
+            return None
 
-        return _BrokenClient()
-
-    adapter = UsersAdminAdapter(client_factory=factory)
+    directory = HttpUserDirectory(
+        base_url="http://users-directory.internal.example:8080",
+        service_token="service-secret",
+        timeout_seconds=5.0,
+        client=_BrokenClient(),
+    )
+    adapter = UsersAdminAdapter(directory=directory)
     engine, reg = _registry()
     route = reg.add_route("users_list", adapter, mode="live")
 
@@ -472,7 +522,7 @@ async def test_every_mutation_sends_the_verified_actor(tool_name: str, args: dic
         captured["actor"] = request.headers.get(ACTOR_EMAIL_HEADER.lower())
         return httpx.Response(200, json=USER_SUMMARY)
 
-    adapter = UsersAdminAdapter(client_factory=_mock_client_factory(handler))
+    adapter = UsersAdminAdapter(directory=_http_directory(handler))
     engine, reg = _registry()
     route = reg.add_route(tool_name, adapter, mode="live")
 
@@ -488,7 +538,7 @@ async def test_unblock_actor_is_normalized_from_the_verified_identity():
         captured["actor"] = request.headers.get(ACTOR_EMAIL_HEADER.lower())
         return httpx.Response(200, json=USER_SUMMARY)
 
-    adapter = UsersAdminAdapter(client_factory=_mock_client_factory(handler))
+    adapter = UsersAdminAdapter(directory=_http_directory(handler))
     engine, reg = _registry()
     route = reg.add_route("users_unblock", adapter, mode="live")
 

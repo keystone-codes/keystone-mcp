@@ -5,7 +5,7 @@ jobs: it is the **facade** the client talks to, the **router** that
 forwards each call to the service that owns it, and the **authorization**
 layer that decides what the signed-in person may see and call. This page
 goes one level deeper than the README on every capability that supports
-that, and says plainly which parts are still ahead, in 0.5.0.
+that.
 
 ## One facade
 
@@ -20,21 +20,25 @@ Keystone-MCP keeps its own list of people — email, roles, blocked or not.
 By default it is built in: a SQLite file for a single host, or PostgreSQL
 for production and more than one replica. A fork that already runs its own
 users service can point `KEYSTONE_MCP_USERS_BACKEND=http` at it instead and
-keep using that directory. Either way, the rest of Keystone-MCP (sign-in,
-RBAC, the `users_*` tools) works the same. Details: [users.md](users.md) and,
-for the HTTP contract a fork's own directory must meet,
-[adding-routes.md](adding-routes.md#the-http-users-directory-contract).
+keep using that directory. Both are implementations of one `UserDirectory`
+protocol — read access (`resolve_user`, `list_users`) plus an optional
+`UserDirectoryAdmin` capability that wires up the `users_*` tools; a
+directory that cannot administer still publishes `users_list`. Either way,
+the rest of Keystone-MCP (sign-in, RBAC, the `users_*` tools) works the
+same. Details: [users.md](users.md) and, for the protocol itself and the
+HTTP contract a fork's own directory must meet,
+[user-directory.md](user-directory.md). Additional directory implementations
+install as packages that declare a `keystone_mcp.user_directories` entry point;
+see [plugins.md](plugins.md).
 
 ## Any sign-in method
 
-Today a person signs in with Google (the production method) or with a DEV
-token (local testing only — a shared password accepted under the `local`
-profile). A deprecated API-key method still exists for one more release.
-There is no common plugin interface for identity providers yet: adding a
-third one means writing to the `IdentityProvider` protocol directly (see
-[adding-routes.md](adding-routes.md#extending-keystone-mcp-in-a-fork)). A
-general way to register your own identity provider without touching that
-code is planned for **0.5.0**.
+People sign in through **LoginProvider** implementations listed in a YAML
+file (`KEYSTONE_MCP_LOGIN_PROVIDERS_PATH`): Google, any OpenID Connect issuer
+(Okta, Microsoft Entra ID, Keycloak), and the built-in API-key form. Setup for
+each provider is in [login-providers.md](login-providers.md). DEV tokens remain
+a local-profile shortcut. Additional provider types install as packages that
+declare a `keystone_mcp.login_providers` entry point; see [plugins.md](plugins.md).
 
 ## Onboarding and access management through the agent
 
@@ -46,9 +50,8 @@ built-in `users_*` tools — `users_add`, `users_grant_role`,
 [`keystone-user-admin`](../skills/keystone-user-admin/SKILL.md) skill. The
 first administrator, and every later one from a fresh deployment, can come
 from `setup.sh --non-interactive` reading `KEYSTONE_SETUP_*` variables —
-see [deploy.md](deploy.md). In 0.4.0 the *access policy itself* (which
-role may call which tools) is still a file an operator edits by hand;
-the agent manages people and roles, not the policy file. Full reference:
+see [deploy.md](deploy.md). The policy, too: the `policy_*` tools change
+roles and allow patterns with the same validation as a hot-reload. Full reference:
 [users.md](users.md).
 
 ## Services in any language or SDK
@@ -58,6 +61,19 @@ It can be written in any language, with any MCP SDK, with its own storage
 and its own integrations. Keystone-MCP only needs its URL, a namespace, and
 optionally a bearer token to authenticate back to it. Contract:
 [connecting-services.md](connecting-services.md).
+
+A service can also be a local process instead of a network one: a registry
+entry with `transport: stdio` names a `command`, its `args`, and the names
+of the environment variables it needs (never their values) — the shape
+most ready-made MCP servers from npm or pip come in. Keystone-MCP's
+registry and supervisor already start that process, keep it alive, and
+restart it with a backoff after a crash or a hang; proxying calls to it
+lands with the stdio wiring.
+
+A long-running tool can report progress while it runs
+(`notifications/progress`); Keystone-MCP relays every update to the client,
+in the same call, exactly as the upstream sent it — see "What passes
+through the door" in [facade.md](facade.md#what-passes-through-the-door).
 
 ## One policy file, reloaded live
 

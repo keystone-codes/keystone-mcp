@@ -20,7 +20,7 @@ from keystone_mcp.upstream_registry.policy import UpstreamSecurityPolicy
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEMO_COMPOSE = REPO_ROOT / "docker-compose.demo.yml"
 POSTGRES_OVERLAY = REPO_ROOT / "docker-compose.postgres.yml"
-DEMO_POLICY = REPO_ROOT / "examples" / "demo" / "rbac-policy.yaml"
+DEMO_POLICY = REPO_ROOT / "examples" / "demo" / "policy" / "rbac-policy.yaml"
 DEMO_REGISTRY = REPO_ROOT / "examples" / "demo" / "upstreams.yaml"
 PRODUCTION_COMPOSE = REPO_ROOT / "examples" / "production" / "docker-compose.yml"
 
@@ -75,12 +75,34 @@ def test_demo_policy_loads():
     assert not policy.allows_role("member", "users_list")
 
 
-def test_demo_registry_validates():
-    permissive = UpstreamSecurityPolicy(allow_insecure_http=True, egress_allow_private=False)
-    upstreams = load_upstream_registry_file(DEMO_REGISTRY, policy=permissive)
+def test_demo_hello_uses_identity_secret():
+    demo = _load(DEMO_COMPOSE)
+    registry = _load(DEMO_REGISTRY)
 
-    assert len(upstreams) == 1
-    assert upstreams[0].namespace == "hello"
+    hello_entry = next(e for e in registry["entries"] if e["name"] == "hello")
+    secret_env = hello_entry["auth"]["identity_secret_env"]
+    assert secret_env.startswith("KEYSTONE_MCP_UPSTREAM_")
+
+    keystone_env = demo["services"]["keystone"]["environment"]
+    hello_env = demo["services"]["hello-upstream"]["environment"]
+    assert secret_env in keystone_env
+    assert keystone_env[secret_env] == hello_env["HELLO_IDENTITY_SECRET"]
+    assert "${KEYSTONE_DEMO_HELLO_SECRET" in keystone_env[secret_env]
+
+
+def test_demo_registry_validates(monkeypatch):
+    # The "hello" entry's auth.identity_secret_env must resolve to a real
+    # value for a (non-strict) load to succeed -- same as at Keystone's own
+    # startup; see test_demo_hello_uses_identity_secret for the name itself.
+    monkeypatch.setenv("KEYSTONE_MCP_UPSTREAM_HELLO_IDENTITY_SECRET", "x" * 32)
+
+    permissive = UpstreamSecurityPolicy(allow_insecure_http=True, egress_allow_private=False)
+    upstreams = load_upstream_registry_file(
+        DEMO_REGISTRY, policy=permissive, check_environment=False
+    )
+
+    assert len(upstreams) == 2
+    assert {u.namespace for u in upstreams} == {"hello", "notes"}
 
     strict = UpstreamSecurityPolicy(allow_insecure_http=False, egress_allow_private=False)
     try:
@@ -89,6 +111,30 @@ def test_demo_registry_validates():
         pass
     else:
         raise AssertionError("loading the demo registry without ALLOW_INSECURE_HTTP should fail")
+
+
+def test_demo_mounts_hello_stdio():
+    demo = _load(DEMO_COMPOSE)
+    volumes = demo["services"]["keystone"]["volumes"]
+    assert "./examples/hello-stdio:/opt/hello-stdio:ro" in volumes
+
+
+def test_demo_mounts_policy_writable():
+    demo = _load(DEMO_COMPOSE)
+    env = demo["services"]["keystone"]["environment"]
+    volumes = demo["services"]["keystone"]["volumes"]
+
+    assert env["KEYSTONE_MCP_RBAC_POLICY_PATH"] == "/etc/keystone-mcp/policy/rbac-policy.yaml"
+    assert "./examples/demo/policy:/etc/keystone-mcp/policy" in volumes
+    assert "./examples/demo/upstreams.yaml:/etc/keystone-mcp/upstreams.yaml:ro" in volumes
+
+
+def test_production_mounts_policy_writable():
+    production = _load(PRODUCTION_COMPOSE)
+    volumes = production["services"]["keystone"]["volumes"]
+
+    assert "./policy:/etc/keystone-mcp/policy" in volumes
+    assert "./upstreams.yaml:/etc/keystone-mcp/upstreams.yaml:ro" in volumes
 
 
 def test_demo_services_have_healthchecks():

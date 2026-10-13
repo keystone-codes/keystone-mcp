@@ -23,11 +23,11 @@ from conftest import (
     obtain_access_token,
     register_client,
 )
-from keystone_mcp.auth.identity_provider import StaticIdentityProvider
 from keystone_mcp.auth.keystone_oauth_provider import TRANSLATIONS
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import Settings, resources_equivalent
 from keystone_mcp.server import build_server
+from support.login import dev_token_login
 
 
 @contextlib.asynccontextmanager
@@ -35,7 +35,7 @@ async def login_page_client(**setting_overrides):
     """A client against a server built with the given Settings overrides."""
     settings = Settings(base_url=BASE_URL, **setting_overrides)
     mcp, *_rest = build_server(
-        identity_provider=StaticIdentityProvider({VALID_TOKEN}),
+        login_providers=[dev_token_login({VALID_TOKEN})],
         settings=settings,
         oauth_store=InMemoryOAuthStore(),
         register_builtin_catalog=False,
@@ -96,6 +96,21 @@ async def test_authorization_server_metadata(harness):
     for ep in ("authorization_endpoint", "token_endpoint", "registration_endpoint"):
         assert ep in body
     assert "S256" in body.get("code_challenge_methods_supported", [])
+
+
+async def test_metadata_issuer_equals_base_url(harness):
+    """``issuer_url=settings.base_url`` (unchanged across the fastmcp 4 move, X02):
+
+    the authorization server metadata's ``issuer`` must still name the
+    configured base URL, exactly as it did on fastmcp 3.4.4.
+    ``resources_equivalent`` (not plain string equality), because the SDK's
+    URL type always serializes a bare origin with a trailing slash on both
+    versions -- the same normalization the resource indicator already tolerates.
+    """
+    r = await harness.client.get("/.well-known/oauth-authorization-server")
+    assert r.status_code == 200
+    body = r.json()
+    assert resources_equivalent(body["issuer"], harness.settings.base_url)
 
 
 async def test_dynamic_client_registration(harness):

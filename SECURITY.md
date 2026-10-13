@@ -14,13 +14,15 @@ follow up with next steps as we investigate.
 
 | Version | Supported |
 |---|---|
-| `0.4.x` (currently `0.4.0`) | yes |
-| `0.3.x` and older | no |
+| latest `0.5.x` | yes |
+| `0.4.x` and older | no |
 
 Only the latest released minor version receives security fixes.
+See [docs/compatibility.md](docs/compatibility.md#supported-versions).
 
 Dependencies are audited on every PR and weekly (`uv audit`); the container
-image is scanned with Trivy.
+image is scanned with Trivy; a fixable HIGH or CRITICAL finding blocks the
+pull request and the release.
 
 ## Security documentation
 

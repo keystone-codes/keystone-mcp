@@ -15,20 +15,36 @@ import asyncio
 import logging
 import threading
 from collections.abc import Sequence
-from dataclasses import dataclass
 
 from redis.exceptions import RedisError
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
 
+from keystone_mcp.user_directory.types import (
+    ApiKeyRecord,
+    ApiKeyVerification,
+    IssuedApiKey,
+    MutationResult,
+    ServiceAccountMutation,
+    ServiceAccountRecord,
+    UserRecord,
+)
 from keystone_mcp.users import service
 from keystone_mcp.users.db import describe_db_url, make_session_factory, session_scope
 from keystone_mcp.users.errors import UsersError, UsersStoreUnavailableError
 from keystone_mcp.users.migrate import upgrade_to_head
-from keystone_mcp.users.records import ImportedUser, ResolvedUser, UserRecord
+from keystone_mcp.users.records import (
+    ImportedUser,
+    ResolvedUser,
+    api_key_record_from_row,
+    service_account_record_from_row,
+    user_record_from_row,
+)
 from keystone_mcp.users.revision import RevisionWriter
+from keystone_mcp.users.service import ApiKeyMutation as ApiKeyWriteMutation
 from keystone_mcp.users.service import ImportOutcome, Mutation
+from keystone_mcp.users.service import ServiceAccountMutation as ServiceAccountWriteMutation
 
 logger = logging.getLogger(__name__)
 
@@ -38,25 +54,15 @@ logger = logging.getLogger(__name__)
 _BUMP_FAILURE_TYPES = (RedisError, OSError)
 
 
-@dataclass(frozen=True, slots=True)
-class MutationResult:
-    """A :class:`~keystone_mcp.users.service.Mutation`, shaped for callers outside this package."""
-
-    user: UserRecord
-    changed: bool
-    created: bool = False
-    roles_before: tuple[str, ...] = ()
-    blocked_before: bool = False
-
-    @classmethod
-    def _from_mutation(cls, mutation: Mutation) -> MutationResult:
-        return cls(
-            user=UserRecord.from_row(mutation.user),
-            changed=mutation.changed,
-            created=mutation.created,
-            roles_before=mutation.roles_before,
-            blocked_before=mutation.blocked_before,
-        )
+def _mutation_result_from_mutation(mutation: Mutation) -> MutationResult:
+    """Shape a service-layer :class:`Mutation` for callers outside this package."""
+    return MutationResult(
+        user=user_record_from_row(mutation.user),
+        changed=mutation.changed,
+        created=mutation.created,
+        roles_before=mutation.roles_before,
+        blocked_before=mutation.blocked_before,
+    )
 
 
 def _wrap_database_errors(exc: Exception) -> Exception:
@@ -103,8 +109,128 @@ class UsersStore:
         except (SQLAlchemyError, OSError) as exc:
             raise UsersStoreUnavailableError("users directory database is unavailable") from exc
 
-    async def resolve(self, email: str) -> ResolvedUser:
-        return await self._read(service.resolve_user, email=email)
+    async def resolve(self, subject: str) -> ResolvedUser:
+        return await self._read(service.resolve_user, subject=subject)
+
+    async def list_service_accounts(
+        self,
+        *,
+        is_blocked: bool | None = False,
+    ) -> list[ServiceAccountRecord]:
+        rows = await self._read(service.list_service_accounts, is_blocked=is_blocked)
+        return [service_account_record_from_row(row) for row in rows]
+
+    async def issue_api_key(
+        self,
+        *,
+        subject: str,
+        label: str | None,
+        expires_in_days: int | None,
+        created_by: str | None,
+    ) -> IssuedApiKey:
+        def _call() -> tuple[ApiKeyWriteMutation, str]:
+            def _in_session() -> tuple[ApiKeyWriteMutation, str]:
+                with session_scope(self._session_factory) as session:
+                    row, full_key = service.issue_api_key(
+                        session,
+                        subject=subject,
+                        label=label,
+                        expires_in_days=expires_in_days,
+                        created_by=created_by,
+                    )
+                    return ApiKeyWriteMutation(row=row, changed=True), full_key
+
+            if self._write_lock is not None:
+                with self._write_lock:
+                    return _in_session()
+            return _in_session()
+
+        try:
+            mutation, full_key = await asyncio.to_thread(_call)
+        except Exception as exc:
+            raise _wrap_database_errors(exc) from exc
+        try:
+            await self._revision.bump()
+        except _BUMP_FAILURE_TYPES:
+            logger.warning(
+                "users directory revision bump failed; other replicas will "
+                "notice the change after the cache TTL"
+            )
+        record = api_key_record_from_row(mutation.row)
+        return IssuedApiKey(record=record, key=full_key)
+
+    async def list_api_keys(
+        self,
+        *,
+        subject: str | None = None,
+        include_revoked: bool = False,
+    ) -> list[ApiKeyRecord]:
+        rows = await self._read(
+            service.list_api_keys, subject=subject, include_revoked=include_revoked
+        )
+        return [api_key_record_from_row(row) for row in rows]
+
+    async def revoke_api_key(self, *, key_id: str, actor: str) -> tuple[ApiKeyRecord, bool]:
+        def _call() -> ApiKeyWriteMutation:
+            def _in_session() -> ApiKeyWriteMutation:
+                with session_scope(self._session_factory) as session:
+                    return service.revoke_api_key(session, key_id=key_id, actor=actor)
+
+            if self._write_lock is not None:
+                with self._write_lock:
+                    return _in_session()
+            return _in_session()
+
+        try:
+            mutation = await asyncio.to_thread(_call)
+        except Exception as exc:
+            raise _wrap_database_errors(exc) from exc
+        if mutation.changed:
+            try:
+                await self._revision.bump()
+            except _BUMP_FAILURE_TYPES:
+                logger.warning(
+                    "users directory revision bump failed; other replicas will "
+                    "notice the change after the cache TTL"
+                )
+        return api_key_record_from_row(mutation.row), mutation.changed
+
+    async def verify_api_key(self, key: str) -> ApiKeyVerification | None:
+        return await self._read(service.verify_api_key, key=key)
+
+    async def create_service_account(
+        self,
+        *,
+        name: str,
+        description: str | None,
+        roles: Sequence[str],
+        created_by: str | None,
+    ) -> ServiceAccountMutation:
+        return await self._mutate_service_account(
+            service.create_service_account,
+            name=name,
+            description=description,
+            roles=roles,
+            created_by=created_by,
+        )
+
+    async def update_service_account(
+        self,
+        *,
+        name: str,
+        description: str | None = None,
+        roles: Sequence[str] | None = None,
+        is_blocked: bool | None = None,
+        actor: str,
+    ) -> ServiceAccountMutation:
+        return await self._mutate_service_account(
+            service.update_service_account,
+            name=name,
+            description=description,
+            roles=roles,
+            is_blocked=is_blocked,
+            actor=actor,
+        )
 
     async def list_users(
         self,
@@ -119,7 +245,7 @@ class UsersStore:
             role=role,
             email_contains=email_contains,
         )
-        return [UserRecord.from_row(row) for row in rows]
+        return [user_record_from_row(row) for row in rows]
 
     async def count_active_administrators(self) -> int:
         return await self._read(service.count_active_administrators)
@@ -325,12 +451,52 @@ class UsersStore:
         except Exception as exc:
             raise _wrap_database_errors(exc) from exc
 
-        result = MutationResult._from_mutation(mutation)
+        result = _mutation_result_from_mutation(mutation)
         if result.changed:
             # Bumped after the transaction above has already committed (we are
             # here only once asyncio.to_thread has returned): another request
             # that observes the new revision is guaranteed to read the data
             # this mutation just wrote, not a stale snapshot.
+            try:
+                await self._revision.bump()
+            except _BUMP_FAILURE_TYPES:
+                logger.warning(
+                    "users directory revision bump failed; other replicas will "
+                    "notice the change after the cache TTL"
+                )
+        return result
+
+    def _service_mutation_result(
+        self, mutation: ServiceAccountWriteMutation
+    ) -> ServiceAccountMutation:
+        return ServiceAccountMutation(
+            account=service_account_record_from_row(mutation.account),
+            changed=mutation.changed,
+            created=mutation.created,
+            roles_before=mutation.roles_before,
+            blocked_before=mutation.blocked_before,
+        )
+
+    async def _mutate_service_account(self, fn, **kwargs) -> ServiceAccountMutation:  # noqa: ANN001
+        def _call() -> ServiceAccountWriteMutation:
+            def _in_session() -> ServiceAccountWriteMutation:
+                with session_scope(self._session_factory) as session:
+                    mutation = fn(session, **kwargs)
+                    len(mutation.account.roles)
+                    return mutation
+
+            if self._write_lock is not None:
+                with self._write_lock:
+                    return _in_session()
+            return _in_session()
+
+        try:
+            mutation = await asyncio.to_thread(_call)
+        except Exception as exc:
+            raise _wrap_database_errors(exc) from exc
+
+        result = self._service_mutation_result(mutation)
+        if result.changed:
             try:
                 await self._revision.bump()
             except _BUMP_FAILURE_TYPES:

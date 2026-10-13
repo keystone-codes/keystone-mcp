@@ -28,7 +28,7 @@ Five files, each doing one job:
 |---|---|
 | `docker-compose.yml` | Keystone-MCP, Redis, and Postgres. Pinned image tag, loopback-only port. |
 | `.env` | Every setting Keystone-MCP reads (copied from the repository's `.env.example`). |
-| `rbac-policy.yaml` | Who may call which tools. Mounted into the container read-only. |
+| `policy/rbac-policy.yaml` | Who may call which tools. The `policy/` directory is mounted read-write so `policy_*` tools can update the file. |
 | `upstreams.yaml` | The MCP services behind Keystone-MCP. Mounted read-only, starts empty. |
 | `Caddyfile` | TLS reverse proxy config (step 7). |
 
@@ -59,7 +59,7 @@ for this deployment. Required:
 | `KEYSTONE_MCP_REDIS_URL` | `redis://:<password>@redis:6379/0` |
 | `KEYSTONE_MCP_USERS_DB_URL` | `postgresql+psycopg://keystone:<password>@postgres:5432/keystone` |
 | `KEYSTONE_MCP_RBAC_MODE` | `enforce` (already the section-1 default; leave it) |
-| `KEYSTONE_MCP_RBAC_POLICY_PATH` | `/etc/keystone-mcp/rbac-policy.yaml` |
+| `KEYSTONE_MCP_RBAC_POLICY_PATH` | `/etc/keystone-mcp/policy/rbac-policy.yaml` |
 | `KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT` | output of `openssl rand -hex 32` |
 | `KEYSTONE_MCP_SUPERADMIN_EMAIL` | the first administrator's email |
 | `KEYSTONE_MCP_GOOGLE_CLIENT_ID` / `_SECRET` | from step 2 |
@@ -101,10 +101,16 @@ See [environment.md](../environment.md#deployment-profile) for every rule.
 
 ## 4. Write the policy file
 
-`rbac-policy.yaml` ships with one role, `administrator`, allowed `*`, plus a
-commented-out second role to copy and adapt. A role can only be granted to a
-person if its name is in this file. Format:
+`policy/rbac-policy.yaml` ships with one role, `administrator`, allowed `*`,
+plus a commented-out second role to copy and adapt. A role can only be granted
+to a person if its name is in this file. Format:
 [rbac-policy-format.md](../rbac-policy-format.md).
+
+Before `docker compose up`, ensure the container user (uid `10001` in the
+official image) can write the policy directory — for example
+`chown -R 10001:10001 policy` or `chmod 664 policy/rbac-policy.yaml` with a
+group the container user shares. The directory must be writable, not only the
+file, because atomic updates use `rename` in that directory.
 
 ## 5. List your services
 

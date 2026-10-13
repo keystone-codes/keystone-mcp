@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from keystone_mcp.observability.audit import (
     AuthzAuditRecorder,
     PolicyAuditFields,
+    PolicyMutationAuditRecorder,
     UsersMutationAuditRecorder,
     policy_fields,
 )
@@ -36,6 +37,10 @@ class RbacObservability:
             subject_salt=settings.rbac_audit_subject_salt,
         )
         self.users_audit = UsersMutationAuditRecorder(
+            enabled=settings.rbac_audit_enabled,
+            subject_salt=settings.rbac_audit_subject_salt,
+        )
+        self.policy_audit = PolicyMutationAuditRecorder(
             enabled=settings.rbac_audit_enabled,
             subject_salt=settings.rbac_audit_subject_salt,
         )
@@ -69,6 +74,8 @@ class RbacObservability:
         cache_hit: bool | None,
         operation: str,
         request_id: str | None,
+        login_provider: str | None = None,
+        subject_type: str | None = None,
     ) -> None:
         policy = self.active_policy_fields()
         family = tool_family(tool_name)
@@ -87,6 +94,8 @@ class RbacObservability:
                 operation=operation,
                 request_id=request_id,
                 critical=critical,
+                login_provider=login_provider,
+                subject_type=subject_type,
             )
             self.metrics.record_decision(
                 allowed=allowed,
@@ -145,6 +154,14 @@ class RbacObservability:
 
             logging.getLogger(__name__).warning("catalog refresh metric failed", exc_info=True)
 
+    def record_list_changed(self, *, kind: str, sessions: int) -> None:
+        try:
+            self.metrics.record_list_changed(kind=kind, sessions=sessions)
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).warning("list_changed metric failed", exc_info=True)
+
     def record_upstream_available(self, *, namespace: str, available: bool) -> None:
         try:
             self.metrics.set_upstream_available(namespace=namespace, available=available)
@@ -152,6 +169,16 @@ class RbacObservability:
             import logging
 
             logging.getLogger(__name__).warning("upstream available metric failed", exc_info=True)
+
+    def record_upstream_process_restart(self, *, namespace: str) -> None:
+        try:
+            self.metrics.record_upstream_process_restart(namespace=namespace)
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "upstream process restart metric failed", exc_info=True
+            )
 
     def record_users_mutation(
         self,
@@ -167,6 +194,8 @@ class RbacObservability:
         blocked_before: bool | None = None,
         blocked_after: bool | None = None,
         role: str | None = None,
+        actor_subject_type: str | None = None,
+        key_id: str | None = None,
     ) -> None:
         policy = self.active_policy_fields()
         try:
@@ -183,6 +212,8 @@ class RbacObservability:
                 blocked_before=blocked_before,
                 blocked_after=blocked_after,
                 role=role,
+                actor_subject_type=actor_subject_type,
+                key_id=key_id,
             )
             self.metrics.record_users_mutation(operation=operation, outcome=outcome)
         except Exception:
@@ -190,6 +221,43 @@ class RbacObservability:
 
             logging.getLogger(__name__).warning(
                 "rbac users mutation observability failed", exc_info=True
+            )
+
+    def record_policy_mutation(
+        self,
+        *,
+        operation: str,
+        actor_email: str,
+        outcome: str,
+        code: str | None,
+        task_id: str,
+        policy_version_before: str | None = None,
+        policy_version_after: str | None = None,
+        content_hash_before: str | None = None,
+        content_hash_after: str | None = None,
+        changes: tuple[str, ...] = (),
+        warnings_count: int = 0,
+    ) -> None:
+        try:
+            self.policy_audit.record_mutation(
+                operation=operation,
+                actor_email=actor_email,
+                outcome=outcome,
+                code=code,
+                task_id=task_id,
+                policy_version_before=policy_version_before,
+                policy_version_after=policy_version_after,
+                content_hash_before=content_hash_before,
+                content_hash_after=content_hash_after,
+                changes=changes,
+                warnings_count=warnings_count,
+            )
+            self.metrics.record_policy_mutation(operation=operation, outcome=outcome)
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "rbac policy mutation observability failed", exc_info=True
             )
 
     def record_tool_call_attempt(self, *, tool_name: str) -> None:

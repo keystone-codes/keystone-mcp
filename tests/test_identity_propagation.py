@@ -9,19 +9,19 @@ from __future__ import annotations
 
 import httpx
 
-from keystone_mcp.adapters.webhook import WebhookAdapter
 from keystone_mcp.config import Settings
+from keystone_mcp.contrib.adapters.webhook import WebhookAdapter, WebhookSettings
 from keystone_mcp.identity import AUTHOR_EMAIL_HEADER, VerifiedIdentity
 from keystone_mcp.router.engine import RouterEngine
 from keystone_mcp.router.registry import Param, RouterRegistry
 
+WEBHOOK_SETTINGS = WebhookSettings(
+    base_url="http://localhost:8080", client="acme", project="demo-project"
+)
+
 
 def _registry(adapter):
-    settings = Settings(
-        base_url="http://localhost:8080",
-        webhook_client_id="acme",
-        webhook_project_id="demo-project",
-    )
+    settings = Settings(base_url="http://localhost:8080")
     engine = RouterEngine(settings)
     reg = RouterRegistry(engine)  # no FastMCP — exercise the engine directly
     return settings, engine, reg
@@ -44,7 +44,7 @@ async def test_email_propagated_as_x_author_email():
             transport=httpx.MockTransport(handler), base_url="http://localhost:8080"
         )
 
-    adapter = WebhookAdapter(client_factory=factory, poll_interval=0.0)
+    adapter = WebhookAdapter(WEBHOOK_SETTINGS, client_factory=factory, poll_interval=0.0)
     settings, engine, reg = _registry(adapter)
     route = reg.add_route(
         "apply_changes",
@@ -78,7 +78,7 @@ async def test_peek_short_circuits_webhook():
             transport=httpx.MockTransport(handler), base_url="http://localhost:8080"
         )
 
-    adapter = WebhookAdapter(client_factory=factory, poll_interval=0.0)
+    adapter = WebhookAdapter(WEBHOOK_SETTINGS, client_factory=factory, poll_interval=0.0)
     settings, engine, reg = _registry(adapter)
     route = reg.add_route("get_totals", adapter, mode="live", params=[Param("project_id", str)])
 
@@ -103,10 +103,11 @@ async def test_webhook_refuses_when_client_and_project_are_unset():
             transport=httpx.MockTransport(handler), base_url="http://localhost:8080"
         )
 
-    adapter = WebhookAdapter(client_factory=factory, poll_interval=0.0)
+    unconfigured = WebhookSettings()
+    assert unconfigured.client == ""
+    assert unconfigured.project == ""
+    adapter = WebhookAdapter(unconfigured, client_factory=factory, poll_interval=0.0)
     settings = Settings(base_url="http://localhost:8080")
-    assert settings.webhook_client_id == ""
-    assert settings.webhook_project_id == ""
     engine = RouterEngine(settings)
     reg = RouterRegistry(engine)
     route = reg.add_route("submit_task", adapter, mode="live", params=[Param("x", str)])

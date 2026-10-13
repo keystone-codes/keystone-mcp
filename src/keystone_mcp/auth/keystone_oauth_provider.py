@@ -2,11 +2,15 @@
 
 Implements the full embedded OAuth server pattern on top of FastMCP's
 ``OAuthProvider`` so Claude can connect as a remote OAuth connector. The provider
-emits the discovery/registration/authorize/token endpoints; user credentials are
-collected on a login page (``/login``) where the ``api_token`` is validated via the
-:class:`IdentityProvider`. A valid login binds the verified ``email`` to the issued
-access token as a claim and ``subject`` — this is the verified identity propagated
-downstream as ``X-Author-Email``.
+emits the discovery/registration/authorize/token endpoints; credentials are
+collected on a login page (``/login`` plus one ``/login/{name}`` pair per
+configured redirect provider) through the pluggable
+:class:`~keystone_mcp.login.protocol.LoginProvider` contract (X03) — this
+provider owns the OAuth transaction, the consent screen, the CSRF/browser
+binding and the users-directory check; a provider only proves who signed in.
+A valid login binds the verified ``email`` to the issued access token as a
+claim and ``subject`` — this is the verified identity propagated downstream
+as ``X-Author-Email``.
 
 OAuth clients and tokens persist in :class:`~keystone_mcp.auth.oauth_store.OAuthStore`
 (Redis in production). Pending login transactions and authorization codes persist in
@@ -19,12 +23,13 @@ Indicators (RFC 8707) bind the token audience and are checked in ``verify_token`
 from __future__ import annotations
 
 import hashlib
-import html
 import json
 import logging
 import secrets
 import time
-from urllib.parse import urlencode, urlparse
+from collections.abc import Sequence
+from dataclasses import replace
+from urllib.parse import quote, urlencode, urlparse
 
 from fastmcp.server.auth import OAuthProvider
 from mcp.server.auth.provider import (
@@ -36,23 +41,15 @@ from mcp.server.auth.provider import (
     TokenError,
     construct_redirect_uri,
 )
-from mcp.server.auth.settings import ClientRegistrationOptions
+from mcp.server.auth.settings import ClientRegistrationOptions, RevocationOptions
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 from pydantic import ValidationError
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, RedirectResponse, Response
 from starlette.routing import Route
 
-from keystone_mcp.auth.google_oidc import (
-    GoogleIdTokenError,
-    GoogleOidcClient,
-    GoogleOidcError,
-    GoogleTokenExchangeError,
-    email_matches_allowed_domain,
-)
-from keystone_mcp.auth.identity_provider import IdentityProvider
 from keystone_mcp.auth.login_pending_store import LoginPendingStore
-from keystone_mcp.auth.oauth_store import OAuthStore
+from keystone_mcp.auth.oauth_store import CredentialRevokedError, OAuthStore
 from keystone_mcp.auth.throttle import (
     LoginAttemptThrottle,
     login_throttle_response,
@@ -60,6 +57,14 @@ from keystone_mcp.auth.throttle import (
     wrap_asgi_with_ip_login_throttle,
 )
 from keystone_mcp.config import Settings, resources_equivalent
+from keystone_mcp.login.pages import FieldView, ProviderView, render_consent_page, render_error_page
+from keystone_mcp.login.protocol import (
+    FormField,
+    FormLoginProvider,
+    LoginIdentity,
+    LoginProvider,
+    LoginRejected,
+)
 from keystone_mcp.observability.service import RbacObservability
 from keystone_mcp.user_directory.errors import UserDirectoryUnavailableError
 from keystone_mcp.user_directory.protocol import UserDirectoryResolver
@@ -69,7 +74,7 @@ logger = logging.getLogger(__name__)
 
 _NS_PENDING_TXN = "txn"
 _NS_AUTH_CODE = "code"
-_NS_GOOGLE_STATE = "google"
+_NS_LOGIN_ATTEMPT = "login_attempt"
 _NS_REFRESH_AUTH = "refresh_auth"
 
 # How long a rotated-away refresh token's auth_method/resource marker is kept
@@ -80,9 +85,9 @@ _NS_REFRESH_AUTH = "refresh_auth"
 # grace window is what it reads instead of nothing.
 _OLD_REFRESH_MARKER_GRACE_SECONDS = 60
 
-# Double-submit CSRF cookie for the consent screen's "Sign in with Google"
-# form (A13). Scoped to the /login path and as short-lived as the login
-# transaction it protects.
+# Double-submit CSRF cookie for the consent screen's redirect-provider
+# button forms (A13; generalized from Google-only in X03). Scoped to the
+# /login path and as short-lived as the login transaction it protects.
 #
 # Over https, the cookie carries the `__Host-` prefix instead (finding #4,
 # second review): a browser refuses to even store a `__Host-`-prefixed cookie
@@ -98,19 +103,23 @@ _OLD_REFRESH_MARKER_GRACE_SECONDS = 60
 # gets the broader path the prefix demands.
 _CSRF_COOKIE_NAME = "km_login_csrf"
 _CSRF_COOKIE_NAME_HOST_PREFIXED = "__Host-km_login_csrf"
+_LANG_COOKIE_NAME = "km_lang"
+_LANG_COOKIE_NAME_HOST_PREFIXED = "__Host-km_lang"
+_LANG_COOKIE_MAX_AGE_SECONDS = 365 * 24 * 60 * 60
 
 
 def _hash_csrf_cookie(value: str) -> str:
     """SHA-256 of a ``km_login_csrf`` cookie value, hex-encoded.
 
-    Used to bind the Google OIDC ``state`` round trip to the browser that
-    started it (finding #1): the hash travels inside the server-side pending
-    envelope keyed by ``state``, and is compared against a hash of the
-    cookie presented on ``/login/google/callback``. A plain equality check on
-    secrets of fixed, known length does not need ``hmac.compare_digest`` to
-    produce a timing side channel worth caring about, but the callers compare
-    these hashes with ``secrets.compare_digest`` anyway, for the same reason
-    the CSRF field comparison on ``POST /login/google`` does.
+    Used to bind a redirect provider's ``state`` round trip to the browser
+    that started it (finding #1): the hash travels inside the server-side
+    pending envelope keyed by ``state``, and is compared against a hash of
+    the cookie presented on ``/login/{name}/callback``. A plain equality
+    check on secrets of fixed, known length does not need
+    ``hmac.compare_digest`` to produce a timing side channel worth caring
+    about, but the callers compare these hashes with
+    ``secrets.compare_digest`` anyway, for the same reason the CSRF field
+    comparison on ``POST /login/{name}`` does.
     """
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
@@ -323,39 +332,50 @@ RTL_LANGS = frozenset({"he", "ar"})
 TRANSLATIONS: dict[str, dict[str, str]] = {
     "he": {
         "title": "Keystone MCP — התחברות",
-        "subtitle": "אשרו את המחבר באמצעות אסימון ה־API של keystone.",
+        "subtitle": "התחברות לחיבור לקוח לסביבת העבודה.",
         "email_label": "אימייל",
         "token_label": "אסימון API",
         "submit": "אישור",
         "error_invalid": "אסימון API או אימייל שגויים",
         "error_request": "בקשת הרשאה לא חוקית או שפג תוקפה",
-        "google_button": "התחברות עם Google",
-        "error_google_disabled": "התחברות Google לא זמינה",
-        "error_google_domain": "חשבון Google לא שייך לדומיין המורשה",
-        "error_google_identity": "אימות Google נכשל",
-        "error_google_user_denied": "המשתמש לא רשום או חסום",
-        "error_google_unavailable": "שירות המשתמשים לא זמין",
+        "login_with": "התחברות עם {provider}",
+        "error_provider_disabled": "שיטת ההתחברות הזו אינה זמינה",
+        "error_provider_identity": "ההתחברות דרך ספק הזהות נכשלה",
+        "error_provider_domain": "חשבון זה מחוץ לדומיינים המורשים",
+        "error_provider_unverified": 'ספק הזהות לא אישר את כתובת הדוא"ל',
+        "error_provider_unavailable": "ספק הזהות אינו זמין. נסו שוב מאוחר יותר",
+        "error_user_denied": "המשתמש לא רשום או חסום",
+        "error_directory_unavailable": "שירות המשתמשים לא זמין",
         "error_redirect_host": "כתובת החזרה של האפליקציה אינה מורשית",
         "consent_title": "לאשר גישה?",
         "consent_app": "אפליקציה",
         "consent_redirect": "לאחר ההתחברות תועברו אל",
         "consent_unnamed": "אפליקציה ללא שם",
         "consent_warning": "המשיכו רק אם אתם יזמתם את ההתחברות הזו ומזהים את הכתובת שלמעלה.",
+        "or_api_key": "או עם מפתח API",
+        "token_help": "המפתח מונפק על ידי מנהל המערכת; הוא מוצג פעם אחת בלבד בעת ההנפקה.",
+        "error_hint_generic": "חזרו ליישום והתחילו את ההתחברות מחדש.",
+        "error_hint_request": "חזרו ליישום והתחילו את ההתחברות מחדש. הקישור תקף לעשר דקות.",
+        "error_hint_redirect_host": "כתובת החזרה של היישום לא ברשימת המורשים; פנו למנהל המערכת.",
+        "error_code_hint": "אם זה חוזר על עצמו, דווחו למנהל המערכת על הקוד:",
+        "lang_switcher_label": "שפה",
     },
     "en": {
         "title": "Keystone MCP — Sign in",
-        "subtitle": "Authorize the connector with your keystone API token.",
+        "subtitle": "Sign in to connect a client to your workspace.",
         "email_label": "Email",
         "token_label": "API token",
         "submit": "Authorize",
         "error_invalid": "Invalid api_token or email",
         "error_request": "Invalid or expired authorization request",
-        "google_button": "Sign in with Google",
-        "error_google_disabled": "Google sign-in is not available",
-        "error_google_domain": "Google account is outside the allowed domain",
-        "error_google_identity": "Google identity verification failed",
-        "error_google_user_denied": "User is not registered or is blocked",
-        "error_google_unavailable": "User directory is unavailable",
+        "login_with": "Sign in with {provider}",
+        "error_provider_disabled": "This sign-in method is not available",
+        "error_provider_identity": "Sign-in with the identity provider failed",
+        "error_provider_domain": "This account is outside the allowed domains",
+        "error_provider_unverified": "The identity provider has not confirmed this e-mail address",
+        "error_provider_unavailable": "The identity provider is unavailable. Try again later",
+        "error_user_denied": "User is not registered or is blocked",
+        "error_directory_unavailable": "User directory is unavailable",
         "error_redirect_host": "This application's redirect address is not allowed",
         "consent_title": "Allow access?",
         "consent_app": "Application",
@@ -364,21 +384,34 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "consent_warning": (
             "Continue only if you started this connection yourself and recognise the address above."
         ),
+        "or_api_key": "or with an API key",
+        "token_help": "Your administrator issues the key; it is shown only once when created.",
+        "error_hint_generic": "Go back to the application and start sign-in again.",
+        "error_hint_request": (
+            "Go back to the application and start sign-in again. The link is valid for ten minutes."
+        ),
+        "error_hint_redirect_host": (
+            "This application's return address is not on the allowed list; contact your administrator."
+        ),
+        "error_code_hint": "If this keeps happening, tell your administrator the code:",
+        "lang_switcher_label": "Language",
     },
     "ru": {
         "title": "Keystone MCP — Вход",
-        "subtitle": "Авторизуйте коннектор с помощью вашего API-токена keystone.",
+        "subtitle": "Вход для подключения клиента к рабочему пространству.",
         "email_label": "Электронная почта",
         "token_label": "API-токен",
         "submit": "Авторизовать",
         "error_invalid": "Неверный api_token или email",
         "error_request": "Недействительный или истёкший запрос авторизации",
-        "google_button": "Войти через Google",
-        "error_google_disabled": "Вход через Google недоступен",
-        "error_google_domain": "Аккаунт Google вне разрешённого домена",
-        "error_google_identity": "Проверка Google-идентичности не удалась",
-        "error_google_user_denied": "Пользователь не зарегистрирован или заблокирован",
-        "error_google_unavailable": "Каталог пользователей недоступен",
+        "login_with": "Войти через {provider}",
+        "error_provider_disabled": "Этот способ входа недоступен",
+        "error_provider_identity": "Вход через поставщика идентичности не удался",
+        "error_provider_domain": "Эта учётная запись вне разрешённых доменов",
+        "error_provider_unverified": "Поставщик идентичности не подтвердил адрес электронной почты",
+        "error_provider_unavailable": "Поставщик идентичности недоступен. Попробуйте позже",
+        "error_user_denied": "Пользователь не зарегистрирован или заблокирован",
+        "error_directory_unavailable": "Каталог пользователей недоступен",
         "error_redirect_host": "Адрес возврата этого приложения не разрешён",
         "consent_title": "Разрешить доступ?",
         "consent_app": "Приложение",
@@ -387,41 +420,73 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "consent_warning": (
             "Продолжайте, только если вы сами начали этот вход и узнаёте адрес выше."
         ),
+        "or_api_key": "или по ключу API",
+        "token_help": "Ключ выдаёт администратор; он показывается один раз при выпуске.",
+        "error_hint_generic": "Вернитесь в приложение и начните вход заново.",
+        "error_hint_request": (
+            "Вернитесь в приложение и начните вход заново. Ссылка действует десять минут."
+        ),
+        "error_hint_redirect_host": (
+            "Адрес возврата приложения не входит в разрешённые; обратитесь к администратору."
+        ),
+        "error_code_hint": "Если это повторяется, сообщите администратору код:",
+        "lang_switcher_label": "Язык",
     },
     "ar": {
         "title": "Keystone MCP — تسجيل الدخول",
-        "subtitle": "قم بتفويض الموصل باستخدام رمز API الخاص بـ keystone.",
+        "subtitle": "تسجيل الدخول لربط عميل بمساحة العمل.",
         "email_label": "البريد الإلكتروني",
         "token_label": "رمز API",
         "submit": "تفويض",
         "error_invalid": "رمز API أو البريد الإلكتروني غير صحيح",
         "error_request": "طلب تفويض غير صالح أو منتهي الصلاحية",
-        "google_button": "تسجيل الدخول عبر Google",
-        "error_google_disabled": "تسجيل الدخول عبر Google غير متاح",
-        "error_google_domain": "حساب Google خارج النطاق المسموح",
-        "error_google_identity": "فشل التحقق من هوية Google",
-        "error_google_user_denied": "المستخدم غير مسجل أو محظور",
-        "error_google_unavailable": "خدمة المستخدمين غير متاحة",
+        "login_with": "تسجيل الدخول عبر {provider}",
+        "error_provider_disabled": "طريقة تسجيل الدخول هذه غير متاحة",
+        "error_provider_identity": "فشل تسجيل الدخول عبر مزود الهوية",
+        "error_provider_domain": "هذا الحساب خارج النطاقات المسموح بها",
+        "error_provider_unverified": "مزود الهوية لم يؤكد عنوان البريد الإلكتروني",
+        "error_provider_unavailable": "مزود الهوية غير متاح. حاول مرة أخرى لاحقًا",
+        "error_user_denied": "المستخدم غير مسجل أو محظور",
+        "error_directory_unavailable": "خدمة المستخدمين غير متاحة",
         "error_redirect_host": "عنوان إعادة التوجيه لهذا التطبيق غير مسموح به",
         "consent_title": "السماح بالوصول؟",
         "consent_app": "التطبيق",
         "consent_redirect": "بعد تسجيل الدخول سيتم تحويلك إلى",
         "consent_unnamed": "تطبيق بدون اسم",
         "consent_warning": "تابع فقط إذا بدأت هذا الاتصال بنفسك وتتعرف على العنوان أعلاه.",
+        "or_api_key": "أو بمفتاح API",
+        "token_help": "يصدر المسؤول المفتاح؛ يُعرض مرة واحدة فقط عند الإنشاء.",
+        "error_hint_generic": "ارجع إلى التطبيق وابدأ تسجيل الدخول من جديد.",
+        "error_hint_request": "ارجع إلى التطبيق وابدأ تسجيل الدخول من جديد. الرابط صالح لعشرة دقائق.",
+        "error_hint_redirect_host": "عنوان إرجاع التطبيق غير مسموح به؛ تواصل مع المسؤول.",
+        "error_code_hint": "إذا تكرر ذلك، أبلغ المسؤول بالرمز:",
+        "lang_switcher_label": "اللغة",
     },
 }
 
 
-def _pick_language(request: Request, default_lang: str = FALLBACK_LANG) -> str:
-    """Select a supported UI language from ``?lang=`` or ``Accept-Language``.
+def _lang_cookie_names(base_url: str) -> tuple[str, ...]:
+    if base_url.startswith("https://"):
+        return (_LANG_COOKIE_NAME_HOST_PREFIXED, _LANG_COOKIE_NAME)
+    return (_LANG_COOKIE_NAME, _LANG_COOKIE_NAME_HOST_PREFIXED)
 
-    Falls back to *default_lang* (the deployment's configured login language)
-    when neither the override nor the browser's preferences name a language we
-    ship translations for.
+
+def _pick_language(
+    request: Request, default_lang: str = FALLBACK_LANG, *, base_url: str = ""
+) -> str:
+    """Select a supported UI language for sign-in pages.
+
+    Priority: explicit ``?lang=``, then the ``km_lang`` choice cookie, then
+    ``Accept-Language``, then the deployment's ``KEYSTONE_MCP_LOGIN_DEFAULT_LANG``.
     """
     override = request.query_params.get("lang", "").strip().lower()
     if override in TRANSLATIONS:
         return override
+
+    for cookie_name in _lang_cookie_names(base_url):
+        cookie_lang = request.cookies.get(cookie_name, "").strip().lower()
+        if cookie_lang in TRANSLATIONS:
+            return cookie_lang
 
     header = request.headers.get("accept-language", "")
     best_lang = default_lang if default_lang in TRANSLATIONS else FALLBACK_LANG
@@ -466,28 +531,17 @@ def _consent_redirect_location(redirect_uri: str) -> str:
     return f"{scheme}://{host}"
 
 
-def _consent_block_html(t: dict[str, str], client_name: str | None, redirect_uri: str) -> str:
-    """The consent block shown first on the login page (A13).
+def _field_label(t: dict[str, str], field: FormField) -> str:
+    """The (un-escaped) label text for one form field, falling back to its name.
 
-    The application name is whatever the client supplied at registration
-    (RFC 7591 ``client_name``) — unverified, so it cannot be trusted on its
-    own. The redirect destination is the fact that actually matters here: it
-    is read from the authorization request itself, not from the client's
-    self-reported metadata, which is why it gets its own bolded line and the
-    full URL underneath.
+    ``field.label_key`` names a translation key the provider chose; a
+    third-party provider's key missing from ``TRANSLATIONS`` must not 500 the
+    login page (``t`` is a plain ``dict``, so a bare ``t[field.label_key]``
+    raises ``KeyError``) -- it falls back to the field's own (validated,
+    startup-checked) name instead. The caller still ``html.escape``s whatever
+    this returns.
     """
-    name = (client_name or "").strip()
-    display_name = html.escape(name) if name else html.escape(t["consent_unnamed"])
-    location = html.escape(_consent_redirect_location(redirect_uri))
-    full_redirect = html.escape(redirect_uri)
-    return f"""
-  <div style="border:1px solid #ddd;border-radius:6px;padding:12px;margin:16px 0">
-    <h2 style="margin-top:0;font-size:1.1em">{html.escape(t["consent_title"])}</h2>
-    <p>{html.escape(t["consent_app"])}: <strong>{display_name}</strong></p>
-    <p>{html.escape(t["consent_redirect"])} <strong>{location}</strong></p>
-    <p style="font-size:0.8em;color:#555;word-break:break-all">{full_redirect}</p>
-    <p style="font-size:0.9em;color:#a60">{html.escape(t["consent_warning"])}</p>
-  </div>"""
+    return t.get(field.label_key, field.name)
 
 
 class _PendingAuthorization:
@@ -498,26 +552,34 @@ class _PendingAuthorization:
         self.params = params
 
 
-class _GooglePendingState:
-    __slots__ = ("txn_id", "nonce", "pkce_verifier", "csrf_hash")
+class _LoginAttempt:
+    """A redirect provider's in-flight sign-in attempt, keyed by ``state``.
 
-    def __init__(self, txn_id: str, nonce: str, pkce_verifier: str, csrf_hash: str) -> None:
+    Replaces the Google-only ``_GooglePendingState``: the same record shape
+    now serves any ``RedirectLoginProvider`` (X03). ``attempt`` is whatever
+    private per-attempt data the provider's own ``begin()`` returned (a
+    nonce, a PKCE verifier, ...) — Keystone never looks inside it, only
+    stores and hands it back to ``complete()``.
+    """
+
+    __slots__ = ("txn_id", "provider", "attempt", "csrf_hash")
+
+    def __init__(self, txn_id: str, provider: str, attempt: dict[str, str], csrf_hash: str) -> None:
         self.txn_id = txn_id
-        self.nonce = nonce
-        self.pkce_verifier = pkce_verifier
+        self.provider = provider
+        self.attempt = attempt
         self.csrf_hash = csrf_hash
 
 
 class KeystoneOAuthProvider(OAuthProvider):
     def __init__(
         self,
-        identity_provider: IdentityProvider,
         settings: Settings,
         oauth_store: OAuthStore,
         login_pending_store: LoginPendingStore,
         *,
+        login_providers: Sequence[LoginProvider],
         user_resolver: UserDirectoryResolver | None = None,
-        google_oidc_client: GoogleOidcClient | None = None,
         login_throttle: LoginAttemptThrottle | None = None,
         oauth_endpoint_throttle: LoginAttemptThrottle | None = None,
         observability: RbacObservability | None = None,
@@ -528,14 +590,14 @@ class KeystoneOAuthProvider(OAuthProvider):
             client_registration_options=ClientRegistrationOptions(
                 enabled=settings.oauth_dcr_enabled
             ),
+            revocation_options=RevocationOptions(enabled=True),
             required_scopes=None,
         )
-        self._identity = identity_provider
         self._settings = settings
         self._store = oauth_store
         self._pending_store = login_pending_store
+        self._providers: dict[str, LoginProvider] = {p.name: p for p in login_providers}
         self._user_resolver = user_resolver
-        self._google_oidc = google_oidc_client
         self._login_throttle = login_throttle or LoginAttemptThrottle(
             settings.login_throttle_ip_max,
             settings.login_throttle_email_max,
@@ -598,17 +660,70 @@ class KeystoneOAuthProvider(OAuthProvider):
                 app = wrap_asgi_with_ip_login_throttle(
                     app, self._oauth_endpoint_throttle, frozenset({"POST"})
                 )
+            elif (
+                route.path == "/revoke"
+                and "POST" in route_methods
+                and self._oauth_endpoint_throttle.enabled()
+            ):
+                app = wrap_asgi_with_ip_login_throttle(
+                    app, self._oauth_endpoint_throttle, frozenset({"POST"})
+                )
             wrapped.append(_rebuild(route, app) if app is not route.app else route)
         return wrapped
 
-    def _google_client(self) -> GoogleOidcClient:
-        if self._google_oidc is not None:
-            return self._google_oidc
-        return GoogleOidcClient(
-            self._settings.google_client_id,
-            self._settings.google_client_secret,
-            self._settings.google_redirect_uri,
-        )
+    def _callback_url(self, name: str) -> str:
+        """Where a redirect provider named *name* sends the browser back.
+
+        For the provider named ``google`` this always equals
+        ``settings.google_redirect_uri`` (the address registered with Google
+        — S4), since that property uses this same ``{base_url}/login/{name}/
+        callback`` formula.
+        """
+        return f"{self._settings.base_url.rstrip('/')}/login/{name}/callback"
+
+    def _form_provider(self) -> FormLoginProvider | None:
+        """The configured ``form``-kind provider, if any (at most one — validated at startup)."""
+        for provider in self._providers.values():
+            if provider.kind == "form":
+                return provider  # type: ignore[return-value]
+        return None
+
+    @staticmethod
+    def _verify_identity_route(identity: LoginIdentity, route_name: str) -> LoginIdentity | None:
+        """Confirm ``identity.provider`` matches the route it came back on, and normalize its email.
+
+        ``identity.provider`` becomes the issued token's ``auth_method``
+        claim. Without this check, a third-party provider configured under
+        some other name could simply report ``provider="google"`` in the
+        ``LoginIdentity`` it returns and claim to be the built-in Google
+        provider -- Keystone must instead derive ``auth_method`` from *which
+        route the sign-in came back on* (``name`` in
+        ``handle_login_callback``, ``form_provider.name`` in
+        ``handle_login``), and refuse the attempt outright when a provider's
+        own claim disagrees with it. RBAC's interactive-human gate
+        (``rbac/human_identity.py``) no longer trusts ``auth_method ==
+        "google"`` either (X05): it reads the ``interactive`` claim, which
+        ``_complete_login`` derives from the *registered provider's own*
+        ``LoginProvider.interactive`` -- looked up by this same route name,
+        not from the identity a provider hands back -- so a provider cannot
+        earn that trust by self-reporting it any more than it can the name.
+
+        The email is normalized again here (on top of the generic providers'
+        own normalization) as defence in depth: a provider is third-party
+        code, and the users-directory lookup and the token's ``subject`` must
+        not depend on it having normalized correctly.
+
+        Returns ``None`` (logging a warning naming both provider names, but
+        never the email) when the names disagree.
+        """
+        if identity.provider != route_name:
+            logger.warning(
+                "login provider %s reported provider=%r; refusing the sign-in",
+                route_name,
+                identity.provider,
+            )
+            return None
+        return replace(identity, email=normalize_email(identity.email))
 
     def _csrf_cookie_name(self) -> str:
         """The ``km_login_csrf`` cookie's name for this deployment (finding #4).
@@ -626,6 +741,92 @@ class KeystoneOAuthProvider(OAuthProvider):
         if self._settings.base_url.startswith("https://"):
             return "/"
         return "/login"
+
+    def _lang_cookie_name(self) -> str:
+        if self._settings.base_url.startswith("https://"):
+            return _LANG_COOKIE_NAME_HOST_PREFIXED
+        return _LANG_COOKIE_NAME
+
+    def _maybe_set_lang_cookie(self, response: Response, request: Request, lang: str) -> None:
+        explicit = request.query_params.get("lang", "").strip().lower()
+        if explicit not in TRANSLATIONS:
+            return
+        response.set_cookie(
+            self._lang_cookie_name(),
+            lang,
+            max_age=_LANG_COOKIE_MAX_AGE_SECONDS,
+            path="/login",
+            httponly=True,
+            samesite="lax",
+            secure=self._settings.base_url.startswith("https://"),
+        )
+
+    def _txn_query(self, txn_id: str) -> str:
+        if not txn_id:
+            return ""
+        return f"txn={quote(txn_id)}&"
+
+    def _translation(self, lang: str) -> dict[str, str]:
+        return TRANSLATIONS.get(lang, TRANSLATIONS[FALLBACK_LANG])
+
+    def _build_provider_views(self, t: dict[str, str]) -> list[ProviderView]:
+        views: list[ProviderView] = []
+        for provider in self._providers.values():
+            if provider.kind == "redirect":
+                views.append(ProviderView(provider.name, provider.kind, provider.title, ()))
+                continue
+            if provider.kind != "form":
+                continue
+            fields: list[FieldView] = []
+            for field in provider.form_fields():
+                help_key: str | None = None
+                autocomplete = "off"
+                inputmode: str | None = None
+                if field.name == "email":
+                    autocomplete = "email"
+                    inputmode = "email"
+                elif field.name == "api_token":
+                    help_key = "token_help"
+                fields.append(
+                    FieldView(
+                        field.name,
+                        field.input_type,
+                        _field_label(t, field),
+                        help_key,
+                        autocomplete,
+                        inputmode,
+                    )
+                )
+            views.append(ProviderView(provider.name, provider.kind, provider.title, tuple(fields)))
+        return views
+
+    def _error_page(
+        self, lang: str, error_key: str, *, txn_query: str = "", status_code: int = 400
+    ) -> str:
+        return render_error_page(
+            lang=lang,
+            t=self._translation(lang),
+            brand=self._settings.login_brand,
+            error_key=error_key,
+            status_code=status_code,
+            txn_query=txn_query,
+        )
+
+    def _html_error(
+        self,
+        request: Request | None,
+        lang: str,
+        error_key: str,
+        status_code: int,
+    ) -> Response:
+        txn_query = ""
+        if request is not None:
+            txn_query = self._txn_query(request.query_params.get("txn", ""))
+        content = self._error_page(error_key=error_key, lang=lang, txn_query=txn_query)
+        response = _html_response(content, status_code=status_code)
+        if request is not None:
+            self._maybe_set_lang_cookie(response, request, lang)
+        return response
 
     # ── Client management (DCR, RFC 7591) ─────────────────────────────────
     async def get_client(self, client_id: str) -> OAuthClientInformationFull | None:
@@ -786,12 +987,14 @@ class KeystoneOAuthProvider(OAuthProvider):
             return None
         return _parse_pending_txn_raw(raw)
 
-    async def _put_auth_code(self, code: AuthorizationCode, *, auth_method: str) -> None:
+    async def _put_auth_code(
+        self, code: AuthorizationCode, *, auth_method: str, interactive: bool
+    ) -> None:
         ttl = max(int(code.expires_at - time.time()), 1)
         await self._pending_store.put(
             _NS_AUTH_CODE,
             code.code,
-            _encode_auth_code_envelope(code, auth_method),
+            _encode_auth_code_envelope(code, auth_method, interactive),
             ttl,
         )
 
@@ -802,13 +1005,13 @@ class KeystoneOAuthProvider(OAuthProvider):
         parsed = _parse_auth_code_envelope(raw)
         if parsed is None:
             return None
-        code, _auth_method = parsed
+        code, _auth_method, _interactive = parsed
         if code.expires_at < time.time():
             await self._pending_store.consume(_NS_AUTH_CODE, code_str)
             return None
         return code
 
-    async def _consume_auth_code(self, code_str: str) -> tuple[AuthorizationCode, str] | None:
+    async def _consume_auth_code(self, code_str: str) -> tuple[AuthorizationCode, str, bool] | None:
         raw = await self._pending_store.consume(_NS_AUTH_CODE, code_str)
         if raw is None:
             return None
@@ -831,7 +1034,7 @@ class KeystoneOAuthProvider(OAuthProvider):
         consumed = await self._consume_auth_code(authorization_code.code)
         if consumed is None:
             raise ValueError("authorization code invalid or already consumed")
-        consumed_code, auth_method = consumed
+        consumed_code, auth_method, interactive = consumed
         if consumed_code.code != authorization_code.code:
             raise ValueError("authorization code invalid or already consumed")
 
@@ -840,34 +1043,51 @@ class KeystoneOAuthProvider(OAuthProvider):
         refresh_token = f"km_rt_{secrets.token_urlsafe(32)}"
         now = int(time.time())
         expires_at = now + self._settings.token_cache_ttl_seconds
-        token_claims = {"email": email, "auth_method": auth_method}
+        code_iat = int(consumed_code.expires_at) - self._settings.auth_code_ttl_seconds
+        token_claims = {
+            "email": email,
+            "auth_method": auth_method,
+            "interactive": interactive,
+            "iat": now,
+        }
 
         # Renew the client's lifetime before writing the refresh token it will
         # own, so the client record never expires ahead of a token issued
         # under it.
         await self._store.touch_client(client.client_id)
-        await self._store.put_access_token(
-            AccessToken(
-                token=access_token,
-                client_id=client.client_id,
-                scopes=authorization_code.scopes,
-                expires_at=expires_at,
-                resource=authorization_code.resource,
-                subject=email,
-                claims=token_claims,
-            )
+        access_record = AccessToken(
+            token=access_token,
+            client_id=client.client_id,
+            scopes=authorization_code.scopes,
+            expires_at=expires_at,
+            resource=authorization_code.resource,
+            subject=email,
+            claims=token_claims,
         )
-        await self._store.put_refresh_token(
-            RefreshToken(
-                token=refresh_token,
-                client_id=client.client_id,
-                scopes=authorization_code.scopes,
-                expires_at=now + self._settings.refresh_token_ttl_seconds,
-                subject=email,
-            )
+        refresh_record = RefreshToken(
+            token=refresh_token,
+            client_id=client.client_id,
+            scopes=authorization_code.scopes,
+            expires_at=now + self._settings.refresh_token_ttl_seconds,
+            subject=email,
         )
+        try:
+            await self._store.commit_token_pair(
+                subject=email,
+                consumed_iat=code_iat,
+                access=access_record,
+                refresh=refresh_record,
+            )
+        except CredentialRevokedError:
+            raise TokenError(
+                error="invalid_grant",
+                error_description="session was revoked",
+            ) from None
         await self._put_refresh_meta(
-            refresh_token, auth_method=auth_method, resource=authorization_code.resource
+            refresh_token,
+            auth_method=auth_method,
+            resource=authorization_code.resource,
+            interactive=interactive,
         )
         return OAuthToken(
             access_token=access_token,
@@ -912,44 +1132,74 @@ class KeystoneOAuthProvider(OAuthProvider):
         # also carries the resource (RFC 8707) the original access token was
         # bound to, so a refreshed token keeps that binding instead of coming
         # back unbound.
-        auth_method, resource = await self._read_refresh_meta(refresh_token.token)
+        auth_method, resource, interactive = await self._read_refresh_meta(refresh_token.token)
+        if auth_method not in self._providers:
+            # The sign-in provider this session was opened through was
+            # removed from the configuration (or was never configured at
+            # all, for a marker that never belonged to this deployment).
+            # X03 used to read an unrecognised auth_method as "api_key",
+            # silently turning an interactive session into a machine one
+            # that could still refresh forever; X05 refuses instead, since
+            # only the operator removing the provider on purpose should end
+            # sessions opened through it -- not let them keep renewing under
+            # a different, weaker identity.
+            logger.warning(
+                "refresh refused: sign-in provider %r is no longer configured", auth_method
+            )
+            await self._store.delete_refresh_token(refresh_token.token)
+            await self._pending_store.consume(_NS_REFRESH_AUTH, refresh_token.token)
+            raise TokenError(
+                error="invalid_grant",
+                error_description="sign-in provider is no longer configured",
+            )
         email = refresh_token.subject or ""
         granted = scopes or refresh_token.scopes
         access_token = f"km_at_{secrets.token_urlsafe(32)}"
         new_refresh = f"km_rt_{secrets.token_urlsafe(32)}"
         now = int(time.time())
-        token_claims = {"email": email, "auth_method": auth_method}
+        token_claims = {
+            "email": email,
+            "auth_method": auth_method,
+            "interactive": interactive,
+            "iat": now,
+        }
 
         # Renew the client's lifetime before writing the new refresh token.
         await self._store.touch_client(client.client_id)
-        await self._store.put_access_token(
-            AccessToken(
-                token=access_token,
-                client_id=client.client_id,
-                scopes=granted,
-                expires_at=now + self._settings.token_cache_ttl_seconds,
-                resource=resource,
-                subject=email,
-                claims=token_claims,
-            )
+        access_record = AccessToken(
+            token=access_token,
+            client_id=client.client_id,
+            scopes=granted,
+            expires_at=now + self._settings.token_cache_ttl_seconds,
+            resource=resource,
+            subject=email,
+            claims=token_claims,
         )
-        # Rotation renews the lifetime, so an actively refreshing client stays
-        # connected and an idle one expires refresh_token_ttl_seconds after its
-        # last refresh.
-        await self._store.put_refresh_token(
-            RefreshToken(
-                token=new_refresh,
-                client_id=client.client_id,
-                scopes=granted,
-                expires_at=now + self._settings.refresh_token_ttl_seconds,
-                subject=email,
-            )
+        refresh_record = RefreshToken(
+            token=new_refresh,
+            client_id=client.client_id,
+            scopes=granted,
+            expires_at=now + self._settings.refresh_token_ttl_seconds,
+            subject=email,
         )
-        await self._put_refresh_meta(new_refresh, auth_method=auth_method, resource=resource)
-
-        # The replacement is durable; retiring the old token can no longer
-        # strand the session.
-        await self._store.delete_refresh_token(refresh_token.token)
+        consumed_iat = self._store.refresh_credential_iat(refresh_token)
+        try:
+            await self._store.commit_token_pair(
+                subject=email,
+                consumed_iat=consumed_iat,
+                access=access_record,
+                refresh=refresh_record,
+                replace_refresh_token=refresh_token.token,
+            )
+        except CredentialRevokedError:
+            await self._pending_store.consume(_NS_REFRESH_AUTH, refresh_token.token)
+            raise TokenError(
+                error="invalid_grant",
+                error_description="session was revoked",
+            ) from None
+        await self._put_refresh_meta(
+            new_refresh, auth_method=auth_method, resource=resource, interactive=interactive
+        )
 
         # Rewrite the old marker with a short grace TTL instead of deleting it
         # outright (finding #2). The two calls a concurrent rotation of the
@@ -968,6 +1218,7 @@ class KeystoneOAuthProvider(OAuthProvider):
             refresh_token.token,
             auth_method=auth_method,
             resource=resource,
+            interactive=interactive,
             ttl_seconds=_OLD_REFRESH_MARKER_GRACE_SECONDS,
         )
         return OAuthToken(
@@ -980,9 +1231,13 @@ class KeystoneOAuthProvider(OAuthProvider):
 
     # ── Access tokens (Resource Server) ───────────────────────────────────
     async def load_access_token(self, token: str) -> AccessToken | None:
+        if token.startswith("ksk_"):
+            return await self._verify_service_api_key(token)
         return await self._store.get_access_token(token)
 
     async def verify_token(self, token: str) -> AccessToken | None:
+        if token.startswith("ksk_"):
+            return await self._verify_service_api_key(token)
         access = await self.load_access_token(token)
         if access is None:
             return None
@@ -1004,9 +1259,60 @@ class KeystoneOAuthProvider(OAuthProvider):
             return None
         return access
 
+    async def _verify_service_api_key(self, token: str) -> AccessToken | None:
+        if self._user_resolver is None:
+            return None
+        try:
+            verification = await self._user_resolver.verify_api_key(token)
+        except UserDirectoryUnavailableError:
+            logger.warning("users directory unavailable while verifying service API key")
+            return None
+        if verification is None:
+            return None
+        if verification.subject_type == "human":
+            logger.info(
+                "refused bearer API key %s: keys of people work only on the sign-in page",
+                verification.key_id,
+            )
+            return None
+        try:
+            resolved = await self._user_resolver.resolve(verification.subject)
+        except UserDirectoryUnavailableError:
+            logger.warning("users directory unavailable while resolving service API key subject")
+            return None
+        if not resolved.exists or resolved.is_blocked:
+            return None
+        expires_at = (
+            int(verification.expires_at.timestamp())
+            if verification.expires_at is not None
+            else None
+        )
+        return AccessToken(
+            token=token,
+            client_id="keystone-service-key",
+            scopes=[],
+            expires_at=expires_at,
+            resource=self._settings.resource_url,
+            subject=verification.subject,
+            claims={
+                "subject": verification.subject,
+                "subject_type": "service",
+                "interactive": False,
+                "auth_method": "service_key",
+                "key_id": verification.key_id,
+            },
+        )
+
     async def revoke_token(self, token: AccessToken | RefreshToken) -> None:
-        await self._store.delete_access_token(token.token)
-        await self._store.delete_refresh_token(token.token)
+        if isinstance(token, AccessToken):
+            await self._store.delete_access_token(token.token)
+            return
+        subject = token.subject or ""
+        if subject:
+            await self._store.revoke_refresh_grant(subject, token.client_id, token.token)
+        else:
+            await self._store.delete_refresh_token(token.token)
+        await self._pending_store.consume(_NS_REFRESH_AUTH, token.token)
 
     # ── Login page (custom routes, registered by the server) ──────────────
     async def render_login(self, request: Request) -> Response:
@@ -1018,14 +1324,16 @@ class KeystoneOAuthProvider(OAuthProvider):
         already signed in to Google, the code goes to the attacker's
         redirect_uri" attack: see docs/security-model.md#consent-screen.
         """
-        lang = _pick_language(request, self._settings.login_default_lang)
+        lang = _pick_language(
+            request, self._settings.login_default_lang, base_url=self._settings.base_url
+        )
         txn_id = request.query_params.get("txn", "")
         pending = await self._get_pending_txn(txn_id)
         if pending is None:
-            return _html_response(self._error_page(lang, "error_request"), status_code=400)
+            return self._html_error(request, lang, "error_request", 400)
         client = await self._store.get_client(pending.client_id)
         if client is None:
-            return _html_response(self._error_page(lang, "error_request"), status_code=400)
+            return self._html_error(request, lang, "error_request", 400)
         return self._render_consent_page(request, txn_id, lang, pending, client)
 
     async def render_redirect_not_allowed(self, request: Request) -> Response:
@@ -1037,13 +1345,19 @@ class KeystoneOAuthProvider(OAuthProvider):
         was ever stashed in the pending store for this request, so there is
         nothing to look up or consume.
         """
-        lang = _pick_language(request, self._settings.login_default_lang)
-        return _html_response(self._error_page(lang, "error_redirect_host"), status_code=400)
+        lang = _pick_language(
+            request, self._settings.login_default_lang, base_url=self._settings.base_url
+        )
+        return self._html_error(request, lang, "error_redirect_host", 400)
 
     async def handle_login(self, request: Request) -> Response:
-        lang = _pick_language(request, self._settings.login_default_lang)
-        if not self._settings.api_key_login_enabled:
-            return _html_response(self._error_page(lang, "error_request"), status_code=400)
+        """``POST /login``: the single configured ``form``-kind provider's credential form."""
+        lang = _pick_language(
+            request, self._settings.login_default_lang, base_url=self._settings.base_url
+        )
+        form_provider = self._form_provider()
+        if form_provider is None:
+            return self._html_error(request, lang, "error_request", 400)
 
         allowed_ip, retry_ip = self._login_throttle.check_ip(peer_host(request))
         if not allowed_ip:
@@ -1051,7 +1365,10 @@ class KeystoneOAuthProvider(OAuthProvider):
 
         form = await request.form()
         txn_id = str(form.get("txn", ""))
-        api_token = str(form.get("api_token", ""))
+        # The login-throttle-by-email key: read directly off the form rather
+        # than from the provider's (not-yet-verified) result, exactly as the
+        # api_token form has always done, so a bad guess against a given
+        # email is throttled before the provider ever runs.
         email = normalize_email(str(form.get("email", "")))
 
         allowed_email, retry_email = self._login_throttle.check_email_failures(email)
@@ -1064,14 +1381,52 @@ class KeystoneOAuthProvider(OAuthProvider):
         # gain.
         pending = await self._get_pending_txn(txn_id)
         if pending is None:
-            return _html_response(self._error_page(lang, "error_request"), status_code=400)
+            return self._html_error(request, lang, "error_request", 400)
 
-        # Authoritative check: invalid api_token → NO code is issued.
-        if not await self._identity.verify(api_token, email):
+        raw_form = {
+            field.name: str(form.get(field.name, "")) for field in form_provider.form_fields()
+        }
+        try:
+            identity = await form_provider.verify(raw_form)
+        except LoginRejected as exc:
+            if exc.reason == "provider_unavailable":
+                client = await self._store.get_client(pending.client_id)
+                if client is None:
+                    return self._html_error(request, lang, "error_request", 400)
+                return self._render_consent_page(
+                    request,
+                    txn_id,
+                    lang,
+                    pending,
+                    client,
+                    error_key="error_directory_unavailable",
+                    status_code=503,
+                )
+            logger.info("login rejected by provider %s: %s", form_provider.name, exc.reason)
             self._login_throttle.record_login_failure(email)
             client = await self._store.get_client(pending.client_id)
             if client is None:
-                return _html_response(self._error_page(lang, "error_request"), status_code=400)
+                return self._html_error(request, lang, "error_request", 400)
+            return self._render_consent_page(
+                request,
+                txn_id,
+                lang,
+                pending,
+                client,
+                error_key="error_invalid",
+                status_code=401,
+            )
+        except Exception:
+            # The protocol's own rule (keystone_mcp/login/protocol.py): any
+            # exception other than LoginRejected is the provider being
+            # unavailable or buggy, not the credentials being wrong — logged
+            # with a traceback, shown to the user the same as a bad
+            # credential since there is no more specific page for this form.
+            logger.exception("unexpected error from login provider %s", form_provider.name)
+            self._login_throttle.record_login_failure(email)
+            client = await self._store.get_client(pending.client_id)
+            if client is None:
+                return self._html_error(request, lang, "error_request", 400)
             return self._render_consent_page(
                 request,
                 txn_id,
@@ -1082,6 +1437,23 @@ class KeystoneOAuthProvider(OAuthProvider):
                 status_code=401,
             )
 
+        verified_identity = self._verify_identity_route(identity, form_provider.name)
+        if verified_identity is None:
+            self._login_throttle.record_login_failure(email)
+            client = await self._store.get_client(pending.client_id)
+            if client is None:
+                return self._html_error(request, lang, "error_request", 400)
+            return self._render_consent_page(
+                request,
+                txn_id,
+                lang,
+                pending,
+                client,
+                error_key="error_invalid",
+                status_code=401,
+            )
+        identity = verified_identity
+
         # Token-only verification is not enough: the holder of a shared
         # DEV-token (or an auth-service-issued one) could otherwise sign in
         # as any email, including one that does not belong to a real person.
@@ -1090,32 +1462,32 @@ class KeystoneOAuthProvider(OAuthProvider):
         # which emails the directory knows about.
         if self._user_resolver is not None:
             try:
-                resolved = await self._user_resolver.resolve(email)
+                resolved = await self._user_resolver.resolve(identity.email)
             except UserDirectoryUnavailableError:
                 client = await self._store.get_client(pending.client_id)
                 if client is None:
-                    return _html_response(self._error_page(lang, "error_request"), status_code=400)
+                    return self._html_error(request, lang, "error_request", 400)
                 return self._render_consent_page(
                     request,
                     txn_id,
                     lang,
                     pending,
                     client,
-                    error_key="error_google_unavailable",
+                    error_key="error_directory_unavailable",
                     status_code=503,
                 )
             if not resolved.exists or resolved.is_blocked:
-                self._login_throttle.record_login_failure(email)
+                self._login_throttle.record_login_failure(identity.email)
                 client = await self._store.get_client(pending.client_id)
                 if client is None:
-                    return _html_response(self._error_page(lang, "error_request"), status_code=400)
+                    return self._html_error(request, lang, "error_request", 400)
                 return self._render_consent_page(
                     request,
                     txn_id,
                     lang,
                     pending,
                     client,
-                    error_key="error_google_user_denied",
+                    error_key="error_user_denied",
                     status_code=403,
                 )
         # Reachable whenever no directory resolver is wired at all, which is
@@ -1127,18 +1499,30 @@ class KeystoneOAuthProvider(OAuthProvider):
         # a real server runs this branch too, and a token-login email is
         # accepted without ever being checked against the directory.
 
-        return await self._complete_login_with_email(txn_id, email, lang, auth_method="api_key")
+        return await self._complete_login(
+            txn_id,
+            identity,
+            lang,
+            auth_method=form_provider.name,
+            interactive=form_provider.interactive,
+        )
 
-    async def start_google_login(self, request: Request) -> Response:
-        """``GET /login/google`` no longer redirects straight to Google (A13).
+    async def start_login_redirect_get(self, request: Request, name: str) -> Response:
+        """``GET /login/{name}`` no longer redirects straight to the provider (A13).
 
         A bare link to this route used to skip the consent screen entirely;
         now it bounces to it (303) so the screen cannot be bypassed by a
-        direct URL.
+        direct URL. Only reachable for a configured redirect provider: the
+        route is not registered at all otherwise (server.py), so the
+        defensive 404 below only guards against a provider disabled after
+        this route was registered (e.g. a future hot-reload).
         """
-        lang = _pick_language(request, self._settings.login_default_lang)
-        if not self._settings.google_login_enabled:
-            return _html_response(self._error_page(lang, "error_google_disabled"), status_code=404)
+        lang = _pick_language(
+            request, self._settings.login_default_lang, base_url=self._settings.base_url
+        )
+        provider = self._providers.get(name)
+        if provider is None or provider.kind != "redirect":
+            return self._html_error(request, lang, "error_provider_disabled", 404)
 
         txn_id = request.query_params.get("txn", "").strip()
         return RedirectResponse(
@@ -1146,16 +1530,20 @@ class KeystoneOAuthProvider(OAuthProvider):
             status_code=303,
         )
 
-    async def start_google_login_post(self, request: Request) -> Response:
-        """Consent screen's Google button target: requires a matching CSRF pair.
+    async def start_login_redirect(self, request: Request, name: str) -> Response:
+        """Consent screen's provider button target: requires a matching CSRF pair.
 
         The double-submit cookie (``km_login_csrf``) is unreadable from another
         origin and is not sent on a cross-site POST under ``SameSite=Lax``, so a
-        forged form submission cannot reach Google on the victim's behalf.
+        forged form submission cannot start a redirect sign-in on the victim's
+        behalf.
         """
-        lang = _pick_language(request, self._settings.login_default_lang)
-        if not self._settings.google_login_enabled:
-            return _html_response(self._error_page(lang, "error_google_disabled"), status_code=404)
+        lang = _pick_language(
+            request, self._settings.login_default_lang, base_url=self._settings.base_url
+        )
+        provider = self._providers.get(name)
+        if provider is None or provider.kind != "redirect":
+            return self._html_error(request, lang, "error_provider_disabled", 404)
 
         allowed_ip, retry_ip = self._login_throttle.check_ip(peer_host(request))
         if not allowed_ip:
@@ -1166,37 +1554,49 @@ class KeystoneOAuthProvider(OAuthProvider):
         csrf_field = str(form.get("csrf", ""))
         csrf_cookie = request.cookies.get(self._csrf_cookie_name(), "")
         if not csrf_field or not csrf_cookie or not secrets.compare_digest(csrf_field, csrf_cookie):
-            return _html_response(self._error_page(lang, "error_request"), status_code=400)
+            return self._html_error(request, lang, "error_request", 400)
 
         if await self._get_pending_txn(txn_id) is None:
-            return _html_response(self._error_page(lang, "error_request"), status_code=400)
+            return self._html_error(request, lang, "error_request", 400)
 
-        return await self._redirect_to_google(txn_id, csrf_cookie)
-
-    async def _redirect_to_google(self, txn_id: str, csrf_cookie: str) -> Response:
-        google_state = secrets.token_urlsafe(24)
-        client = self._google_client()
-        nonce = client.new_nonce()
-        verifier, challenge = client.new_pkce_pair()
-        # Binds this Google round trip to the browser that started it
-        # (finding #1): only a hash travels through Google, never the cookie
-        # value itself, in case the state envelope ever leaked (it is opaque
-        # server-side state, but there is no reason to carry the raw secret).
+        state = secrets.token_urlsafe(24)
+        # Binds this round trip to the browser that started it (finding #1,
+        # 0.4.0 A13/A17): only a hash travels through the external provider,
+        # never the cookie value itself, in case the state envelope ever
+        # leaked (it is opaque server-side state, but there is no reason to
+        # carry the raw secret).
         csrf_hash = _hash_csrf_cookie(csrf_cookie)
-        envelope = _encode_google_pending(txn_id, nonce, verifier, csrf_hash)
+        try:
+            redirect = await provider.begin(state=state, callback_url=self._callback_url(name))
+        except LoginRejected as exc:
+            logger.info("login rejected by provider %s: %s", name, exc.reason)
+            if exc.reason == "provider_unavailable":
+                return self._html_error(request, lang, "error_provider_unavailable", 503)
+            return self._html_error(request, lang, "error_request", 400)
+        except Exception:
+            # Mirrors the protocol's own rule, applied at the other end of
+            # the round trip (handle_login_callback): any exception other
+            # than LoginRejected means the provider itself is unavailable or
+            # buggy, not that this particular attempt is invalid -- logged
+            # with a traceback, shown to the user as a service outage rather
+            # than a 500 with a stack trace.
+            logger.exception("unexpected error from login provider %s", name)
+            return self._html_error(request, lang, "error_provider_unavailable", 503)
+        envelope = json.dumps(
+            {
+                "txn": txn_id,
+                "provider": name,
+                "attempt": dict(redirect.attempt),
+                "csrf_hash": csrf_hash,
+            }
+        )
         await self._pending_store.put(
-            _NS_GOOGLE_STATE,
-            google_state,
+            _NS_LOGIN_ATTEMPT,
+            state,
             envelope,
             self._settings.login_pending_txn_ttl_seconds,
         )
-        redirect_url = client.build_authorization_url(
-            state=google_state,
-            nonce=nonce,
-            code_challenge=challenge,
-            hosted_domain=self._settings.google_allowed_domain.strip() or None,
-        )
-        return RedirectResponse(url=redirect_url, status_code=302)
+        return RedirectResponse(url=redirect.url, status_code=302)
 
     def _render_consent_page(
         self,
@@ -1209,7 +1609,7 @@ class KeystoneOAuthProvider(OAuthProvider):
         error_key: str | None = None,
         status_code: int = 200,
     ) -> Response:
-        """Build the consent screen and, if Google is enabled, (re)issue its CSRF cookie.
+        """Build the consent screen and, if a redirect provider is configured, (re)issue its CSRF cookie.
 
         A fresh value is minted on every render (finding #4, second review):
         the cookie used to be reused whenever the request already carried one
@@ -1228,19 +1628,25 @@ class KeystoneOAuthProvider(OAuthProvider):
         "reload and retry" inconvenience, not a dead end.
         """
         csrf_token: str | None = None
-        if self._settings.google_login_enabled:
+        if any(provider.kind == "redirect" for provider in self._providers.values()):
             csrf_token = secrets.token_urlsafe(32)
 
-        content = self._login_form_html(
-            txn_id,
-            lang,
-            error_key=error_key,
-            settings=self._settings,
+        t = self._translation(lang)
+        content = render_consent_page(
+            lang=lang,
+            t=t,
+            brand=self._settings.login_brand,
             client_name=client.client_name,
             redirect_uri=str(pending.params.redirect_uri),
-            csrf_token=csrf_token,
+            redirect_location=_consent_redirect_location(str(pending.params.redirect_uri)),
+            providers=self._build_provider_views(t),
+            txn=txn_id,
+            csrf=csrf_token,
+            error_key=error_key,
+            txn_query=self._txn_query(txn_id),
         )
         response = _html_response(content, status_code=status_code)
+        self._maybe_set_lang_cookie(response, request, lang)
         if csrf_token is not None:
             response.set_cookie(
                 self._csrf_cookie_name(),
@@ -1253,102 +1659,110 @@ class KeystoneOAuthProvider(OAuthProvider):
             )
         return response
 
-    async def handle_google_callback(self, request: Request) -> Response:
-        lang = _pick_language(request, self._settings.login_default_lang)
-        if not self._settings.google_login_enabled:
-            return _html_response(self._error_page(lang, "error_google_disabled"), status_code=404)
+    async def handle_login_callback(self, request: Request, name: str) -> Response:
+        """``GET /login/{name}/callback``: hand the callback to the named redirect provider.
 
-        error = request.query_params.get("error")
-        if error:
-            return _html_response(self._error_page(lang, "error_google_identity"), status_code=400)
-
-        google_state = request.query_params.get("state", "").strip()
-        code = request.query_params.get("code", "").strip()
-        if not google_state or not code:
-            return _html_response(self._error_page(lang, "error_request"), status_code=400)
-
-        raw = await self._pending_store.consume(_NS_GOOGLE_STATE, google_state)
-        if raw is None:
-            return _html_response(self._error_page(lang, "error_request"), status_code=400)
-
-        pending_google = _parse_google_pending_raw(raw)
-        if pending_google is None:
-            return _html_response(self._error_page(lang, "error_request"), status_code=400)
-
-        # Binds this callback to the browser that started the Google round
-        # trip (finding #1): without this, a browser that never visited
-        # /login or POSTed /login/google — and so never holds the matching
-        # km_login_csrf cookie — could still complete a Google login whose
-        # `state` it only received as a link (e.g. one an attacker forwards
-        # from their own /login/google POST). google_state is already
-        # consumed above regardless of the outcome; that is unchanged from
-        # before this check and is fine, since it is a single-use nonce
-        # either way. The login transaction itself (pending_google.txn_id) is
-        # not touched until _complete_login_with_email, below, so refusing
-        # here does not burn it.
-        callback_csrf_cookie = request.cookies.get(self._csrf_cookie_name(), "")
-        if not callback_csrf_cookie or not secrets.compare_digest(
-            _hash_csrf_cookie(callback_csrf_cookie), pending_google.csrf_hash
-        ):
-            logger.warning("google callback refused: csrf cookie missing or mismatched")
-            return _html_response(self._error_page(lang, "error_request"), status_code=400)
-
-        client = self._google_client()
-        try:
-            token_body = await client.exchange_code(code, pending_google.pkce_verifier)
-            identity = client.verify_id_token(str(token_body["id_token"]), pending_google.nonce)
-        except GoogleTokenExchangeError:
-            return _html_response(self._error_page(lang, "error_google_identity"), status_code=400)
-        except GoogleIdTokenError:
-            return _html_response(self._error_page(lang, "error_google_identity"), status_code=400)
-        except GoogleOidcError:
-            return _html_response(self._error_page(lang, "error_google_identity"), status_code=400)
-
-        # Google's own email claim is already lower-case in practice, but
-        # normalizing here too (as handle_login does for token sign-in, A01)
-        # costs nothing and removes the dependency on that holding forever
-        # (finding #7): every downstream use — domain check, directory
-        # lookup, and the subject written into the issued token — sees the
-        # same normalized value handle_login would produce for the same
-        # address.
-        email = normalize_email(identity.email)
-
-        allowed_domain = self._settings.google_allowed_domain.strip()
-        if allowed_domain and not email_matches_allowed_domain(
-            email,
-            allowed_domain,
-            hosted_domain=identity.hosted_domain,
-        ):
-            return _html_response(self._error_page(lang, "error_google_domain"), status_code=403)
-
-        if self._user_resolver is None:
-            logger.error("google login enabled but user directory resolver is not configured")
-            return _html_response(
-                self._error_page(lang, "error_google_unavailable"), status_code=503
-            )
-
-        try:
-            resolved = await self._user_resolver.resolve(email)
-        except UserDirectoryUnavailableError:
-            return _html_response(
-                self._error_page(lang, "error_google_unavailable"), status_code=503
-            )
-
-        if not resolved.exists or resolved.is_blocked:
-            return _html_response(
-                self._error_page(lang, "error_google_user_denied"), status_code=403
-            )
-
-        return await self._complete_login_with_email(
-            pending_google.txn_id, email, lang, auth_method="google"
+        Only reachable for a configured redirect provider (server.py
+        registers this route per provider); the ``provider is None`` branch
+        below is defensive, matching ``start_login_redirect``.
+        """
+        lang = _pick_language(
+            request, self._settings.login_default_lang, base_url=self._settings.base_url
         )
 
-    async def _complete_login_with_email(
-        self, txn_id: str, email: str, lang: str, *, auth_method: str
+        state = request.query_params.get("state", "").strip()
+        if not state:
+            return self._html_error(request, lang, "error_request", 400)
+
+        raw = await self._pending_store.consume(_NS_LOGIN_ATTEMPT, state)
+        if raw is None:
+            return self._html_error(request, lang, "error_request", 400)
+
+        attempt = _parse_login_attempt_raw(raw)
+        if attempt is None or attempt.provider != name:
+            return self._html_error(request, lang, "error_request", 400)
+
+        provider = self._providers.get(name)
+        if provider is None or provider.kind != "redirect":
+            return self._html_error(request, lang, "error_request", 400)
+
+        # Binds this callback to the browser that started the round trip
+        # (finding #1, 0.4.0 A13/A17): without this, a browser that never
+        # visited /login or POSTed /login/{name} — and so never holds the
+        # matching km_login_csrf cookie — could still complete a sign-in
+        # whose `state` it only received as a link (e.g. one an attacker
+        # forwards from their own /login/{name} POST). `state` is already
+        # consumed above regardless of the outcome; that is unchanged from
+        # before this check and is fine, since it is a single-use nonce
+        # either way. The login transaction itself (attempt.txn_id) is not
+        # touched until _complete_login, below, so refusing here does not
+        # burn it.
+        callback_csrf_cookie = request.cookies.get(self._csrf_cookie_name(), "")
+        if not callback_csrf_cookie or not secrets.compare_digest(
+            _hash_csrf_cookie(callback_csrf_cookie), attempt.csrf_hash
+        ):
+            logger.warning("login callback refused: csrf cookie missing or mismatched")
+            return self._html_error(request, lang, "error_request", 400)
+
+        params = dict(request.query_params)
+        try:
+            identity = await provider.complete(
+                params=params, callback_url=self._callback_url(name), attempt=attempt.attempt
+            )
+        except LoginRejected as exc:
+            logger.info("login rejected by provider %s: %s", name, exc.reason)
+            if exc.reason == "domain_not_allowed":
+                return self._html_error(request, lang, "error_provider_domain", 403)
+            if exc.reason == "email_unverified":
+                return self._html_error(request, lang, "error_provider_unverified", 403)
+            if exc.reason == "provider_unavailable":
+                return self._html_error(request, lang, "error_provider_unavailable", 502)
+            if exc.reason == "request_invalid":
+                if "error" in params:
+                    return self._html_error(request, lang, "error_provider_identity", 400)
+                return self._html_error(request, lang, "error_request", 400)
+            if exc.reason == "identity_invalid":
+                return self._html_error(request, lang, "error_provider_identity", 400)
+            return self._html_error(request, lang, "error_provider_identity", 400)
+        except Exception:
+            logger.exception("unexpected error from login provider %s", name)
+            return self._html_error(request, lang, "error_provider_unavailable", 503)
+
+        verified_identity = self._verify_identity_route(identity, name)
+        if verified_identity is None:
+            return self._html_error(request, lang, "error_request", 400)
+        identity = verified_identity
+
+        if self._user_resolver is None:
+            logger.error(
+                "login provider %s enabled but user directory resolver is not configured", name
+            )
+            return self._html_error(request, lang, "error_directory_unavailable", 503)
+
+        try:
+            resolved = await self._user_resolver.resolve(identity.email)
+        except UserDirectoryUnavailableError:
+            return self._html_error(request, lang, "error_directory_unavailable", 503)
+
+        if not resolved.exists or resolved.is_blocked:
+            return self._html_error(request, lang, "error_user_denied", 403)
+
+        return await self._complete_login(
+            attempt.txn_id, identity, lang, auth_method=name, interactive=provider.interactive
+        )
+
+    async def _complete_login(
+        self,
+        txn_id: str,
+        identity: LoginIdentity,
+        lang: str,
+        *,
+        auth_method: str,
+        interactive: bool,
     ) -> Response:
         pending = await self._consume_pending_txn(txn_id)
         if pending is None:
-            return _html_response(self._error_page(lang, "error_request"), status_code=400)
+            return self._html_error(None, lang, "error_request", 400)
 
         params = pending.params
         code_str = f"km_code_{secrets.token_urlsafe(24)}"
@@ -1361,9 +1775,9 @@ class KeystoneOAuthProvider(OAuthProvider):
             redirect_uri=params.redirect_uri,
             redirect_uri_provided_explicitly=params.redirect_uri_provided_explicitly,
             resource=params.resource,
-            subject=email,
+            subject=identity.email,
         )
-        await self._put_auth_code(auth_code, auth_method=auth_method)
+        await self._put_auth_code(auth_code, auth_method=auth_method, interactive=interactive)
         redirect_to = construct_redirect_uri(
             str(params.redirect_uri), code=code_str, state=params.state
         )
@@ -1375,9 +1789,10 @@ class KeystoneOAuthProvider(OAuthProvider):
         *,
         auth_method: str,
         resource: str | None,
+        interactive: bool,
         ttl_seconds: int | None = None,
     ) -> None:
-        """Hold the login method and resource for the refresh token's lifetime.
+        """Hold the login method, resource and interactive flag for the refresh token's lifetime.
 
         The marker is keyed by refresh token, so by default it lives exactly
         as long as the token (``ttl_seconds=None``): a longer TTL leaves
@@ -1385,106 +1800,62 @@ class KeystoneOAuthProvider(OAuthProvider):
         one silently downgrades a Google session to ``api_key`` (closing the
         human-identity gate) while the token still works. The resource
         travels the same way so a refreshed access token can keep the RFC 8707
-        binding the original one was issued with.
+        binding the original one was issued with, and so does ``interactive``
+        (X05): without it, a refreshed token would have to re-derive the flag
+        from ``auth_method == "google"``, exactly the name-based shortcut this
+        change removes.
 
         ``ttl_seconds`` is overridden to a short grace period when rotation
         rewrites the *old* token's marker instead of deleting it outright
         (finding #2, see ``exchange_refresh_token``).
         """
         ttl = ttl_seconds if ttl_seconds is not None else self._settings.refresh_token_ttl_seconds
-        payload = json.dumps({"auth_method": auth_method, "resource": resource})
+        payload = json.dumps(
+            {"auth_method": auth_method, "resource": resource, "interactive": interactive}
+        )
         await self._pending_store.put(_NS_REFRESH_AUTH, refresh_token, payload, ttl)
 
-    async def _read_refresh_meta(self, refresh_token: str) -> tuple[str, str | None]:
-        """Return ``(auth_method, resource)`` for a refresh token's marker.
+    async def _read_refresh_meta(self, refresh_token: str) -> tuple[str, str | None, bool]:
+        """Return ``(auth_method, resource, interactive)`` for a refresh token's marker.
 
-        Markers written before this field existed are a bare string
-        (``"google"`` or ``"api_key"``): read as that method with no resource.
-        Missing or unparsable markers fall back to ``("api_key", None)``, the
-        same default ``_read_refresh_auth_method`` used before this change.
+        Pure parsing: this does not check whether ``auth_method`` names a
+        sign-in provider configured right now -- ``exchange_refresh_token``
+        does that itself and decides whether to refuse the refresh (X05).
+
+        Markers written before the ``interactive`` field existed (0.4.0,
+        ``{"auth_method", "resource"}``) or in the oldest, bare-string form
+        (``"google"`` or ``"api_key"``) have no claim to read, so it is
+        rebuilt from the sign-in method's own name: ``interactive =
+        (auth_method == "google")``, the same rule
+        ``has_interactive_human_identity`` uses for an access token minted
+        before this claim existed. Missing or unparsable markers fall back to
+        ``("api_key", None, False)``, the same default used before this
+        change.
         """
         raw = await self._pending_store.get(_NS_REFRESH_AUTH, refresh_token)
         if raw is None:
-            return "api_key", None
-        if raw in {"google", "api_key"}:
-            return raw, None
+            return "api_key", None, False
         try:
             data = json.loads(raw)
         except ValueError:
-            return "api_key", None
-        if not isinstance(data, dict):
-            return "api_key", None
-        auth_method = data.get("auth_method")
-        if auth_method not in {"google", "api_key"}:
-            auth_method = "api_key"
-        resource = data.get("resource")
-        if resource is not None and not isinstance(resource, str):
-            resource = None
-        return auth_method, resource
-
-    @staticmethod
-    def _login_form_html(
-        txn_id: str,
-        lang: str,
-        error_key: str | None = None,
-        *,
-        settings: Settings | None = None,
-        client_name: str | None = None,
-        redirect_uri: str = "",
-        csrf_token: str | None = None,
-    ) -> str:
-        t = TRANSLATIONS.get(lang, TRANSLATIONS[FALLBACK_LANG])
-        direction = "rtl" if lang in RTL_LANGS else "ltr"
-        err = f'<p style="color:#c00">{html.escape(t[error_key])}</p>' if error_key else ""
-        txn = html.escape(txn_id)
-
-        consent_block = _consent_block_html(t, client_name, redirect_uri)
-
-        google_block = ""
-        api_key_block = ""
-        if settings is not None and settings.google_login_enabled:
-            csrf_value = html.escape(csrf_token or "")
-            google_block = f"""
-  <form method="post" action="/login/google">
-    <input type="hidden" name="txn" value="{txn}">
-    <input type="hidden" name="csrf" value="{csrf_value}">
-    <button type="submit" style="display:block;width:100%;text-align:center;padding:10px;
-border:1px solid #ccc;background:none">{html.escape(t["google_button"])}</button>
-  </form>"""
-        if settings is not None and settings.api_key_login_enabled:
-            api_key_block = f"""
-  <form method="post" action="/login">
-    <input type="hidden" name="txn" value="{txn}">
-    <label>{html.escape(t["email_label"])}<br><input name="email" type="email" required style="width:100%"></label><br><br>
-    <label>{html.escape(t["token_label"])}<br><input name="api_token" type="password" required style="width:100%"></label><br><br>
-    <button type="submit">{html.escape(t["submit"])}</button>
-  </form>"""
-
-        return f"""<!doctype html>
-<html lang="{lang}" dir="{direction}"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{html.escape(t["title"])}</title></head>
-<body style="font-family:system-ui;max-width:420px;margin:64px auto">
-  <h1>Keystone MCP</h1>
-  <p>{html.escape(t["subtitle"])}</p>
-  {consent_block}
-  {err}
-  {google_block}
-  {api_key_block}
-</body></html>"""
-
-    @staticmethod
-    def _error_page(lang: str, error_key: str) -> str:
-        t = TRANSLATIONS.get(lang, TRANSLATIONS[FALLBACK_LANG])
-        direction = "rtl" if lang in RTL_LANGS else "ltr"
-        message = html.escape(t[error_key])
-        return f"""<!doctype html>
-<html lang="{lang}" dir="{direction}"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{message}</title></head>
-<body style="font-family:system-ui;max-width:420px;margin:64px auto">
-  <h1>{message}</h1>
-</body></html>"""
+            data = None
+        if isinstance(data, dict):
+            auth_method = data.get("auth_method")
+            if not isinstance(auth_method, str) or not auth_method:
+                return "api_key", None, False
+            resource = data.get("resource")
+            if resource is not None and not isinstance(resource, str):
+                resource = None
+            if "interactive" in data:
+                interactive = data["interactive"] is True
+            else:
+                interactive = auth_method == "google"
+            return auth_method, resource, interactive
+        # Oldest format: a bare auth_method string ("google" or "api_key").
+        auth_method = raw.strip()
+        if not auth_method:
+            return "api_key", None, False
+        return auth_method, None, auth_method == "google"
 
 
 def _parse_pending_txn_raw(raw: str) -> _PendingAuthorization | None:
@@ -1498,11 +1869,28 @@ def _parse_pending_txn_raw(raw: str) -> _PendingAuthorization | None:
     return _PendingAuthorization(client_id, params)
 
 
-def _encode_auth_code_envelope(code: AuthorizationCode, auth_method: str) -> str:
-    return json.dumps({"code": code.model_dump(mode="json"), "auth_method": auth_method})
+def _encode_auth_code_envelope(code: AuthorizationCode, auth_method: str, interactive: bool) -> str:
+    return json.dumps(
+        {
+            "code": code.model_dump(mode="json"),
+            "auth_method": auth_method,
+            "interactive": interactive,
+        }
+    )
 
 
-def _parse_auth_code_envelope(raw: str) -> tuple[AuthorizationCode, str] | None:
+def _parse_auth_code_envelope(raw: str) -> tuple[AuthorizationCode, str, bool] | None:
+    """Parse an authorization-code envelope, bridging pre-0.5.0 shapes.
+
+    - Current shape: ``{"code", "auth_method", "interactive"}``.
+    - 0.4.0 shape: ``{"code", "auth_method"}`` with no ``interactive`` key --
+      rebuilt from the sign-in method's own name (``interactive = auth_method
+      == "google"``), the same rule ``has_interactive_human_identity`` uses
+      for a token minted before this claim existed.
+    - Oldest (3.x) shape: a bare ``AuthorizationCode`` with no envelope at
+      all -- ``auth_method`` defaults to ``"api_key"`` (never interactive),
+      exactly as before this change.
+    """
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError:
@@ -1513,20 +1901,24 @@ def _parse_auth_code_envelope(raw: str) -> tuple[AuthorizationCode, str] | None:
         except ValidationError:
             return None
         auth_method = str(payload.get("auth_method", "api_key")).strip() or "api_key"
-        return code, auth_method
+        if "interactive" in payload:
+            interactive = payload["interactive"] is True
+        else:
+            interactive = auth_method == "google"
+        return code, auth_method, interactive
     try:
-        return AuthorizationCode.model_validate_json(raw), "api_key"
+        return AuthorizationCode.model_validate_json(raw), "api_key", False
     except ValidationError:
         return None
 
 
-def _encode_google_pending(txn_id: str, nonce: str, pkce_verifier: str, csrf_hash: str) -> str:
-    return json.dumps(
-        {"txn": txn_id, "nonce": nonce, "verifier": pkce_verifier, "csrf_hash": csrf_hash}
-    )
+def _parse_login_attempt_raw(raw: str) -> _LoginAttempt | None:
+    """Parse a ``login_attempt`` envelope written by ``start_login_redirect``.
 
-
-def _parse_google_pending_raw(raw: str) -> _GooglePendingState | None:
+    Replaces the Google-only ``_parse_google_pending_raw``: the stored shape
+    is now ``{"txn", "provider", "attempt", "csrf_hash"}`` for any redirect
+    provider (X03).
+    """
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError:
@@ -1534,15 +1926,18 @@ def _parse_google_pending_raw(raw: str) -> _GooglePendingState | None:
     if not isinstance(payload, dict):
         return None
     txn_id = str(payload.get("txn", "")).strip()
-    nonce = str(payload.get("nonce", "")).strip()
-    verifier = str(payload.get("verifier", "")).strip()
-    # Required, not defaulted: an envelope written before this field existed
-    # (a Google login already in flight across a deploy) has no csrf_hash to
-    # check against, and treating that as "no restriction" would reopen
-    # finding #1 for exactly the in-flight logins a deploy is most likely to
-    # catch. Failing them closed just means a re-click of "Sign in with
-    # Google".
-    csrf_hash = str(payload.get("csrf_hash", "")).strip()
-    if not txn_id or not nonce or not verifier or not csrf_hash:
+    provider_name = str(payload.get("provider", "")).strip()
+    attempt = payload.get("attempt")
+    if not isinstance(attempt, dict):
         return None
-    return _GooglePendingState(txn_id, nonce, verifier, csrf_hash)
+    # Required, not defaulted: an envelope written before this field existed
+    # (a login already in flight across a deploy) has no csrf_hash to check
+    # against, and treating that as "no restriction" would reopen finding #1
+    # for exactly the in-flight logins a deploy is most likely to catch.
+    # Failing them closed just means a re-click of the provider's button.
+    csrf_hash = str(payload.get("csrf_hash", "")).strip()
+    if not txn_id or not provider_name or not csrf_hash:
+        return None
+    return _LoginAttempt(
+        txn_id, provider_name, {str(k): str(v) for k, v in attempt.items()}, csrf_hash
+    )

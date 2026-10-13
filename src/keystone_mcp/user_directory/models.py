@@ -1,21 +1,13 @@
-"""Resolved user state returned by the directory client."""
+"""Deprecated location of ``UserResolveResult`` -- re-exported from ``types``.
+
+``UserResolveResult`` moved to :mod:`keystone_mcp.user_directory.types`
+alongside ``UserRecord`` and ``MutationResult`` (X06). Import it from there;
+this module is kept only so existing imports of
+``keystone_mcp.user_directory.models.UserResolveResult`` keep working.
+"""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from keystone_mcp.user_directory.types import UserResolveResult
 
-
-@dataclass(frozen=True, slots=True)
-class UserResolveResult:
-    """Effective roles and block state for a verified email."""
-
-    exists: bool
-    roles: tuple[str, ...]
-    is_blocked: bool
-    from_cache: bool = False
-    revision: int | None = None
-
-    @property
-    def is_allow_decision(self) -> bool:
-        """Whether the outcome permits RBAC evaluation (known, active, has roles)."""
-        return self.exists and not self.is_blocked and bool(self.roles)
+__all__ = ["UserResolveResult"]

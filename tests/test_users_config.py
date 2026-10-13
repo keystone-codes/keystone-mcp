@@ -29,7 +29,7 @@ def test_superadmin_email_default_empty():
 
 
 def test_unknown_users_backend_is_refused(monkeypatch):
-    monkeypatch.setenv("KEYSTONE_MCP_USERS_BACKEND", "ldap")
+    monkeypatch.setenv("KEYSTONE_MCP_USERS_BACKEND", "not-valid!")
     with pytest.raises(ConfigError, match="KEYSTONE_MCP_USERS_BACKEND"):
         load_settings()
 
@@ -50,7 +50,7 @@ def test_local_backend_does_not_require_users_service(monkeypatch, tmp_path: Pat
 
 def test_http_backend_still_requires_users_service(monkeypatch):
     monkeypatch.setenv("KEYSTONE_MCP_USERS_BACKEND", "http")
-    monkeypatch.setenv("KEYSTONE_MCP_RBAC_ENABLED", "true")
+    monkeypatch.setenv("KEYSTONE_MCP_RBAC_MODE", "enforce")
     monkeypatch.delenv("KEYSTONE_MCP_USERS_SERVICE_URL", raising=False)
     monkeypatch.delenv("KEYSTONE_MCP_USERS_SERVICE_TOKEN", raising=False)
     with pytest.raises(ConfigError, match="Users directory"):

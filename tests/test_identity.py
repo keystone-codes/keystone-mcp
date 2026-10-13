@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import pytest
+
 from keystone_mcp.identity import VerifiedIdentity, canonical, make_task_id
+from keystone_mcp.observability.subject import hash_subject
 
 ID = VerifiedIdentity(email="u@example.com")
 
@@ -50,3 +53,26 @@ def test_idempotency_token_forks_task_id():
     a = make_task_id(ID, "register_project", {"code": "X"})
     b = make_task_id(ID, "register_project", {"code": "X"}, idempotency_token="retry-2")
     assert a != b
+
+
+def test_human_subject_keeps_task_id_and_hash():
+    email = "a@b.c"
+    expected_task = make_task_id(VerifiedIdentity(email=email), "register_project", {"code": "X"})
+    expected_hash = hash_subject(email)
+    legacy = VerifiedIdentity(email=email)
+    explicit = VerifiedIdentity(email)
+    assert make_task_id(legacy, "register_project", {"code": "X"}) == expected_task
+    assert make_task_id(explicit, "register_project", {"code": "X"}) == expected_task
+    assert hash_subject(legacy.subject) == expected_hash
+    assert hash_subject(explicit.subject) == expected_hash
+
+
+def test_service_identity_has_no_email():
+    svc = VerifiedIdentity("svc:ci")
+    assert svc.email is None
+    assert svc.subject_type == "service"
+
+
+def test_subject_and_email_together_is_type_error():
+    with pytest.raises(TypeError):
+        VerifiedIdentity(subject="a@b.c", email="a@b.c")

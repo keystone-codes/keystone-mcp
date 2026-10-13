@@ -13,7 +13,7 @@ the same, only the packaging differs.
 | `kustomization.yaml` | Lists the applied resources, in the `keystone` namespace. |
 | `namespace.yaml` | Creates the `keystone` namespace. |
 | `configmap.yaml` | `rbac-policy.yaml` and `upstreams.yaml`, same content as [`examples/production/`](../../examples/production/). |
-| `deployment.yaml` | Two replicas of the pinned `0.4.0` image, probes, resource limits. |
+| `deployment.yaml` | Two replicas of the pinned `0.5.0` image, probes, resource limits. |
 | `service.yaml` | ClusterIP on port 8080. |
 | `secret.example.yaml` | Template for the Secret below — not applied by `kustomization.yaml`. |
 | `ingress.example.yaml` | ingress-nginx example with TLS — not applied by `kustomization.yaml`. |
@@ -83,6 +83,9 @@ one, is not part of this check — see [observability-logging.md](../observabili
   starting at once do not race each other.
 - The RBAC policy file is re-read on its own refresh interval per pod — a
   policy change reaches every pod within that interval, not instantly.
+- Policy tools are read-only with a ConfigMap mount; set
+  `KEYSTONE_MCP_POLICY_TOOLS=read-only` (or `off`) or mount the policy from
+  a writable PVC if agents should mutate it. See [policy-admin.md](../policy-admin.md).
 - Behind an ingress controller, set `FORWARDED_ALLOW_IPS` (a plain
   uvicorn/environment variable, no `KEYSTONE_MCP_` prefix) to your ingress
   controller's pod network, or the login rate limiter sees the ingress pod's

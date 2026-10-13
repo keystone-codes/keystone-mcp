@@ -1,7 +1,7 @@
 """End-to-end smoke test for the users_* tools against the built-in directory.
 
 Replaces the old ``test_users_admin_mcp_users_smoke.py``, which drove a live
-external ``mcp-users`` service that is no longer published. This test wires
+external HTTP users directory service that is no longer published. This test wires
 ``register_catalog`` the way ``keystone_mcp.server.build_server`` does —
 against a real (migrated) ``UsersStore`` — and drives the ``users_*`` tools
 through ``RouterEngine.execute`` directly, the same way the legacy
@@ -20,6 +20,7 @@ from keystone_mcp.config import Settings
 from keystone_mcp.identity import VerifiedIdentity
 from keystone_mcp.router.engine import RouterEngine
 from keystone_mcp.router.registry import RouterRegistry
+from keystone_mcp.user_directory.local import LocalUserDirectory
 from keystone_mcp.user_directory.revision import InMemoryRevisionReader
 from keystone_mcp.users.revision import InProcessRevisionWriter
 from keystone_mcp.users.store import UsersStore
@@ -44,7 +45,9 @@ def _build_stack(
     store = UsersStore(users_engine, revision=InProcessRevisionWriter(revision.bump))
     engine = RouterEngine(settings)
     registry = RouterRegistry(engine)
-    register_catalog(registry, settings, users_store=store, role_source=_role_source)
+    register_catalog(
+        registry, settings, directory=LocalUserDirectory(store), role_source=_role_source
+    )
     return engine, registry, store, revision
 
 

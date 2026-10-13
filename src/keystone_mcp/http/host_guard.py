@@ -8,7 +8,7 @@ exempt ``/healthz``/``/readyz`` from it, which a container healthcheck or a
 Kubernetes probe reaches by IP (``127.0.0.1``, or a pod IP that cannot be
 enumerated ahead of time) rather than by the configured ``Host``. This module
 is Keystone's own guard instead: applied to every route including the OAuth
-endpoints (``/register``, ``/authorize``, ``/login``, ``/token``,
+endpoints (``/register``, ``/authorize``, ``/login``, ``/token``, ``/revoke``,
 ``/.well-known/*``) and ``/mcp``, with the two health endpoints carved out.
 
 Without it, an attacker who gets a victim to open a page on a hostname they

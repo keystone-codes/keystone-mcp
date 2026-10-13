@@ -60,7 +60,7 @@ def settings(policy_path: Path) -> Settings:
         rbac_mode="enforce",
         rbac_policy_path=str(policy_path),
         # The HTTP-proxy branch is what test_users_mutation_audited_on_service_timeout
-        # exercises below (a mocked mcp-users client that times out); without this
+        # exercises below (a mocked HTTP users directory client that times out); without this
         # the default built-in (local) backend would hit "service_unconfigured"
         # instead, since no UsersStore is wired up in this fixture.
         users_backend="http",
@@ -183,6 +183,74 @@ async def test_authz_audit_event_fields(
     assert event["operation"] == "call_tool"
 
 
+HUMAN_GATE_POLICY = """\
+version: "audit-human-gate"
+default_deny: true
+roles:
+  administrator:
+    allow: ["*"]
+requires_human_identity: ["ledger_commit"]
+"""
+
+
+@pytest.mark.asyncio
+async def test_human_identity_required_denial_records_login_provider(
+    caplog: pytest.LogCaptureFixture,
+    tmp_path: Path,
+    monkeypatch,
+):
+    """The audit event names the sign-in method behind a human_identity_required
+    denial (X05), so an operator can read "signed in with api_key" straight
+    off the log line instead of cross-referencing the token store.
+    """
+    from keystone_mcp.adapters.stub import StubAdapter
+
+    policy_path = tmp_path / "human-gate-policy.yaml"
+    policy_path.write_text(HUMAN_GATE_POLICY, encoding="utf-8")
+    settings = Settings(
+        base_url="http://localhost:8080",
+        rbac_mode="enforce",
+        rbac_policy_path=str(policy_path),
+        redis_url="redis://localhost:6379/0",
+        rbac_audit_enabled=True,
+        rbac_audit_list_tools_sample_rate=1.0,
+    )
+    caplog.set_level(logging.INFO)
+    manager = RbacPolicyManager(settings)
+    registry = RouterRegistry(RouterEngine(settings), FastMCP("host"))
+    registry.add_route("ledger_commit", StubAdapter(), mode="live")
+    manager.load_initial(registry)
+    observability = RbacObservability(settings, policy_manager=manager)
+
+    monkeypatch.setattr(
+        "keystone_mcp.router.rbac_middleware.resolve_verified_identity",
+        lambda: VerifiedIdentity(
+            email="admin@example.com",
+            claims={
+                "email": "admin@example.com",
+                "auth_method": "api_key",
+                "interactive": False,
+            },
+        ),
+    )
+    middleware = _middleware(
+        settings, observability, email="admin@example.com", roles=("administrator",)
+    )
+    ctx = MiddlewareContext(message=type("Msg", (), {"name": "ledger_commit"})())
+
+    async def call_next(_context):
+        return {"ok": True}
+
+    with pytest.raises(ToolError):
+        await middleware.on_call_tool(ctx, call_next)
+
+    events = [e for e in _parse_audit_records(caplog) if e["event"] == "rbac_authz_decision"]
+    assert len(events) == 1
+    event = events[0]
+    assert event["reason"] == "human_identity_required"
+    assert event["login_provider"] == "api_key"
+
+
 @pytest.mark.asyncio
 async def test_list_tools_deny_always_audited(
     caplog: pytest.LogCaptureFixture,
@@ -253,7 +321,7 @@ def test_users_mutation_audit(
 
     route = Route(
         name="users_grant_role",
-        pattern=Pattern.M_B,
+        pattern=Pattern.SYNC,
         target=adapter,
         mode="live",
     )
@@ -262,7 +330,7 @@ def test_users_mutation_audit(
         task_id="t_abc123",
         canonical_args="",
         tool_name="users_grant_role",
-        pattern=Pattern.M_B,
+        pattern=Pattern.SYNC,
         settings=settings,
     )
     adapter._record_mutation_audit(
@@ -303,7 +371,7 @@ async def test_users_mutation_audited_on_service_timeout(
         raise httpx.TimeoutException("timed out")
 
     adapter = UsersAdminAdapter(
-        client_factory=_mock_client_factory(handler),
+        directory=_http_directory(handler),
         observability=observability,
     )
     engine = RouterEngine(settings)
@@ -335,15 +403,20 @@ async def test_users_mutation_audited_on_service_timeout(
     assert "user@example.com" not in json.dumps(event)
 
 
-def _mock_client_factory(handler):
-    def factory(_ctx=None):
-        return httpx.AsyncClient(
-            transport=httpx.MockTransport(handler),
-            base_url="http://mcp-users:8080",
-            headers={"Authorization": "Bearer service-secret"},
-        )
+def _http_directory(handler):
+    from keystone_mcp.user_directory.http import HttpUserDirectory
 
-    return factory
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler),
+        base_url="http://users-directory.internal.example:8080",
+        headers={"Authorization": "Bearer service-secret"},
+    )
+    return HttpUserDirectory(
+        base_url="http://users-directory.internal.example:8080",
+        service_token="service-secret",
+        timeout_seconds=5.0,
+        client=client,
+    )
 
 
 @pytest.mark.asyncio
@@ -479,7 +552,7 @@ async def test_audit_marks_policy_declared_critical_tools(
     async def call_next(_context):
         return {"ok": True}
 
-    for tool_name, expected in (("ledger_commit", True), ("create_upload_url", True)):
+    for tool_name, expected in (("ledger_commit", True), ("create_upload_url", False)):
         caplog.clear()
         ctx = MiddlewareContext(message=type("Msg", (), {"name": tool_name})())
         await middleware.on_call_tool(ctx, call_next)

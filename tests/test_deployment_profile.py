@@ -10,6 +10,8 @@ API-key sign-in needs an external key-verification service, and a plain
 
 from __future__ import annotations
 
+import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -28,7 +30,6 @@ def _rbac_env(monkeypatch, tmp_path: Path) -> None:
     policy = tmp_path / "rbac-policy.yaml"
     policy.write_text("default_deny: true\nroles: {}\n", encoding="utf-8")
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_MODE", "enforce")
-    monkeypatch.delenv("KEYSTONE_MCP_RBAC_ENABLED", raising=False)
     # The built-in (local, default) users directory needs neither URL nor
     # token; these tests exercise the deployment profile, not the users
     # directory backend, so they leave KEYSTONE_MCP_USERS_BACKEND unset.
@@ -46,9 +47,16 @@ def _rbac_env(monkeypatch, tmp_path: Path) -> None:
 
 
 def _production_login_env(monkeypatch) -> None:
-    """Satisfy P3 (api_key sign-in needs an external key-verification service)."""
-    monkeypatch.setenv("KEYSTONE_MCP_AUTH_SERVICE_URL", "http://auth:9000/introspect")
-    monkeypatch.setenv("KEYSTONE_MCP_AUTH_SERVICE_TOKEN", "auth-token")
+    """Satisfy production api_key sign-in with a local Postgres-backed directory."""
+    monkeypatch.delenv("KEYSTONE_MCP_AUTH_SERVICE_URL", raising=False)
+    monkeypatch.delenv("KEYSTONE_MCP_AUTH_SERVICE_TOKEN", raising=False)
+    monkeypatch.delenv("KEYSTONE_MCP_GOOGLE_CLIENT_ID", raising=False)
+    monkeypatch.delenv("KEYSTONE_MCP_GOOGLE_CLIENT_SECRET", raising=False)
+    monkeypatch.setenv("KEYSTONE_MCP_USERS_BACKEND", "local")
+    monkeypatch.setenv(
+        "KEYSTONE_MCP_USERS_DB_URL",
+        "postgresql+psycopg://user:pass@localhost:5432/keystone_users",
+    )
 
 
 # ── Default and parsing ──────────────────────────────────────────────────────
@@ -118,7 +126,6 @@ def test_production_refuses_dev_tokens(monkeypatch, tmp_path: Path):
 def test_production_refuses_rbac_off(monkeypatch):
     monkeypatch.setenv("KEYSTONE_MCP_DEPLOYMENT_PROFILE", "production")
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_MODE", "off")
-    monkeypatch.delenv("KEYSTONE_MCP_RBAC_ENABLED", raising=False)
     _production_login_env(monkeypatch)
     with pytest.raises(ConfigError, match="requires KEYSTONE_MCP_RBAC_MODE=enforce"):
         load_settings()
@@ -133,11 +140,12 @@ def test_production_refuses_rbac_observe(monkeypatch, tmp_path: Path):
         load_settings()
 
 
-def test_production_refuses_api_key_without_auth_service(monkeypatch, tmp_path: Path):
+def test_production_refuses_api_key_with_http_users_directory(monkeypatch, tmp_path: Path):
     _rbac_env(monkeypatch, tmp_path)
     monkeypatch.setenv("KEYSTONE_MCP_DEPLOYMENT_PROFILE", "production")
-    monkeypatch.delenv("KEYSTONE_MCP_AUTH_SERVICE_URL", raising=False)
-    monkeypatch.delenv("KEYSTONE_MCP_AUTH_SERVICE_TOKEN", raising=False)
+    monkeypatch.setenv("KEYSTONE_MCP_USERS_BACKEND", "http")
+    monkeypatch.setenv("KEYSTONE_MCP_USERS_SERVICE_URL", "http://users:8080")
+    monkeypatch.setenv("KEYSTONE_MCP_USERS_SERVICE_TOKEN", "token")
     with pytest.raises(ConfigError, match="API-key sign-in in production needs"):
         load_settings()
 
@@ -156,7 +164,7 @@ def test_production_accepts_google_only(monkeypatch, tmp_path: Path):
     assert settings.api_key_login_enabled is False
 
 
-def test_production_accepts_api_key_with_auth_service(monkeypatch, tmp_path: Path):
+def test_production_accepts_api_key_with_local_directory(monkeypatch, tmp_path: Path):
     _rbac_env(monkeypatch, tmp_path)
     _production_login_env(monkeypatch)
     monkeypatch.setenv("KEYSTONE_MCP_DEPLOYMENT_PROFILE", "production")
@@ -228,9 +236,15 @@ def test_production_http_backend_ignores_users_db_url(monkeypatch, tmp_path: Pat
     _production_login_env(monkeypatch)
     monkeypatch.setenv("KEYSTONE_MCP_DEPLOYMENT_PROFILE", "production")
     monkeypatch.setenv("KEYSTONE_MCP_USERS_BACKEND", "http")
-    monkeypatch.setenv("KEYSTONE_MCP_USERS_SERVICE_URL", "http://mcp-users:8000")
+    monkeypatch.setenv(
+        "KEYSTONE_MCP_USERS_SERVICE_URL", "http://users-directory.internal.example:8000"
+    )
     monkeypatch.setenv("KEYSTONE_MCP_USERS_SERVICE_TOKEN", "users-token")
     monkeypatch.setenv("KEYSTONE_MCP_USERS_DB_URL", "sqlite:///./keystone-users.db")
+    monkeypatch.setenv("KEYSTONE_MCP_ENABLED_LOGIN_METHODS", "google")
+    monkeypatch.setenv("KEYSTONE_MCP_PRIMARY_LOGIN_METHOD", "google")
+    monkeypatch.setenv("KEYSTONE_MCP_GOOGLE_CLIENT_ID", "client-id")
+    monkeypatch.setenv("KEYSTONE_MCP_GOOGLE_CLIENT_SECRET", "client-secret")
     settings = load_settings()
     assert settings.users_backend == "http"
 
@@ -260,11 +274,131 @@ def test_startup_warnings_for_insecure_upstream_flags(monkeypatch, tmp_path: Pat
     assert any("UPSTREAM_EGRESS_ALLOW_PRIVATE" in w for w in warnings)
 
 
+def test_startup_warns_for_upstream_without_identity_secret(monkeypatch, tmp_path: Path):
+    """Y01 (W6): an upstream with no auth.identity_secret_env only ever proves
+
+    who is calling via the unsigned X-Author-Email header."""
+    import json
+
+    _rbac_env(monkeypatch, tmp_path)
+    _production_login_env(monkeypatch)
+    monkeypatch.setenv("KEYSTONE_MCP_DEPLOYMENT_PROFILE", "production")
+    monkeypatch.setenv(
+        "KEYSTONE_MCP_UPSTREAMS",
+        json.dumps(
+            [{"name": "docs-mcp", "url": "https://docs-mcp.example/mcp", "namespace": "docs"}]
+        ),
+    )
+    settings = load_settings()
+    warnings = startup_warnings(settings)
+    assert any(
+        "namespace=docs" in w and "identity_secret_env" in w and "X-Author-Email" in w
+        for w in warnings
+    )
+
+
+def test_production_warns_for_stdio_upstream(monkeypatch, tmp_path: Path):
+    _rbac_env(monkeypatch, tmp_path)
+    _production_login_env(monkeypatch)
+    monkeypatch.setenv("KEYSTONE_MCP_DEPLOYMENT_PROFILE", "production")
+    monkeypatch.setenv(
+        "KEYSTONE_MCP_UPSTREAMS",
+        json.dumps(
+            [
+                {
+                    "name": "notes",
+                    "namespace": "notes",
+                    "transport": "stdio",
+                    "command": sys.executable,
+                }
+            ]
+        ),
+    )
+    settings = load_settings()
+    warnings = startup_warnings(settings)
+    assert any("no sandbox" in w and "namespace=notes" in w for w in warnings)
+
+
+def test_local_does_not_warn_for_stdio_upstream(monkeypatch):
+    monkeypatch.setenv("KEYSTONE_MCP_DEPLOYMENT_PROFILE", "local")
+    monkeypatch.setenv(
+        "KEYSTONE_MCP_UPSTREAMS",
+        json.dumps(
+            [
+                {
+                    "name": "notes",
+                    "namespace": "notes",
+                    "transport": "stdio",
+                    "command": sys.executable,
+                }
+            ]
+        ),
+    )
+    settings = load_settings()
+    assert not any("no sandbox" in w for w in startup_warnings(settings))
+
+
+def test_startup_warns_for_stdio_upstream_without_identity_secret(monkeypatch, tmp_path: Path):
+    """D8: a stdio upstream never receives X-Author-Email at all (there are no
+
+    HTTP headers to a child process), so its missing-secret warning must not
+    claim it does.
+    """
+    import json
+    import sys
+
+    _rbac_env(monkeypatch, tmp_path)
+    _production_login_env(monkeypatch)
+    monkeypatch.setenv("KEYSTONE_MCP_DEPLOYMENT_PROFILE", "production")
+    monkeypatch.setenv(
+        "KEYSTONE_MCP_UPSTREAMS",
+        json.dumps(
+            [
+                {
+                    "name": "notes",
+                    "namespace": "notes",
+                    "transport": "stdio",
+                    "command": sys.executable,
+                }
+            ]
+        ),
+    )
+    settings = load_settings()
+    warnings = startup_warnings(settings)
+    matching = [w for w in warnings if "namespace=notes" in w and "identity_secret_env" in w]
+    assert matching, warnings
+    assert "X-Author-Email" not in matching[0]
+
+
+def test_startup_warning_absent_with_identity_secret_configured(monkeypatch, tmp_path: Path):
+    import json
+
+    _rbac_env(monkeypatch, tmp_path)
+    _production_login_env(monkeypatch)
+    monkeypatch.setenv("KEYSTONE_MCP_DEPLOYMENT_PROFILE", "production")
+    monkeypatch.setenv("KEYSTONE_MCP_UPSTREAM_DOCS_IDENTITY_SECRET", "x" * 40)
+    monkeypatch.setenv(
+        "KEYSTONE_MCP_UPSTREAMS",
+        json.dumps(
+            [
+                {
+                    "name": "docs-mcp",
+                    "url": "https://docs-mcp.example/mcp",
+                    "namespace": "docs",
+                    "auth": {"identity_secret_env": "KEYSTONE_MCP_UPSTREAM_DOCS_IDENTITY_SECRET"},
+                }
+            ]
+        ),
+    )
+    settings = load_settings()
+    warnings = startup_warnings(settings)
+    assert not any("identity_secret_env" in w for w in warnings)
+
+
 @pytest.mark.parametrize("dev_tokens", ["", "a-dev-token"])
 def test_local_warnings_empty_with_rbac_off(monkeypatch, dev_tokens: str):
     monkeypatch.setenv("KEYSTONE_MCP_DEPLOYMENT_PROFILE", "local")
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_MODE", "off")
-    monkeypatch.delenv("KEYSTONE_MCP_RBAC_ENABLED", raising=False)
     monkeypatch.setenv("KEYSTONE_MCP_DEV_TOKENS", dev_tokens)
     settings = load_settings()
     assert startup_warnings(settings) == []
@@ -298,23 +432,24 @@ def test_local_warnings_exactly_w4_with_dev_tokens_and_enforce(monkeypatch, tmp_
 def test_stage_like_production_configuration_is_accepted(monkeypatch, tmp_path: Path):
     """The planned stage deployment must pass `validate_settings` unchanged.
 
-    `production`, `KEYSTONE_MCP_USERS_BACKEND=http` (mcp-users),
-    `ENABLED_LOGIN_METHODS=api_key,google`, `AUTH_SERVICE_URL`/`_TOKEN` set,
-    `RBAC_MODE=enforce`, no DEV tokens.
+    `production`, `KEYSTONE_MCP_USERS_BACKEND=http` (HTTP users directory),
+    Google sign-in for people, `RBAC_MODE=enforce`, no DEV tokens.
     """
     policy = tmp_path / "rbac-policy.yaml"
     policy.write_text("default_deny: true\nroles: {}\n", encoding="utf-8")
     monkeypatch.setenv("KEYSTONE_MCP_DEPLOYMENT_PROFILE", "production")
     monkeypatch.setenv("KEYSTONE_MCP_BASE_URL", "https://mcp-stage.keystone.codes")
     monkeypatch.setenv("KEYSTONE_MCP_USERS_BACKEND", "http")
-    monkeypatch.setenv("KEYSTONE_MCP_USERS_SERVICE_URL", "http://mcp-users:8000")
+    monkeypatch.setenv(
+        "KEYSTONE_MCP_USERS_SERVICE_URL", "http://users-directory.internal.example:8000"
+    )
     monkeypatch.setenv("KEYSTONE_MCP_USERS_SERVICE_TOKEN", "users-token")
-    monkeypatch.setenv("KEYSTONE_MCP_ENABLED_LOGIN_METHODS", "api_key,google")
-    monkeypatch.setenv("KEYSTONE_MCP_PRIMARY_LOGIN_METHOD", "api_key")
+    monkeypatch.setenv("KEYSTONE_MCP_ENABLED_LOGIN_METHODS", "google")
+    monkeypatch.setenv("KEYSTONE_MCP_PRIMARY_LOGIN_METHOD", "google")
     monkeypatch.setenv("KEYSTONE_MCP_GOOGLE_CLIENT_ID", "client-id")
     monkeypatch.setenv("KEYSTONE_MCP_GOOGLE_CLIENT_SECRET", "client-secret")
-    monkeypatch.setenv("KEYSTONE_MCP_AUTH_SERVICE_URL", "http://auth:9000/introspect")
-    monkeypatch.setenv("KEYSTONE_MCP_AUTH_SERVICE_TOKEN", "auth-token")
+    monkeypatch.delenv("KEYSTONE_MCP_AUTH_SERVICE_URL", raising=False)
+    monkeypatch.delenv("KEYSTONE_MCP_AUTH_SERVICE_TOKEN", raising=False)
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_MODE", "enforce")
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_POLICY_PATH", str(policy))
     monkeypatch.setenv("KEYSTONE_MCP_REDIS_URL", "redis://localhost:6379/0")
@@ -325,16 +460,18 @@ def test_stage_like_production_configuration_is_accepted(monkeypatch, tmp_path: 
 
     assert settings.deployment_profile == "production"
     assert settings.rbac_enforcing is True
-    assert settings.api_key_login_enabled is True
+    assert settings.api_key_login_enabled is False
     assert settings.google_login_enabled is True
     # The two insecure-upstream warnings are expected here: the autouse fixture
     # `_allow_insecure_upstream_http_for_tests` sets both flags for every test
     # in this suite (unrelated to the deployment profile under test). What
-    # matters is that https + enforce + a configured auth service produce no
+    # matters is that https + enforce + Google-only sign-in produce no
     # *other* warning (e.g. no plain-http-base-url or DEV-token warning).
     warnings = startup_warnings(settings)
     assert all(
-        "UPSTREAM_ALLOW_INSECURE_HTTP" in w or "UPSTREAM_EGRESS_ALLOW_PRIVATE" in w
+        "UPSTREAM_ALLOW_INSECURE_HTTP" in w
+        or "UPSTREAM_EGRESS_ALLOW_PRIVATE" in w
+        or "deprecated since 0.5.0" in w
         for w in warnings
     )
 
@@ -437,3 +574,55 @@ def test_local_no_all_interfaces_warning_for_loopback_host_with_dev_tokens(
     warnings = startup_warnings(settings)
     assert not any("listening on all interfaces" in w for w in warnings)
     assert any("KEYSTONE_MCP_DEV_TOKENS is set" in w for w in warnings)
+
+
+# ── W7: policy file not writable while KEYSTONE_MCP_POLICY_TOOLS=full ───────
+
+
+def test_w7_warns_when_policy_file_is_not_writable(monkeypatch, tmp_path: Path):
+    import os
+
+    _rbac_env(monkeypatch, tmp_path)
+    _production_login_env(monkeypatch)
+    monkeypatch.setenv("KEYSTONE_MCP_DEPLOYMENT_PROFILE", "production")
+    policy_path = Path(os.environ["KEYSTONE_MCP_RBAC_POLICY_PATH"])
+    os.chmod(policy_path, 0o444)
+    try:
+        if os.geteuid() == 0:
+            pytest.skip("root can write a 0o444 file")
+        settings = load_settings()
+        warnings = startup_warnings(settings)
+        assert any(
+            "is not writable" in w and "policy_readonly" in w and str(policy_path) in w
+            for w in warnings
+        )
+    finally:
+        os.chmod(policy_path, 0o644)
+
+
+def test_w7_absent_when_policy_tools_is_not_full(monkeypatch, tmp_path: Path):
+    import os
+
+    _rbac_env(monkeypatch, tmp_path)
+    _production_login_env(monkeypatch)
+    monkeypatch.setenv("KEYSTONE_MCP_DEPLOYMENT_PROFILE", "production")
+    monkeypatch.setenv("KEYSTONE_MCP_POLICY_TOOLS", "read-only")
+    policy_path = Path(os.environ["KEYSTONE_MCP_RBAC_POLICY_PATH"])
+    os.chmod(policy_path, 0o444)
+    try:
+        if os.geteuid() == 0:
+            pytest.skip("root can write a 0o444 file")
+        settings = load_settings()
+        warnings = startup_warnings(settings)
+        assert not any("is not writable" in w for w in warnings)
+    finally:
+        os.chmod(policy_path, 0o644)
+
+
+def test_w7_absent_when_policy_file_is_writable(monkeypatch, tmp_path: Path):
+    _rbac_env(monkeypatch, tmp_path)
+    _production_login_env(monkeypatch)
+    monkeypatch.setenv("KEYSTONE_MCP_DEPLOYMENT_PROFILE", "production")
+    settings = load_settings()
+    warnings = startup_warnings(settings)
+    assert not any("is not writable" in w for w in warnings)

@@ -19,7 +19,9 @@ import ipaddress
 import json
 import logging
 import os
+import re
 import socket
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
@@ -33,27 +35,21 @@ logger = logging.getLogger(__name__)
 LoginMethod = Literal["google", "api_key"]
 RbacMode = Literal["off", "observe", "enforce"]
 LogFormat = Literal["json", "text"]
-UsersBackend = Literal["local", "http"]
+UsersBackend = str
 DeploymentProfile = Literal["local", "production"]
+PolicyToolsMode = Literal["full", "read-only", "off"]
 _VALID_LOG_FORMATS = frozenset({"json", "text"})
 _VALID_LOG_LEVELS = frozenset({"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"})
 _VALID_LOGIN_METHODS = frozenset({"google", "api_key"})
 _VALID_RBAC_MODES = frozenset({"off", "observe", "enforce"})
-_VALID_USERS_BACKENDS = frozenset({"local", "http"})
+_USERS_BACKEND_NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 _VALID_DEPLOYMENT_PROFILES = frozenset({"local", "production"})
+_VALID_POLICY_TOOLS_MODES = frozenset({"full", "read-only", "off"})
 
 # Languages the login page ships translations for. Kept here (rather than
 # imported from the auth layer) so settings validation stays free of an import
 # cycle; a test pins this set to the provider's translation table.
 LOGIN_LANGS = frozenset({"ar", "en", "he", "ru"})
-
-# Shared between validate_settings and server.build_identity_provider so the
-# startup refusal and the defence-in-depth check say exactly the same thing.
-AUTH_SERVICE_URL_WITHOUT_TOKEN_ERROR = (
-    "KEYSTONE_MCP_AUTH_SERVICE_URL is set but KEYSTONE_MCP_AUTH_SERVICE_TOKEN is empty. "
-    "Set both to verify API keys with an external service, or clear "
-    "KEYSTONE_MCP_AUTH_SERVICE_URL to use KEYSTONE_MCP_DEV_TOKENS."
-)
 
 
 def _env(name: str, default: str) -> str:
@@ -62,6 +58,115 @@ def _env(name: str, default: str) -> str:
 
 class ConfigError(ValueError):
     """Raised when platform settings are missing or inconsistent at startup."""
+
+
+@dataclass(frozen=True)
+class RemovedVariable:
+    """A ``KEYSTONE_MCP_*`` variable the code no longer reads.
+
+    Kept in :data:`REMOVED_VARIABLES` so that a stale ``.env`` is reported
+    instead of silently ignored.
+    """
+
+    removed_in: str
+    """Release that stopped reading the variable, e.g. ``"0.5.0"``."""
+
+    replacement: str
+    """One English sentence: what to set instead."""
+
+    fatal: bool
+    """``True``: startup is refused while the variable is set (non-empty)."""
+
+
+#: Variables that Keystone-MCP no longer reads. Kept so that a stale .env
+#: is reported instead of silently ignored. Plain dict on purpose: tests
+#: patch it with monkeypatch.setitem.
+REMOVED_VARIABLES: dict[str, RemovedVariable] = {
+    "KEYSTONE_MCP_RBAC_ENABLED": RemovedVariable(
+        removed_in="0.5.0",
+        replacement="Set KEYSTONE_MCP_RBAC_MODE=enforce (or observe, or off).",
+        fatal=True,
+    ),
+    "KEYSTONE_MCP_DET_INTERNAL_URL": RemovedVariable(
+        removed_in="0.5.0",
+        replacement="Nothing to set: the placeholder adapter that read it was removed.",
+        fatal=False,
+    ),
+    "KEYSTONE_MCP_FILE_API_URL": RemovedVariable(
+        removed_in="0.5.0",
+        replacement=(
+            "The built-in file tools were removed. Run your file service as an "
+            "upstream MCP server; see docs/connecting-services.md."
+        ),
+        fatal=True,
+    ),
+    "KEYSTONE_MCP_WEBHOOK_BASE_URL": RemovedVariable(
+        removed_in="0.5.0",
+        replacement=(
+            "The webhook adapter moved to keystone_mcp.contrib.adapters and reads "
+            "KEYSTONE_MCP_CONTRIB_WEBHOOK_* instead; see docs/contrib/adapters.md."
+        ),
+        fatal=False,
+    ),
+    "KEYSTONE_MCP_WEBHOOK_CLIENT": RemovedVariable(
+        removed_in="0.5.0",
+        replacement=(
+            "The webhook adapter moved to keystone_mcp.contrib.adapters and reads "
+            "KEYSTONE_MCP_CONTRIB_WEBHOOK_* instead; see docs/contrib/adapters.md."
+        ),
+        fatal=False,
+    ),
+    "KEYSTONE_MCP_WEBHOOK_PROJECT": RemovedVariable(
+        removed_in="0.5.0",
+        replacement=(
+            "The webhook adapter moved to keystone_mcp.contrib.adapters and reads "
+            "KEYSTONE_MCP_CONTRIB_WEBHOOK_* instead; see docs/contrib/adapters.md."
+        ),
+        fatal=False,
+    ),
+    "KEYSTONE_MCP_WEBHOOK_API_TOKEN": RemovedVariable(
+        removed_in="0.5.0",
+        replacement=(
+            "The webhook adapter moved to keystone_mcp.contrib.adapters and reads "
+            "KEYSTONE_MCP_CONTRIB_WEBHOOK_* instead; see docs/contrib/adapters.md."
+        ),
+        fatal=False,
+    ),
+    "KEYSTONE_MCP_LONG_POLL": RemovedVariable(
+        removed_in="0.5.0",
+        replacement=(
+            "The webhook adapter moved to keystone_mcp.contrib.adapters and reads "
+            "KEYSTONE_MCP_CONTRIB_WEBHOOK_LONG_POLL_SECONDS instead; see "
+            "docs/contrib/adapters.md."
+        ),
+        fatal=False,
+    ),
+    "KEYSTONE_MCP_AUTH_SERVICE_URL": RemovedVariable(
+        removed_in="0.5.0",
+        replacement="API keys are issued and checked by the users directory; see docs/users.md.",
+        fatal=True,
+    ),
+    "KEYSTONE_MCP_AUTH_SERVICE_TOKEN": RemovedVariable(
+        removed_in="0.5.0",
+        replacement="API keys are issued and checked by the users directory; see docs/users.md.",
+        fatal=True,
+    ),
+}
+
+
+def removed_variables_set(environ: Mapping[str, str]) -> list[tuple[str, RemovedVariable]]:
+    """Return the removed variables that are set (non-empty) in ``environ``.
+
+    A variable counts as set when it is present in ``environ`` and its value,
+    after ``strip()``, is not empty — an empty value (e.g. from a Compose file
+    using ``${X:-}``) must not trip a startup refusal. Ordered by name so the
+    reported message is deterministic.
+    """
+    found: list[tuple[str, RemovedVariable]] = []
+    for name in sorted(REMOVED_VARIABLES):
+        if name in environ and environ[name].strip():
+            found.append((name, REMOVED_VARIABLES[name]))
+    return found
 
 
 def _env_int(name: str, default: int) -> int:
@@ -138,10 +243,17 @@ def _parse_users_backend(
     raw: str, *, field_name: str = "KEYSTONE_MCP_USERS_BACKEND"
 ) -> UsersBackend:
     value = raw.strip().lower()
-    if value not in _VALID_USERS_BACKENDS:
-        raise ConfigError(
-            f"{field_name} must be one of {sorted(_VALID_USERS_BACKENDS)}; got {raw!r}"
-        )
+    if not _USERS_BACKEND_NAME_RE.fullmatch(value):
+        raise ConfigError(f"{field_name} must match ^[a-z][a-z0-9_-]{{0,31}}$; got {raw!r}")
+    return value
+
+
+def _parse_policy_tools(
+    raw: str, *, field_name: str = "KEYSTONE_MCP_POLICY_TOOLS"
+) -> PolicyToolsMode:
+    value = raw.strip().lower()
+    if value not in _VALID_POLICY_TOOLS_MODES:
+        raise ConfigError(f"{field_name} must be one of: full, read-only, off")
     return value  # type: ignore[return-value]
 
 
@@ -383,37 +495,28 @@ def _parse_login_lang(raw: str) -> str:
     return value
 
 
-def _warn_rbac_enabled_deprecated() -> None:
-    """Warn once per resolution that the legacy boolean alias is in use."""
-    logger.warning(
-        "KEYSTONE_MCP_RBAC_ENABLED is deprecated and will be removed; "
-        "set KEYSTONE_MCP_RBAC_MODE (off | observe | enforce) instead "
-        "(RBAC_ENABLED=true is equivalent to RBAC_MODE=enforce)"
-    )
+def _parse_login_brand(raw: str) -> str:
+    """Validate the name shown on built-in sign-in pages."""
+    if "\n" in raw or "\r" in raw:
+        raise ConfigError("KEYSTONE_MCP_LOGIN_BRAND must not contain a newline")
+    value = raw.strip()
+    if not value:
+        return "Keystone-MCP"
+    if len(value) > 64:
+        raise ConfigError("KEYSTONE_MCP_LOGIN_BRAND must be at most 64 characters")
+    return value
 
 
 def _resolve_rbac_mode() -> RbacMode:
     """Resolve the phased RBAC mode from the environment.
 
-    ``KEYSTONE_MCP_RBAC_MODE`` takes precedence when set. Otherwise the
-    deprecated ``KEYSTONE_MCP_RBAC_ENABLED=true`` still maps to ``enforce``;
-    setting it at all logs a deprecation warning.
+    Only ``KEYSTONE_MCP_RBAC_MODE`` is read; an unset or empty value means
+    ``off``. The legacy ``KEYSTONE_MCP_RBAC_ENABLED`` boolean alias was
+    removed in 0.5.0 (see ``REMOVED_VARIABLES``) and is not consulted here.
     """
     mode_raw = _env("KEYSTONE_MCP_RBAC_MODE", "").strip()
-    enabled_raw = os.environ.get("KEYSTONE_MCP_RBAC_ENABLED")
-    if enabled_raw is not None:
-        _warn_rbac_enabled_deprecated()
     if mode_raw:
-        mode = _parse_rbac_mode(mode_raw)
-        if enabled_raw is not None:
-            legacy_enabled = enabled_raw.lower() in ("1", "true", "yes")
-            if mode == "off" and legacy_enabled:
-                raise ConfigError(
-                    "KEYSTONE_MCP_RBAC_MODE=off conflicts with KEYSTONE_MCP_RBAC_ENABLED=true"
-                )
-        return mode
-    if _env_bool("KEYSTONE_MCP_RBAC_ENABLED", False):
-        return "enforce"
+        return _parse_rbac_mode(mode_raw)
     return "off"
 
 
@@ -520,6 +623,23 @@ class UpstreamConfig:
     # (``auth.bearer_env`` in the registry entry) — never the token value
     # itself, so this dataclass's repr stays safe to log.
     bearer_env: str | None = None
+    # Name of the environment variable holding this upstream's identity
+    # assertion secret (``auth.identity_secret_env``, Y01) — again, only the
+    # variable's name, never its value. ``None`` means this upstream receives
+    # no ``X-Keystone-Identity`` header, only the unsigned ``X-Author-Email``.
+    identity_secret_env: str | None = None
+    # When ``"ES256"``, Keystone signs assertions with
+    # ``KEYSTONE_MCP_IDENTITY_SIGNING_KEY`` instead of ``identity_secret_env``.
+    identity_alg: Literal["ES256"] | None = None
+    # ``transport: stdio`` fields (Y08). ``url`` is ``""`` for a stdio entry.
+    # ``env_from`` pairs a name in the child process's environment with the
+    # name of the keystone-mcp environment variable that supplies it — never
+    # the value itself, for the same reason as ``bearer_env`` above.
+    transport: Literal["http", "stdio"] = "http"
+    command: str | None = None
+    args: tuple[str, ...] = ()
+    env_from: tuple[tuple[str, str], ...] = ()
+    cwd: str | None = None
 
     def build_tool_filter(self):
         """Return a predicate for downstream tool names (discovery filter)."""
@@ -549,7 +669,7 @@ def _parse_upstream_tool_timeouts(raw: str) -> dict[str, float]:
     """Parse ``KEYSTONE_MCP_UPSTREAM_TOOL_TIMEOUTS`` (per-published-tool overrides).
 
     Format: a JSON object mapping a published tool name to a timeout in seconds,
-    e.g. ``{"catalog_advance": 30, "catalog_record_decision": 30}``. An empty or
+    e.g. ``{"reports_build": 30, "reports_publish": 30}``. An empty or
     unset value means "no overrides" (every proxied call uses
     ``KEYSTONE_MCP_UPSTREAM_TOOL_TIMEOUT_SECONDS``).
     """
@@ -744,13 +864,7 @@ class Settings:
         default_factory=lambda: _env_int("KEYSTONE_MCP_LOGIN_PENDING_TXN_TTL", 600)
     )
 
-    # ── Auth-service introspection (production) ───────────────────────────
-    auth_service_url: str = field(default_factory=lambda: _env("KEYSTONE_MCP_AUTH_SERVICE_URL", ""))
-    auth_service_token: str = field(
-        default_factory=lambda: _env("KEYSTONE_MCP_AUTH_SERVICE_TOKEN", "")
-    )
-    # Comma-separated api_tokens accepted without an auth service (local dev).
-    # Ignored once auth_service_url is set.
+    # Comma-separated api_tokens accepted on the sign-in page (local profile only).
     dev_tokens: str = field(default_factory=lambda: _env("KEYSTONE_MCP_DEV_TOKENS", ""))
 
     # ── Login methods and RBAC ────────────────────────────────────────────
@@ -772,6 +886,9 @@ class Settings:
     login_default_lang: str = field(
         default_factory=lambda: _parse_login_lang(_env("KEYSTONE_MCP_LOGIN_DEFAULT_LANG", "en"))
     )
+    login_brand: str = field(
+        default_factory=lambda: _parse_login_brand(_env("KEYSTONE_MCP_LOGIN_BRAND", "Keystone-MCP"))
+    )
 
     # Google OIDC (required when google login is enabled).
     google_client_id: str = field(default_factory=lambda: _env("KEYSTONE_MCP_GOOGLE_CLIENT_ID", ""))
@@ -780,6 +897,9 @@ class Settings:
     )
     google_allowed_domain: str = field(
         default_factory=lambda: _env("KEYSTONE_MCP_GOOGLE_ALLOWED_DOMAIN", "")
+    )
+    login_providers_path: str = field(
+        default_factory=lambda: _env("KEYSTONE_MCP_LOGIN_PROVIDERS_PATH", "")
     )
 
     # Users directory: built in by default (local), or an external HTTP service
@@ -793,6 +913,9 @@ class Settings:
     # mentioned) apart from a deployment that explicitly opted into "local".
     users_backend_explicit: bool = field(
         default_factory=lambda: os.environ.get("KEYSTONE_MCP_USERS_BACKEND") is not None
+    )
+    users_backend_config: str = field(
+        default_factory=lambda: _env("KEYSTONE_MCP_USERS_BACKEND_CONFIG", "")
     )
     users_db_url: str = field(
         default_factory=lambda: _env("KEYSTONE_MCP_USERS_DB_URL", "sqlite:///./keystone-users.db")
@@ -844,6 +967,13 @@ class Settings:
     )
     rbac_audit_subject_salt: str = field(
         default_factory=lambda: _env("KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT", "")
+    )
+    # Whether the policy_* tools (V02) may change the policy file through this
+    # process: "full" reads and writes, "read-only" reads and validates only
+    # (for a replica with no write access to a shared policy volume), "off"
+    # publishes no policy_* tools at all.
+    policy_tools: PolicyToolsMode = field(
+        default_factory=lambda: _parse_policy_tools(_env("KEYSTONE_MCP_POLICY_TOOLS", "full"))
     )
     # RFC 8707: refuse an access token that names no resource at all. Default
     # false, because a client that predates resource indicators would otherwise
@@ -903,47 +1033,6 @@ class Settings:
         default_factory=lambda: _env_int("KEYSTONE_MCP_OAUTH_THROTTLE_IP_MAX", 120)
     )
 
-    # ── Webhook adapter target ────────────────────────────────────────────
-    # Base URL the reference webhook adapter submits to
-    # (POST /api/v1/webhooks/{client}/{project}).
-    webhook_base_url: str = field(
-        default_factory=lambda: _env("KEYSTONE_MCP_WEBHOOK_BASE_URL", "http://localhost:8000")
-    )
-    # Webhook route segments (POST /api/v1/webhooks/{client}/{project}). No
-    # default: a deployment that registers webhook routes must name its own.
-    webhook_client_id: str = field(default_factory=lambda: _env("KEYSTONE_MCP_WEBHOOK_CLIENT", ""))
-    webhook_project_id: str = field(
-        default_factory=lambda: _env("KEYSTONE_MCP_WEBHOOK_PROJECT", "")
-    )
-    # Optional token sent as Authorization to the webhook and to the file API.
-    webhook_api_token: str = field(
-        default_factory=lambda: _env("KEYSTONE_MCP_WEBHOOK_API_TOKEN", "")
-    )
-    # Long-poll hint for GET /tasks/{id}/result (server-side ~30-50s).
-    long_poll_seconds: int = field(default_factory=lambda: _env_int("KEYSTONE_MCP_LONG_POLL", 40))
-
-    # ── Optional file API for the built-in file tools ─────────────────────
-    file_api_base_url: str = field(default_factory=lambda: _env("KEYSTONE_MCP_FILE_API_URL", ""))
-
-    @property
-    def file_tools_enabled(self) -> bool:
-        """Whether ``create_upload_url`` and ``get_download_link`` are published.
-
-        True only when ``KEYSTONE_MCP_FILE_API_URL`` is set; there is no
-        fallback to the webhook base URL.
-        """
-        return bool(self.file_api_base_url.strip())
-
-    @property
-    def resolved_file_api_base_url(self) -> str:
-        """Base URL for POST /api/v1/files (``KEYSTONE_MCP_FILE_API_URL``, no fallback)."""
-        return self.file_api_base_url.strip().rstrip("/")
-
-    # ── det_internal target (placeholder adapter) ─────────────────────────
-    det_internal_base_url: str = field(
-        default_factory=lambda: _env("KEYSTONE_MCP_DET_INTERNAL_URL", "http://localhost:8000")
-    )
-
     # ── Upstream MCP proxy ────────────────────────────────────────────────
     upstream_discovery_retries: int = field(
         default_factory=lambda: _env_int("KEYSTONE_MCP_UPSTREAM_DISCOVERY_RETRIES", 3)
@@ -983,6 +1072,12 @@ class Settings:
     proxy_status_envelope: bool = field(
         default_factory=lambda: _env_bool("KEYSTONE_MCP_PROXY_STATUS_ENVELOPE", False)
     )
+    # true (default): HTTP upstream elicitation/create (form mode) and upstream
+    # InputRequiredResult round-trips reach the Keystone client. false: no
+    # upstream elicitation handler and no InputRequired passthrough (Y03 path).
+    proxy_elicitation: bool = field(
+        default_factory=lambda: _env_bool("KEYSTONE_MCP_PROXY_ELICITATION", True)
+    )
     upstreams_path: str = field(default_factory=lambda: _env("KEYSTONE_MCP_UPSTREAMS_PATH", ""))
     upstream_allow_insecure_http: bool = field(
         default_factory=lambda: _env_bool("KEYSTONE_MCP_UPSTREAM_ALLOW_INSECURE_HTTP", False)
@@ -991,6 +1086,12 @@ class Settings:
         default_factory=lambda: _env_bool("KEYSTONE_MCP_UPSTREAM_EGRESS_ALLOW_PRIVATE", False)
     )
     upstreams_json: str = field(default_factory=lambda: _env("KEYSTONE_MCP_UPSTREAMS", ""))
+    # Optional EC P-256 PEM private key for ES256 identity assertions (Y11).
+    # Empty means ES256 is unavailable; upstream entries with
+    # ``auth.identity_alg: ES256`` refuse to start without it.
+    identity_signing_key: str = field(
+        default_factory=lambda: _env("KEYSTONE_MCP_IDENTITY_SIGNING_KEY", "")
+    )
 
     @property
     def http_path(self) -> str:
@@ -1106,7 +1207,17 @@ def validate_settings(settings: Settings) -> None:
             "KEYSTONE_MCP_ENABLED_LOGIN_METHODS"
         )
 
-    if settings.google_login_enabled:
+    providers_file = settings.login_providers_path.strip()
+    if providers_file:
+        from keystone_mcp.login.config import load_login_providers_file
+
+        load_login_providers_file(
+            providers_file,
+            deployment_profile=settings.deployment_profile,
+            environ=os.environ,
+        )
+
+    if settings.google_login_enabled and not providers_file:
         missing_google = [
             name
             for name, value in (
@@ -1150,9 +1261,15 @@ def validate_settings(settings: Settings) -> None:
     # (unknown/blocked → deny), independent of rbac_enabled; the RBAC middleware
     # needs the same directory when rbac_enabled=true. The built-in (local)
     # backend needs neither URL nor token: it has its own checks below.
-    if settings.users_backend == "http" and (
-        settings.google_login_enabled or settings.rbac_enabled
-    ):
+    from keystone_mcp.login.factory import api_key_login_configured, file_has_interactive_providers
+
+    needs_users_for_login = settings.rbac_enabled
+    if providers_file:
+        needs_users_for_login = needs_users_for_login or file_has_interactive_providers(settings)
+    else:
+        needs_users_for_login = needs_users_for_login or settings.google_login_enabled
+
+    if settings.users_backend == "http" and needs_users_for_login:
         missing_users = [
             name
             for name, value in (
@@ -1163,7 +1280,7 @@ def validate_settings(settings: Settings) -> None:
         ]
         if missing_users:
             raise ConfigError(
-                "Users directory settings are required when Google login or RBAC "
+                "Users directory settings are required when interactive sign-in or RBAC "
                 "is enabled but missing: " + ", ".join(missing_users)
             )
 
@@ -1197,13 +1314,7 @@ def validate_settings(settings: Settings) -> None:
             f"KEYSTONE_MCP_PROXY_SCHEMA_PATCHES does not exist or is not a file: {patches_path_raw}"
         )
 
-    if settings.auth_service_url.strip() and not settings.auth_service_token.strip():
-        raise ConfigError(AUTH_SERVICE_URL_WITHOUT_TOKEN_ERROR)
-
     dev_token_set = {t for t in settings.dev_tokens.split(",") if t.strip()}
-    auth_service_configured = bool(
-        settings.auth_service_url.strip() and settings.auth_service_token.strip()
-    )
 
     # ── Deployment profile (local | production, §4) ───────────────────────
     base_host = (urlparse(settings.base_url).hostname or "").lower()
@@ -1235,15 +1346,21 @@ def validate_settings(settings: Settings) -> None:
                 f"KEYSTONE_MCP_RBAC_MODE=enforce; got {settings.rbac_mode!r}. Use "
                 "KEYSTONE_MCP_DEPLOYMENT_PROFILE=local for off/observe."
             )
-        # P3: api_key sign-in needs an external key-verification service in
-        # production; an empty KEYSTONE_MCP_ENABLED_LOGIN_METHODS defaults to
-        # api_key (_parse_enabled_login_methods), so a production deployment
-        # with no explicit sign-in configuration is refused here too.
-        if settings.api_key_login_enabled and not auth_service_configured:
+        # P3: api_key sign-in in production needs a directory that stores keys.
+        if api_key_login_configured(settings) and settings.users_backend == "http":
             raise ConfigError(
-                "API-key sign-in in production needs KEYSTONE_MCP_AUTH_SERVICE_URL "
-                "and _TOKEN; DEV tokens are local-only. Remove api_key from "
-                "KEYSTONE_MCP_ENABLED_LOGIN_METHODS or configure the service."
+                "API-key sign-in in production needs a users directory that stores "
+                "API keys (KEYSTONE_MCP_USERS_BACKEND=local). Remove api_key from "
+                "the login providers or switch the directory."
+            )
+        interactive_login = file_has_interactive_providers(settings) or (
+            not providers_file and settings.google_login_enabled
+        )
+        if api_key_login_configured(settings) and interactive_login:
+            raise ConfigError(
+                "api_key sign-in for people is not available in the production profile "
+                "when an interactive provider is configured; people sign in through the "
+                "provider, machines use Bearer keys"
             )
         # P4: no unencrypted OAuth traffic to a publicly reachable host. This
         # also refuses an internal-looking name such as `*.svc.cluster.local`
@@ -1290,6 +1407,16 @@ def validate_settings(settings: Settings) -> None:
         if value < 0:
             raise ConfigError(f"{name} must be zero or positive (got {value})")
 
+    from keystone_mcp.identity_assertion import load_ec_p256_private_key
+
+    if settings.identity_signing_key.strip():
+        try:
+            load_ec_p256_private_key(settings.identity_signing_key)
+        except ValueError:
+            raise ConfigError(
+                "KEYSTONE_MCP_IDENTITY_SIGNING_KEY must be a PEM EC P-256 private key"
+            )
+
     if settings.rbac_mode == "off":
         return
 
@@ -1334,7 +1461,7 @@ def validate_settings(settings: Settings) -> None:
         )
 
 
-def startup_warnings(settings: Settings) -> list[str]:
+def startup_warnings(settings: Settings, *, environ: Mapping[str, str] | None = None) -> list[str]:
     """Operator-facing warnings for a configuration that starts but is risky.
 
     Pure: never logs, never raises, so it can be unit-tested without
@@ -1342,8 +1469,18 @@ def startup_warnings(settings: Settings) -> list[str]:
     (``validate_settings`` itself runs before logging is configured), and
     logs every returned line at WARNING. Later cards append to this function
     rather than growing a separate set of ad hoc ``if`` checks in ``main``.
+
+    ``environ`` defaults to ``os.environ`` and is only used to report
+    non-fatal entries of :data:`REMOVED_VARIABLES`; fatal ones already made
+    ``load_settings()`` raise before this function is reached.
     """
     warnings: list[str] = []
+    for name, removed in removed_variables_set(os.environ if environ is None else environ):
+        if not removed.fatal:
+            warnings.append(
+                f"{name} was removed in {removed.removed_in} and has no effect. "
+                f"{removed.replacement}"
+            )
     base_host = (urlparse(settings.base_url).hostname or "").lower()
     base_scheme = (urlparse(settings.base_url).scheme or "").lower()
 
@@ -1368,6 +1505,38 @@ def startup_warnings(settings: Settings) -> list[str]:
                 "may point at private addresses; keep the upstream registry "
                 "under operator control"
             )
+        # W6 (Y01): an upstream with no identity_secret_env only ever learns
+        # who is calling from the unsigned, deprecated X-Author-Email header
+        # -- except a stdio upstream (D8), which never receives that header
+        # at all (there are no HTTP headers to a child process), so its
+        # warning must say that instead of naming a header it never gets.
+        for cfg in settings.upstreams:
+            if cfg.enabled and cfg.transport == "stdio":
+                command = cfg.command or ""
+                warnings.append(
+                    f"upstream namespace={cfg.namespace} runs local command "
+                    f"{os.path.basename(command)} with keystone-mcp's own user and no "
+                    "sandbox; trust it as you trust keystone-mcp"
+                )
+        for cfg in settings.upstreams:
+            if (
+                not cfg.enabled
+                or cfg.identity_secret_env is not None
+                or cfg.identity_alg == "ES256"
+            ):
+                continue
+            if cfg.transport == "stdio":
+                warnings.append(
+                    f"upstream namespace={cfg.namespace} (stdio) has no "
+                    "auth.identity_secret_env: the process has no way to verify "
+                    "who is calling it"
+                )
+            else:
+                warnings.append(
+                    f"upstream namespace={cfg.namespace} receives only the unsigned "
+                    "X-Author-Email header; set auth.identity_secret_env so the "
+                    "service can verify who is calling"
+                )
     else:
         dev_token_set = {t for t in settings.dev_tokens.split(",") if t.strip()}
         # W4: the only local-profile warning (dev tokens under off/observe are
@@ -1399,10 +1568,70 @@ def startup_warnings(settings: Settings) -> list[str]:
                 "otherwise.".format(settings.host)
             )
 
+    # W7: a deployment that wants policy_* tools to write the policy file
+    # (KEYSTONE_MCP_POLICY_TOOLS=full, the default) but mounted it read-only
+    # (e.g. the ":ro" examples) is not refused at startup -- read-only tools
+    # still work -- but every mutating policy_* call will refuse with
+    # policy_readonly until the operator remounts read-write or switches this
+    # replica to KEYSTONE_MCP_POLICY_TOOLS=read-only.
+    if (
+        settings.rbac_enforcing
+        and settings.policy_tools == "full"
+        and settings.rbac_policy_path.strip()
+    ):
+        policy_path = Path(settings.rbac_policy_path)
+        if policy_path.is_file() and not (
+            os.access(policy_path, os.W_OK) and os.access(policy_path.parent, os.W_OK)
+        ):
+            warnings.append(
+                f"policy file {settings.rbac_policy_path} is not writable: "
+                "policy_* mutation tools will refuse with policy_readonly "
+                "(mount it read-write or set KEYSTONE_MCP_POLICY_TOOLS=read-only)"
+            )
+
+    _LEGACY_LOGIN_ENV = (
+        "KEYSTONE_MCP_GOOGLE_CLIENT_ID",
+        "KEYSTONE_MCP_GOOGLE_CLIENT_SECRET",
+        "KEYSTONE_MCP_GOOGLE_ALLOWED_DOMAIN",
+        "KEYSTONE_MCP_ENABLED_LOGIN_METHODS",
+        "KEYSTONE_MCP_PRIMARY_LOGIN_METHOD",
+    )
+    env_map = os.environ if environ is None else environ
+    legacy_set = any(env_map.get(name, "").strip() for name in _LEGACY_LOGIN_ENV)
+    if settings.users_backend_config.strip() and settings.users_backend in ("local", "http"):
+        warnings.append(
+            "KEYSTONE_MCP_USERS_BACKEND_CONFIG is set but has no effect for the "
+            f"built-in {settings.users_backend!r} users directory"
+        )
+
+    if legacy_set:
+        base_msg = (
+            "KEYSTONE_MCP_GOOGLE_*, KEYSTONE_MCP_ENABLED_LOGIN_METHODS and "
+            "KEYSTONE_MCP_PRIMARY_LOGIN_METHOD are deprecated since 0.5.0 and will "
+            "be removed in a future major version. Describe sign-in providers in the "
+            "file named by KEYSTONE_MCP_LOGIN_PROVIDERS_PATH (docs/login-providers.md)."
+        )
+        if settings.login_providers_path.strip():
+            warnings.append(
+                f"{base_msg} They are ignored because KEYSTONE_MCP_LOGIN_PROVIDERS_PATH is set."
+            )
+        else:
+            warnings.append(base_msg)
+
     return warnings
 
 
 def load_settings() -> Settings:
+    fatal = [
+        (name, removed) for name, removed in removed_variables_set(os.environ) if removed.fatal
+    ]
+    if fatal:
+        messages = [
+            f"{name} was removed in {removed.removed_in} and is no longer read. "
+            f"{removed.replacement} Remove the variable to start."
+            for name, removed in fatal
+        ]
+        raise ConfigError(" ".join(messages))
     settings = Settings()
     validate_settings(settings)
     return settings

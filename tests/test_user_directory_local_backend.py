@@ -13,8 +13,8 @@ from keystone_mcp.user_directory.cache import ResolutionCache
 from keystone_mcp.user_directory.circuit_breaker import CircuitBreaker
 from keystone_mcp.user_directory.errors import UserDirectoryUnavailableError
 from keystone_mcp.user_directory.factory import build_user_directory_resolver
-from keystone_mcp.user_directory.http import HttpUserDirectoryBackend
-from keystone_mcp.user_directory.local import LocalUserDirectoryBackend
+from keystone_mcp.user_directory.http import HttpUserDirectory
+from keystone_mcp.user_directory.local import LocalUserDirectory
 from keystone_mcp.user_directory.resolver import CachedUserDirectoryResolver
 from keystone_mcp.user_directory.revision import InMemoryRevisionReader, RedisRevisionReader
 from keystone_mcp.users.db import create_users_engine
@@ -28,16 +28,18 @@ def test_factory_builds_local_backend_by_default(monkeypatch) -> None:
     settings = Settings()
     resolver = build_user_directory_resolver(settings, revision_reader=InMemoryRevisionReader())
     assert isinstance(resolver, CachedUserDirectoryResolver)
-    assert isinstance(resolver._backend, LocalUserDirectoryBackend)
+    assert isinstance(resolver._backend, LocalUserDirectory)
 
 
 def test_factory_builds_http_backend_when_configured(monkeypatch) -> None:
     monkeypatch.setenv("KEYSTONE_MCP_USERS_BACKEND", "http")
-    monkeypatch.setenv("KEYSTONE_MCP_USERS_SERVICE_URL", "http://mcp-users:8080")
+    monkeypatch.setenv(
+        "KEYSTONE_MCP_USERS_SERVICE_URL", "http://users-directory.internal.example:8080"
+    )
     monkeypatch.setenv("KEYSTONE_MCP_USERS_SERVICE_TOKEN", "token")
     settings = Settings()
     resolver = build_user_directory_resolver(settings, revision_reader=InMemoryRevisionReader())
-    assert isinstance(resolver._backend, HttpUserDirectoryBackend)
+    assert isinstance(resolver._backend, HttpUserDirectory)
 
 
 @pytest.mark.asyncio
@@ -51,7 +53,7 @@ async def test_local_backend_resolves_existing_and_unknown_user(tmp_path: Path) 
         created_by=None,
         allowed_roles=None,
     )
-    backend = LocalUserDirectoryBackend(store)
+    backend = LocalUserDirectory(store)
 
     known = await backend.resolve_user("user@example.com")
     assert known.exists is True
@@ -68,7 +70,7 @@ async def test_local_backend_resolves_existing_and_unknown_user(tmp_path: Path) 
 
 def _resolver_for(store: UsersStore, revision) -> CachedUserDirectoryResolver:  # noqa: ANN001
     return CachedUserDirectoryResolver(
-        LocalUserDirectoryBackend(store),
+        LocalUserDirectory(store),
         revision_reader=revision,
         cache=ResolutionCache(allow_ttl_seconds=60.0, deny_ttl_seconds=30.0),
         circuit_breaker=CircuitBreaker(failure_threshold=3, recovery_seconds=30.0),
@@ -147,11 +149,30 @@ async def test_block_visible_through_redis_revision(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_ping_translates_store_unavailable_to_catalog_unavailable() -> None:
+    """``LocalUserDirectory.ping()`` must raise the ``UserDirectory`` error
+
+    vocabulary (``UserDirectoryUnavailableError``, code ``catalog_unavailable``),
+    not the store's own ``keystone_mcp.users.errors.UsersStoreUnavailableError``
+    -- the same translation ``resolve_user`` already does (X06 review finding).
+    """
+    engine = create_users_engine("postgresql+psycopg://u:pass@127.0.0.1:1/db")
+    store = UsersStore(engine, revision=NullRevisionWriter())
+    directory = LocalUserDirectory(store)
+
+    with pytest.raises(UserDirectoryUnavailableError) as exc_info:
+        await directory.ping()
+    assert exc_info.value.code == "catalog_unavailable"
+
+    store.dispose()
+
+
+@pytest.mark.asyncio
 async def test_database_failure_is_fail_closed() -> None:
     engine = create_users_engine("postgresql+psycopg://u:pass@127.0.0.1:1/db")
     store = UsersStore(engine, revision=NullRevisionWriter())
     resolver = CachedUserDirectoryResolver(
-        LocalUserDirectoryBackend(store),
+        LocalUserDirectory(store),
         revision_reader=InMemoryRevisionReader(),
         cache=ResolutionCache(allow_ttl_seconds=60.0, deny_ttl_seconds=30.0),
         circuit_breaker=CircuitBreaker(failure_threshold=1, recovery_seconds=30.0),

@@ -70,7 +70,7 @@ def reconciler_stack(policy_path: Path):
         registry.add_route(
             tool,
             adapter,
-            pattern=Pattern.M_B,
+            pattern=Pattern.SYNC,
             mode="live",
             namespace="reports",
             config_mode="PROXY",
@@ -215,7 +215,7 @@ async def test_one_failing_namespace_does_not_block_others(reconciler_stack):
         def __init__(self, name: str) -> None:
             self.name = name
             self.description = "ledger tool"
-            self.inputSchema = None
+            self.input_schema = None
 
     upstreams.add_upstream("ledger", "http://ledger:8082/mcp", namespace="ledger")
 
@@ -241,7 +241,7 @@ class _FakeSchemaTool:
     def __init__(self, name: str, schema: dict, *, description: str = "fake tool") -> None:
         self.name = name
         self.description = description
-        self.inputSchema = schema
+        self.input_schema = schema
 
 
 _GOOD_SCHEMA = {
@@ -342,7 +342,7 @@ async def test_failed_update_keeps_old_tool_and_removal_still_works(
     assert "ledger:good_tool" in registry.routes
     async with Client(sub) as client:
         tools = await client.list_tools()
-    assert next(t for t in tools if t.name == "good_tool").inputSchema["required"] == ["query"]
+    assert next(t for t in tools if t.name == "good_tool").input_schema["required"] == ["query"]
 
     # Tick 2: the upstream changes the tool's description (forcing an update
     # attempt -- the fingerprint changes), but republishing it fails this one
@@ -375,7 +375,7 @@ async def test_failed_update_keeps_old_tool_and_removal_still_works(
     async with Client(sub) as client:
         tools = await client.list_tools()
     still_good = next(t for t in tools if t.name == "good_tool")
-    assert list(still_good.inputSchema["properties"]) == ["query"]
+    assert list(still_good.input_schema["properties"]) == ["query"]
 
     monkeypatch.setattr(RouterRegistry, "_register_tool", original_register_tool)
 
@@ -437,7 +437,7 @@ async def test_enum_change_triggers_update(reconciler_stack, caplog):
     async with Client(sub) as client:
         tools = await client.list_tools()
     first = next(t for t in tools if t.name == "set_mode")
-    assert first.inputSchema["properties"]["mode"]["enum"] == ["a", "b"]
+    assert first.input_schema["properties"]["mode"]["enum"] == ["a", "b"]
 
     with (
         caplog.at_level(logging.INFO),
@@ -457,7 +457,7 @@ async def test_enum_change_triggers_update(reconciler_stack, caplog):
     async with Client(sub) as client:
         tools = await client.list_tools()
     second = next(t for t in tools if t.name == "set_mode")
-    assert second.inputSchema["properties"]["mode"]["enum"] == ["a", "b", "c"]
+    assert second.input_schema["properties"]["mode"]["enum"] == ["a", "b", "c"]
 
 
 async def test_policy_reload_runs_even_if_catalog_refresh_crashes(reconciler_stack):
@@ -570,7 +570,7 @@ class _FakeTool:
     def __init__(self, name: str, *, description: str = "") -> None:
         self.name = name
         self.description = description
-        self.inputSchema = None
+        self.input_schema = None
 
 
 async def test_upstream_down_at_start_is_added_when_it_comes_up():
@@ -705,7 +705,7 @@ def _build_docs_reconciler(tmp_path: Path, policy_text: str):
     upstreams.add_upstream("docs", "http://docs:8081/mcp", namespace="docs")
     from keystone_mcp.adapters.stub import StubAdapter
 
-    registry.add_route("reports_read", StubAdapter(), pattern=Pattern.M_B, mode="live")
+    registry.add_route("reports_read", StubAdapter(), pattern=Pattern.SYNC, mode="live")
     policy_manager = RbacPolicyManager(settings, upstream_catalog_state=upstreams.catalog_state)
     policy_manager.load_initial(registry)  # docs is down: docs_* / docs_serch are "not verified"
     reconciler = SurfaceReconciler(

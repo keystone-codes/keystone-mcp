@@ -27,7 +27,6 @@ def test_default_settings_preserve_pre_r4_api_key_mode():
 def test_load_settings_defaults_from_env(monkeypatch):
     monkeypatch.delenv("KEYSTONE_MCP_PRIMARY_LOGIN_METHOD", raising=False)
     monkeypatch.delenv("KEYSTONE_MCP_ENABLED_LOGIN_METHODS", raising=False)
-    monkeypatch.delenv("KEYSTONE_MCP_RBAC_ENABLED", raising=False)
     settings = load_settings()
     assert settings.primary_login_method == "api_key"
     assert settings.rbac_enabled is False
@@ -40,7 +39,7 @@ def test_login_methods_are_independent_from_rbac(monkeypatch):
     monkeypatch.setenv("KEYSTONE_MCP_GOOGLE_CLIENT_SECRET", "client-secret")
     # The built-in (local, default) users directory needs neither URL nor
     # token; this test is about login methods, not the users directory.
-    monkeypatch.setenv("KEYSTONE_MCP_RBAC_ENABLED", "false")
+    # RBAC defaults to off, which is all this test needs.
     settings = load_settings()
     assert settings.primary_login_method == "google"
     assert settings.enabled_login_methods == frozenset({"google", "api_key"})
@@ -54,7 +53,6 @@ def test_google_login_requires_users_directory_without_rbac(monkeypatch):
     monkeypatch.setenv("KEYSTONE_MCP_ENABLED_LOGIN_METHODS", "google,api_key")
     monkeypatch.setenv("KEYSTONE_MCP_GOOGLE_CLIENT_ID", "client-id")
     monkeypatch.setenv("KEYSTONE_MCP_GOOGLE_CLIENT_SECRET", "client-secret")
-    monkeypatch.setenv("KEYSTONE_MCP_RBAC_ENABLED", "false")
     with pytest.raises(ConfigError, match="Users directory"):
         load_settings()
 
@@ -76,8 +74,7 @@ def test_enabled_login_methods_csv_edge_cases(monkeypatch, raw: str, expected):
 def test_rbac_enabled_without_changing_login_methods(monkeypatch, tmp_path: Path):
     policy = tmp_path / "rbac-policy.yaml"
     policy.write_text("default_deny: true\nroles: {}\n", encoding="utf-8")
-    monkeypatch.setenv("KEYSTONE_MCP_RBAC_ENABLED", "true")
-    monkeypatch.delenv("KEYSTONE_MCP_RBAC_MODE", raising=False)
+    monkeypatch.setenv("KEYSTONE_MCP_RBAC_MODE", "enforce")
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_POLICY_PATH", str(policy))
     monkeypatch.setenv("KEYSTONE_MCP_REDIS_URL", "redis://localhost:6379/0")
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT", "test-salt")
@@ -92,7 +89,6 @@ def test_rbac_mode_observe_requires_redis_and_policy(monkeypatch, tmp_path: Path
     policy = tmp_path / "rbac-policy.yaml"
     policy.write_text("default_deny: true\nroles: {}\n", encoding="utf-8")
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_MODE", "observe")
-    monkeypatch.delenv("KEYSTONE_MCP_RBAC_ENABLED", raising=False)
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_POLICY_PATH", str(policy))
     monkeypatch.setenv("KEYSTONE_MCP_REDIS_URL", "redis://localhost:6379/0")
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT", "test-salt")
@@ -112,28 +108,27 @@ def test_rbac_mode_observe_requires_redis(monkeypatch, tmp_path: Path):
         load_settings()
 
 
-def test_rbac_mode_takes_precedence_over_legacy_enabled_false(monkeypatch, tmp_path: Path):
-    policy = tmp_path / "rbac-policy.yaml"
-    policy.write_text("default_deny: true\nroles: {}\n", encoding="utf-8")
-    monkeypatch.setenv("KEYSTONE_MCP_RBAC_MODE", "observe")
-    monkeypatch.setenv("KEYSTONE_MCP_RBAC_ENABLED", "false")
-    monkeypatch.setenv("KEYSTONE_MCP_RBAC_POLICY_PATH", str(policy))
-    monkeypatch.setenv("KEYSTONE_MCP_REDIS_URL", "redis://localhost:6379/0")
-    monkeypatch.setenv("KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT", "test-salt")
-    settings = load_settings()
-    assert settings.rbac_mode == "observe"
-
-
-def test_rbac_mode_off_conflicts_with_legacy_enabled(monkeypatch):
-    monkeypatch.setenv("KEYSTONE_MCP_RBAC_MODE", "off")
-    monkeypatch.setenv("KEYSTONE_MCP_RBAC_ENABLED", "true")
-    with pytest.raises(ConfigError, match="conflicts"):
-        load_settings()
-
-
 def test_invalid_rbac_mode_rejected(monkeypatch):
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_MODE", "shadow")
     with pytest.raises(ConfigError, match="KEYSTONE_MCP_RBAC_MODE"):
+        load_settings()
+
+
+def test_policy_tools_defaults_to_full():
+    assert Settings().policy_tools == "full"
+
+
+@pytest.mark.parametrize("value", ["full", "read-only", "off"])
+def test_policy_tools_accepts_its_three_values(monkeypatch, value: str):
+    monkeypatch.setenv("KEYSTONE_MCP_POLICY_TOOLS", value)
+    assert load_settings().policy_tools == value
+
+
+def test_policy_tools_rejects_unknown_value(monkeypatch):
+    monkeypatch.setenv("KEYSTONE_MCP_POLICY_TOOLS", "read-write")
+    with pytest.raises(
+        ConfigError, match=r"KEYSTONE_MCP_POLICY_TOOLS must be one of: full, read-only, off"
+    ):
         load_settings()
 
 
@@ -160,13 +155,13 @@ def test_google_login_requires_client_credentials(monkeypatch):
 def test_rbac_enabled_requires_users_and_policy(monkeypatch):
     # Same as above: this check is specific to the http backend.
     monkeypatch.setenv("KEYSTONE_MCP_USERS_BACKEND", "http")
-    monkeypatch.setenv("KEYSTONE_MCP_RBAC_ENABLED", "true")
+    monkeypatch.setenv("KEYSTONE_MCP_RBAC_MODE", "enforce")
     with pytest.raises(ConfigError, match="Users directory"):
         load_settings()
 
 
 def test_rbac_enabled_requires_existing_policy_file(monkeypatch):
-    monkeypatch.setenv("KEYSTONE_MCP_RBAC_ENABLED", "true")
+    monkeypatch.setenv("KEYSTONE_MCP_RBAC_MODE", "enforce")
     monkeypatch.setenv("KEYSTONE_MCP_REDIS_URL", "redis://localhost:6379/0")
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT", "test-salt")
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_POLICY_PATH", "/no/such/rbac-policy.yaml")
@@ -177,7 +172,7 @@ def test_rbac_enabled_requires_existing_policy_file(monkeypatch):
 def test_rbac_enabled_requires_redis_url(monkeypatch, tmp_path: Path):
     policy = tmp_path / "rbac-policy.yaml"
     policy.write_text("default_deny: true\nroles: {}\n", encoding="utf-8")
-    monkeypatch.setenv("KEYSTONE_MCP_RBAC_ENABLED", "true")
+    monkeypatch.setenv("KEYSTONE_MCP_RBAC_MODE", "enforce")
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_POLICY_PATH", str(policy))
     monkeypatch.delenv("KEYSTONE_MCP_REDIS_URL", raising=False)
     with pytest.raises(ConfigError, match="KEYSTONE_MCP_REDIS_URL"):
@@ -185,7 +180,7 @@ def test_rbac_enabled_requires_redis_url(monkeypatch, tmp_path: Path):
 
 
 def test_rbac_disabled_allows_missing_google_and_users_settings(monkeypatch):
-    monkeypatch.setenv("KEYSTONE_MCP_RBAC_ENABLED", "false")
+    monkeypatch.setenv("KEYSTONE_MCP_RBAC_MODE", "off")
     monkeypatch.setenv("KEYSTONE_MCP_ENABLED_LOGIN_METHODS", "api_key")
     settings = load_settings()
     assert settings.google_client_id == ""
@@ -200,18 +195,20 @@ def test_google_redirect_uri_uses_public_base_url():
 def test_users_and_policy_settings_are_readable(monkeypatch, tmp_path: Path):
     policy = tmp_path / "policy.yaml"
     policy.write_text("default_deny: true\n", encoding="utf-8")
-    monkeypatch.setenv("KEYSTONE_MCP_RBAC_ENABLED", "true")
+    monkeypatch.setenv("KEYSTONE_MCP_RBAC_MODE", "enforce")
     # This test is specifically about reading USERS_SERVICE_* back, which only
     # applies to the http backend (local never requires it).
     monkeypatch.setenv("KEYSTONE_MCP_USERS_BACKEND", "http")
-    monkeypatch.setenv("KEYSTONE_MCP_USERS_SERVICE_URL", "http://mcp-users:8080")
+    monkeypatch.setenv(
+        "KEYSTONE_MCP_USERS_SERVICE_URL", "http://users-directory.internal.example:8080"
+    )
     monkeypatch.setenv("KEYSTONE_MCP_USERS_SERVICE_TOKEN", "secret-token")
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_POLICY_PATH", str(policy))
     monkeypatch.setenv("KEYSTONE_MCP_REDIS_URL", "redis://localhost:6379/0")
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT", "test-salt")
     monkeypatch.setenv("KEYSTONE_MCP_GOOGLE_ALLOWED_DOMAIN", "example.com")
     settings = load_settings()
-    assert settings.users_service_url == "http://mcp-users:8080"
+    assert settings.users_service_url == "http://users-directory.internal.example:8080"
     assert settings.users_service_token == "secret-token"
     assert settings.rbac_policy_path == str(policy)
     assert settings.google_allowed_domain == "example.com"
@@ -230,7 +227,6 @@ def test_catalog_snapshot_path_read_from_env(monkeypatch, tmp_path: Path):
         encoding="utf-8",
     )
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_MODE", "enforce")
-    monkeypatch.delenv("KEYSTONE_MCP_RBAC_ENABLED", raising=False)
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_POLICY_PATH", str(policy))
     monkeypatch.setenv("KEYSTONE_MCP_REDIS_URL", "redis://localhost:6379/0")
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT", "test-salt")
@@ -246,7 +242,6 @@ def test_missing_catalog_snapshot_file_is_refused(monkeypatch, tmp_path: Path):
         encoding="utf-8",
     )
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_MODE", "enforce")
-    monkeypatch.delenv("KEYSTONE_MCP_RBAC_ENABLED", raising=False)
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_POLICY_PATH", str(policy))
     monkeypatch.setenv("KEYSTONE_MCP_REDIS_URL", "redis://localhost:6379/0")
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT", "test-salt")
@@ -257,7 +252,6 @@ def test_missing_catalog_snapshot_file_is_refused(monkeypatch, tmp_path: Path):
 
 def test_catalog_snapshot_not_required_when_rbac_off(monkeypatch):
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_MODE", "off")
-    monkeypatch.delenv("KEYSTONE_MCP_RBAC_ENABLED", raising=False)
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_CATALOG_SNAPSHOT", "/no/such/snapshot.yaml")
     settings = load_settings()
     assert settings.rbac_enabled is False
@@ -316,10 +310,10 @@ def test_upstream_tool_timeouts_default_to_empty(monkeypatch):
 def test_upstream_tool_timeouts_parsed_from_json(monkeypatch):
     monkeypatch.setenv(
         "KEYSTONE_MCP_UPSTREAM_TOOL_TIMEOUTS",
-        '{"catalog_advance": 30, "catalog_export": 12.5}',
+        '{"reports_build": 30, "catalog_export": 12.5}',
     )
     timeouts = Settings().upstream_tool_timeouts
-    assert timeouts == {"catalog_advance": 30.0, "catalog_export": 12.5}
+    assert timeouts == {"reports_build": 30.0, "catalog_export": 12.5}
     assert all(isinstance(value, float) for value in timeouts.values())
 
 
@@ -330,15 +324,15 @@ def test_upstream_tool_timeouts_rejects_malformed_json(monkeypatch):
 
 
 def test_upstream_tool_timeouts_rejects_non_object(monkeypatch):
-    monkeypatch.setenv("KEYSTONE_MCP_UPSTREAM_TOOL_TIMEOUTS", '["catalog_advance"]')
+    monkeypatch.setenv("KEYSTONE_MCP_UPSTREAM_TOOL_TIMEOUTS", '["reports_build"]')
     with pytest.raises(ConfigError, match="must be a JSON object"):
         Settings()
 
 
 @pytest.mark.parametrize("value", ['"30"', "null", "true", "-5", "0"])
 def test_upstream_tool_timeouts_rejects_non_positive_numbers(monkeypatch, value: str):
-    monkeypatch.setenv("KEYSTONE_MCP_UPSTREAM_TOOL_TIMEOUTS", '{"catalog_advance": %s}' % value)
-    with pytest.raises(ConfigError, match="catalog_advance"):
+    monkeypatch.setenv("KEYSTONE_MCP_UPSTREAM_TOOL_TIMEOUTS", '{"reports_build": %s}' % value)
+    with pytest.raises(ConfigError, match="reports_build"):
         Settings()
 
 
@@ -368,52 +362,11 @@ def test_login_langs_match_the_shipped_translation_table():
     assert set(TRANSLATIONS) == set(LOGIN_LANGS)
 
 
-# ── Deprecated RBAC_ENABLED alias ───────────────────────────────────────────
-def test_legacy_rbac_enabled_still_maps_to_enforce(monkeypatch, tmp_path: Path):
-    monkeypatch.delenv("KEYSTONE_MCP_RBAC_MODE", raising=False)
-    monkeypatch.setenv("KEYSTONE_MCP_RBAC_ENABLED", "true")
-    assert Settings().rbac_mode == "enforce"
-
-
-def test_legacy_rbac_enabled_warns_about_deprecation(monkeypatch, caplog):
-    monkeypatch.delenv("KEYSTONE_MCP_RBAC_MODE", raising=False)
-    monkeypatch.setenv("KEYSTONE_MCP_RBAC_ENABLED", "true")
-    with caplog.at_level("WARNING", logger="keystone_mcp.config"):
-        Settings()
-    messages = [record.getMessage() for record in caplog.records]
-    assert any("KEYSTONE_MCP_RBAC_ENABLED is deprecated" in message for message in messages)
-    assert any("KEYSTONE_MCP_RBAC_MODE" in message for message in messages)
-
-
-def test_legacy_rbac_enabled_false_also_warns(monkeypatch, caplog):
-    """Setting it at all is deprecated, whatever the value."""
-    monkeypatch.delenv("KEYSTONE_MCP_RBAC_MODE", raising=False)
-    monkeypatch.setenv("KEYSTONE_MCP_RBAC_ENABLED", "false")
-    with caplog.at_level("WARNING", logger="keystone_mcp.config"):
-        settings = Settings()
-    assert settings.rbac_mode == "off"
-    assert any(
-        "KEYSTONE_MCP_RBAC_ENABLED is deprecated" in record.getMessage()
-        for record in caplog.records
-    )
-
-
-def test_rbac_mode_alone_does_not_warn(monkeypatch, caplog):
-    monkeypatch.delenv("KEYSTONE_MCP_RBAC_ENABLED", raising=False)
-    monkeypatch.setenv("KEYSTONE_MCP_RBAC_MODE", "off")
-    with caplog.at_level("WARNING", logger="keystone_mcp.config"):
-        Settings()
-    assert not [
-        record for record in caplog.records if "KEYSTONE_MCP_RBAC_ENABLED" in record.getMessage()
-    ]
-
-
 # ── Audit subject salt is required, not merely advised ──────────────────────
 def _rbac_env(monkeypatch, tmp_path: Path) -> None:
     policy = tmp_path / "rbac-policy.yaml"
     policy.write_text("default_deny: true\nroles: {}\n", encoding="utf-8")
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_MODE", "enforce")
-    monkeypatch.delenv("KEYSTONE_MCP_RBAC_ENABLED", raising=False)
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_POLICY_PATH", str(policy))
     monkeypatch.setenv("KEYSTONE_MCP_REDIS_URL", "redis://localhost:6379/0")
 
@@ -444,7 +397,6 @@ def test_salt_not_required_when_audit_is_off(monkeypatch, tmp_path: Path):
 
 def test_salt_not_required_when_rbac_is_off(monkeypatch):
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_MODE", "off")
-    monkeypatch.delenv("KEYSTONE_MCP_RBAC_ENABLED", raising=False)
     monkeypatch.delenv("KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT", raising=False)
     settings = load_settings()
     assert settings.rbac_enabled is False
@@ -468,16 +420,14 @@ def test_dev_tokens_are_refused_in_production(monkeypatch, tmp_path: Path):
         load_settings()
 
 
-def test_dev_tokens_with_enforce_allowed_when_auth_service_configured(
-    monkeypatch,
-    tmp_path: Path,
-):
+def test_dev_tokens_refused_when_auth_service_env_is_set(monkeypatch, tmp_path: Path):
     _rbac_env(monkeypatch, tmp_path)
     monkeypatch.setenv("KEYSTONE_MCP_DEV_TOKENS", "local-dev-token")
     monkeypatch.setenv("KEYSTONE_MCP_AUTH_SERVICE_URL", "http://auth:9000/introspect")
     monkeypatch.setenv("KEYSTONE_MCP_AUTH_SERVICE_TOKEN", "auth-token")
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT", "test-salt")
-    load_settings()
+    with pytest.raises(ConfigError, match="KEYSTONE_MCP_AUTH_SERVICE_URL"):
+        load_settings()
 
 
 def test_dev_tokens_with_enforce_allowed_in_local(monkeypatch, tmp_path: Path):

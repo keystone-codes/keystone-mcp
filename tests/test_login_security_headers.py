@@ -15,10 +15,10 @@ import pytest
 from asgi_lifespan import LifespanManager
 
 from conftest import BASE_URL, REDIRECT_URI, VALID_TOKEN, authorize_to_login, make_pkce
-from keystone_mcp.auth.identity_provider import StaticIdentityProvider
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import Settings
 from keystone_mcp.server import build_server
+from support.login import dev_token_login
 
 PROVIDER_PATH = (
     Path(__file__).resolve().parent.parent
@@ -31,10 +31,10 @@ PROVIDER_PATH = (
 
 def _build_app(**settings_overrides):
     settings = Settings(base_url=BASE_URL, refresh_interval_seconds=0, **settings_overrides)
-    idp = StaticIdentityProvider({VALID_TOKEN})
+    _login = dev_token_login({VALID_TOKEN})
     store = InMemoryOAuthStore()
     mcp, *_rest = build_server(
-        identity_provider=idp,
+        login_providers=[_login],
         settings=settings,
         oauth_store=store,
         register_builtin_catalog=False,
@@ -108,6 +108,13 @@ async def test_post_login_with_invalid_token_has_security_headers():
 
 @pytest.mark.asyncio
 async def test_get_login_google_disabled_has_security_headers():
+    """X03: with Google disabled, no ``/login/google`` route is registered at all.
+
+    Keystone only registers a route per *configured* redirect login
+    provider, so this is now a bare Starlette 404 rather than a Keystone
+    error page — it carries no security headers of Keystone's own, since
+    no Keystone handler ever runs for it.
+    """
     app = _build_app()
     async with LifespanManager(app):
         async with httpx.AsyncClient(
@@ -115,7 +122,6 @@ async def test_get_login_google_disabled_has_security_headers():
         ) as client:
             resp = await client.get("/login/google", params={"txn": "x"})
             assert resp.status_code == 404
-            _assert_security_headers(resp)
 
 
 @pytest.mark.asyncio

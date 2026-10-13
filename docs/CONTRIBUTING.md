@@ -34,9 +34,11 @@ Dependabot runs weekly on the `uv` ecosystem and only touches `uv.lock`
 (`versioning-strategy: lockfile-only`); it does not raise the lower bounds in
 `pyproject.toml`, since those also constrain whoever installs this package
 elsewhere. Minor and patch updates land together in one grouped PR; major
-updates (other than `fastmcp`) get their own PR. `fastmcp` major updates are
-ignored for the whole 0.4.x line — we stay on `fastmcp==3.4.4`. To update a
-dependency by hand: `uv lock --upgrade-package <name>`.
+updates (other than `fastmcp` and `mcp`) get their own PR. Major upgrades of
+`fastmcp` and `mcp` are ignored by Dependabot and done as planned work (we
+currently run `fastmcp>=4.1,<5`, MCP SDK 2). Why: [ADR 0010](adr/0010-fastmcp-major-version.md).
+To update a dependency by hand:
+`uv lock --upgrade-package <name>`.
 
 ## Running the tests
 
@@ -68,15 +70,34 @@ In CI, a `postgres:16-alpine` service is always available and
 not skipped (`tests/test_users_migrations.py::test_postgres_is_configured_in_ci`
 fails the build if they would silently skip).
 
+The suite must pass without reruns or forced ordering; a flaky test is a bug
+to fix, not to retry (`tests/test_ci_hygiene.py`).
+
 CI runs the suite on Python 3.11, 3.12 and 3.13.
+
+Changing a protocol in `keystone_mcp.login` or `keystone_mcp.user_directory`
+means changing the contract tests in the same pull request; the contract is
+frozen from 0.5.0.
+
+## Changing a public contract
+
+Public contracts are listed in [compatibility.md](compatibility.md). A new
+environment variable needs a `config.py` read, `.env.example`,
+[environment.md](environment.md), a row in `compatibility.md`, and an append to
+`tests/data/frozen-env-vars.txt`. Deprecate via the rule in that document; remove
+only in a major release through `REMOVED_VARIABLES` and a `### Removed` changelog
+entry. Policy keys and CLI commands follow the same append-only frozen lists.
+CI enforces this in `tests/test_contract_freeze.py`.
 
 ## Security checks
 
 CI runs a dependency audit (`uv audit`, OSV database) on every pull request
-and weekly, and a container image scan (Trivy) on every pull request. The
-dependency audit is blocking; the image scan is informational only (it
-reports Debian base-image CVEs that may have no fix yet) and does not block
-the pull request. See [`SECURITY.md`](../SECURITY.md).
+and weekly, and a container image scan (Trivy) on every pull request and
+before every release. Both are blocking: a fixable CRITICAL or HIGH
+vulnerability fails the build. See [`SECURITY.md`](../SECURITY.md).
+
+Image scan blocks the pull request. To accept a finding temporarily, add it
+to `.trivyignore` with a reason and a review date.
 
 To run the same checks locally:
 
@@ -86,11 +107,12 @@ uv audit --frozen
 
 ```bash
 docker build -t keystone-mcp:scan .
-trivy image --severity CRITICAL,HIGH --ignore-unfixed keystone-mcp:scan
+trivy image --severity CRITICAL,HIGH --ignore-unfixed --ignorefile .trivyignore keystone-mcp:scan
 ```
 
 ## Before opening a pull request
 
+- `tests/test_no_legacy_terms.py` rejects internal labels of the original platform; use the neutral terms it suggests.
 - Keep the test suite green: `pytest -q`.
 - `uv run pytest tests/test_doc_links.py` checks every relative link and
   heading anchor in the Markdown docs.
@@ -129,11 +151,34 @@ image unless all three (plus the tag itself) agree
    pushing the tag; it fails with a clear message if anything is out of
    sync. Pre-release tags (`vX.Y.Z-rc1`) are not supported.
 
-Once the tag is pushed, the `release.yml` workflow (`version-gate` →
-`test` → `publish` → `github-release`) builds the image for both
-`linux/amd64` and `linux/arm64`, starts the `linux/amd64` build against Redis
-and checks it over HTTP (`scripts/smoke_image.sh`: `/healthz`, `/readyz`,
-the container `HEALTHCHECK` status, and the non-root uid) before publishing
-anything, pushes both platforms to GHCR, and creates a GitHub Release whose
-notes are the matching `CHANGELOG.md` section
-(`scripts/extract_changelog.py`).
+Once the tag is pushed, the `release.yml` workflow (`version-gate` → `test` →
+`build-dist` → `wheel-smoke` → `image-scan` → `publish` → `pypi` →
+`github-release`) builds the image for both `linux/amd64` and `linux/arm64`,
+runs the same Trivy scan as the pull-request gate against it — a fixable
+HIGH or CRITICAL finding blocks `publish` — starts the `linux/amd64` build
+against Redis and checks it over HTTP (`scripts/smoke_image.sh`:
+`/healthz`, `/readyz`, the container `HEALTHCHECK` status, and the non-root
+uid) before publishing anything, pushes both platforms to GHCR, builds the
+wheel and sdist with `uv build`, checks them against the same version with
+`scripts/check_version.py --dist-dir` and installs the wheel into a clean
+virtualenv for a second `/healthz`/`/readyz` smoke test
+(`scripts/smoke_wheel.sh`), publishes the
+package to PyPI as `keystone-mcp-gateway` via trusted publishing (no API
+token in secrets; `pypa/gh-action-pypi-publish`) once the image is
+published, and creates a GitHub Release whose notes are the matching
+`CHANGELOG.md` section (`scripts/extract_changelog.py`).
+
+The first release ever needs a one-time, outside-this-repo setup: on
+pypi.org, under the organization account, "Your projects → Publishing → Add
+a new pending publisher" for PyPI project name `keystone-mcp-gateway`,
+owner `keystone-codes`, repository `keystone-mcp`, workflow `release.yml`,
+environment `pypi`; and in GitHub, Settings → Environments → create the
+`pypi` environment (optionally with required reviewers). A fork without
+that publisher configured sets the repository variable
+`SKIP_PYPI_PUBLISH=true` to skip the `pypi` job without failing the release
+(the same pattern as `SKIP_GHCR_PUSH` for the image).
+
+`release.yml` also supports a manual `workflow_dispatch` run (`dry_run`
+input, default `true`) to exercise `version-gate` and `build-dist` without a
+release tag and without publishing anything — see the workflow file for
+exactly what it skips.

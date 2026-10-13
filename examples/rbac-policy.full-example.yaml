@@ -36,8 +36,6 @@ roles:
       - ledger_read
       - ledger_propose
       - ledger_commit
-      - create_upload_url
-      - get_download_link
 
   reviewer:
     description: >-
@@ -47,7 +45,6 @@ roles:
       - reports_approve_*
       - ledger_propose
       - ledger_commit
-      - get_download_link
 
   viewer:
     description: "Read-only."
@@ -56,7 +53,6 @@ roles:
       - reports_list
       - documents_read
       - ledger_read
-      - get_download_link
 
 # ── deny ─────────────────────────────────────────────────────────────────────
 # Global kill list. A tool matched here is denied for every role, including a
@@ -75,8 +71,8 @@ requires_human_identity:
 # ── critical_tools ───────────────────────────────────────────────────────────
 # Tools whose role resolution must be synchronous — the allow cache is bypassed
 # so a just-revoked role takes effect immediately. Costs one directory call per
-# invocation, so list only what matters. users_*, create_upload_url and
-# get_download_link are always critical and need not be repeated here.
+# invocation, so list only what matters. users_* is always critical and need
+# not be repeated here.
 critical_tools:
   - ledger_*
   - reports_approve_*
@@ -103,9 +99,7 @@ tool_dispositions:
     - reports_list
     - documents_read
     - ledger_read
-    - get_download_link
   W:
     - documents_*
     - reports_*
     - ledger_*
-    - create_upload_url

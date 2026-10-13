@@ -11,12 +11,12 @@ from mcp.server.auth.provider import AccessToken
 
 from conftest import BASE_URL as HTTP_BASE_URL
 from conftest import VALID_TOKEN, obtain_access_token, refresh_access_token
-from keystone_mcp.auth.identity_provider import StaticIdentityProvider
 from keystone_mcp.auth.keystone_oauth_provider import KeystoneOAuthProvider
 from keystone_mcp.auth.login_pending_store import InMemoryLoginPendingStore
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import Settings, resources_equivalent
 from keystone_mcp.server import build_server
+from support.login import dev_token_login
 
 BASE_URL = "https://mcp.example.com"
 
@@ -72,10 +72,14 @@ def _provider(**overrides) -> tuple[KeystoneOAuthProvider, InMemoryOAuthStore, S
     settings = Settings(base_url=BASE_URL, **overrides)
     store = InMemoryOAuthStore()
     provider = KeystoneOAuthProvider(
-        StaticIdentityProvider({"token"}),
         settings,
         store,
         InMemoryLoginPendingStore(),
+        login_providers=[
+            dev_token_login(
+                {"token"} if isinstance({"token"}, set) else set({"token"}) if False else {"token"}
+            )
+        ],
     )
     return provider, store, settings
 
@@ -148,10 +152,10 @@ async def test_equivalent_spellings_of_our_own_resource_are_accepted(strict: boo
 async def _http_app(**settings_overrides):
     """Build a KeystoneOAuthProvider behind a live ASGI app with custom settings."""
     settings = Settings(base_url=HTTP_BASE_URL, **settings_overrides)
-    idp = StaticIdentityProvider({VALID_TOKEN})
+    _login = dev_token_login({VALID_TOKEN})
     store = InMemoryOAuthStore()
     mcp, _registry, oauth, _upstreams, _policy_manager, _observability, _reconciler = build_server(
-        identity_provider=idp, settings=settings, oauth_store=store
+        login_providers=[_login], settings=settings, oauth_store=store
     )
     app = mcp.http_app(path=settings.http_path)
     return app, oauth, settings
@@ -203,7 +207,8 @@ async def test_legacy_plain_marker_is_read():
     provider, _store, _settings = _provider()
     await provider._pending_store.put("refresh_auth", "km_rt_legacy", "google", 3600)
 
-    auth_method, resource = await provider._read_refresh_meta("km_rt_legacy")
+    auth_method, resource, interactive = await provider._read_refresh_meta("km_rt_legacy")
 
     assert auth_method == "google"
     assert resource is None
+    assert interactive is True

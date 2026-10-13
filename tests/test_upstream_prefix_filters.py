@@ -121,7 +121,7 @@ async def test_discover_splits_one_facade_by_prefix() -> None:
         sub = upstreams._sub_servers[cfg.namespace]
         adapter = upstreams._adapters[cfg.namespace]
         tools = [
-            SimpleNamespace(name=name, description="", inputSchema={}) for name in FACADE_TOOLS
+            SimpleNamespace(name=name, description="", input_schema={}) for name in FACADE_TOOLS
         ]
         registered = 0
         for tool in tools:
@@ -283,7 +283,7 @@ async def test_discover_routes_present_confirm_to_rulebook_namespace() -> None:
         sub = upstreams._sub_servers[cfg.namespace]
         adapter = upstreams._adapters[cfg.namespace]
         tools = [
-            SimpleNamespace(name=name, description="", inputSchema={})
+            SimpleNamespace(name=name, description="", input_schema={})
             for name in RULEBOOK_FACADE_TOOLS
         ]
         registered = 0

@@ -3,16 +3,19 @@
 
 FROM python:3.12-slim
 
-# Pinned to the "mcp" version Keystone-MCP itself locks (see ../../uv.lock),
-# so the demo exercises the same SDK release.
-RUN pip install --no-cache-dir mcp==1.28.1
+# Pinned to MCP Python SDK 1.x on purpose: Keystone-MCP itself moved to SDK 2
+# (see ../../uv.lock), so this demo upstream deliberately stays behind to
+# exercise the older handshake protocol through Keystone-MCP's proxy.
+# pyjwt verifies X-Keystone-Identity (see keystone_identity.py); pinned to
+# the same version Keystone-MCP itself uses (../../uv.lock).
+RUN pip install --no-cache-dir mcp==1.28.1 pyjwt==2.15.1
 
 RUN groupadd --system --gid 10001 hello \
     && useradd --system --uid 10001 --gid hello \
        --home-dir /nonexistent --no-create-home --shell /usr/sbin/nologin hello
 
 WORKDIR /app
-COPY server.py ./server.py
+COPY server.py keystone_identity.py ./
 
 USER hello:hello
 EXPOSE 8081

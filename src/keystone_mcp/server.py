@@ -10,18 +10,16 @@ from __future__ import annotations
 import asyncio
 import logging
 import signal
+import sys
+from collections.abc import Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+import mcp_types
 from fastmcp import FastMCP
 
 from keystone_mcp.adapters.users_admin import RoleSource
-from keystone_mcp.auth.identity_provider import (
-    AuthServiceIdentityProvider,
-    IdentityProvider,
-    StaticIdentityProvider,
-)
 from keystone_mcp.auth.keystone_oauth_provider import KeystoneOAuthProvider
 from keystone_mcp.auth.login_pending_store import (
     InMemoryLoginPendingStore,
@@ -32,10 +30,10 @@ from keystone_mcp.auth.oauth_store import (
     OAuthStore,
     build_shared_auth_stores,
 )
+from keystone_mcp.auth.sessions import SessionRevoker
 from keystone_mcp.auth.throttle import PerIdentityThrottle
 from keystone_mcp.catalog import register_catalog
 from keystone_mcp.config import (
-    AUTH_SERVICE_URL_WITHOUT_TOKEN_ERROR,
     ConfigError,
     Settings,
     client_address_allowed,
@@ -47,6 +45,13 @@ from keystone_mcp.env_file import load_env_file
 from keystone_mcp.http.access_log import AccessLogMiddleware
 from keystone_mcp.http.host_guard import HostGuardMiddleware
 from keystone_mcp.http.readiness import ReadinessProbe
+from keystone_mcp.login.factory import (
+    api_key_login_configured,
+    build_login_providers,
+    login_providers_want_directory_resolver,
+    validate_login_providers,
+)
+from keystone_mcp.login.protocol import LoginProvider
 from keystone_mcp.observability import RbacObservability
 from keystone_mcp.observability.logging import configure_logging
 from keystone_mcp.rbac.catalog import (
@@ -56,6 +61,7 @@ from keystone_mcp.rbac.catalog import (
 )
 from keystone_mcp.rbac.loader import PolicyLoadError, RbacPolicyManager
 from keystone_mcp.rbac.policy import PolicyContractError
+from keystone_mcp.rbac.policy_store import PolicyStore
 from keystone_mcp.router.engine import RouterEngine
 from keystone_mcp.router.proxy_schema import load_proxy_schema_patches
 from keystone_mcp.router.rbac_middleware import RbacMiddleware
@@ -65,9 +71,17 @@ from keystone_mcp.router.tool_call_observability_middleware import (
     ToolCallObservabilityMiddleware,
 )
 from keystone_mcp.router.upstream import UpstreamRegistry, UpstreamUnavailableError
+from keystone_mcp.surface.client_sessions import (
+    ClientSessionRegistry,
+    SessionTrackingMiddleware,
+)
 from keystone_mcp.surface.reconciler import SurfaceReconciler, surface_reconciler_lifespan
-from keystone_mcp.user_directory.factory import build_user_directory_resolver
-from keystone_mcp.user_directory.protocol import UserDirectoryResolver
+from keystone_mcp.user_directory.factory import (
+    build_user_directory,
+    build_user_directory_resolver,
+    validate_directory_capabilities,
+)
+from keystone_mcp.user_directory.protocol import UserDirectory, UserDirectoryResolver
 from keystone_mcp.user_directory.revision import InMemoryRevisionReader
 from keystone_mcp.users.bootstrap import UsersBootstrapError, bootstrap_users_store
 from keystone_mcp.users.db import UsersConfigError
@@ -81,13 +95,38 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _reconciler_holder: dict[str, SurfaceReconciler | None] = {"reconciler": None}
+_upstreams_holder: dict[str, UpstreamRegistry | None] = {"upstreams": None}
 _users_store_holder: dict[str, UsersStore | None] = {"store": None}
+_login_providers_holder: dict[str, list[LoginProvider] | None] = {"providers": None}
+_client_sessions_holder: dict[str, ClientSessionRegistry | None] = {"registry": None}
+#: The PolicyStore built by the most recent build_server() call, for whatever
+#: wants to reach it outside the return tuple (a later card's policy_* tool
+#: adapter, a CLI). None whenever RBAC does not enforce or POLICY_TOOLS=off.
+_policy_store_holder: dict[str, PolicyStore | None] = {"store": None}
+_session_revoker_holder: dict[str, SessionRevoker | None] = {"revoker": None}
 
 
 @asynccontextmanager
 async def _keystone_lifespan(_server: FastMCP):
-    async with surface_reconciler_lifespan(_reconciler_holder.get("reconciler")):
-        yield {}
+    upstreams = _upstreams_holder.get("upstreams")
+    try:
+        if upstreams is not None:
+            await upstreams.start_connections()
+        async with surface_reconciler_lifespan(_reconciler_holder.get("reconciler")):
+            yield {}
+    finally:
+        if upstreams is not None:
+            await upstreams.stop_connections()
+        client_sessions = _client_sessions_holder.get("registry")
+        if client_sessions is not None:
+            client_sessions.close()
+        login_providers = _login_providers_holder.get("providers")
+        if login_providers:
+            for provider in login_providers:
+                try:
+                    await provider.aclose()
+                except Exception:  # noqa: BLE001 - shutdown must not be blocked by one provider
+                    logger.exception("error closing login provider %s", provider.name)
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,26 +142,6 @@ class UpstreamDiscoveryResult:
     @property
     def total_tools(self) -> int:
         return sum(self.counts.values())
-
-
-def build_identity_provider(settings: Settings) -> IdentityProvider:
-    """Select dev-token or auth-service introspection based on configuration.
-
-    ``validate_settings`` already refuses an auth-service URL without a token at
-    startup; the same check is repeated here as defence-in-depth for callers
-    that assemble a server without going through ``load_settings``.
-    """
-    url = settings.auth_service_url.strip()
-    token = settings.auth_service_token.strip()
-    if url and not token:
-        raise ConfigError(AUTH_SERVICE_URL_WITHOUT_TOKEN_ERROR)
-    if url and token:
-        logger.warning(
-            "KEYSTONE_MCP_AUTH_SERVICE_URL / KEYSTONE_MCP_AUTH_SERVICE_TOKEN are deprecated "
-            "and will be removed in 0.4.1; API keys move into the built-in users directory."
-        )
-        return AuthServiceIdentityProvider(url, token)
-    return StaticIdentityProvider({token for token in settings.dev_tokens.split(",") if token})
 
 
 def policy_role_source(policy_manager: RbacPolicyManager | None) -> RoleSource:
@@ -146,15 +165,15 @@ def policy_role_source(policy_manager: RbacPolicyManager | None) -> RoleSource:
 
 
 def build_server(
-    identity_provider: IdentityProvider | None = None,
     settings: Settings | None = None,
     register_builtin_catalog: bool = True,
     oauth_store: OAuthStore | None = None,
     login_pending_store: LoginPendingStore | None = None,
     user_resolver: UserDirectoryResolver | None = None,
-    google_oidc_client: object | None = None,
     observability: RbacObservability | None = None,
     users_store: UsersStore | None = None,
+    login_providers: Sequence[LoginProvider] | None = None,
+    user_directory: UserDirectory | None = None,
 ) -> tuple[
     FastMCP,
     RouterRegistry,
@@ -170,8 +189,12 @@ def build_server(
     routes, and seed valid tokens.
     """
     settings = settings or load_settings()
-    if identity_provider is None:
-        identity_provider = build_identity_provider(settings)
+    auto_login_providers = login_providers is None
+    provisional_login_providers = login_providers
+    if provisional_login_providers is None:
+        provisional_login_providers = build_login_providers(settings, resolver=None)
+    validate_login_providers(provisional_login_providers)
+    login_providers = provisional_login_providers
 
     if oauth_store is None:
         store, pending_store = build_shared_auth_stores(settings)
@@ -226,23 +249,73 @@ def build_server(
     # KEYSTONE_MCP_DEV_TOKENS set at all — the vulnerability this closes does
     # not apply there, and auto-building a resolver for them would demand an
     # unrelated, repo-wide rewrite of every such test's login fixtures.
+    #
+    # Later finding: the gate used to key off ``settings.google_login_enabled``
+    # specifically, so a deployment that passes its own ``login_providers``
+    # (a custom redirect or form provider, not the built-in Google one) never
+    # got a resolver built for it at all — the directory check silently
+    # never ran (``handle_login`` skips it when ``user_resolver is None``),
+    # and a custom *redirect* provider's callback got a hard 503 on every
+    # sign-in instead (``handle_login_callback`` requires one). The gate is
+    # keyed off the actually-configured provider set instead: any provider
+    # other than the single built-in ``api_key`` one needs a resolver, since
+    # 0.5's directory check is this gate's reason to exist, not a property
+    # specific to Google. The one case kept exactly as before is "only the
+    # built-in api_key form, nothing else" — the 0.4.0 compatibility case
+    # above still applies unchanged there.
     dev_tokens_configured = bool({t for t in settings.dev_tokens.split(",") if t.strip()})
     local_users_directory_ready = settings.users_backend == "local" or (
         settings.users_backend == "http" and settings.users_service_url.strip()
     )
+    only_builtin_api_key_provider = (
+        len(login_providers) == 1 and login_providers[0].name == "api_key"
+    )
     directory_resolver: UserDirectoryResolver | None = user_resolver
-    if directory_resolver is None and (
-        settings.google_login_enabled
-        or settings.rbac_enabled
+    resolver_needed = directory_resolver is None and (
+        settings.rbac_enabled
+        or (len(login_providers) > 0 and not only_builtin_api_key_provider)
+        or (only_builtin_api_key_provider and dev_tokens_configured and local_users_directory_ready)
         or (
-            settings.api_key_login_enabled and dev_tokens_configured and local_users_directory_ready
+            local_users_directory_ready and login_providers_want_directory_resolver(login_providers)
         )
-    ):
+    )
+    # Built independently of whether a resolver was injected or auto-built
+    # above (an embedding process, or a test, may supply its own resolver for
+    # login/RBAC while still wanting the catalog's users_* tools wired to the
+    # real directory) -- register_catalog needs this whenever RBAC enforces,
+    # the resolver-building branch below needs it whenever it runs at all.
+    directory: UserDirectory | None = user_directory
+    if directory is not None:
+        # build_user_directory() already runs this check on the directory it
+        # builds; a directory passed in directly (an embedding process, a
+        # test, a plugin) gets the same refusal for declaring "admin"
+        # without implementing UserDirectoryAdmin.
+        directory = validate_directory_capabilities(directory)
+    if directory is None and (resolver_needed or settings.rbac_enforcing):
+        directory = build_user_directory(settings, users_store=users_store)
+    if resolver_needed:
         directory_resolver = build_user_directory_resolver(
             settings,
-            users_store=users_store,
+            directory=directory,
             revision_reader=shared_revision,
         )
+
+    if auto_login_providers:
+        login_providers = build_login_providers(settings, resolver=directory_resolver)
+        validate_login_providers(login_providers)
+
+    if (
+        api_key_login_configured(settings)
+        and directory is not None
+        and "api_keys" not in directory.capabilities
+    ):
+        raise ConfigError(
+            "API-key sign-in needs a users directory that stores API keys "
+            "(KEYSTONE_MCP_USERS_BACKEND=local). Remove api_key from the login "
+            "providers or switch the directory."
+        )
+
+    _login_providers_holder["providers"] = list(login_providers)
 
     # Built before the OAuth provider (rather than alongside registry/upstream
     # wiring further down) so the provider itself can record client
@@ -255,7 +328,11 @@ def build_server(
     # populated), so the forward reference to a not-yet-assigned local is safe
     # (P06).
     policy_manager = (
-        RbacPolicyManager(settings, upstream_catalog_state=lambda: upstreams.catalog_state())
+        RbacPolicyManager(
+            settings,
+            upstream_catalog_state=lambda: upstreams.catalog_state(),
+            extra_catalog_names=lambda: upstreams.content.rbac_names(),
+        )
         if settings.rbac_enabled
         else None
     )
@@ -264,19 +341,38 @@ def build_server(
         policy_manager=policy_manager,
     )
 
+    session_revoker = SessionRevoker(store, pending_store)
+    _session_revoker_holder["revoker"] = session_revoker
+
     oauth = KeystoneOAuthProvider(
-        identity_provider,
         settings,
         store,
         pending_store,
+        login_providers=login_providers,
         user_resolver=directory_resolver,
-        google_oidc_client=google_oidc_client,
         observability=rbac_observability,
     )
     mcp = FastMCP(name="keystone-mcp", auth=oauth, lifespan=_keystone_lifespan)
 
-    # Login page: GET renders the credential form, POST validates the api_token
-    # and issues the authorization code (no code on failure).
+    # Tracks open connections (handshake era) and ``subscriptions/listen``
+    # streams (2026-07-28 era) so the surface reconciler can notify them of a
+    # catalog change, a policy reload or a users-directory change (Y05).
+    # Registered on the private low-level server (``FastMCP._mcp_server``,
+    # the same field X01 documented as closed API) so the SDK advertises
+    # ``tools.listChanged=true`` to 2026-07-28 clients -- FastMCP 4.1 does not
+    # serve ``subscriptions/listen`` on its own (test-sentinel:
+    # ``test_list_changed_is_advertised_on_both_eras``).
+    client_sessions = ClientSessionRegistry()
+    mcp._mcp_server.add_request_handler(
+        "subscriptions/listen",
+        mcp_types.SubscriptionsListenRequestParams,
+        client_sessions.listen_handler,
+    )
+    _client_sessions_holder["registry"] = client_sessions
+
+    # Login page: GET renders the consent screen, POST validates the single
+    # configured form-kind provider's credentials and issues the
+    # authorization code (no code on failure).
     @mcp.custom_route("/login", methods=["GET"])
     async def _login_get(request):  # noqa: ANN001
         return await oauth.render_login(request)
@@ -285,20 +381,39 @@ def build_server(
     async def _login_post(request):  # noqa: ANN001
         return await oauth.handle_login(request)
 
-    @mcp.custom_route("/login/google", methods=["GET"])
-    async def _login_google(request):  # noqa: ANN001
-        return await oauth.start_google_login(request)
+    # One GET/POST/callback trio per configured redirect provider (X03): a
+    # provider that is not configured gets no route at all, so a request for
+    # it 404s from Starlette's own routing rather than a Keystone error page.
+    # The provider named "google" gets exactly the paths it always has
+    # (/login/google, /login/google/callback — S4), since _callback_url()
+    # builds that address from the name the same way for every provider.
+    for _provider in login_providers:
+        if _provider.kind != "redirect":
+            continue
 
-    # Consent screen's "Sign in with Google" button posts here (CSRF-checked)
-    # instead of following a bare link, so the federated-login redirect cannot
-    # be triggered from a cross-site page or an emailed URL (A13).
-    @mcp.custom_route("/login/google", methods=["POST"])
-    async def _login_google_post(request):  # noqa: ANN001
-        return await oauth.start_google_login_post(request)
+        def _make_login_redirect_routes(_name: str = _provider.name):
+            async def _get(request):  # noqa: ANN001
+                return await oauth.start_login_redirect_get(request, _name)
 
-    @mcp.custom_route("/login/google/callback", methods=["GET"])
-    async def _login_google_callback(request):  # noqa: ANN001
-        return await oauth.handle_google_callback(request)
+            async def _post(request):  # noqa: ANN001
+                return await oauth.start_login_redirect(request, _name)
+
+            async def _callback(request):  # noqa: ANN001
+                return await oauth.handle_login_callback(request, _name)
+
+            return _get, _post, _callback
+
+        _login_get_handler, _login_post_handler, _login_callback_handler = (
+            _make_login_redirect_routes()
+        )
+        mcp.custom_route(f"/login/{_provider.name}", methods=["GET"])(_login_get_handler)
+        # Consent screen's provider button posts here (CSRF-checked) instead
+        # of following a bare link, so the redirect sign-in cannot be
+        # triggered from a cross-site page or an emailed URL (A13).
+        mcp.custom_route(f"/login/{_provider.name}", methods=["POST"])(_login_post_handler)
+        mcp.custom_route(f"/login/{_provider.name}/callback", methods=["GET"])(
+            _login_callback_handler
+        )
 
     # Where authorize() sends a request whose redirect_uri host is not on
     # KEYSTONE_MCP_OAUTH_ALLOWED_REDIRECT_HOSTS (A17): a local error page
@@ -318,10 +433,32 @@ def build_server(
         tool_timeout_overrides=dict(settings.upstream_tool_timeouts),
         schema_patches=load_proxy_schema_patches(settings.proxy_schema_patches_path),
         status_envelope=settings.proxy_status_envelope,
+        proxy_elicitation=settings.proxy_elicitation,
         discovery_retries=settings.upstream_discovery_retries,
         refresh_enabled=settings.refresh_interval_seconds > 0,
+        identity_issuer=settings.base_url.rstrip("/"),
+        _identity_signing_key_pem=settings.identity_signing_key,
     )
     upstreams.observability = rbac_observability
+    upstreams.rbac_mode = settings.rbac_mode
+
+    # Core of changing the RBAC policy through the agent instead of a server
+    # login: lets a later release's policy_* tools read and change the policy
+    # file with the same validation a hot-reload runs. Built whenever RBAC
+    # actually enforces (nothing to administer otherwise) and policy_tools !=
+    # "off" (an operator who wants no policy_* tools at all skips this too).
+    policy_store: PolicyStore | None = (
+        PolicyStore(
+            settings=settings,
+            policy_manager=policy_manager,
+            registry=registry,
+            observability=rbac_observability,
+            directory=directory,
+        )
+        if policy_manager is not None and settings.rbac_enforcing and settings.policy_tools != "off"
+        else None
+    )
+    _policy_store_holder["store"] = policy_store
 
     if settings.internal_endpoints_enabled:
 
@@ -341,12 +478,19 @@ def build_server(
             registry,
             settings,
             observability=rbac_observability,
-            users_store=users_store,
+            directory=directory,
             role_source=policy_role_source(policy_manager),
+            policy_store=policy_store,
+            session_revoker=session_revoker,
         )
         _warn_if_admin_tools_are_unguarded(registry, settings)
 
     _register_default_upstreams(upstreams, settings)
+
+    # Remembers a handshake-era connection even for a request that a later
+    # middleware throttles or RBAC denies, so added before every other
+    # middleware (test-sentinel: test_session_is_tracked_even_when_rbac_denies).
+    mcp.add_middleware(SessionTrackingMiddleware(client_sessions))
 
     # Throttling is enforced here and nowhere else, so one tool call consumes
     # exactly one slot whatever the RBAC mode. Added first, so it runs outermost
@@ -362,12 +506,31 @@ def build_server(
                 directory_resolver,
                 settings=settings,
                 observability=rbac_observability,
+                content_catalog=upstreams.content,
             )
         )
+
+    from keystone_mcp.router.upstream_uri_middleware import UpstreamResourceUriMiddleware
+
+    mcp.add_middleware(UpstreamResourceUriMiddleware(upstreams.content))
 
     mcp.add_middleware(
         ToolCallObservabilityMiddleware(observability=rbac_observability),
     )
+
+    from keystone_mcp.identity_assertion import IDENTITY_JWKS_PATH, build_identity_jwks
+
+    @mcp.custom_route(IDENTITY_JWKS_PATH, methods=["GET"])
+    async def _identity_jwks(_request):  # noqa: ANN001
+        from starlette.responses import JSONResponse, Response
+
+        private_key = upstreams._identity_es256_private_key
+        if private_key is None:
+            return Response(status_code=404)
+        return JSONResponse(
+            build_identity_jwks(private_key),
+            headers={"Cache-Control": "public, max-age=300"},
+        )
 
     @mcp.custom_route("/healthz", methods=["GET"])
     async def _healthz(_request):  # noqa: ANN001
@@ -375,10 +538,20 @@ def build_server(
 
         return JSONResponse({"status": "ok"})
 
+    # The HTTP directory's own availability already fails closed on every
+    # call that needs it (S16, see ReadinessProbe's module docstring): never
+    # poll it from /readyz, whatever object .backend happens to carry (a test
+    # double with no .name attribute is left alone, so it keeps exercising
+    # whatever ping() behavior it defines).
+    _readyz_backend = getattr(directory_resolver, "backend", None)
+    if getattr(_readyz_backend, "name", None) == "http":
+        _readyz_backend = None
     readiness_probe = ReadinessProbe(
         redis=getattr(store, "redis", None),
         policy_manager=policy_manager,
-        users_backend=getattr(directory_resolver, "backend", None),
+        users_backend=_readyz_backend,
+        upstreams=upstreams,
+        require_all=settings.upstream_require_all,
     )
 
     @mcp.custom_route("/readyz", methods=["GET"])
@@ -389,6 +562,7 @@ def build_server(
         body: dict[str, object] = {"status": "ok" if report.ready else "degraded"}
         if _is_trusted_internal_caller(request, settings):
             body["checks"] = dict(report.checks)
+            body["upstreams"] = upstreams.upstream_readiness_snapshot()
         return JSONResponse(body, status_code=200 if report.ready else 503)
 
     if settings.metrics_enabled:
@@ -418,8 +592,10 @@ def build_server(
             policy_manager=policy_manager,
             observability=rbac_observability,
             revision_reader=revision_reader,
+            client_sessions=client_sessions,
         )
     _reconciler_holder["reconciler"] = reconciler
+    _upstreams_holder["upstreams"] = upstreams
 
     return mcp, registry, oauth, upstreams, policy_manager, rbac_observability, reconciler
 
@@ -520,6 +696,13 @@ def _register_default_upstreams(upstreams: UpstreamRegistry, settings: Settings)
             discovery_timeout_seconds=cfg.discovery_timeout_seconds,
             tool_timeout_seconds=cfg.tool_timeout_seconds,
             bearer_env=cfg.bearer_env,
+            identity_secret_env=cfg.identity_secret_env,
+            identity_alg=cfg.identity_alg,
+            transport=cfg.transport,
+            command=cfg.command,
+            args=cfg.args,
+            env_from=cfg.env_from,
+            cwd=cfg.cwd,
         )
 
 
@@ -646,6 +829,21 @@ def install_policy_reload_signal(
     logger.info("rbac policy SIGHUP hot-reload handler installed")
 
 
+async def _warm_up_login_providers(login_providers: Sequence[LoginProvider]) -> None:
+    """Call ``warm_up()`` on every configured login provider, 5s timeout each.
+
+    A provider that times out or raises does not stop the server from
+    starting (X03): sign-in through it will simply fail until it recovers,
+    the same way an unreachable upstream does not block startup elsewhere in
+    this module.
+    """
+    for provider in login_providers:
+        try:
+            await asyncio.wait_for(provider.warm_up(), timeout=5)
+        except Exception as exc:  # noqa: BLE001 - logged and intentionally swallowed
+            logger.warning("login provider %s is not ready: %s", provider.name, type(exc).__name__)
+
+
 async def bootstrap_platform(
     upstreams: UpstreamRegistry,
     registry: RouterRegistry,
@@ -654,10 +852,13 @@ async def bootstrap_platform(
     *,
     observability: RbacObservability | None = None,
     users_store: UsersStore | None = None,
+    login_providers: Sequence[LoginProvider] | None = None,
 ) -> UpstreamDiscoveryResult:
-    """Migrate/seed the users directory, discover upstreams, then load RBAC policy."""
+    """Migrate/seed the users directory, warm up login providers, discover upstreams, load RBAC policy."""
     if users_store is not None:
         await bootstrap_users_store(users_store, settings)
+    if login_providers:
+        await _warm_up_login_providers(login_providers)
     discovery = await bootstrap_upstreams(upstreams, settings)
     if settings.upstream_require_all and discovery.unavailable:
         raise UpstreamUnavailableError(
@@ -699,8 +900,16 @@ def _http_asgi_middleware(settings: Settings) -> list:
 
 
 def main() -> None:
-    env_result = load_env_file()
-    settings = load_settings()
+    try:
+        env_result = load_env_file()
+        settings = load_settings()
+    except ConfigError as exc:
+        # No logging configuration exists yet at this point (configure_logging
+        # runs right after), so an uncaught ConfigError would otherwise print a
+        # full Python traceback; a misconfigured .env or environment variable
+        # is an operator mistake, not a bug, and deserves a one-line message.
+        print(f"keystone-mcp: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
     configure_logging(settings)
     logger.info("deployment profile: %s", settings.deployment_profile)
     for warning in startup_warnings(settings):
@@ -721,6 +930,7 @@ def main() -> None:
         raise SystemExit(1) from exc
 
     users_store = _users_store_holder["store"]
+    login_providers = _login_providers_holder["providers"]
     try:
         asyncio.run(
             bootstrap_platform(
@@ -730,6 +940,7 @@ def main() -> None:
                 policy_manager,
                 observability=observability,
                 users_store=users_store,
+                login_providers=login_providers,
             )
         )
     except UsersBootstrapError as exc:

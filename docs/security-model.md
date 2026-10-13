@@ -22,28 +22,37 @@ Google; the policy lets `analyst` call `reports_*` and nothing else.
 
 ### Who exists: the users directory
 
-Keystone-MCP keeps its own list of people — email, roles, blocked or not. It
-is built in by default, or an external HTTP service for forks (see
+Keystone-MCP keeps its own list of people — email, roles, blocked or not — and,
+in the built-in directory, **service accounts** for machine callers (`svc:<name>`,
+roles, no `administrator`, never treated as an interactive human). It is built
+in by default, or an external HTTP service for forks (see
 [environment.md#users-directory](environment.md#users-directory) for the
 backend switch). **Sign-in works only for an email that
 already exists in the users directory and is not blocked. Signing in never
 creates a person** — someone with access has to add them first with
 `users_add`, or they come from `KEYSTONE_MCP_SUPERADMIN_EMAIL` at the first
-start. Details, including recovering a lost administrator account, are in
-[users.md](users.md).
+start. Service accounts are created with `service_accounts_*` or the CLI; see
+[users.md](users.md). Details, including recovering a lost administrator
+account, are in [users.md](users.md).
 
 ### How they prove it: the sign-in secret
 
 - **Google** (`KEYSTONE_MCP_ENABLED_LOGIN_METHODS=google`) — the production
   method. The email Google verifies is looked up in the users directory,
   lower-cased first; an email can never carry different directory entries
-  through different casing.
+  through different casing. Google and any other interactive sign-in
+  provider mark the session `interactive`, which is what
+  `requires_human_identity` ([rbac-policy-format.md](rbac-policy-format.md))
+  actually checks — not the provider's name.
 - **DEV token** (`KEYSTONE_MCP_DEV_TOKENS`) — a shared secret for testing
   roles without wiring up Google. A holder signs in as *any* email that
   exists in the directory, so it is accepted only under the `local` profile
   (below); `production` refuses a non-empty value outright.
-- **API key through an external service** (`KEYSTONE_MCP_AUTH_SERVICE_URL`) —
-  deprecated, moving into the users directory in 0.4.1.
+- **API key (built-in directory)** — a `ksk_<key_id>_<secret>` string hashed
+  at rest; the secret is shown only when the key is issued. People may enter
+  it on the sign-in form; service accounts send it as `Authorization: Bearer
+  <key>`. Human OAuth Bearer tokens are not accepted as API keys. Revocation
+  is immediate via the directory revision, not a Redis token index.
 
 ### What they may call: the policy file
 
@@ -104,6 +113,8 @@ forever on an allowance that no longer holds. See
 [`KEYSTONE_MCP_OAUTH_ALLOWED_REDIRECT_HOSTS`](environment.md) for the exact
 matching rules.
 
+Why: [ADR 0005](adr/0005-dynamic-client-registration-on-by-default.md).
+
 ## Trust zones
 
 ![Clients reach only Keystone-MCP on the public network. Service MCP ports, Redis, and databases stay on a private network with no published port.](network.svg)
@@ -123,20 +134,61 @@ more private-network service.
 
 ## What a service behind Keystone-MCP receives
 
-Every proxied call carries `X-Author-Email` — the verified email of the
-signed-in person, lower-cased. It carries no roles: RBAC is decided on
-Keystone-MCP before the call is forwarded, not re-checked by the upstream.
-By itself, that header only proves a sender knows the right string; an
-upstream should trust it only on a network Keystone-MCP alone controls. An
-upstream registry entry can additionally set `auth.bearer_env` to a variable
-holding a token; Keystone-MCP then sends `Authorization: Bearer <value>` on
-every discovery and proxied call to that entry, so the upstream can check
-that header *first*, before trusting `X-Author-Email` at all — see
-[Connecting services](connecting-services.md#authenticating-keystone-mcp-to-your-service).
-Without `auth.bearer_env` configured, network isolation is the only control:
-plan the upstream's address with `KEYSTONE_MCP_UPSTREAM_ALLOW_INSECURE_HTTP`
-and `KEYSTONE_MCP_UPSTREAM_EGRESS_ALLOW_PRIVATE` in mind (below). The proxy
-itself never follows a redirect an upstream sends back.
+A proxied call can carry up to three headers, each proving something
+different; an upstream should check them in this order, trusting a weaker one
+only once the stronger ones configured for it have passed.
+
+1. **`Authorization: Bearer <value>`** — proves the call came from Keystone-MCP
+   itself. Set only when the registry entry's `auth.bearer_env` names an
+   environment variable holding a token; Keystone-MCP then sends it on every
+   discovery and proxied call to that entry — see
+   [Connecting services](connecting-services.md#authenticating-keystone-mcp-to-your-service).
+   Without it, network isolation is the only control: plan the upstream's
+   address with `KEYSTONE_MCP_UPSTREAM_ALLOW_INSECURE_HTTP` and
+   `KEYSTONE_MCP_UPSTREAM_EGRESS_ALLOW_PRIVATE` in mind (below).
+2. **`X-Keystone-Identity`** — proves *who is behind* the call Keystone-MCP
+   just authenticated: a signed (`HS256`, per-upstream secret) JWT carrying
+   the subject, the roles RBAC used, the auth method, the OAuth client and
+   the tool called. Set only when the registry entry's
+   `auth.identity_secret_env` names the signing secret; see
+   [Connecting services](connecting-services.md#who-is-calling-x-keystone-identity)
+   for the field list and how to verify it.
+3. **`X-Author-Email`** — the verified email of the signed-in person,
+   lower-cased, always sent. Unsigned: by itself it only proves a sender
+   knows the right string, so an upstream should trust it only on a network
+   Keystone-MCP alone controls, and only after checking the two headers
+   above when they are configured. It carries no roles: RBAC is decided on
+   Keystone-MCP before the call is forwarded, not re-checked by the
+   upstream. **Deprecated since 0.5.0** (kept until the next major version)
+   — prefer `X-Keystone-Identity`.
+
+The proxy itself never follows a redirect an upstream sends back.
+
+Why: [ADR 0003](adr/0003-signed-identity-assertion.md).
+
+## stdio upstreams
+
+A registry entry with `transport: stdio` does not open a network port.
+Keystone-MCP **executes** `command` with `args` and optional `cwd` as a child
+process of itself. That process runs as the **same OS user** as Keystone-MCP,
+with **no sandbox**: it can read anything that user can read, spawn other
+programs, and use any environment variables you map in through the entry's
+`env` block (child name → parent variable name only — nothing else from
+Keystone-MCP's environment is copied in).
+
+Treat a stdio upstream like Keystone-MCP itself: only mount code and secrets
+you trust at that privilege level. The demo's `notes` service is an example of
+the pattern, not a security boundary.
+
+When `KEYSTONE_MCP_DEPLOYMENT_PROFILE=production`, startup logs one **WARNING**
+per enabled stdio entry:
+`upstream namespace=<ns> runs local command <basename> with keystone-mcp's own
+user and no sandbox; trust it as you trust keystone-mcp`.
+
+Identity for proxied calls uses the signed assertion in
+`params._meta["keystone-mcp/identity"]` when `auth.identity_secret_env` is set;
+unsigned `X-Author-Email` is not sent on stdio. See
+[connecting-services.md](connecting-services.md#running-a-stdio-server).
 
 ## RBAC modes
 
@@ -201,6 +253,18 @@ comparison; refreshing keeps that same binding instead of dropping it.
 `KEYSTONE_MCP_REQUIRE_RESOURCE_INDICATOR=true` refuses any token that names
 no resource at all, including one issued before this binding existed.
 
+Why: [ADR 0004](adr/0004-redis-is-required.md).
+
+Clients may call **`POST /revoke`** (RFC 7009) with their own access or
+refresh token and `client_id` to end a session without waiting for TTL.
+Revoking an **access token** drops only that token; other access and refresh
+tokens for the same person stay valid. Revoking a **refresh token** drops
+that refresh token, its login marker, and every **access token** issued to
+the same OAuth client for that person — other registered applications keep
+their tokens. A wrong `client_id` or an unknown token still returns `200`
+(the handler does not reveal whether a token existed). The route is behind
+the same Host/Origin guard and OAuth IP throttle as `/token`.
+
 ## What is protected by default
 
 - Every HTTP route — every OAuth endpoint, discovery metadata, and `/mcp`
@@ -234,8 +298,8 @@ no resource at all, including one issued before this binding existed.
   moment audit is on; without it, subject identifiers in audit records would
   be guessable from an email and not actually pseudonymous.
 - Sign-in attempts are rate-limited per IP and, for failures, per email
-  (`KEYSTONE_MCP_LOGIN_THROTTLE_IP_MAX` / `_EMAIL_MAX`); `/authorize` and
-  `/token` share a separate IP budget
+  (`KEYSTONE_MCP_LOGIN_THROTTLE_IP_MAX` / `_EMAIL_MAX`); `/authorize`,
+  `/token`, and `/revoke` share a separate IP budget
   (`KEYSTONE_MCP_OAUTH_THROTTLE_IP_MAX`).
 - An upstream address is checked before it is used: `https` is required
   unless `KEYSTONE_MCP_UPSTREAM_ALLOW_INSECURE_HTTP=true`, userinfo
@@ -258,14 +322,14 @@ no resource at all, including one issued before this binding existed.
   effective budget multiplies by the replica count. See
   [environment.md#more-than-one-replica](environment.md#more-than-one-replica)
   for the per-process throttle note.
-- There is no way to revoke every session a person holds in one action.
-  Blocking them in the users directory takes effect on their **next call**
-  (the directory is re-checked every time), but an access token already
-  issued keeps working until it expires on its own.
-- Interactive sign-in is Google only; a general OIDC provider is planned
-  for 0.5.0. The deprecated API-key method
-  (`KEYSTONE_MCP_AUTH_SERVICE_URL`) is still accepted under `production`
-  until 0.4.1.
+- Blocking a person in the users directory, or calling `users_logout`, revokes
+  every OAuth access and refresh token for that person immediately. The next
+  request with an old token is rejected; unblocking does not bring old
+  sessions back.
+- Interactive sign-in is any provider in the login providers file (Google
+  and other OpenID Connect issuers). In production, API-key sign-in for
+  people is refused while an interactive provider is configured. The old
+  `KEYSTONE_MCP_AUTH_SERVICE_*` variables are removed; startup refuses them.
 - `HostGuardMiddleware` exempts only `/healthz` and `/readyz`, not
   `/metrics` or `/internal/*`. By default the allowlist holds only
   `KEYSTONE_MCP_BASE_URL`'s host (plus `localhost`/`127.0.0.1`/`[::1]` when
@@ -274,7 +338,7 @@ no resource at all, including one issued before this binding existed.
   IP is refused with `421`. Add the exact name the scraper uses to
   `KEYSTONE_MCP_ALLOWED_HOSTS` (e.g. `127.0.0.1:8080` for a scraper on the
   same host). A pod IP assigned at pod start cannot be listed in advance,
-  so scraping each pod by IP is not supported in 0.4.0.
+  so scraping each pod by IP is not supported.
 
 ## Checklist by profile
 

@@ -1,10 +1,10 @@
-"""A failed downstream HTTP call returns the Model-M error shape, never an exception.
+"""A failed downstream HTTP call returns the status-envelope error shape, never an exception.
 
-upload_url, file_ref, external_http and webhook all called raise_for_status()
-without catching it, so a downstream 500 (or a refused connection, or a
-timeout) escaped the adapter and reached the client as an opaque internal tool
-error rather than {"state": "error", ...} — the shape every other outcome, and
-the users_admin adapter, already uses.
+external_http and webhook both called raise_for_status() without catching it,
+so a downstream 500 (or a refused connection, or a timeout) escaped the
+adapter and reached the client as an opaque internal tool error rather than
+{"state": "error", ...} — the shape every other outcome, and the users_admin
+adapter, already uses.
 """
 
 from __future__ import annotations
@@ -12,11 +12,9 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from keystone_mcp.adapters.external_http import ExternalHttpAdapter
-from keystone_mcp.adapters.file_ref import FileRefAdapter
-from keystone_mcp.adapters.upload_url import UploadUrlAdapter
-from keystone_mcp.adapters.webhook import WebhookAdapter
 from keystone_mcp.config import Settings
+from keystone_mcp.contrib.adapters.external_http import ExternalHttpAdapter
+from keystone_mcp.contrib.adapters.webhook import WebhookAdapter, WebhookSettings
 from keystone_mcp.identity import VerifiedIdentity
 from keystone_mcp.router.engine import RouterEngine
 from keystone_mcp.router.registry import RouterRegistry
@@ -24,11 +22,10 @@ from keystone_mcp.router.registry import RouterRegistry
 ID = VerifiedIdentity(email="u@example.com")
 BASE = "http://localhost:8000"
 
-SETTINGS = Settings(
-    base_url="http://localhost:8080",
-    webhook_client_id="acme",
-    webhook_project_id="demo-project",
-    long_poll_seconds=0,
+SETTINGS = Settings(base_url="http://localhost:8080")
+
+WEBHOOK_SETTINGS = WebhookSettings(
+    base_url=BASE, client="acme", project="demo-project", long_poll_seconds=0
 )
 
 
@@ -68,25 +65,15 @@ def _run(adapter, tool_name: str, args: dict, params=None):
 
 ADAPTER_CASES = [
     pytest.param(
-        lambda handler: UploadUrlAdapter(BASE, client_factory=_factory(handler)),
-        "create_upload_url",
-        {"filename": "x.dat"},
-        id="upload_url",
-    ),
-    pytest.param(
-        lambda handler: FileRefAdapter(BASE, client_factory=_factory(handler)),
-        "get_download_link",
-        {"file_id": "eph:uploads/x.dat"},
-        id="file_ref",
-    ),
-    pytest.param(
         lambda handler: ExternalHttpAdapter(BASE, client_factory=_factory(handler)),
         "call_target",
         {"x": "1"},
         id="external_http",
     ),
     pytest.param(
-        lambda handler: WebhookAdapter(client_factory=_factory(handler), poll_interval=0.0),
+        lambda handler: WebhookAdapter(
+            WEBHOOK_SETTINGS, client_factory=_factory(handler), poll_interval=0.0
+        ),
         "submit_task",
         {"x": "1"},
         id="webhook",
@@ -99,8 +86,6 @@ ADAPTER_CASES = [
 async def test_downstream_error_status_becomes_a_model_m_error(
     build, tool_name: str, args: dict, status: int
 ):
-    if tool_name == "get_download_link" and status == 404:
-        pytest.skip("file_ref maps 404 to file_not_found; covered separately")
     out = await _run(build(_status_handler(status)), tool_name, args)
     assert out["state"] == "error"
     assert out["code"] == f"downstream_http_{status}"
@@ -132,31 +117,3 @@ async def test_error_result_does_not_echo_the_downstream_body(build, tool_name: 
     serialized = json_module.dumps(out)
     assert "boom" not in serialized
     assert "Authorization" not in serialized
-
-
-async def test_file_ref_still_maps_404_to_file_not_found():
-    """The adapter's own 404 handling is more specific and must still win."""
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(404)
-
-    out = await _run(
-        FileRefAdapter(BASE, client_factory=_factory(handler)),
-        "get_download_link",
-        {"file_id": "eph:uploads/x.dat"},
-    )
-    assert out["state"] == "error"
-    assert out["code"] == "file_not_found"
-
-
-async def test_success_path_is_unaffected():
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"upload_url": "https://s3/put", "file_id": "eph:k"})
-
-    out = await _run(
-        UploadUrlAdapter(BASE, client_factory=_factory(handler)),
-        "create_upload_url",
-        {"filename": "x.dat"},
-    )
-    assert out["state"] == "done"
-    assert out["file_id"] == "eph:k"

@@ -7,14 +7,14 @@ import json
 import pytest
 from asgi_lifespan import LifespanManager
 from fastmcp import Client, FastMCP
+from fastmcp.client.transports import StreamableHttpTransport
 from fastmcp.exceptions import ToolError
 from fastmcp.tools.base import ToolResult
 
-from conftest import retry_transient_mcp_errors
 from keystone_mcp.adapters.base import Pattern
 from keystone_mcp.adapters.mcp_proxy import McpProxyAdapter
 from keystone_mcp.config import Settings, load_settings
-from keystone_mcp.identity import AUTHOR_EMAIL_HEADER, VerifiedIdentity
+from keystone_mcp.identity import AUTHOR_EMAIL_HEADER, VerifiedIdentity, upstream_identity_headers
 from keystone_mcp.router.context import RouteContext
 from keystone_mcp.router.route import Route
 from support.lowlevel_upstream import (
@@ -32,7 +32,7 @@ def _ctx(task_id: str = "t_test") -> RouteContext:
         task_id=task_id,
         canonical_args="{}",
         tool_name="reports_query_totals",
-        pattern=Pattern.M_B,
+        pattern=Pattern.SYNC,
         settings=Settings(base_url="http://localhost:8080"),
     )
 
@@ -140,7 +140,7 @@ async def test_mcp_proxy_maps_accepted_as_pending():
     downstream = FastMCP("catalog-downstream")
 
     @downstream.tool()
-    def catalog_advance(run_id: str) -> dict:
+    def reports_build(run_id: str) -> dict:
         return {
             "status": "accepted",
             "run_id": run_id,
@@ -154,9 +154,9 @@ async def test_mcp_proxy_maps_accepted_as_pending():
     adapter = McpProxyAdapter("http://unused", status_envelope=True)
     adapter._client_factory = lambda **_kw: Client(downstream)  # type: ignore[assignment]
     route = Route(
-        name="catalog_advance",
+        name="reports_build",
         target=adapter,
-        upstream_tool="catalog_advance",
+        upstream_tool="reports_build",
         namespace="catalog",
         mode="live",
     )
@@ -171,18 +171,18 @@ def test_mcp_proxy_per_tool_timeout_override():
         "http://unused",
         tool_timeout_seconds=180,
         tool_timeout_overrides={
-            "catalog_advance": 30,
-            "catalog_record_decision": 30,
+            "reports_build": 30,
+            "reports_publish": 30,
         },
     )
-    assert adapter._timeout_for("catalog_advance") == 30
-    assert adapter._timeout_for("catalog_record_decision") == 30
+    assert adapter._timeout_for("reports_build") == 30
+    assert adapter._timeout_for("reports_publish") == 30
     assert adapter._timeout_for("catalog_status") == 180
 
 
 def test_mcp_proxy_falls_back_to_default_timeout_without_overrides():
     adapter = McpProxyAdapter("http://unused", tool_timeout_seconds=180)
-    assert adapter._timeout_for("catalog_advance") == 180
+    assert adapter._timeout_for("reports_build") == 180
 
 
 def test_mcp_proxy_http_client_disables_redirects():
@@ -200,7 +200,7 @@ def test_configured_tool_timeouts_reach_the_proxy_adapter(monkeypatch):
     from keystone_mcp.router.registry import RouterRegistry
     from keystone_mcp.router.upstream import UpstreamRegistry
 
-    monkeypatch.setenv("KEYSTONE_MCP_UPSTREAM_TOOL_TIMEOUTS", '{"catalog_advance": 25}')
+    monkeypatch.setenv("KEYSTONE_MCP_UPSTREAM_TOOL_TIMEOUTS", '{"reports_build": 25}')
     monkeypatch.setenv("KEYSTONE_MCP_UPSTREAM_TOOL_TIMEOUT_SECONDS", "180")
     settings = Settings(base_url="http://localhost:8080")
 
@@ -215,7 +215,7 @@ def test_configured_tool_timeouts_reach_the_proxy_adapter(monkeypatch):
     upstreams.add_upstream("catalog-mcp", "http://unused", namespace="catalog")
 
     adapter = upstreams._adapters["catalog"]
-    assert adapter._timeout_for("catalog_advance") == 25
+    assert adapter._timeout_for("reports_build") == 25
     assert adapter._timeout_for("catalog_status") == 180
 
 
@@ -250,7 +250,7 @@ async def test_injected_factory_receives_identity_headers_and_timeout():
     out = await adapter.execute(route, _ctx(), {"report_key": "r1"}, None)
 
     assert out.is_error is False
-    assert seen["headers"] == {AUTHOR_EMAIL_HEADER: ID.email}
+    assert seen["headers"] == upstream_identity_headers(ID)
     assert seen["timeout"] == 25
 
 
@@ -261,10 +261,9 @@ async def test_identity_header_reaches_an_http_upstream_end_to_end():
     verified identity genuinely travels as a request header rather than being
     asserted on the adapter's own inputs.
     """
-    import httpx
+    import httpx2
     from fastmcp.server.dependencies import get_http_headers
 
-    from conftest import retry_transient_mcp_errors
     from keystone_mcp.adapters.mcp_proxy import _http_client_factory
 
     upstream = FastMCP("reports-upstream")
@@ -285,8 +284,8 @@ async def test_identity_header_reaches_an_http_upstream_end_to_end():
         def factory(headers=None, timeout=None, auth=None, **_kw):
             built = base(headers=headers, timeout=timeout, auth=auth, **_kw)
             captured["timeout"] = built.timeout
-            return httpx.AsyncClient(
-                transport=httpx.ASGITransport(app=upstream_app),
+            return httpx2.AsyncClient(
+                transport=httpx2.ASGITransport(app=upstream_app),
                 base_url="http://upstream.local",
                 headers=headers,
                 timeout=built.timeout,
@@ -315,7 +314,7 @@ async def test_identity_header_reaches_an_http_upstream_end_to_end():
         async def run_proxy_call():
             return await adapter.execute(route, _ctx(), {"report_key": "r1"}, None)
 
-        out = await retry_transient_mcp_errors(run_proxy_call)
+        out = await run_proxy_call()
 
     assert out.is_error is False
     assert out.structured_content["report_key"] == "r1"
@@ -350,7 +349,7 @@ async def test_transparent_mode_returns_text_as_is():
         async def run_call():
             return await adapter.execute(route, _ctx(), {"name": "Ann"}, None)
 
-        out = await retry_transient_mcp_errors(run_call)
+        out = await run_call()
 
     assert out.content[0].text == "Hello, Ann!"
     assert out.structured_content is None
@@ -382,7 +381,7 @@ async def test_transparent_mode_returns_search_text_as_is():
         async def run_call():
             return await adapter.execute(route, _ctx(), {"query": "q", "filter": "all"}, None)
 
-        out = await retry_transient_mcp_errors(run_call)
+        out = await run_call()
 
     assert out.is_error is False
     assert "Found 3 documents for 'q'" in out.content[0].text
@@ -435,10 +434,44 @@ async def test_transparent_mode_reports_upstream_error_flag():
         async def run_call():
             return await adapter.execute(route, _ctx(), {}, None)
 
-        out = await retry_transient_mcp_errors(run_call)
+        out = await run_call()
 
     assert out.is_error is True
     assert "quota exceeded" in out.content[0].text
+
+
+async def test_proxy_call_over_legacy_handshake():
+    """``Client(..., mode="legacy")`` reaches the same upstream, same answer.
+
+    ``McpProxyAdapter`` builds its default client with ``mode="auto"``
+    (X02: no epoch-caching optimisation here, that is left to section Y) --
+    the upstream negotiates the newest protocol epoch it can. This pins the
+    other end of that negotiation range: a client that forces the pre-SDK-v2
+    handshake must still reach the same (SDK v2) upstream and get the exact
+    same answer, confirming the proxy does not depend on auto-negotiation to
+    talk to an older peer.
+    """
+    app = build_lowlevel_upstream_app(tools=["greet"])
+    async with LifespanManager(app):
+        http_client_factory = asgi_http_client_factory(app)
+
+        def legacy_client_factory(headers=None, timeout=None, **_kw):
+            transport = StreamableHttpTransport(
+                UPSTREAM_MCP_URL,
+                headers=headers,
+                httpx_client_factory=http_client_factory(timeout or 30.0),
+            )
+            return Client(transport, timeout=timeout, mode="legacy")
+
+        adapter = McpProxyAdapter(UPSTREAM_MCP_URL, client_factory=legacy_client_factory)
+        route = Route(
+            name="greet", target=adapter, upstream_tool="greet", namespace="hello", mode="live"
+        )
+
+        out = await adapter.execute(route, _ctx(), {"name": "Ann"}, None)
+
+    assert out.is_error is False
+    assert out.content[0].text == "Hello, Ann!"
 
 
 # ── status_envelope=True: 0.3.x envelope, kept for deployments that want it ──
@@ -459,7 +492,7 @@ async def test_status_envelope_wraps_plain_text():
         async def run_call():
             return await adapter.execute(route, _ctx("t_greet"), {"name": "Ann"}, None)
 
-        out = await retry_transient_mcp_errors(run_call)
+        out = await run_call()
 
     assert out == {
         "state": "done",
@@ -484,7 +517,7 @@ async def test_status_envelope_parses_json_text():
         async def run_call():
             return await adapter.execute(route, _ctx(), {}, None)
 
-        out = await retry_transient_mcp_errors(run_call)
+        out = await run_call()
 
     assert out["state"] == "done"
     assert isinstance(out["result"], dict)
@@ -506,7 +539,7 @@ async def test_status_envelope_raises_tool_error_on_upstream_error():
             return await adapter.execute(route, _ctx(), {}, None)
 
         with pytest.raises(ToolError, match="quota exceeded"):
-            await retry_transient_mcp_errors(run_call)
+            await run_call()
 
 
 def test_proxy_status_envelope_env_flag(monkeypatch):

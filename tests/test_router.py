@@ -1,9 +1,8 @@
 """Router constructor unit tests.
 
 Covers: stub default, stub<->live switch without transport changes,
-external_http GET|POST switching, det_internal placeholder, and the
-unauthorized path. Throttling is not the engine's job — see
-tests/test_throttle_middleware.py.
+external_http GET|POST switching, and the unauthorized path. Throttling is
+not the engine's job — see tests/test_throttle_middleware.py.
 """
 
 from __future__ import annotations
@@ -11,10 +10,9 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from keystone_mcp.adapters.det_internal import DetInternalAdapter
-from keystone_mcp.adapters.external_http import ExternalHttpAdapter
 from keystone_mcp.adapters.stub import StubAdapter
 from keystone_mcp.config import Settings
+from keystone_mcp.contrib.adapters.external_http import ExternalHttpAdapter
 from keystone_mcp.identity import AUTHOR_EMAIL_HEADER, VerifiedIdentity
 from keystone_mcp.router.engine import RouterEngine, UnauthorizedError
 from keystone_mcp.router.registry import Param, RouterRegistry
@@ -124,16 +122,6 @@ async def test_external_http_transform_can_override_method():
     await engine.execute(route, {"a": 1}, identity=ID)
     assert seen["method"] == "GET"
     assert seen["path"] == "/override"
-
-
-async def test_det_internal_is_placeholder():
-    engine = _engine()
-    reg = RouterRegistry(engine)
-    route = reg.add_route("issue_api_key", DetInternalAdapter(fn="issue_api_key"), mode="live")
-    out = await engine.execute(route, {"label": "x"}, identity=ID)
-    assert out["det_internal"] is True
-    assert out["fn"] == "issue_api_key"
-    assert "placeholder" in out["note"]
 
 
 async def test_engine_does_not_throttle():
