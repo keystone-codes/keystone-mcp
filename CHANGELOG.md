@@ -4,14 +4,225 @@ All notable changes to this project are documented in this file. The format
 is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project uses [Semantic Versioning](https://semver.org/).
 
+Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatibility.md).
+
 ## [Unreleased]
+
+## [0.5.0] - 2026-10-13
+
+### Added
+
+- CI: contract freeze gate — a frozen environment variable, policy key or CLI command cannot disappear without a `Removed` entry in the changelog.
+- `docs/compatibility.md`: public contracts frozen since 0.5.0, what counts as a breaking change, deprecation rule, supported versions.
+- Upstream resources and resource templates are published (URIs get the namespace, `scheme://<namespace>/...`) and authorized by `<namespace>_<name>` with the same allow patterns as tools.
+- Contract tests for sign-in providers and users directories (`pytest -p keystone_mcp.contract_tests`, extra `contract-tests`) and a plugin template in `examples/plugin-template`.
+- HTTP upstream elicitation forwarding (`KEYSTONE_MCP_PROXY_ELICITATION`, default
+  `true`): form-mode `elicitation/create` and MCP 2026-07-28 `input_required`
+  guard rounds reach the Keystone client with a `[namespace]` message prefix;
+  URL-mode asks are declined. Metric `keystone_mcp_upstream_elicitations_total`.
+- Upstream prompts are published as `<namespace>_<name>` under the same RBAC allow patterns as tools; `notifications/prompts/list_changed` after a change.
+- `keystone-policy-admin` skill and `docs/policy-admin.md`: changing roles and allow patterns from the agent.
+- OAuth token revocation endpoint `POST /revoke` (RFC 7009); revoking a refresh token also revokes that client's access tokens for the user. CLI `keystone-mcp users block|unblock|logout`.
+- Plugins: sign-in provider types and users directories are discovered through the `keystone_mcp.login_providers` and `keystone_mcp.user_directories` entry points; built-in implementations use the same mechanism. `keystone-mcp plugins list`. `KEYSTONE_MCP_USERS_BACKEND_CONFIG`.
+- `policy_*` tools (`policy_read`, `policy_catalog`, `policy_validate`, `policy_role_set`, `policy_role_delete`, `policy_allow_add`, `policy_allow_remove`, `policy_list_set`, `policy_rollback`): administrators change the RBAC policy from the agent; every change is validated against the live catalog, written atomically, reloaded in place and audited. Namespace `policy` is reserved.
+- API keys stored in the users directory (hashed, shown once): `api_keys_issue|list|revoke` tools and `keystone-mcp keys` CLI. Service accounts call MCP with `Authorization: Bearer <key>`.
+- `users_logout`; blocking a user revokes all of their tokens immediately.
+- Service accounts (`svc:<name>`) with their own roles; `service_accounts_list|add|update` tools and `keystone-mcp service-accounts` CLI (built-in directory).
+- Upstreams receive `X-Keystone-Subject` and `X-Keystone-Subject-Type`.
+- Architecture decision records 0007–0012: login providers, API keys and service
+  accounts, plugins via entry points, fastmcp major version, RBAC for prompts
+  (resources when shipped), unsandboxed stdio upstreams; plus 0001–0006 (built-in
+  users directory, roles in the policy file, signed identity assertion, Redis,
+  dynamic client registration, no file API in the core).
+- Startup refuses a removed variable that would change security behaviour
+  if ignored, and warns about other removed variables
+  (`docs/environment.md#removed-variables`).
+- `UserDirectory` protocol (`keystone_mcp.user_directory`): one interface for
+  reading and administering people; `users_*` tools work over any
+  implementation. See `docs/user-directory.md`.
+- Signed identity assertion for upstreams: registry `auth.identity_secret_env`;
+  header `X-Keystone-Identity` (JWT HS256, audience = registry entry name)
+  with subject, roles used by RBAC, auth method, OAuth client and task id.
+- ES256 identity assertions (`auth.identity_alg: ES256`,
+  `KEYSTONE_MCP_IDENTITY_SIGNING_KEY`) with the public key at
+  `/.well-known/keystone-identity-jwks.json`.
+- Reference verifiers for `X-Keystone-Identity` (Python, TypeScript) in
+  `examples/keystone-identity/`; the demo upstream (`hello-upstream`) verifies
+  the assertion and rejects forged headers once `HELLO_IDENTITY_SECRET` is set.
+- Upstream registry: `transport: stdio` with `command`, `args`, `env`
+  (names of keystone-mcp variables, never their values) and `cwd`; a
+  supervised child process with restart backoff (1 second doubling to 60).
+- stdio upstreams are discovered, proxied (with progress, cancellation and
+  the identity assertion in `_meta`), supervised and restarted; `/readyz`
+  lists upstream state for internal callers; metric
+  `keystone_mcp_upstream_process_restarts_total`; the demo includes a stdio
+  upstream.
+- `notifications/tools/list_changed` is sent to open sessions and
+  `subscriptions/listen` streams after a catalog change, a policy reload or
+  a users-directory change.
+- Progress notifications from upstream tools reach the client
+  (`notifications/progress`), when the client asked for progress.
+- A client cancellation or a keystone-mcp tool timeout is forwarded to the
+  upstream request.
+- Published on PyPI as `keystone-mcp-gateway` (same version as the image);
+  `keystone-mcp serve` starts the server; the package ships type information
+  (`py.typed`).
+- `PolicyStore`: the RBAC policy file can be changed from inside the process
+  with the same validation as a hot-reload, an atomic write, one backup
+  (`<policy>.bak`), an in-place reload and an `rbac_policy_mutation` audit
+  event. `KEYSTONE_MCP_POLICY_TOOLS` (`full` | `read-only` | `off`).
+- Sign-in with any OpenID Connect provider (Okta, Microsoft Entra ID, Keycloak,
+  Google) configured in `KEYSTONE_MCP_LOGIN_PROVIDERS_PATH`.
 
 ### Changed
 
+- Sign-in, consent and error pages are rendered by one built-in template: card layout, light and dark theme, RTL for Hebrew and Arabic, mobile width, keyboard and screen-reader friendly; the redirect destination and the phishing warning are visually prominent. A language switcher (EN, RU, HE, AR) remembers the choice in a `km_lang` cookie for the whole sign-in. New `KEYSTONE_MCP_LOGIN_BRAND` sets the name shown on the pages.
+- Production and demo compose examples mount the policy file read-write from a `policy/` directory so the `policy_*` tools can write it.
+- `X-Author-Email` is sent only for people.
 - Documentation brought in line with the 0.4.0 code: the Host/Origin
   allowlist and /metrics, deployment profile rules P5 and W5, the
   Kubernetes and Prometheus examples, client redirect hosts, host install
   permissions, and the supported-versions table in SECURITY.md.
+- README states what Keystone-MCP does not do: multi-tenancy, an admin UI,
+  storing business data, routing by request content.
+- Tool-call metrics record `outcome="cancelled"`.
+- Runtime moved to FastMCP 4.1 and MCP Python SDK 2. Clients that support MCP
+  2026-07-28 negotiate it; older clients keep the handshake protocol. No
+  configuration changes; OAuth clients and sessions stored in Redis remain
+  valid.
+- Idle HTTP sessions of the handshake protocol now close after 30 minutes
+  (FastMCP default); clients reconnect transparently.
+- Developers: the test suite runs without reruns; `pytest-rerunfailures` removed.
+- Developers: sign-in goes through the `LoginProvider` protocol
+  (`keystone_mcp.login`); Google and API-key sign-in are its first two
+  implementations. No user-visible change.
+- With `KEYSTONE_MCP_USERS_BACKEND=http`, `users_*` errors use the documented
+  codes: `validation_error` instead of `invalid_role`, `conflict` instead of
+  `user_already_exists`.
+- With `KEYSTONE_MCP_USERS_BACKEND=http`, the roles passed to `users_add`,
+  `users_set_roles` and `users_grant_role` are checked against the active
+  RBAC policy before the directory is ever called; a directory that cannot
+  be reached reports the fixed message "users directory is unavailable"
+  instead of connection details.
+- A read-only directory publishes only `users_list`.
+- Developers: release workflow builds and checks the wheel and sdist and
+  refuses a version already on PyPI.
+- Developers: `register_catalog()` takes `directory=` (a `UserDirectory`)
+  instead of `users_store=`; `UsersAdminAdapter.__init__` takes `directory=`
+  instead of `(client_factory, users_store)`.
+- CI guards against test reruns and forced test ordering.
+- Upstream namespace validation no longer reserves `create` or `get`: with
+  the built-in file tools gone, `users` is the only namespace a new upstream
+  cannot shadow.
+- `WebhookAdapter` and `ExternalHttpAdapter` moved to
+  `keystone_mcp.contrib.adapters`. The webhook adapter reads
+  `KEYSTONE_MCP_CONTRIB_WEBHOOK_*` when it is constructed; it has no default
+  base URL.
+- `requires_human_identity` accepts any interactive sign-in provider, not
+  only Google. Access tokens carry an `interactive` claim.
+- Login page error texts are provider-neutral.
+- New Redis keys `km:oauth:subject:<sub>` (set) and `km:oauth:subject_nbf:<sub>`
+  under `KEYSTONE_MCP_REDIS_KEY_PREFIX`; access tokens carry `iat`.
+- `Pattern` members renamed: `M_B` → `SYNC`, `M_E` → `CONTINUATION`; `M_D` and `M_U` removed with the file tools. The built-in answer format is called the status envelope throughout the code and docs.
+- Production profile: service accounts authenticate with Bearer API keys issued
+  on the server (`keystone-mcp keys issue`); the `api_keys_issue` tool is not
+  published, and API-key sign-in for people is refused while an interactive
+  login provider is configured.
+
+### Deprecated
+
+- `KEYSTONE_MCP_GOOGLE_*`, `KEYSTONE_MCP_ENABLED_LOGIN_METHODS`,
+  `KEYSTONE_MCP_PRIMARY_LOGIN_METHOD` — deprecated since 0.5.0, kept until the
+  next major version; use a login providers file.
+
+- `UserDirectoryBackend` (single `resolve_user` method) — implement
+  `UserDirectory`; deprecated since 0.5.0, removed in 2.0.
+- `X-Author-Email` is unsigned and deprecated since 0.5.0, removed in 2.0;
+  verify `X-Keystone-Identity` instead.
+
+### Removed
+
+- `KEYSTONE_MCP_RBAC_ENABLED`. Use `KEYSTONE_MCP_RBAC_MODE`.
+- The placeholder adapters `det_internal` and `chat_attachment`, and
+  `KEYSTONE_MCP_DET_INTERNAL_URL`. Neither adapter was registered by default.
+- Built-in file tools `create_upload_url` and `get_download_link`, the file
+  API adapters (`keystone_mcp.adapters.upload_url`, `keystone_mcp.adapters.file_ref`,
+  `keystone_mcp.storage`) and `KEYSTONE_MCP_FILE_API_URL` (startup is refused
+  while it is set). File transfer is an upstream service like any other.
+- `KEYSTONE_MCP_WEBHOOK_BASE_URL`, `KEYSTONE_MCP_WEBHOOK_CLIENT`,
+  `KEYSTONE_MCP_WEBHOOK_PROJECT`, `KEYSTONE_MCP_WEBHOOK_API_TOKEN`,
+  `KEYSTONE_MCP_LONG_POLL`.
+- `KEYSTONE_MCP_AUTH_SERVICE_URL`, `KEYSTONE_MCP_AUTH_SERVICE_TOKEN` and the
+  external key check; startup refuses while they are set.
+- `keystone_mcp.auth.IdentityProvider` and `build_server(identity_provider=...)`;
+  use `keystone_mcp.login` providers.
+
+### Security
+
+- Production startup and server build now treat api_key sign-in as configured only
+  when the login providers file lists `api_key`, not from the deprecated
+  `KEYSTONE_MCP_ENABLED_LOGIN_METHODS` default when a providers file is set.
+- API key verification cache and the login form no longer accept a cached human
+  key after its `expires_at`; positive cache TTL is capped to the key's remaining
+  lifetime.
+- API key secrets are stored and logged only as hashes or redacted forms
+  (`ksk_<key_id>_***`); startup refuses legacy `KEYSTONE_MCP_AUTH_SERVICE_*`.
+- stdio upstreams run as the keystone-mcp user without a sandbox; production
+  profile warns at startup.
+- Trivy image scan now blocks pull requests and releases on fixable HIGH and
+  CRITICAL findings; temporary exceptions live in `.trivyignore` with a
+  reason and a review date, checked by `tests/test_trivyignore.py`.
+- A sign-in provider's own `provider` claim is no longer trusted for the
+  issued token's `auth_method`: it is taken from the route (or form) the
+  sign-in came back on, and a provider reporting another name is refused.
+  Closes a path where a non-Google provider could report `provider="google"`
+  and pick up the interactive-human gate's trust in that name.
+- A deployment that configures any sign-in provider other than the built-in
+  API-key form now gets the users-directory check wired up automatically, the
+  way Google already did; previously only `google_login_enabled` triggered
+  it, so a custom provider's directory check silently never ran for a form
+  provider, and a custom redirect provider's callback always failed with 503.
+- A redirect provider's `begin()` rejecting or raising now returns a sign-in
+  error page (400 or 503) instead of an unhandled 500.
+- Refreshing a session opened through a sign-in provider that is no longer
+  configured is refused.
+- OIDC discovery endpoints must share the configured issuer origin; login
+  providers YAML parse errors no longer echo file contents; unverified email
+  without domain restriction is rejected at config load.
+- Token rotation and authorization-code exchange refuse credentials issued at
+  or before a subject not-before timestamp, atomically with the write, so a
+  refresh started before session revocation cannot mint a live pair afterward.
+- `users_block` returns `service_unavailable` when session revocation fails
+  after the directory block succeeds, so a retry can revoke tokens.
+
+### Migration
+
+- To use the `policy_*` mutation tools, mount the policy file (and its directory) read-write; otherwise they answer `policy_readonly`. With several replicas and no shared volume, set `KEYSTONE_MCP_POLICY_TOOLS=read-only` on all but one.
+- Database migration `0003_api_keys`. Deployments that checked keys with an
+  external service: issue new keys from the built-in directory and remove the
+  two variables; external HTTP directories do not support API keys.
+- Tokens issued before the upgrade are indexed on first use; a block revokes
+  them in any case. If you share Redis, reserve these key patterns.
+- Forks that pass `pattern=Pattern.M_B` (and the others) to `add_route`: use the new member names.
+- Google users: nothing to do now; when convenient, move the Google settings into
+  a login providers file (`type: google`). The Google redirect URI stays
+  `<base>/login/google/callback`.
+- Database migration `0002_service_accounts` runs at startup. Accounts like
+  `bot@…` created as people keep working; move them to service accounts to get
+  correct audit and human-only checks.
+- Replace `KEYSTONE_MCP_RBAC_ENABLED=true` with `KEYSTONE_MCP_RBAC_MODE=enforce`;
+  delete the old variable — the server does not start while it is set.
+- A fork that registered `DetInternalAdapter` or `ChatAttachmentAdapter` must
+  keep its own copy of the class (see the 0.4.x source).
+- If you used the file tools, expose your file service as an MCP server and
+  list it in the upstream registry; remove `KEYSTONE_MCP_FILE_API_URL` from
+  `.env` and the two tool names from your policy file.
+- Forks that register webhook routes: import from `keystone_mcp.contrib.adapters`
+  and rename the variables to `KEYSTONE_MCP_CONTRIB_WEBHOOK_BASE_URL`,
+  `_CLIENT`, `_PROJECT`, `_API_TOKEN`, `_LONG_POLL_SECONDS`, or pass
+  `WebhookSettings` to the constructor.
+- Sessions opened before the upgrade keep working; a session whose provider
+  was removed from the configuration must sign in again.
 
 ## [0.4.0] - 2026-10-11
 

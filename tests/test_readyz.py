@@ -12,8 +12,10 @@ for that (a load balancer polls every few seconds from every replica).
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
+import sys
 from pathlib import Path
 
 import httpx
@@ -21,14 +23,15 @@ import pytest
 from asgi_lifespan import LifespanManager
 
 from keystone_mcp.adapters.stub import StubAdapter
-from keystone_mcp.auth.identity_provider import StaticIdentityProvider
 from keystone_mcp.auth.login_pending_store import InMemoryLoginPendingStore
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import Settings
 from keystone_mcp.http.readiness import ReadinessProbe
 from keystone_mcp.server import bootstrap_rbac_policy, build_server
+from support.login import dev_token_login
 
 BASE_URL = "http://localhost:8080"
+STDIO_SERVER = str(Path(__file__).parent / "support" / "stdio_upstream.py")
 
 RBAC_POLICY = """\
 version: "1.0.0"
@@ -60,7 +63,7 @@ async def _get(app, path: str, *, client_host: str, headers=None):
 
 def _app(settings: Settings, **build_kwargs):
     mcp, *_rest = build_server(
-        identity_provider=StaticIdentityProvider({"token"}),
+        login_providers=[dev_token_login({"token"})],
         settings=settings,
         register_builtin_catalog=False,
         **build_kwargs,
@@ -179,7 +182,7 @@ def _rbac_settings(tmp_path: Path) -> Settings:
 async def test_readyz_rbac_policy_not_loaded_is_503(tmp_path: Path):
     settings = _rbac_settings(tmp_path)
     mcp, registry, _oauth, _upstreams, _policy_manager, _observability, _reconciler = build_server(
-        identity_provider=StaticIdentityProvider({"token"}),
+        login_providers=[dev_token_login({"token"})],
         settings=settings,
         oauth_store=InMemoryOAuthStore(),
         register_builtin_catalog=False,
@@ -195,7 +198,7 @@ async def test_readyz_rbac_policy_not_loaded_is_503(tmp_path: Path):
 async def test_readyz_rbac_policy_loaded_is_ok(tmp_path: Path):
     settings = _rbac_settings(tmp_path)
     mcp, registry, _oauth, _upstreams, policy_manager, _observability, _reconciler = build_server(
-        identity_provider=StaticIdentityProvider({"token"}),
+        login_providers=[dev_token_login({"token"})],
         settings=settings,
         oauth_store=InMemoryOAuthStore(),
         register_builtin_catalog=False,
@@ -239,7 +242,7 @@ class _StubDirectoryResolver:
 async def _rbac_app_with_backend(tmp_path: Path, backend: object):
     settings = _rbac_settings(tmp_path)
     mcp, registry, _oauth, _upstreams, policy_manager, _observability, _reconciler = build_server(
-        identity_provider=StaticIdentityProvider({"token"}),
+        login_providers=[dev_token_login({"token"})],
         settings=settings,
         oauth_store=InMemoryOAuthStore(),
         user_resolver=_StubDirectoryResolver(backend),
@@ -264,6 +267,78 @@ async def test_readyz_http_users_backend_is_skipped(tmp_path: Path):
     response = await _get(app, "/readyz", client_host="127.0.0.1")
     assert response.status_code == 200
     assert response.json()["checks"]["users_directory"] == "skipped"
+
+
+def _build_app_with_stdio_upstream(monkeypatch: pytest.MonkeyPatch, **settings_kw: object) -> tuple:
+    monkeypatch.setenv(
+        "KEYSTONE_MCP_UPSTREAMS",
+        json.dumps(
+            [
+                {
+                    "name": "notes",
+                    "namespace": "notes",
+                    "transport": "stdio",
+                    "command": sys.executable,
+                    "args": [STDIO_SERVER],
+                    "enabled": True,
+                }
+            ]
+        ),
+    )
+    settings = Settings(base_url=BASE_URL, **settings_kw)
+    built = build_server(
+        login_providers=[dev_token_login({"token"})],
+        settings=settings,
+        oauth_store=InMemoryOAuthStore(),
+        register_builtin_catalog=False,
+    )
+    return built[0], built[3], settings
+
+
+async def test_readyz_internal_body_lists_upstreams(monkeypatch: pytest.MonkeyPatch):
+    mcp, upstreams, settings = _build_app_with_stdio_upstream(monkeypatch)
+    assert "notes" in upstreams._sub_servers
+    app = mcp.http_app(path=settings.http_path)
+    response = await _get(app, "/readyz", client_host="127.0.0.1")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "ok"
+    assert "notes" in body["upstreams"]
+    assert body["upstreams"]["notes"]["transport"] == "stdio"
+
+
+async def _noop_start_connections(*, wait: float | None = None) -> None:
+    return
+
+
+async def test_readyz_ignores_unavailable_upstream_by_default(monkeypatch: pytest.MonkeyPatch):
+    mcp, upstreams, settings = _build_app_with_stdio_upstream(monkeypatch)
+    monkeypatch.setattr(upstreams, "start_connections", _noop_start_connections)
+    upstreams.mark_unavailable("notes", "down for test")
+    app = mcp.http_app(path=settings.http_path)
+    response = await _get(app, "/readyz", client_host="127.0.0.1")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "ok"
+    assert body["upstreams"]["notes"]["available"] is False
+    assert "upstreams" not in body.get("checks", {})
+
+
+async def test_readyz_require_all_fails_when_upstream_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("KEYSTONE_MCP_UPSTREAM_REQUIRE_ALL", "true")
+    mcp, upstreams, settings = _build_app_with_stdio_upstream(
+        monkeypatch, upstream_require_all=True
+    )
+    monkeypatch.setattr(upstreams, "start_connections", _noop_start_connections)
+    upstreams.mark_unavailable("notes", "down for test")
+    app = mcp.http_app(path=settings.http_path)
+    response = await _get(app, "/readyz", client_host="127.0.0.1")
+    assert response.status_code == 503
+    body = response.json()
+    assert body["checks"]["upstreams"] == "fail"
+    assert body["upstreams"]["notes"]["available"] is False
 
 
 # ── Logging: one WARNING per degradation, not one per poll ──────────────────

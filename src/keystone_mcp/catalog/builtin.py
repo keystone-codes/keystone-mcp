@@ -2,14 +2,7 @@
 
 These are the domain-neutral tools the server owns itself, as opposed to the
 tools it proxies from configured upstreams (see
-:mod:`keystone_mcp.router.upstream`). Two groups:
-
-File transfer — keeps large binaries out of MCP tool-call JSON by handing the
-caller a short-lived signed URL instead of bytes. Registered only when
-``KEYSTONE_MCP_FILE_API_URL`` is set:
-  - ``create_upload_url`` mints a signed PUT link plus the ``file_id`` to pass
-    on to whichever import tool consumes the upload.
-  - ``get_download_link`` mints a signed download link for a stored object.
+:mod:`keystone_mcp.router.upstream`).
 
 User administration — administration of the users directory, used to manage
 who may reach this server and with which roles: ``users_list``,
@@ -17,8 +10,10 @@ who may reach this server and with which roles: ``users_list``,
 ``users_set_roles``, ``users_grant_role``, ``users_revoke_role``. These routes
 are registered only when ``KEYSTONE_MCP_RBAC_MODE=enforce``; authorization is
 RBAC policy plus the RBAC middleware. The ``admin=True`` flag is catalog
-metadata only and enforces nothing. User administration: built-in directory by
-default, HTTP directory with ``KEYSTONE_MCP_USERS_BACKEND=http``.
+metadata only and enforces nothing. ``users_list`` is published whenever a
+directory is configured; the other seven (administration) are published only
+when that directory declares the ``"admin"`` capability -- a read-only
+directory publishes ``users_list`` alone.
 
 Every route here is registered ``mode="live"`` — its adapter is wired and
 serving. Add a route with ``registry.add_route`` when a new built-in target is
@@ -27,21 +22,24 @@ ready.
 
 from __future__ import annotations
 
+import logging
+
+from keystone_mcp.adapters.api_keys_admin import ApiKeysAdminAdapter
 from keystone_mcp.adapters.base import Pattern
-from keystone_mcp.adapters.file_ref import FileRefAdapter
-from keystone_mcp.adapters.upload_url import UploadUrlAdapter
+from keystone_mcp.adapters.policy_admin import PolicyAdminAdapter
+from keystone_mcp.adapters.service_accounts_admin import ServiceAccountsAdminAdapter
 from keystone_mcp.adapters.users_admin import RoleSource, UsersAdminAdapter
 from keystone_mcp.config import Settings
 from keystone_mcp.router.registry import Param, RouterRegistry
-from keystone_mcp.users.store import UsersStore
+from keystone_mcp.user_directory.protocol import UserDirectory
+
+logger = logging.getLogger(__name__)
 
 #: Every tool name the built-in catalog can register, whatever the settings.
 #: Used by upstream namespace validation (P09) to reject namespaces that
 #: would publish a colliding ``<namespace>_<tool>`` name.
 BUILTIN_TOOL_NAMES: frozenset[str] = frozenset(
     {
-        "create_upload_url",
-        "get_download_link",
         "users_list",
         "users_add",
         "users_update",
@@ -50,6 +48,22 @@ BUILTIN_TOOL_NAMES: frozenset[str] = frozenset(
         "users_set_roles",
         "users_grant_role",
         "users_revoke_role",
+        "users_logout",
+        "service_accounts_list",
+        "service_accounts_add",
+        "service_accounts_update",
+        "api_keys_issue",
+        "api_keys_list",
+        "api_keys_revoke",
+        "policy_read",
+        "policy_catalog",
+        "policy_validate",
+        "policy_role_set",
+        "policy_role_delete",
+        "policy_allow_add",
+        "policy_allow_remove",
+        "policy_list_set",
+        "policy_rollback",
     }
 )
 
@@ -59,55 +73,35 @@ def register_catalog(
     settings: Settings,
     *,
     observability: object | None = None,
-    users_store: UsersStore | None = None,
+    directory: UserDirectory | None = None,
     role_source: RoleSource | None = None,
+    policy_store: object | None = None,
+    session_revoker: object | None = None,
 ) -> None:
+    """``policy_store``, when given, is a ``keystone_mcp.rbac.policy_store.PolicyStore``."""
     users_admin = UsersAdminAdapter(
-        observability=observability, users_store=users_store, role_source=role_source
+        directory=directory,
+        observability=observability,
+        role_source=role_source,
+        session_revoker=session_revoker,
     )
+    service_accounts_admin = ServiceAccountsAdminAdapter(
+        directory=directory, observability=observability, role_source=role_source
+    )
+    api_keys_admin = ApiKeysAdminAdapter(directory=directory, observability=observability)
 
     P = Param  # noqa: N806 — local alias for brevity
 
-    # ── File transfer (optional): only when KEYSTONE_MCP_FILE_API_URL is set ──
-    if settings.file_tools_enabled:
-        upload_url = UploadUrlAdapter(settings.resolved_file_api_base_url)
-        file_ref = FileRefAdapter(settings.resolved_file_api_base_url)
-
-        registry.add_route(
-            "create_upload_url",
-            upload_url,
-            pattern=Pattern.M_U,
-            params=[
-                P("filename", str, required=False, default=None),
-                P("content_type", str, required=False, default=None),
-            ],
-            description=(
-                "Create a short-lived signed URL for uploading one file. Returns "
-                "upload_url, file_id, expires_at and max_bytes. PUT the file bytes "
-                "to upload_url, then pass file_id to the tool that imports the "
-                "file. Keeps large files out of tool arguments."
-            ),
-            mode="live",
-        )
-        registry.add_route(
-            "get_download_link",
-            file_ref,
-            pattern=Pattern.M_D,
-            params=[P("file_id", str)],
-            description=(
-                "Create a short-lived signed download link for a stored file. "
-                "Returns file_url and expires_at."
-            ),
-            mode="live",
-        )
-
     if not settings.rbac_enforcing:
         return
+    if directory is None:
+        return
 
-    # ── ADMIN — user administration: built-in directory by default, HTTP
-    # directory with KEYSTONE_MCP_USERS_BACKEND=http. Who may call these tools
-    # is decided by the policy file. ``admin=True`` is catalog metadata only.
-    _users_tools: list[tuple[str, str, list[Param]]] = [
+    # ── ADMIN — user administration over whichever UserDirectory the server
+    # was built with. Who may call these tools is decided by the policy file.
+    # ``admin=True`` is catalog metadata only. ``users_list`` is published for
+    # any directory; the other seven only when it declares "admin".
+    _read_only_tools: list[tuple[str, str, list[Param]]] = [
         (
             "users_list",
             "List workspace users with optional filters (default: not blocked).",
@@ -117,6 +111,8 @@ def register_catalog(
                 P("email_contains", str, required=False, default=None),
             ],
         ),
+    ]
+    _admin_tools: list[tuple[str, str, list[Param]]] = [
         (
             "users_add",
             "Create a workspace user with an initial role set.",
@@ -147,6 +143,12 @@ def register_catalog(
             [P("email", str)],
         ),
         (
+            "users_logout",
+            "End all sessions of a user: every access and refresh token is revoked; "
+            "the user can sign in again.",
+            [P("email", str)],
+        ),
+        (
             "users_set_roles",
             "Replace the full role set for a user (multi-role model).",
             [
@@ -171,13 +173,218 @@ def register_catalog(
             ],
         ),
     ]
-    for tool_name, description, params in _users_tools:
+    for tool_name, description, params in _read_only_tools:
         registry.add_route(
             tool_name,
             users_admin,
-            pattern=Pattern.M_B,
+            pattern=Pattern.SYNC,
             params=params,
             description=description,
             mode="live",
             admin=True,
         )
+    if "admin" in directory.capabilities:
+        for tool_name, description, params in _admin_tools:
+            registry.add_route(
+                tool_name,
+                users_admin,
+                pattern=Pattern.SYNC,
+                params=params,
+                description=description,
+                mode="live",
+                admin=True,
+            )
+    else:
+        logger.warning(
+            "users directory %s is read-only: users_* administration tools are not published",
+            directory.name,
+        )
+
+    if "service_accounts" in directory.capabilities:
+        _service_tools: list[tuple[str, str, list[Param]]] = [
+            (
+                "service_accounts_list",
+                "List service accounts (machine identities) with their roles.",
+                [P("is_blocked", bool, required=False, default=False)],
+            ),
+            (
+                "service_accounts_add",
+                "Create a service account for a machine caller (CI, scheduler, agent). "
+                "Service accounts are never treated as an interactive human and cannot "
+                "hold the administrator role.",
+                [
+                    P("name", str),
+                    P("roles", list, required=False, default=None),
+                    P("description", str, required=False, default=None),
+                ],
+            ),
+            (
+                "service_accounts_update",
+                "Change a service account's description, replace its roles, or block/unblock it.",
+                [
+                    P("name", str),
+                    P("description", str, required=False, default=None),
+                    P("roles", list, required=False, default=None),
+                    P("is_blocked", bool, required=False, default=None),
+                ],
+            ),
+        ]
+        for tool_name, description, params in _service_tools:
+            registry.add_route(
+                tool_name,
+                service_accounts_admin,
+                pattern=Pattern.SYNC,
+                params=params,
+                description=description,
+                mode="live",
+                admin=True,
+            )
+
+    if "api_keys" in directory.capabilities:
+        publish_issue = settings.deployment_profile != "production"
+        _api_key_tools: list[tuple[str, str, list[Param]]] = []
+        if publish_issue:
+            _api_key_tools.append(
+                (
+                    "api_keys_issue",
+                    "Issue an API key for a person (sign-in page) or a service account "
+                    "(Bearer header). The key is returned once.",
+                    [
+                        P("subject", str),
+                        P("label", str, required=False, default=None),
+                        P("expires_in_days", int, required=False, default=90),
+                    ],
+                )
+            )
+        _api_key_tools.extend(
+            [
+                (
+                    "api_keys_list",
+                    "List API keys without their secrets.",
+                    [
+                        P("subject", str, required=False, default=None),
+                        P("include_revoked", bool, required=False, default=False),
+                    ],
+                ),
+                (
+                    "api_keys_revoke",
+                    "Revoke an API key; sessions and calls using it stop at once.",
+                    [P("key_id", str)],
+                ),
+            ]
+        )
+        for tool_name, description, params in _api_key_tools:
+            registry.add_route(
+                tool_name,
+                api_keys_admin,
+                pattern=Pattern.SYNC,
+                params=params,
+                description=description,
+                mode="live",
+                admin=True,
+            )
+
+    if settings.policy_tools != "off" and policy_store is not None:
+        policy_admin = PolicyAdminAdapter(
+            store=policy_store,
+            directory=directory,
+            observability=observability,
+        )
+        _policy_read_tools: list[tuple[str, str, list[Param]]] = [
+            (
+                "policy_read",
+                "Read the RBAC policy file, its hashes, and catalog validation hints.",
+                [],
+            ),
+            (
+                "policy_catalog",
+                "List published tool names from the live catalog and optional snapshot, "
+                "with per-role allow decisions.",
+                [
+                    P("namespace", str, required=False, default=None),
+                    P("role", str, required=False, default=None),
+                ],
+            ),
+            (
+                "policy_validate",
+                "Dry-run structural and catalog validation on the current file or a candidate.",
+                [P("policy", dict, required=False, default=None)],
+            ),
+        ]
+        _policy_write_tools: list[tuple[str, str, list[Param]]] = [
+            (
+                "policy_role_set",
+                "Create or replace a role's allow patterns and description. "
+                "Validated against the live catalog and applied immediately.",
+                [
+                    P("role", str),
+                    P("allow", list),
+                    P("description", str, required=False, default=None),
+                    P("expected_hash", str, required=False, default=None),
+                ],
+            ),
+            (
+                "policy_role_delete",
+                "Delete a role that is not assigned to any active account.",
+                [
+                    P("role", str),
+                    P("expected_hash", str, required=False, default=None),
+                ],
+            ),
+            (
+                "policy_allow_add",
+                "Add allow patterns to a role. Patterns are globs over published tool names "
+                "(namespace prefix included), e.g. files_*. The change is validated against the "
+                "live catalog and applied immediately.",
+                [
+                    P("role", str),
+                    P("patterns", list),
+                    P("expected_hash", str, required=False, default=None),
+                ],
+            ),
+            (
+                "policy_allow_remove",
+                "Remove allow patterns from a role. The role must keep at least one pattern.",
+                [
+                    P("role", str),
+                    P("patterns", list),
+                    P("expected_hash", str, required=False, default=None),
+                ],
+            ),
+            (
+                "policy_list_set",
+                "Replace a global policy list (deny, requires_human_identity, critical_tools, "
+                "or reserved_allow_patterns) wholesale.",
+                [
+                    P("list", str),
+                    P("patterns", list),
+                    P("expected_hash", str, required=False, default=None),
+                ],
+            ),
+            (
+                "policy_rollback",
+                "Restore the previous policy file generation from the one-step backup.",
+                [],
+            ),
+        ]
+        for tool_name, description, params in _policy_read_tools:
+            registry.add_route(
+                tool_name,
+                policy_admin,
+                pattern=Pattern.SYNC,
+                params=params,
+                description=description,
+                mode="live",
+                admin=True,
+            )
+        if settings.policy_tools == "full":
+            for tool_name, description, params in _policy_write_tools:
+                registry.add_route(
+                    tool_name,
+                    policy_admin,
+                    pattern=Pattern.SYNC,
+                    params=params,
+                    description=description,
+                    mode="live",
+                    admin=True,
+                )

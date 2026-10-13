@@ -19,6 +19,7 @@ from keystone_mcp.rbac.loader import PolicyLoadError
 from keystone_mcp.router.engine import RouterEngine
 from keystone_mcp.router.registry import RouterRegistry
 from keystone_mcp.user_directory.factory import build_user_directory_resolver
+from keystone_mcp.user_directory.local import LocalUserDirectory
 from keystone_mcp.users.db import create_users_engine
 from keystone_mcp.users.revision import NullRevisionWriter
 from keystone_mcp.users.store import UsersStore
@@ -123,7 +124,9 @@ _USER_RESPONSE_KEYS = {
 )
 async def test_each_tool_runs_against_local_store(tool_name: str, tmp_path: Path) -> None:
     store, _revision = await make_users_store(tmp_path)
-    adapter = UsersAdminAdapter(users_store=store, role_source=_default_role_source)
+    adapter = UsersAdminAdapter(
+        directory=LocalUserDirectory(store), role_source=_default_role_source
+    )
     engine, registry = _registry(adapter)
     route = registry.add_route(tool_name, adapter, mode="live")
 
@@ -147,7 +150,9 @@ async def test_each_tool_runs_against_local_store(tool_name: str, tmp_path: Path
 
 async def test_users_add_unknown_role_is_validation_error(tmp_path: Path) -> None:
     store, _revision = await make_users_store(tmp_path)
-    adapter = UsersAdminAdapter(users_store=store, role_source=_default_role_source)
+    adapter = UsersAdminAdapter(
+        directory=LocalUserDirectory(store), role_source=_default_role_source
+    )
     engine, registry = _registry(adapter)
     route = registry.add_route("users_add", adapter, mode="live")
 
@@ -168,7 +173,9 @@ async def test_users_add_unknown_role_is_validation_error(tmp_path: Path) -> Non
 async def test_grant_and_set_roles_check_policy(tmp_path: Path) -> None:
     store, _revision = await make_users_store(tmp_path)
     await _seed(store, email="target@example.com", roles=["member"])
-    adapter = UsersAdminAdapter(users_store=store, role_source=_default_role_source)
+    adapter = UsersAdminAdapter(
+        directory=LocalUserDirectory(store), role_source=_default_role_source
+    )
     engine, registry = _registry(adapter)
     grant_route = registry.add_route("users_grant_role", adapter, mode="live")
     set_roles_route = registry.add_route("users_set_roles", adapter, mode="live")
@@ -191,7 +198,9 @@ async def test_grant_and_set_roles_check_policy(tmp_path: Path) -> None:
 async def test_administrator_accepted_even_if_policy_lacks_it(tmp_path: Path) -> None:
     store, _revision = await make_users_store(tmp_path)
     await _seed(store, email="promote-me@example.com", roles=["member"])
-    adapter = UsersAdminAdapter(users_store=store, role_source=lambda: frozenset({"member"}))
+    adapter = UsersAdminAdapter(
+        directory=LocalUserDirectory(store), role_source=lambda: frozenset({"member"})
+    )
     engine, registry = _registry(adapter)
     route = registry.add_route("users_grant_role", adapter, mode="live")
 
@@ -205,7 +214,7 @@ async def test_administrator_accepted_even_if_policy_lacks_it(tmp_path: Path) ->
 
 async def test_no_policy_skips_role_check(tmp_path: Path) -> None:
     store, _revision = await make_users_store(tmp_path)
-    adapter = UsersAdminAdapter(users_store=store, role_source=None)
+    adapter = UsersAdminAdapter(directory=LocalUserDirectory(store), role_source=None)
     engine, registry = _registry(adapter)
     route = registry.add_route("users_add", adapter, mode="live")
 
@@ -225,7 +234,7 @@ async def test_policy_not_loaded_is_service_unavailable(tmp_path: Path) -> None:
     def _raising_source() -> frozenset[str]:
         raise PolicyLoadError("RBAC policy has not been loaded")
 
-    adapter = UsersAdminAdapter(users_store=store, role_source=_raising_source)
+    adapter = UsersAdminAdapter(directory=LocalUserDirectory(store), role_source=_raising_source)
     engine, registry = _registry(adapter)
     route = registry.add_route("users_add", adapter, mode="live")
 
@@ -247,7 +256,9 @@ async def test_revoke_role_missing_from_policy_is_allowed(tmp_path: Path) -> Non
     # Bypasses the policy check entirely (allowed_roles=None), same as a role
     # that used to be in the policy and was since removed.
     await _seed(store, email="legacy-user@example.com", roles=["legacy"])
-    adapter = UsersAdminAdapter(users_store=store, role_source=_default_role_source)
+    adapter = UsersAdminAdapter(
+        directory=LocalUserDirectory(store), role_source=_default_role_source
+    )
     engine, registry = _registry(adapter)
     route = registry.add_route("users_revoke_role", adapter, mode="live")
 
@@ -261,7 +272,9 @@ async def test_revoke_role_missing_from_policy_is_allowed(tmp_path: Path) -> Non
 
 async def test_duplicate_add_is_conflict(tmp_path: Path) -> None:
     store, _revision = await make_users_store(tmp_path)
-    adapter = UsersAdminAdapter(users_store=store, role_source=_default_role_source)
+    adapter = UsersAdminAdapter(
+        directory=LocalUserDirectory(store), role_source=_default_role_source
+    )
     engine, registry = _registry(adapter)
     route = registry.add_route("users_add", adapter, mode="live")
     args = {"email": "dup@example.com", "full_name": "Dup", "roles": []}
@@ -276,7 +289,9 @@ async def test_duplicate_add_is_conflict(tmp_path: Path) -> None:
 
 async def test_unknown_email_is_user_not_found(tmp_path: Path) -> None:
     store, _revision = await make_users_store(tmp_path)
-    adapter = UsersAdminAdapter(users_store=store, role_source=_default_role_source)
+    adapter = UsersAdminAdapter(
+        directory=LocalUserDirectory(store), role_source=_default_role_source
+    )
     engine, registry = _registry(adapter)
     route = registry.add_route("users_block", adapter, mode="live")
 
@@ -290,7 +305,9 @@ async def test_self_mutation_code(tmp_path: Path) -> None:
     store, _revision = await make_users_store(tmp_path)
     await _seed(store, email=ADMIN.email, full_name="Admin A", roles=["administrator"])
     await _seed(store, email=ADMIN_B.email, full_name="Admin B", roles=["administrator"])
-    adapter = UsersAdminAdapter(users_store=store, role_source=_default_role_source)
+    adapter = UsersAdminAdapter(
+        directory=LocalUserDirectory(store), role_source=_default_role_source
+    )
     engine, registry = _registry(adapter)
     block_route = registry.add_route("users_block", adapter, mode="live")
     revoke_route = registry.add_route("users_revoke_role", adapter, mode="live")
@@ -309,7 +326,9 @@ async def test_self_mutation_code(tmp_path: Path) -> None:
 async def test_last_administrator_code(tmp_path: Path) -> None:
     store, _revision = await make_users_store(tmp_path)
     await _seed(store, email=ADMIN.email, full_name="Only Admin", roles=["administrator"])
-    adapter = UsersAdminAdapter(users_store=store, role_source=_default_role_source)
+    adapter = UsersAdminAdapter(
+        directory=LocalUserDirectory(store), role_source=_default_role_source
+    )
     engine, registry = _registry(adapter)
     block_route = registry.add_route("users_block", adapter, mode="live")
     revoke_route = registry.add_route("users_revoke_role", adapter, mode="live")
@@ -334,7 +353,9 @@ async def test_last_administrator_code(tmp_path: Path) -> None:
 
 async def test_actor_is_taken_from_identity_not_arguments(tmp_path: Path) -> None:
     store, _revision = await make_users_store(tmp_path)
-    adapter = UsersAdminAdapter(users_store=store, role_source=_default_role_source)
+    adapter = UsersAdminAdapter(
+        directory=LocalUserDirectory(store), role_source=_default_role_source
+    )
     engine, registry = _registry(adapter)
     route = registry.add_route("users_add", adapter, mode="live")
 
@@ -358,7 +379,9 @@ async def test_grant_existing_role_is_done_without_revision_bump(tmp_path: Path)
     await _seed(store, email="already-member@example.com", roles=["member"])
     after_seed = await revision.current()
 
-    adapter = UsersAdminAdapter(users_store=store, role_source=_default_role_source)
+    adapter = UsersAdminAdapter(
+        directory=LocalUserDirectory(store), role_source=_default_role_source
+    )
     engine, registry = _registry(adapter)
     route = registry.add_route("users_grant_role", adapter, mode="live")
 
@@ -378,7 +401,9 @@ async def test_mutation_bumps_revision_and_resolver_sees_it(tmp_path: Path) -> N
     before = await resolver.resolve("watched@example.com")
     assert before.is_blocked is False
 
-    adapter = UsersAdminAdapter(users_store=store, role_source=_default_role_source)
+    adapter = UsersAdminAdapter(
+        directory=LocalUserDirectory(store), role_source=_default_role_source
+    )
     engine, registry = _registry(adapter)
     route = registry.add_route("users_block", adapter, mode="live")
     result = await engine.execute(route, {"email": "watched@example.com"}, identity=ADMIN)
@@ -405,7 +430,9 @@ async def test_audit_receives_before_state(tmp_path: Path) -> None:
     await _seed(store, email="block-audit@example.com", roles=["member"])
     observability = _RecordingObservability()
     adapter = UsersAdminAdapter(
-        users_store=store, role_source=_default_role_source, observability=observability
+        directory=LocalUserDirectory(store),
+        role_source=_default_role_source,
+        observability=observability,
     )
     engine, registry = _registry(adapter)
     set_roles_route = registry.add_route("users_set_roles", adapter, mode="live")
@@ -426,7 +453,7 @@ async def test_audit_receives_before_state(tmp_path: Path) -> None:
 
 
 async def test_store_missing_is_service_unconfigured() -> None:
-    adapter = UsersAdminAdapter(users_store=None, role_source=_default_role_source)
+    adapter = UsersAdminAdapter(directory=None, role_source=_default_role_source)
     engine, registry = _registry(adapter)
     route = registry.add_route("users_list", adapter, mode="live")
 
@@ -441,7 +468,9 @@ async def test_database_down_is_service_unavailable() -> None:
         "postgresql+psycopg://keystone:s3cr3t@127.0.0.1:1/keystone_users"
     )
     store = UsersStore(engine_obj, revision=NullRevisionWriter())
-    adapter = UsersAdminAdapter(users_store=store, role_source=_default_role_source)
+    adapter = UsersAdminAdapter(
+        directory=LocalUserDirectory(store), role_source=_default_role_source
+    )
     engine, registry = _registry(adapter)
     route = registry.add_route("users_list", adapter, mode="live")
 
@@ -458,7 +487,9 @@ async def test_database_down_is_service_unavailable() -> None:
 
 async def test_response_shape_matches_http_branch(tmp_path: Path) -> None:
     store, _revision = await make_users_store(tmp_path)
-    adapter = UsersAdminAdapter(users_store=store, role_source=_default_role_source)
+    adapter = UsersAdminAdapter(
+        directory=LocalUserDirectory(store), role_source=_default_role_source
+    )
     engine, registry = _registry(adapter)
     route = registry.add_route("users_add", adapter, mode="live")
 

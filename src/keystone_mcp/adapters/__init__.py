@@ -2,30 +2,22 @@
 
 Each adapter talks to one server-side target on behalf of the verified identity:
 
-    stub          canonical Model-M response by pattern (default before "live")
-    webhook       async submit to a webhook API + peek + long-poll
-    external_http arbitrary external API, GET|POST, identity carried downstream
-    det_internal  synchronous deterministic call (placeholder adapter)
-    file_ref      mint a signed file-download reference (Model M pattern M-D)
+    stub          canonical status-envelope stub by pattern (default before "live")
     mcp_proxy     downstream MCP server over streamable HTTP (upstream 1:1 proxy)
+
+Reference adapters for forks (``WebhookAdapter``, ``ExternalHttpAdapter``) live
+in ``keystone_mcp.contrib.adapters``: see docs/contrib/adapters.md. They are
+not part of this package and not covered by docs/compatibility.md.
 """
 
 from keystone_mcp.adapters.base import Adapter, Pattern, stub_response
-from keystone_mcp.adapters.det_internal import DetInternalAdapter
-from keystone_mcp.adapters.external_http import ExternalHttpAdapter
-from keystone_mcp.adapters.file_ref import FileRefAdapter
 from keystone_mcp.adapters.mcp_proxy import McpProxyAdapter
 from keystone_mcp.adapters.stub import StubAdapter
-from keystone_mcp.adapters.webhook import WebhookAdapter
 
 __all__ = [
     "Adapter",
     "Pattern",
     "stub_response",
     "StubAdapter",
-    "WebhookAdapter",
-    "ExternalHttpAdapter",
-    "DetInternalAdapter",
-    "FileRefAdapter",
     "McpProxyAdapter",
 ]

@@ -1,19 +1,27 @@
 """MCP proxy adapter — forwards tool calls to a downstream MCP server over HTTP.
 
 Used by upstream ``proxy_1to1`` routes. The verified identity is propagated to
-the upstream as ``X-Author-Email``. When the upstream's registry entry sets
-``auth.bearer_env``, an ``Authorization: Bearer <token>`` header (read from
-that environment variable by :meth:`keystone_mcp.router.upstream.
-UpstreamRegistry.add_upstream`) is sent alongside it on every call.
+the upstream as ``X-Author-Email`` (unsigned, deprecated since 0.5.0). When
+the upstream's registry entry sets ``auth.identity_secret_env``, a signed
+``X-Keystone-Identity`` JWT (see :mod:`keystone_mcp.identity_assertion`) is
+sent as well, carrying the subject, the roles RBAC used, and which tool was
+called. When it sets ``auth.bearer_env``, an ``Authorization: Bearer <token>``
+header (read from that environment variable by :meth:`keystone_mcp.router.
+upstream.UpstreamRegistry.add_upstream`) is sent alongside it on every call.
 
 By default (``status_envelope=False``) the adapter is transparent: the
 upstream's answer — every content block, ``structuredContent``, ``_meta`` and
 ``isError`` — reaches the client unchanged, as a :class:`fastmcp.tools.base.
 ToolResult`. With ``status_envelope=True`` (``KEYSTONE_MCP_PROXY_STATUS_ENVELOPE=
 true``) the adapter instead reproduces the 0.3.x behaviour: the response is
-wrapped in the Model M ``{"state", "tool", "task_id", "result"}`` envelope and
+wrapped in the status envelope ``{"state", "tool", "task_id", "result"}`` and
 a ``status`` field of ``error``/``refused``/``accepted`` is mapped to an
 error, a rate-limit error, or a pending task.
+
+While the call runs, progress notifications the upstream sends are relayed to
+the client, when the client asked for them -- the actual call to the upstream
+and that relaying both go through :mod:`keystone_mcp.router.upstream_call`,
+the one place Keystone talks to an upstream MCP server.
 """
 
 from __future__ import annotations
@@ -23,29 +31,38 @@ import logging
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Callable
 
-import httpx
+import httpx2
 import pydantic_core
 from fastmcp import Client
-from fastmcp.client.transports import StreamableHttpTransport
 from fastmcp.exceptions import ToolError
-from fastmcp.tools.base import ToolResult
+from fastmcp.server.dependencies import get_context
+from fastmcp.tools.base import InputRequiredToolResult, ToolResult
+from mcp.shared._httpx_utils import McpHttpClientFactory
 
-from keystone_mcp.identity import AUTHOR_EMAIL_HEADER
+from keystone_mcp.identity import upstream_identity_headers
+from keystone_mcp.identity_assertion import (
+    IDENTITY_HEADER,
+    IDENTITY_META_KEY,
+    IdentityAssertionSigner,
+)
 
 if TYPE_CHECKING:
     from keystone_mcp.router.context import RouteContext
     from keystone_mcp.router.route import Route
+    from keystone_mcp.router.upstream_connection import UpstreamConnection
 
 logger = logging.getLogger(__name__)
 
 
-def _http_client_factory(tool_timeout_seconds: float):
+def _http_client_factory(tool_timeout_seconds: float) -> McpHttpClientFactory:
     """Build the transport's HTTP client with the per-tool timeout applied.
 
-    The transport's own ``sse_read_timeout`` argument is deprecated and ignored
-    by the current client, so the read timeout has to be set on the HTTP client
-    instead. Without this the per-tool budget bounded only the MCP request and
-    not the underlying socket.
+    Without this the per-tool budget bounded only the MCP request and not the
+    underlying socket. The transport hands this factory an ``auth`` object
+    built for ``httpx2`` (``fastmcp.client.auth.bearer.BearerAuth``), so the
+    returned client must be an ``httpx2.AsyncClient`` — an ``httpx.AsyncClient``
+    rejects that ``auth`` argument with a ``TypeError``. Our own HTTP code
+    elsewhere in Keystone stays on ``httpx``; only this fastmcp boundary moves.
 
     Matches the MCP HTTP client factory protocol ``(headers, timeout, auth)``;
     the caller's ``timeout`` is deliberately replaced by the per-tool budget.
@@ -56,10 +73,10 @@ def _http_client_factory(tool_timeout_seconds: float):
         timeout: Any = None,  # noqa: ARG001 — superseded by the per-tool budget
         auth: Any = None,
         **_kwargs: Any,
-    ) -> httpx.AsyncClient:
-        return httpx.AsyncClient(
+    ) -> httpx2.AsyncClient:
+        return httpx2.AsyncClient(
             headers=headers,
-            timeout=httpx.Timeout(tool_timeout_seconds),
+            timeout=httpx2.Timeout(tool_timeout_seconds),
             auth=auth,
             follow_redirects=False,
         )
@@ -73,8 +90,9 @@ def _http_client_factory(tool_timeout_seconds: float):
 #: rather than silently dropping them.
 ClientFactory = Callable[..., Client]
 
-#: ``StreamableHttpTransport`` httpx factory for a resolved per-tool timeout.
-HttpClientFactoryBuilder = Callable[[float], Callable[..., httpx.AsyncClient]]
+#: ``StreamableHttpTransport`` http client factory for a resolved per-tool
+#: timeout.
+HttpClientFactoryBuilder = Callable[[float], McpHttpClientFactory]
 
 
 class McpProxyAdapter:
@@ -82,24 +100,87 @@ class McpProxyAdapter:
 
     def __init__(
         self,
-        url: str,
+        connection_or_url: "UpstreamConnection | str",
         *,
         tool_timeout_seconds: float = 180.0,
         tool_timeout_overrides: dict[str, float] | None = None,
         client_factory: ClientFactory | None = None,
         http_client_factory: HttpClientFactoryBuilder | None = None,
         status_envelope: bool = False,
+        proxy_elicitation: bool = True,
         extra_headers: Mapping[str, str] | None = None,
+        identity_signer: IdentityAssertionSigner | None = None,
     ) -> None:
-        self._url = url.rstrip("/")
+        from keystone_mcp.router.upstream_connection import HttpUpstreamConnection
+
+        if isinstance(connection_or_url, str):
+            self._connection: UpstreamConnection = HttpUpstreamConnection(
+                "",
+                connection_or_url,
+                http_client_factory=http_client_factory,
+                client_factory=client_factory,
+            )
+        else:
+            self._connection = connection_or_url
         self._tool_timeout_seconds = tool_timeout_seconds
         self._tool_timeout_overrides = dict(tool_timeout_overrides or {})
         self._client_factory = client_factory
-        self._http_client_factory = http_client_factory or _http_client_factory
+        if http_client_factory is not None:
+            self._http_client_factory = http_client_factory
+        elif isinstance(self._connection, HttpUpstreamConnection):
+            if self._connection._http_client_factory is None:
+                self._connection._http_client_factory = _http_client_factory
         self._status_envelope = status_envelope
+        self._proxy_elicitation = proxy_elicitation
         # e.g. the upstream's ``Authorization: Bearer ...`` (auth.bearer_env).
         # Copied once at construction time, never logged as a whole.
         self._extra_headers = dict(extra_headers or {})
+        # Signs X-Keystone-Identity (Y01); None means this upstream has no
+        # auth.identity_secret_env and gets only the unsigned X-Author-Email.
+        self._identity_signer = identity_signer
+
+    @classmethod
+    def for_url(
+        cls,
+        url: str,
+        **kwargs: Any,
+    ) -> McpProxyAdapter:
+        """Build an HTTP-only adapter (tests and legacy call sites)."""
+        return cls(url, **kwargs)
+
+    @property
+    def _client_factory(self) -> ClientFactory | None:
+        from keystone_mcp.router.upstream_connection import HttpUpstreamConnection
+
+        conn = self._connection
+        if isinstance(conn, HttpUpstreamConnection):
+            return conn._client_factory
+        return None
+
+    @_client_factory.setter
+    def _client_factory(self, factory: ClientFactory | None) -> None:
+        from keystone_mcp.router.upstream_connection import HttpUpstreamConnection
+
+        conn = self._connection
+        if isinstance(conn, HttpUpstreamConnection):
+            conn._client_factory = factory
+
+    @property
+    def _http_client_factory(self) -> HttpClientFactoryBuilder | None:
+        from keystone_mcp.router.upstream_connection import HttpUpstreamConnection
+
+        conn = self._connection
+        if isinstance(conn, HttpUpstreamConnection):
+            return conn._http_client_factory
+        return None
+
+    @_http_client_factory.setter
+    def _http_client_factory(self, factory: HttpClientFactoryBuilder | None) -> None:
+        from keystone_mcp.router.upstream_connection import HttpUpstreamConnection
+
+        conn = self._connection
+        if isinstance(conn, HttpUpstreamConnection):
+            conn._http_client_factory = factory
 
     @property
     def status_envelope(self) -> bool:
@@ -122,6 +203,23 @@ class McpProxyAdapter:
         args: dict[str, Any],
         request: Any,
     ) -> dict[str, Any] | ToolResult:
+        # Local import: keystone_mcp.router (via router/__init__.py ->
+        # router.upstream) imports this module, so a module-level import here
+        # would be circular (see the identity_assertion.py note on the same
+        # problem). Captured first, in the request's own task: it is this
+        # call's only chance to see the client request that is waiting on it
+        # (DownstreamCall.current's docstring explains why that matters).
+        from keystone_mcp.router.upstream_call import (
+            DownstreamCall,
+            attach_upstream_elicitation_callback,
+            call_upstream_tool,
+            downstream_supports_form_elicitation,
+            make_elicitation_callback,
+            parse_for_status_envelope,
+        )
+
+        downstream = DownstreamCall.current()
+
         if request is not None:
             payload = request
         else:
@@ -129,34 +227,84 @@ class McpProxyAdapter:
 
             payload = omit_implicit_null_args(dict(args), route.params)
         tool_name = route.upstream_tool or route.name
-        # AUTHOR_EMAIL_HEADER last: extra_headers (e.g. a bearer token) must
-        # not be able to override the verified identity header.
-        headers = {**self._extra_headers, AUTHOR_EMAIL_HEADER: ctx.verified_identity.email}
         timeout = self._timeout_for(tool_name)
-
-        if self._client_factory is not None:
-            client = self._client_factory(headers=headers, timeout=timeout)
-        else:
-            client = Client(
-                StreamableHttpTransport(
-                    self._url,
-                    headers=headers,
-                    httpx_client_factory=self._http_client_factory(timeout),
-                ),
-                timeout=timeout,
+        # AUTHOR_EMAIL_HEADER last: extra_headers (e.g. a bearer token) must
+        # not be able to override the verified identity header. The signed
+        # assertion is built after extra_headers too, for the same reason —
+        # neither can be overridden by a static header from the registry.
+        call_meta: dict[str, Any] | None = None
+        headers = {**self._extra_headers}
+        if self._identity_signer is not None:
+            token = self._identity_signer.sign(
+                identity=ctx.verified_identity,
+                task_id=ctx.task_id,
+                mcp_method="tools/call",
+                mcp_target=tool_name,
+                timeout_seconds=timeout,
+                rbac_mode=ctx.settings.rbac_mode,
             )
+            if self._connection.transport == "stdio":
+                call_meta = {IDENTITY_META_KEY: token}
+            else:
+                headers[IDENTITY_HEADER] = token
+        if self._connection.transport == "http":
+            headers.update(upstream_identity_headers(ctx.verified_identity))
+
+        from keystone_mcp.router.stdio_process import UpstreamProcessUnavailableError
+
+        elicitation_callback = None
+        if (
+            self._proxy_elicitation
+            and self._connection.transport == "http"
+            and downstream is not None
+            and downstream_supports_form_elicitation(downstream.session)
+        ):
+            elicitation_callback = make_elicitation_callback(
+                downstream,
+                namespace=route.namespace,
+                tool_name=tool_name,
+            )
+
+        input_responses = None
+        request_state = None
+        try:
+            fctx = get_context()
+            input_responses = fctx.input_responses
+            request_state = fctx.request_state
+        except RuntimeError:
+            pass
+
+        try:
+            client = self._connection.call_client(headers=headers, timeout=timeout)
+        except UpstreamProcessUnavailableError:
+            raise ToolError(f"upstream {route.namespace} is unavailable") from None
+        if elicitation_callback is not None:
+            attach_upstream_elicitation_callback(client, elicitation_callback)
         async with client:
-            result = await client.call_tool(tool_name, payload, raise_on_error=False)
+            raw = await call_upstream_tool(
+                client,
+                tool_name,
+                payload,
+                timeout=timeout,
+                meta=call_meta,
+                downstream=downstream,
+                log_namespace=route.namespace,
+                input_responses=input_responses,
+                request_state=request_state,
+                proxy_elicitation=self._proxy_elicitation,
+            )
+            if isinstance(raw, InputRequiredToolResult):
+                return raw
+            if self._status_envelope:
+                # Parsed inside the ``async with`` block: _parse_call_tool_result
+                # decodes against the upstream's output schema, cached on the
+                # still-open session.
+                parsed = await parse_for_status_envelope(client, tool_name, raw)
 
         if self._status_envelope:
-            return self._wrap_status_envelope(result, route, ctx)
+            return self._wrap_status_envelope(parsed, route, ctx)
 
-        return ToolResult(
-            content=list(result.content),
-            structured_content=result.structured_content,
-            meta=result.meta,
-            is_error=result.is_error,
-        )
+        return ToolResult.from_mcp_result(raw)
 
     @staticmethod
     def _wrap_status_envelope(result: Any, route: "Route", ctx: "RouteContext") -> dict[str, Any]:

@@ -66,7 +66,7 @@ class RouterRegistry:
         name: str,
         target: Adapter,
         *,
-        pattern: Pattern = Pattern.M_B,
+        pattern: Pattern = Pattern.SYNC,
         params: list[Param] | None = None,
         description: str = "",
         transform: Transform | None = None,

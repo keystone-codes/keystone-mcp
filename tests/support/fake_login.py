@@ -1,0 +1,154 @@
+"""Fake ``LoginProvider`` implementations for exercising the generic login flow.
+
+These exist so ``tests/test_login_flow_generic.py`` can prove that
+``KeystoneOAuthProvider``'s login machinery (consent screen, CSRF/browser
+binding, ``state``-keyed pending attempts, error-page mapping) works for
+*any* conforming provider, not only the two built-in ones (Google, API key).
+"""
+
+from __future__ import annotations
+
+from collections.abc import Mapping, Sequence
+
+from keystone_mcp.login.protocol import (
+    FormField,
+    LoginIdentity,
+    LoginKind,
+    LoginRedirect,
+    LoginRejected,
+    LoginRejectReason,
+)
+
+
+class FakeRedirectProvider:
+    """A minimal ``RedirectLoginProvider`` standing in for a real OIDC provider.
+
+    ``begin`` returns a URL at a fictitious external host carrying ``state``,
+    exactly as a real redirect provider would; ``complete`` reads the
+    identity straight out of the callback's query params (``email=...``)
+    instead of doing a real token exchange, or raises as directed by
+    ``rejects``/``raises`` so a test can drive every branch of the generic
+    callback handler without a real external service.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        *,
+        title: str | None = None,
+        interactive: bool = True,
+        rejects: LoginRejectReason | None = None,
+        raises: BaseException | None = None,
+        begin_rejects: LoginRejectReason | None = None,
+        begin_raises: BaseException | None = None,
+        reported_provider: str | None = None,
+    ) -> None:
+        self._name = name
+        self._title = title if title is not None else name
+        self._interactive = interactive
+        self._rejects = rejects
+        self._raises = raises
+        self._begin_rejects = begin_rejects
+        self._begin_raises = begin_raises
+        # Lets a test simulate a misbehaving (or malicious) provider that
+        # reports a *different* provider name than the one it is configured
+        # under -- e.g. a third-party provider named "acme" claiming
+        # ``provider="google"`` to pick up RBAC's interactive-human trust in
+        # that name. Defaults to this provider's own name, like a correct
+        # implementation would always report.
+        self._reported_provider = reported_provider if reported_provider is not None else name
+        self.begin_calls: list[dict[str, str]] = []
+        self.complete_calls: list[dict[str, str]] = []
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def kind(self) -> LoginKind:
+        return "redirect"
+
+    @property
+    def title(self) -> str:
+        return self._title
+
+    @property
+    def interactive(self) -> bool:
+        return self._interactive
+
+    async def warm_up(self) -> None:
+        return None
+
+    async def aclose(self) -> None:
+        return None
+
+    async def begin(self, *, state: str, callback_url: str) -> LoginRedirect:
+        self.begin_calls.append({"state": state, "callback_url": callback_url})
+        if self._begin_raises is not None:
+            raise self._begin_raises
+        if self._begin_rejects is not None:
+            raise LoginRejected(self._begin_rejects, "fake provider rejected begin()")
+        url = f"https://fake-provider.example/authorize?state={state}&provider={self._name}"
+        return LoginRedirect(url=url, attempt={"marker": f"attempt-for-{state}"})
+
+    async def complete(
+        self, *, params: Mapping[str, str], callback_url: str, attempt: Mapping[str, str]
+    ) -> LoginIdentity:
+        self.complete_calls.append(dict(params))
+        if self._raises is not None:
+            raise self._raises
+        if self._rejects is not None:
+            raise LoginRejected(self._rejects, "fake provider rejected the attempt")
+        return LoginIdentity(
+            email=params.get("email", ""),
+            provider=self._reported_provider,
+            interactive=self._interactive,
+        )
+
+
+class FakeFormProvider:
+    """A minimal second ``FormLoginProvider``, used only to test that at most one is allowed."""
+
+    def __init__(self, name: str, *, reported_provider: str | None = None) -> None:
+        self._name = name
+        self._reported_provider = reported_provider if reported_provider is not None else name
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def kind(self) -> LoginKind:
+        return "form"
+
+    @property
+    def title(self) -> str:
+        return self._name
+
+    @property
+    def interactive(self) -> bool:
+        return False
+
+    async def warm_up(self) -> None:
+        return None
+
+    async def aclose(self) -> None:
+        return None
+
+    def form_fields(self) -> Sequence[FormField]:
+        return (FormField("email", "email", "email_label"),)
+
+    async def verify(self, form: Mapping[str, str]) -> LoginIdentity:
+        return LoginIdentity(
+            email=form.get("email", ""), provider=self._reported_provider, interactive=False
+        )
+
+
+def create_acme_login_provider(config, context) -> FakeRedirectProvider:
+    """Entry-point factory for plugin integration tests."""
+    from keystone_mcp.plugins import LoginProviderConfig, PluginContext
+
+    if not isinstance(config, LoginProviderConfig) or not isinstance(context, PluginContext):
+        raise TypeError("invalid factory arguments")
+    title = config.title if config.title is not None else config.name
+    return FakeRedirectProvider(config.name, title=title)

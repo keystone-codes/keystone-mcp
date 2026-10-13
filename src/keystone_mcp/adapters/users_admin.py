@@ -1,94 +1,59 @@
-"""Builtin users_* admin tools.
+"""Builtin users_* admin tools, dispatched through a ``UserDirectory``.
 
-By default (``KEYSTONE_MCP_USERS_BACKEND=local``) these tools write straight to
-the built-in users directory (:mod:`keystone_mcp.users.store`). Set
-``KEYSTONE_MCP_USERS_BACKEND=http`` to proxy each route to an external mcp-users
-service instead (service authentication uses the server-held users service
-token). Either way, the acting administrator is taken from the verified OAuth
+Works against whichever :class:`~keystone_mcp.user_directory.protocol.UserDirectory`
+implementation the server was built with (the built-in database, an external
+HTTP service, or a plugin) -- this adapter itself knows nothing about SQL or
+HTTP. The acting administrator is always taken from the verified OAuth
 identity, never from tool arguments.
 """
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
-from urllib.parse import quote
 
-import httpx
+from redis.exceptions import RedisError
 
+from keystone_mcp.user_directory.errors import UsersError
+from keystone_mcp.user_directory.protocol import UserDirectory, UserDirectoryAdmin
 from keystone_mcp.user_directory.util import normalize_email
-from keystone_mcp.users.errors import UsersError, UsersStoreUnavailableError
+from keystone_mcp.users.roles import check_role_name, normalize_roles
 
 if TYPE_CHECKING:
+    from keystone_mcp.auth.sessions import SessionRevoker
     from keystone_mcp.observability.service import RbacObservability
     from keystone_mcp.router.context import RouteContext
     from keystone_mcp.router.route import Route
-    from keystone_mcp.users.store import UsersStore
 
-ACTOR_EMAIL_HEADER = "X-Actor-Email"
-
-_STATUS_CODES: dict[int, str] = {
-    400: "bad_request",
-    403: "forbidden",
-    404: "user_not_found",
-    409: "conflict",
-    422: "validation_error",
-}
+logger = logging.getLogger(__name__)
 
 # Returns the role names the active RBAC policy knows about, or ``None`` when
 # no policy check should be performed (RBAC off). Raised exceptions (e.g.
 # ``PolicyLoadError`` from an ``enforce`` deployment whose policy has not been
-# loaded yet) are translated to ``service_unavailable`` by the local branch.
+# loaded yet) are translated to ``service_unavailable``.
 RoleSource = Callable[[], frozenset[str] | None]
 
-# Tool names the local (built-in store) branch knows how to dispatch.
-_LOCAL_TOOL_NAMES = frozenset(
-    {
-        "users_list",
-        "users_add",
-        "users_update",
-        "users_block",
-        "users_unblock",
-        "users_set_roles",
-        "users_grant_role",
-        "users_revoke_role",
-    }
-)
-
-# Tools whose role argument(s) are checked against the active RBAC policy.
+# Tools whose role argument(s) are checked against the active RBAC policy
+# before the directory is ever called (the directory only checks format).
 _ROLE_CHECKED_TOOLS = frozenset({"users_add", "users_set_roles", "users_grant_role"})
 
 
 class UsersAdminAdapter:
-    """Dispatches ``users_*`` tool calls to the built-in store or mcp-users."""
+    """Dispatches ``users_*`` tool calls to a ``UserDirectory`` implementation."""
 
     def __init__(
         self,
-        client_factory: Any | None = None,
         *,
-        observability: RbacObservability | None = None,
-        users_store: UsersStore | None = None,
+        directory: UserDirectory | None = None,
         role_source: RoleSource | None = None,
+        observability: RbacObservability | None = None,
+        session_revoker: SessionRevoker | None = None,
     ) -> None:
-        self._client_factory = client_factory
-        self._observability = observability
-        self._users_store = users_store
+        self._directory = directory
         self._role_source = role_source
-
-    def _client(self, ctx: RouteContext) -> httpx.AsyncClient:
-        if self._client_factory is not None:
-            return self._client_factory(ctx)
-        base_url = ctx.settings.users_service_url.rstrip("/")
-        token = ctx.settings.users_service_token
-        return httpx.AsyncClient(
-            base_url=base_url,
-            timeout=httpx.Timeout(ctx.settings.users_service_timeout_seconds),
-            headers={"Authorization": f"Bearer {token}"},
-        )
-
-    @staticmethod
-    def _actor_headers(ctx: RouteContext) -> dict[str, str]:
-        return {ACTOR_EMAIL_HEADER: normalize_email(ctx.verified_identity.email)}
+        self._observability = observability
+        self._session_revoker = session_revoker
 
     @staticmethod
     def _error(
@@ -116,67 +81,15 @@ class UsersAdminAdapter:
         }
 
     @staticmethod
-    def _infer_code_from_message(status_code: int, message: str) -> str:
-        lowered = message.lower()
-        if "last active administrator" in lowered:
-            return "last_administrator"
-        if "self-block" in lowered or "own administrator access" in lowered:
-            return "self_admin_mutation_forbidden"
-        if "x-actor-email" in lowered and "required" in lowered:
-            return "actor_email_required"
-        return _STATUS_CODES.get(status_code, "service_error")
-
-    @classmethod
-    def _parse_service_error(cls, response: httpx.Response) -> tuple[str, str]:
-        try:
-            body = response.json()
-        except ValueError:
-            return (
-                _STATUS_CODES.get(response.status_code, "service_error"),
-                "users service request failed",
-            )
-        if not isinstance(body, dict):
-            return (
-                _STATUS_CODES.get(response.status_code, "service_error"),
-                "users service request failed",
-            )
-
-        top_level_code = body.get("code")
-        detail = body.get("detail")
-        if isinstance(detail, dict):
-            code = str(
-                detail.get("code")
-                or top_level_code
-                or _STATUS_CODES.get(response.status_code, "service_error")
-            )
-            message = str(detail.get("detail") or detail.get("message") or "request failed")
-            return code, message
-        if isinstance(detail, list):
-            return "validation_error", "request validation failed"
-        if isinstance(detail, str):
-            if top_level_code:
-                return str(top_level_code), detail
-            return cls._infer_code_from_message(response.status_code, detail), detail
-        message = str(body.get("message") or "users service request failed")
-        code = str(top_level_code or _STATUS_CODES.get(response.status_code, "service_error"))
-        return code, message
-
-    def _service_unconfigured(self, route: Route, ctx: RouteContext) -> dict[str, Any] | None:
-        if (
-            not ctx.settings.users_service_url.strip()
-            or not ctx.settings.users_service_token.strip()
-        ):
-            return self._error(
-                route,
-                ctx,
-                code="service_unconfigured",
-                message="users directory is not configured",
-            )
-        return None
-
-    @staticmethod
-    def _email_path(email: str) -> str:
-        return quote(normalize_email(email), safe="")
+    def _error_message(exc: UsersError) -> str:
+        # Fixed, caller-safe text for the two codes that can carry
+        # implementation detail (a database error, a connection failure):
+        # every other code's own message is already safe to show as-is.
+        if exc.code == "service_unavailable":
+            return "users directory is unavailable"
+        if exc.code == "service_timeout":
+            return "users service timed out"
+        return str(exc)
 
     async def execute(
         self,
@@ -186,44 +99,10 @@ class UsersAdminAdapter:
         request: Any,
     ) -> dict[str, Any]:
         spec = request if isinstance(request, dict) else dict(args)
-        if ctx.settings.users_backend == "local":
-            return await self._execute_local(route, ctx, spec)
-        unconfigured = self._service_unconfigured(route, ctx)
-        if unconfigured is not None:
-            self._record_mutation_audit(route, ctx, spec, unconfigured)
-            return unconfigured
+        name = route.name
 
-        client = self._client(ctx)
-        try:
-            result = await self._dispatch(route, ctx, spec, client)
-            self._record_mutation_audit(route, ctx, spec, result)
-            return result
-        except httpx.TimeoutException:
-            result = self._error(
-                route, ctx, code="service_timeout", message="users service timed out"
-            )
-            self._record_mutation_audit(route, ctx, spec, result)
-            return result
-        except httpx.HTTPError:
-            result = self._error(
-                route,
-                ctx,
-                code="service_unavailable",
-                message="users service is unavailable",
-            )
-            self._record_mutation_audit(route, ctx, spec, result)
-            return result
-        finally:
-            await client.aclose()
-
-    async def _execute_local(
-        self,
-        route: Route,
-        ctx: RouteContext,
-        spec: dict[str, Any],
-    ) -> dict[str, Any]:
-        store = self._users_store
-        if store is None:
+        directory = self._directory
+        if directory is None:
             result = self._error(
                 route,
                 ctx,
@@ -233,18 +112,25 @@ class UsersAdminAdapter:
             self._record_mutation_audit(route, ctx, spec, result)
             return result
 
-        name = route.name
-        if name not in _LOCAL_TOOL_NAMES:
+        if name != "users_list" and not (
+            isinstance(directory, UserDirectoryAdmin) and "admin" in directory.capabilities
+        ):
             result = self._error(
-                route, ctx, code="unsupported_operation", message="unknown users admin tool"
+                route,
+                ctx,
+                code="service_unconfigured",
+                message=f"users directory {directory.name!r} does not support administration",
             )
             self._record_mutation_audit(route, ctx, spec, result)
             return result
 
-        validation_error = self._validate_local_args(route, ctx, spec)
+        validation_error = self._validate_args(route, ctx, spec)
         if validation_error is not None:
             self._record_mutation_audit(route, ctx, spec, validation_error)
             return validation_error
+
+        if name == "users_logout":
+            return await self._execute_logout(route, ctx, spec)
 
         allowed_roles: frozenset[str] | None = None
         if name in _ROLE_CHECKED_TOOLS:
@@ -260,13 +146,18 @@ class UsersAdminAdapter:
                 self._record_mutation_audit(route, ctx, spec, result)
                 return result
 
-        actor_email = normalize_email(ctx.verified_identity.email)
+        actor_email = ctx.verified_identity.subject
+        if ctx.verified_identity.email is not None:
+            actor_email = normalize_email(actor_email)
         try:
             if name == "users_list":
                 is_blocked = spec.get("is_blocked")
-                rows = await store.list_users(
+                role = spec.get("role")
+                if role is not None:
+                    role = check_role_name(str(role))
+                rows = await directory.list_users(
                     is_blocked=is_blocked if is_blocked is not None else False,
-                    role=spec.get("role"),
+                    role=role,
                     email_contains=spec.get("email_contains"),
                 )
                 result = self._done(
@@ -275,61 +166,80 @@ class UsersAdminAdapter:
                 self._record_mutation_audit(route, ctx, spec, result)
                 return result
             if name == "users_add":
-                mutation = await store.create_user(
+                roles = normalize_roles(list(spec.get("roles") or []), allowed=allowed_roles)
+                mutation = await directory.create_user(
                     email=str(spec["email"]),
                     full_name=str(spec["full_name"]),
-                    roles=list(spec.get("roles") or []),
+                    roles=roles,
                     note=spec.get("note"),
-                    created_by=actor_email,
-                    allowed_roles=allowed_roles,
+                    actor=actor_email,
                 )
             elif name == "users_update":
-                mutation = await store.update_profile(
+                mutation = await directory.update_user(
                     email=str(spec["email"]),
                     full_name=spec.get("full_name"),
                     note=spec.get("note"),
+                    actor=actor_email,
                 )
             elif name == "users_block":
-                mutation = await store.set_blocked(
-                    email=str(spec["email"]), blocked=True, actor_email=actor_email
+                mutation = await directory.set_blocked(
+                    email=str(spec["email"]), blocked=True, actor=actor_email
                 )
             elif name == "users_unblock":
-                mutation = await store.set_blocked(
-                    email=str(spec["email"]), blocked=False, actor_email=actor_email
+                mutation = await directory.set_blocked(
+                    email=str(spec["email"]), blocked=False, actor=actor_email
                 )
             elif name == "users_set_roles":
-                mutation = await store.replace_roles(
-                    email=str(spec["email"]),
-                    roles=list(spec["roles"]),
-                    actor_email=actor_email,
-                    allowed_roles=allowed_roles,
+                roles = normalize_roles(list(spec["roles"]), allowed=allowed_roles)
+                mutation = await directory.replace_roles(
+                    email=str(spec["email"]), roles=roles, actor=actor_email
                 )
             elif name == "users_grant_role":
-                mutation = await store.grant_role(
-                    email=str(spec["email"]),
-                    role=str(spec["role"]),
-                    allowed_roles=allowed_roles,
+                role = normalize_roles([str(spec["role"])], allowed=allowed_roles)[0]
+                mutation = await directory.grant_role(
+                    email=str(spec["email"]), role=role, actor=actor_email
                 )
             else:
                 assert name == "users_revoke_role"
-                mutation = await store.revoke_role(
-                    email=str(spec["email"]), role=str(spec["role"]), actor_email=actor_email
+                role = check_role_name(str(spec["role"]))
+                mutation = await directory.revoke_role(
+                    email=str(spec["email"]), role=role, actor=actor_email
                 )
-        except UsersStoreUnavailableError:
-            result = self._error(
-                route,
-                ctx,
-                code="service_unavailable",
-                message="users directory is unavailable",
-            )
-            self._record_mutation_audit(route, ctx, spec, result)
-            return result
         except UsersError as exc:
-            result = self._error(route, ctx, code=exc.code, message=str(exc))
+            result = self._error(route, ctx, code=exc.code, message=self._error_message(exc))
             self._record_mutation_audit(route, ctx, spec, result)
             return result
 
-        result = self._done(route, ctx, user=mutation.user.to_dict())
+        extra: dict[str, Any] = {}
+        if name == "users_block":
+            if self._session_revoker is None:
+                extra["revoked_tokens"] = 0
+            else:
+                try:
+                    extra["revoked_tokens"] = await self._session_revoker.revoke_subject(
+                        str(spec["email"])
+                    )
+                except RedisError:
+                    logger.warning("user blocked but sessions not revoked: token store unavailable")
+                    result = self._error(
+                        route,
+                        ctx,
+                        code="service_unavailable",
+                        message=(
+                            "user is blocked; sessions were not revoked. "
+                            "Call users_block again to retry session revocation."
+                        ),
+                    )
+                    self._record_mutation_audit(
+                        route,
+                        ctx,
+                        spec,
+                        result,
+                        before_roles=mutation.roles_before,
+                        blocked_before=mutation.blocked_before,
+                    )
+                    return result
+        result = self._done(route, ctx, user=mutation.user.to_dict(), **extra)
         self._record_mutation_audit(
             route,
             ctx,
@@ -340,8 +250,34 @@ class UsersAdminAdapter:
         )
         return result
 
+    async def _execute_logout(
+        self,
+        route: Route,
+        ctx: RouteContext,
+        spec: dict[str, Any],
+    ) -> dict[str, Any]:
+        email = normalize_email(str(spec["email"]))
+        if self._session_revoker is None:
+            result = self._done(route, ctx, email=email, revoked_tokens=0)
+            self._record_mutation_audit(route, ctx, spec, result, operation_override="logout")
+            return result
+        try:
+            revoked = await self._session_revoker.revoke_subject(email)
+        except RedisError:
+            result = self._error(
+                route,
+                ctx,
+                code="service_unavailable",
+                message="session store is unavailable",
+            )
+            self._record_mutation_audit(route, ctx, spec, result, operation_override="logout")
+            return result
+        result = self._done(route, ctx, email=email, revoked_tokens=revoked)
+        self._record_mutation_audit(route, ctx, spec, result, operation_override="logout")
+        return result
+
     @staticmethod
-    def _validate_local_args(
+    def _validate_args(
         route: Route, ctx: RouteContext, spec: dict[str, Any]
     ) -> dict[str, Any] | None:
         name = route.name
@@ -368,7 +304,7 @@ class UsersAdminAdapter:
             if not has_full_name and not has_note:
                 return err("at least one of full_name or note is required")
             return None
-        if name in ("users_block", "users_unblock"):
+        if name in ("users_block", "users_unblock", "users_logout"):
             if not spec.get("email"):
                 return err("email is required")
             return None
@@ -388,34 +324,6 @@ class UsersAdminAdapter:
             return None
         return None
 
-    async def _dispatch(
-        self,
-        route: Route,
-        ctx: RouteContext,
-        spec: dict[str, Any],
-        client: httpx.AsyncClient,
-    ) -> dict[str, Any]:
-        name = route.name
-        if name == "users_list":
-            return await self._list_users(route, ctx, spec, client)
-        if name == "users_add":
-            return await self._create_user(route, ctx, spec, client)
-        if name == "users_update":
-            return await self._update_user(route, ctx, spec, client)
-        if name == "users_block":
-            return await self._block_user(route, ctx, spec, client)
-        if name == "users_unblock":
-            return await self._unblock_user(route, ctx, spec, client)
-        if name == "users_set_roles":
-            return await self._set_roles(route, ctx, spec, client)
-        if name == "users_grant_role":
-            return await self._grant_role(route, ctx, spec, client)
-        if name == "users_revoke_role":
-            return await self._revoke_role(route, ctx, spec, client)
-        return self._error(
-            route, ctx, code="unsupported_operation", message="unknown users admin tool"
-        )
-
     def _record_mutation_audit(
         self,
         route: Route,
@@ -425,6 +333,7 @@ class UsersAdminAdapter:
         *,
         before_roles: tuple[str, ...] | None = None,
         blocked_before: bool | None = None,
+        operation_override: str | None = None,
     ) -> None:
         if self._observability is None:
             return
@@ -450,8 +359,9 @@ class UsersAdminAdapter:
                 blocked_before = True
                 blocked_after = False if outcome == "done" else blocked_after
         self._observability.record_users_mutation(
-            operation=route.name,
-            actor_email=ctx.verified_identity.email,
+            operation=operation_override or route.name,
+            actor_email=ctx.verified_identity.subject,
+            actor_subject_type=ctx.verified_identity.subject_type,
             target_email=str(target_email) if target_email else None,
             outcome=outcome,
             code=str(code) if code is not None else None,
@@ -462,186 +372,3 @@ class UsersAdminAdapter:
             blocked_after=blocked_after,
             role=role_label,
         )
-
-    async def _handle_response(
-        self,
-        route: Route,
-        ctx: RouteContext,
-        response: httpx.Response,
-        *,
-        list_payload: bool = False,
-    ) -> dict[str, Any]:
-        if response.is_success:
-            body = response.json() if response.content else {}
-            if list_payload:
-                return self._done(
-                    route, ctx, users=body.get("users", []), total=body.get("total", 0)
-                )
-            return self._done(route, ctx, user=body)
-        code, message = self._parse_service_error(response)
-        return self._error(route, ctx, code=code, message=message)
-
-    async def _list_users(
-        self,
-        route: Route,
-        ctx: RouteContext,
-        spec: dict[str, Any],
-        client: httpx.AsyncClient,
-    ) -> dict[str, Any]:
-        params: dict[str, Any] = {}
-        if "is_blocked" in spec and spec["is_blocked"] is not None:
-            params["is_blocked"] = spec["is_blocked"]
-        else:
-            params["is_blocked"] = False
-        role = spec.get("role")
-        if role:
-            params["role"] = role
-        email_contains = spec.get("email_contains")
-        if email_contains:
-            params["email_contains"] = email_contains
-        response = await client.get("/v1/users", params=params)
-        return await self._handle_response(route, ctx, response, list_payload=True)
-
-    async def _create_user(
-        self,
-        route: Route,
-        ctx: RouteContext,
-        spec: dict[str, Any],
-        client: httpx.AsyncClient,
-    ) -> dict[str, Any]:
-        email = spec.get("email")
-        full_name = spec.get("full_name")
-        if not email or not full_name:
-            return self._error(
-                route, ctx, code="validation_error", message="email and full_name are required"
-            )
-        payload = {
-            "email": normalize_email(str(email)),
-            "full_name": str(full_name),
-            "roles": list(spec.get("roles") or []),
-            "created_by": normalize_email(ctx.verified_identity.email),
-        }
-        note = spec.get("note")
-        if note is not None:
-            payload["note"] = note
-        response = await client.post("/v1/users", json=payload, headers=self._actor_headers(ctx))
-        return await self._handle_response(route, ctx, response)
-
-    async def _update_user(
-        self,
-        route: Route,
-        ctx: RouteContext,
-        spec: dict[str, Any],
-        client: httpx.AsyncClient,
-    ) -> dict[str, Any]:
-        email = spec.get("email")
-        if not email:
-            return self._error(route, ctx, code="validation_error", message="email is required")
-        payload: dict[str, Any] = {}
-        if "full_name" in spec and spec["full_name"] is not None:
-            payload["full_name"] = spec["full_name"]
-        if "note" in spec and spec["note"] is not None:
-            payload["note"] = spec["note"]
-        if not payload:
-            return self._error(
-                route,
-                ctx,
-                code="validation_error",
-                message="at least one of full_name or note is required",
-            )
-        response = await client.patch(
-            f"/v1/users/{self._email_path(str(email))}",
-            json=payload,
-            headers=self._actor_headers(ctx),
-        )
-        return await self._handle_response(route, ctx, response)
-
-    async def _block_user(
-        self,
-        route: Route,
-        ctx: RouteContext,
-        spec: dict[str, Any],
-        client: httpx.AsyncClient,
-    ) -> dict[str, Any]:
-        email = spec.get("email")
-        if not email:
-            return self._error(route, ctx, code="validation_error", message="email is required")
-        response = await client.post(
-            f"/v1/users/{self._email_path(str(email))}/block",
-            headers=self._actor_headers(ctx),
-        )
-        return await self._handle_response(route, ctx, response)
-
-    async def _unblock_user(
-        self,
-        route: Route,
-        ctx: RouteContext,
-        spec: dict[str, Any],
-        client: httpx.AsyncClient,
-    ) -> dict[str, Any]:
-        email = spec.get("email")
-        if not email:
-            return self._error(route, ctx, code="validation_error", message="email is required")
-        response = await client.post(
-            f"/v1/users/{self._email_path(str(email))}/unblock",
-            headers=self._actor_headers(ctx),
-        )
-        return await self._handle_response(route, ctx, response)
-
-    async def _set_roles(
-        self,
-        route: Route,
-        ctx: RouteContext,
-        spec: dict[str, Any],
-        client: httpx.AsyncClient,
-    ) -> dict[str, Any]:
-        email = spec.get("email")
-        roles = spec.get("roles")
-        if not email or roles is None:
-            return self._error(
-                route, ctx, code="validation_error", message="email and roles are required"
-            )
-        response = await client.put(
-            f"/v1/users/{self._email_path(str(email))}/roles",
-            json={"roles": list(roles)},
-            headers=self._actor_headers(ctx),
-        )
-        return await self._handle_response(route, ctx, response)
-
-    async def _grant_role(
-        self,
-        route: Route,
-        ctx: RouteContext,
-        spec: dict[str, Any],
-        client: httpx.AsyncClient,
-    ) -> dict[str, Any]:
-        email = spec.get("email")
-        role = spec.get("role")
-        if not email or not role:
-            return self._error(
-                route, ctx, code="validation_error", message="email and role are required"
-            )
-        response = await client.post(
-            f"/v1/users/{self._email_path(str(email))}/roles/{quote(str(role), safe='')}",
-            headers=self._actor_headers(ctx),
-        )
-        return await self._handle_response(route, ctx, response)
-
-    async def _revoke_role(
-        self,
-        route: Route,
-        ctx: RouteContext,
-        spec: dict[str, Any],
-        client: httpx.AsyncClient,
-    ) -> dict[str, Any]:
-        email = spec.get("email")
-        role = spec.get("role")
-        if not email or not role:
-            return self._error(
-                route, ctx, code="validation_error", message="email and role are required"
-            )
-        response = await client.delete(
-            f"/v1/users/{self._email_path(str(email))}/roles/{quote(str(role), safe='')}",
-            headers=self._actor_headers(ctx),
-        )
-        return await self._handle_response(route, ctx, response)

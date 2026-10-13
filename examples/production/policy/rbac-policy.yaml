@@ -1,0 +1,56 @@
+# Starting-point RBAC policy for a production deployment. Copy of
+# config/rbac-policy.yaml in the repository, mounted read-write at
+# /etc/keystone-mcp/policy/rbac-policy.yaml by docker-compose.yml.
+#
+# Replace the roles and allow patterns with your own; role names are
+# free-form. A role can only be assigned to a person if its name is in this
+# file -- the users directory itself holds no permissions.
+#
+# Effective permissions = authenticated identity
+#                       ∩ active user state (exists, not blocked)
+#                       ∩ ⋃ allow_patterns(role) for all assigned roles
+#                       ∩ OAuth/client protocol constraints
+#
+# Multi-role effect: UNION of allow patterns. Unmatched tools are denied.
+#
+# Format reference: ../../docs/rbac-policy-format.md
+
+version: "1.0.0"
+default_deny: true
+
+roles:
+  administrator:
+    description: "Full access, including user administration."
+    allow:
+      - "*"
+
+# Example of a second role. Uncomment and replace the patterns with tool
+# names from your own services (namespace prefix included).
+#  member:
+#    description: "Read-only access to one service."
+#    allow:
+#      - your_service_search
+#      - your_service_read
+
+# Tools that may only run under an interactive human login. Empty by default.
+requires_human_identity: []
+
+# Tools whose role resolution must bypass the allow cache. The platform
+# always treats users_* as critical.
+# This list adds to that set.
+critical_tools: []
+
+# Documentation-only labels used by scripts/generate_role_matrix.py; the first
+# matching label wins and unmatched tools are labelled "W".
+tool_dispositions:
+  R:
+    - users_list
+  D:
+    - users_block
+  W:
+    - users_add
+    - users_update
+    - users_unblock
+    - users_set_roles
+    - users_grant_role
+    - users_revoke_role

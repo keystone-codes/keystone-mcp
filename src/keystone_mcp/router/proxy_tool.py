@@ -74,7 +74,12 @@ class UpstreamProxyTool(Tool):
         publish_output_schema = (
             route.mode == "live" and transparent and route.output_schema is not None
         )
-        annotations = ToolAnnotations(**route.annotations) if route.annotations else None
+        # route.annotations is stored in wire form (``readOnlyHint`` etc.,
+        # see build_upstream_tool_specs) -- model_validate understands field
+        # aliases, a plain **route.annotations unpack would not.
+        annotations = (
+            ToolAnnotations.model_validate(route.annotations) if route.annotations else None
+        )
 
         tool = cls(
             name=route.name,

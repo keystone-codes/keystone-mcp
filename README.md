@@ -5,9 +5,9 @@
   &nbsp;&nbsp;&nbsp;&nbsp;
   <a href="pyproject.toml"><img alt="Python 3.11, 3.12, 3.13" src="https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-3776AB?logo=python&logoColor=white"></a>
   &nbsp;&nbsp;&nbsp;&nbsp;
-  <a href="CHANGELOG.md"><img alt="version 0.4.0" src="https://img.shields.io/badge/version-0.4.0-0f172a"></a>
+  <a href="CHANGELOG.md"><img alt="version 0.5.0" src="https://img.shields.io/badge/version-0.5.0-0f172a"></a>
   &nbsp;&nbsp;&nbsp;&nbsp;
-  <a href="https://github.com/jlowin/fastmcp"><img alt="FastMCP 3.4.4" src="https://img.shields.io/badge/FastMCP-3.4.4-059669"></a>
+  <a href="https://github.com/jlowin/fastmcp"><img alt="FastMCP 4.1" src="https://img.shields.io/badge/FastMCP-4.1-059669"></a>
   &nbsp;&nbsp;&nbsp;&nbsp;
   <a href="https://modelcontextprotocol.io"><img alt="MCP Streamable HTTP" src="https://img.shields.io/badge/MCP-Streamable%20HTTP-0891b2"></a>
   &nbsp;&nbsp;&nbsp;&nbsp;
@@ -58,6 +58,7 @@ Then connect a client and sign in:
 
 - **Local** — [Run Keystone-MCP on your machine](docs/paths/local-compose.md)
 - **Production** — [Deploy with Docker, Postgres and TLS](docs/paths/production-docker.md)
+- **PyPI** — `pip install keystone-mcp-gateway`, then `keystone-mcp serve` ([docs/deploy.md](docs/deploy.md#from-pypi); the package name differs from the command and the image — `keystone-mcp` on PyPI is an unrelated project)
 
 ## Why Keystone-MCP
 
@@ -65,14 +66,12 @@ Then connect a client and sign in:
   sections, one per service.
 - **Any users directory.** Built in (SQLite for one host, Postgres for
   production), or your own directory over HTTP.
-- **Any sign-in method.** Google, and DEV tokens for local testing (a
-  deprecated external API-key check remains until 0.4.1); a common
-  interface for your own identity provider is on the roadmap for 0.5.0.
-- **Onboarding and access through the agent.** An administrator adds
-  people, changes roles, and manages access by asking the agent, with the
-  `users_*` tools, the `keystone-user-admin` skill, or
-  `setup.sh --non-interactive`; the access-policy file itself is still
-  edited by hand in 0.4.0.
+- **Any sign-in method.** Google, DEV tokens for local testing, and a
+  deprecated API-key method — all three behind one `LoginProvider` interface.
+- **Onboarding and access through the agent.** An administrator adds people,
+  changes roles, and manages access by asking the agent — [two agent
+  skills](docs/README.md#i-manage-who-has-access) (`users_*` and `policy_*`
+  tools), or `setup.sh --non-interactive`.
 - **Services in any language or SDK.** Each one is a plain MCP server
   behind a transparent proxy; it keeps its own stack and storage.
 - **One policy file, reloaded live.** Access rules live in a single file;
@@ -80,15 +79,28 @@ Then connect a client and sign in:
 - **Services never check roles themselves.** RBAC is decided once, on
   Keystone-MCP, before a call is forwarded.
 - **`production` refuses a weak setup.** DEV tokens, a SQLite users
-  directory, and plain HTTP on a public host all fail startup instead of
-  only logging a warning.
+  directory, and plain HTTP on a public host fail startup, not just a warning.
 - **Metrics and audit included.** Prometheus series and structured
   authorization events ship with the process.
 - **One image, two architectures.** `linux/amd64` and `linux/arm64`.
-- **A working demo in about 15 minutes.** See "Try it locally" above.
 
-Full description of every capability, and what is still 0.5.0:
+Full description of every capability:
 [docs/features.md](docs/features.md).
+
+## What it does not do
+
+- **One organization per deployment.** One users directory, one policy file
+  and one upstream registry per Keystone-MCP. For several organizations,
+  run several instances. Multi-tenancy is not planned.
+- **No admin UI.** People and roles are managed with the `users_*` tools from
+  an agent, the `keystone-mcp users` commands and the policy file. A UI
+  could be a separate project on top of the users directory protocol.
+- **No business data.** Keystone-MCP stores people, roles and sessions; your
+  services keep their own data and logic.
+- **No routing by request content.** A call goes to the service that owns the
+  tool name; arguments are not inspected or rewritten.
+- **Not a sandbox for upstream code.** A stdio upstream runs as the same OS
+  user as Keystone-MCP with no isolation; trust it like you trust Keystone.
 
 ## Documentation
 
@@ -110,10 +122,8 @@ See [SECURITY.md](SECURITY.md).
 Keystone-MCP is released under the [Apache License 2.0](LICENSE).
 Copyright 2026 Alexey Klochkov (skynet@kofe.in).
 
-You may use, modify and distribute it, including inside a commercial product
-and as a hosted service. Keep this license and the copyright notice with the
-code, and mark the files you change. The license includes a patent grant from
-the copyright holder.
+You may use, modify and distribute it, including commercially. Keep this
+license and the copyright notice with the code, and mark the files you change.
 
 <p align="center">
   <a href="LICENSE"><img alt="License: Apache 2.0" src="https://img.shields.io/badge/license-Apache%202.0-1e3a8a"></a>

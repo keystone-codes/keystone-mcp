@@ -14,13 +14,14 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING
 
-from fastmcp.exceptions import ToolError
+from fastmcp.exceptions import PromptError, ResourceError, ToolError
 from fastmcp.server.middleware import Middleware, MiddlewareContext
 
 from keystone_mcp.config import Settings
 from keystone_mcp.identity import resolve_verified_identity
 from keystone_mcp.observability.logging.context import get_request_id
 from keystone_mcp.observability.subject import hash_subject
+from keystone_mcp.rbac.call_decision import current_call_decision
 from keystone_mcp.rbac.human_identity import (
     has_interactive_human_identity,
     requires_human_identity,
@@ -34,9 +35,18 @@ from keystone_mcp.user_directory.protocol import UserDirectoryResolver
 
 if TYPE_CHECKING:
     from fastmcp.tools.base import Tool
-    from mcp.types import CallToolRequestParams, ListToolsRequest
+    from mcp.types import (
+        CallToolRequestParams,
+        GetPromptRequestParams,
+        ListPromptsRequest,
+        ListResourcesRequest,
+        ListResourceTemplatesRequest,
+        ListToolsRequest,
+        ReadResourceRequestParams,
+    )
 
     from keystone_mcp.observability.service import RbacObservability
+    from keystone_mcp.router.upstream_content import UpstreamContentCatalog
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +69,7 @@ class RbacDenialReason(str, Enum):
     HUMAN_IDENTITY_REQUIRED = "human_identity_required"
     ROLES_UNAVAILABLE = "roles_unavailable"
     POLICY_UNAVAILABLE = "policy_unavailable"
+    SUBJECT_TYPE_MISMATCH = "subject_type_mismatch"
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,6 +82,12 @@ class RbacDecision:
     reason: RbacDenialReason | None = None
     roles: frozenset[str] = frozenset()
     cache_hit: bool | None = None
+    # The sign-in method's name (``claims["auth_method"]``), so an operator
+    # reading the audit log can see *why* a HUMAN_IDENTITY_REQUIRED denial
+    # happened ("signed in with api_key") without cross-referencing the
+    # token store. ``None`` when there is no verified identity at all.
+    login_provider: str | None = None
+    subject_type: str | None = None
 
 
 def _request_correlation_id() -> str | None:
@@ -100,9 +117,11 @@ class RbacMiddleware(Middleware):
         settings: Settings | None = None,
         observability: RbacObservability | None = None,
         enforce: bool | None = None,
+        content_catalog: UpstreamContentCatalog | None = None,
     ) -> None:
         self._policy_manager = policy_manager
         self._user_resolver = user_resolver
+        self._content_catalog = content_catalog
         self._observability = observability
         if enforce is not None:
             self._enforce = enforce
@@ -119,7 +138,7 @@ class RbacMiddleware(Middleware):
         tools = list(await call_next(context))
         decision = await self._evaluate(
             context,
-            tool_name=None,
+            name=None,
             roles_only=True,
             operation="list_tools",
         )
@@ -140,13 +159,166 @@ class RbacMiddleware(Middleware):
         tool_name = context.message.name
         decision = await self._evaluate(
             context,
-            tool_name=tool_name,
+            name=tool_name,
             roles_only=False,
             operation="call_tool",
         )
         if not decision.allowed and self._enforce:
             raise ToolError(CLIENT_DENIAL_MESSAGE)
-        return await call_next(context)
+        # Published for the duration of this call only (reset in `finally`,
+        # not left for the next call on a reused task) so a signer further
+        # down the same call (keystone_mcp.identity_assertion) can read
+        # exactly the roles RBAC used to allow it. Not set at all when the
+        # decision denied the call in enforce mode, since execution never
+        # reaches `call_next`.
+        token = current_call_decision.set(decision)
+        try:
+            return await call_next(context)
+        finally:
+            current_call_decision.reset(token)
+
+    async def on_list_prompts(
+        self,
+        context: MiddlewareContext[ListPromptsRequest],
+        call_next,
+    ):
+        prompts = list(await call_next(context))
+        decision = await self._evaluate(
+            context,
+            name=None,
+            roles_only=True,
+            operation="list_prompts",
+        )
+        if not self._enforce:
+            return prompts
+        if not decision.allowed:
+            return []
+        policy = self._load_policy(operation="list_prompts")
+        if policy is None:
+            return []
+        return [prompt for prompt in prompts if policy.allows(decision.roles, prompt.name)]
+
+    async def on_get_prompt(
+        self,
+        context: MiddlewareContext[GetPromptRequestParams],
+        call_next,
+    ):
+        prompt_name = context.message.name
+        decision = await self._evaluate(
+            context,
+            name=prompt_name,
+            roles_only=False,
+            operation="get_prompt",
+        )
+        if not decision.allowed and self._enforce:
+            raise PromptError(CLIENT_DENIAL_MESSAGE)
+        token = current_call_decision.set(decision)
+        try:
+            return await call_next(context)
+        finally:
+            current_call_decision.reset(token)
+
+    async def on_list_resources(
+        self,
+        context: MiddlewareContext[ListResourcesRequest],
+        call_next,
+    ):
+        resources = list(await call_next(context))
+        decision = await self._evaluate(
+            context,
+            name=None,
+            roles_only=True,
+            operation="list_resources",
+        )
+        if not self._enforce:
+            return resources
+        if not decision.allowed:
+            return []
+        policy = self._load_policy(operation="list_resources")
+        if policy is None:
+            return []
+        catalog = self._content_catalog
+        filtered = []
+        for resource in resources:
+            rbac_name = None
+            if catalog is not None:
+                rbac_name = catalog.rbac_name_for_uri(str(resource.uri))
+            if rbac_name is None:
+                filtered.append(resource)
+                continue
+            if policy.allows(decision.roles, rbac_name):
+                filtered.append(resource)
+        return filtered
+
+    async def on_list_resource_templates(
+        self,
+        context: MiddlewareContext[ListResourceTemplatesRequest],
+        call_next,
+    ):
+        templates = list(await call_next(context))
+        decision = await self._evaluate(
+            context,
+            name=None,
+            roles_only=True,
+            operation="list_resource_templates",
+        )
+        if not self._enforce:
+            return templates
+        if not decision.allowed:
+            return []
+        policy = self._load_policy(operation="list_resource_templates")
+        if policy is None:
+            return []
+        catalog = self._content_catalog
+        filtered = []
+        for template in templates:
+            rbac_name = None
+            if catalog is not None:
+                rbac_name = catalog.rbac_name_for_template_listing(template.uri_template)
+            if rbac_name is None:
+                filtered.append(template)
+                continue
+            if policy.allows(decision.roles, rbac_name):
+                filtered.append(template)
+        return filtered
+
+    async def on_read_resource(
+        self,
+        context: MiddlewareContext[ReadResourceRequestParams],
+        call_next,
+    ):
+        published_uri = str(context.message.uri)
+        rbac_name = None
+        if self._content_catalog is not None:
+            rbac_name = self._content_catalog.rbac_name_for_uri(published_uri)
+
+        if rbac_name is None:
+            identity = resolve_verified_identity()
+            decision = RbacDecision(
+                tool_name=published_uri,
+                email=identity.email if identity else None,
+                allowed=False,
+                reason=RbacDenialReason.NOT_PERMITTED,
+                subject_type=identity.subject_type if identity else None,
+            )
+            self._record_decision(decision, operation="read_resource")
+            if self._enforce:
+                raise ResourceError(CLIENT_DENIAL_MESSAGE)
+            return await call_next(context)
+
+        decision = await self._evaluate(
+            context,
+            name=rbac_name,
+            roles_only=False,
+            operation="read_resource",
+        )
+        if not decision.allowed and self._enforce:
+            raise ResourceError(CLIENT_DENIAL_MESSAGE)
+        token = current_call_decision.set(decision)
+        try:
+            return await call_next(context)
+        finally:
+            current_call_decision.reset(token)
 
     def _active_policy(self) -> RbacPolicy | None:
         """Active policy without recording a decision (None when not loaded)."""
@@ -168,14 +340,14 @@ class RbacMiddleware(Middleware):
 
     async def _resolve_user(
         self,
-        email: str,
+        subject: str,
         *,
         critical: bool,
     ) -> UserResolveResult:
         outcome_holder = {"outcome": "miss"}
         started = time.perf_counter()
         try:
-            user = await self._user_resolver.resolve(email, critical=critical)
+            user = await self._user_resolver.resolve(subject, critical=critical)
         except UserDirectoryUnavailableError:
             outcome_holder["outcome"] = "unavailable"
             raise
@@ -198,14 +370,14 @@ class RbacMiddleware(Middleware):
         self,
         context: MiddlewareContext,
         *,
-        tool_name: str | None,
+        name: str | None,
         roles_only: bool,
         operation: str,
     ) -> RbacDecision:
         identity = resolve_verified_identity()
         if identity is None:
             decision = RbacDecision(
-                tool_name=tool_name or "",
+                tool_name=name or "",
                 email=None,
                 allowed=False,
                 reason=RbacDenialReason.NO_IDENTITY,
@@ -213,38 +385,58 @@ class RbacMiddleware(Middleware):
             self._record_decision(decision, operation=operation)
             return decision
 
+        login_provider = (identity.claims or {}).get("auth_method")
+
         critical = False
-        if tool_name:
+        if name:
             # Critical-tool globs live in the active policy; the core built-ins
             # apply even before a policy is loaded.
             active_policy = self._active_policy()
             critical = is_critical_tool(
-                tool_name,
+                name,
                 active_policy.critical_tool_patterns if active_policy is not None else (),
             )
         try:
-            user = await self._resolve_user(identity.email, critical=critical)
+            user = await self._resolve_user(identity.subject, critical=critical)
         except UserDirectoryUnavailableError:
             decision = RbacDecision(
-                tool_name=tool_name or "",
-                email=identity.email,
+                tool_name=name or "",
+                email=identity.subject,
+                login_provider=login_provider,
                 allowed=False,
                 reason=RbacDenialReason.ROLES_UNAVAILABLE,
+                subject_type=identity.subject_type,
             )
             self._record_decision(decision, operation=operation)
             return decision
         except Exception as exc:
             logger.warning(
                 "rbac user directory resolve failed for %s: %s",
-                hash_subject(identity.email),
+                hash_subject(identity.subject),
                 exc,
                 exc_info=True,
             )
             decision = RbacDecision(
-                tool_name=tool_name or "",
-                email=identity.email,
+                tool_name=name or "",
+                email=identity.subject,
+                login_provider=login_provider,
                 allowed=False,
                 reason=RbacDenialReason.ROLES_UNAVAILABLE,
+                subject_type=identity.subject_type,
+            )
+            self._record_decision(decision, operation=operation)
+            return decision
+
+        if getattr(user, "subject_type", "human") != identity.subject_type:
+            decision = RbacDecision(
+                tool_name=name or "",
+                email=identity.subject,
+                login_provider=login_provider,
+                allowed=False,
+                reason=RbacDenialReason.SUBJECT_TYPE_MISMATCH,
+                roles=frozenset(user.roles),
+                cache_hit=getattr(user, "from_cache", False),
+                subject_type=identity.subject_type,
             )
             self._record_decision(decision, operation=operation)
             return decision
@@ -252,8 +444,10 @@ class RbacMiddleware(Middleware):
         roles = frozenset(user.roles)
         if user.is_blocked:
             decision = RbacDecision(
-                tool_name=tool_name or "",
-                email=identity.email,
+                tool_name=name or "",
+                email=identity.subject,
+                subject_type=identity.subject_type,
+                login_provider=login_provider,
                 allowed=False,
                 reason=RbacDenialReason.USER_BLOCKED,
                 roles=roles,
@@ -264,8 +458,10 @@ class RbacMiddleware(Middleware):
 
         if not _user_may_access_tools(user):
             decision = RbacDecision(
-                tool_name=tool_name or "",
-                email=identity.email,
+                tool_name=name or "",
+                email=identity.subject,
+                subject_type=identity.subject_type,
+                login_provider=login_provider,
                 allowed=False,
                 reason=RbacDenialReason.NO_ROLES,
                 roles=roles,
@@ -274,10 +470,12 @@ class RbacMiddleware(Middleware):
             self._record_decision(decision, operation=operation)
             return decision
 
-        if roles_only or tool_name is None:
+        if roles_only or name is None:
             decision = RbacDecision(
                 tool_name="",
-                email=identity.email,
+                email=identity.subject,
+                subject_type=identity.subject_type,
+                login_provider=login_provider,
                 allowed=True,
                 roles=roles,
                 cache_hit=getattr(user, "from_cache", False),
@@ -288,8 +486,10 @@ class RbacMiddleware(Middleware):
         policy = self._load_policy(operation=operation)
         if policy is None:
             decision = RbacDecision(
-                tool_name=tool_name,
-                email=identity.email,
+                tool_name=name,
+                email=identity.subject,
+                subject_type=identity.subject_type,
+                login_provider=login_provider,
                 allowed=False,
                 reason=RbacDenialReason.POLICY_UNAVAILABLE,
                 cache_hit=getattr(user, "from_cache", False),
@@ -297,13 +497,15 @@ class RbacMiddleware(Middleware):
             self._record_decision(decision, operation=operation)
             return decision
 
-        if policy.allows(roles, tool_name):
-            if requires_human_identity(tool_name, policy) and not has_interactive_human_identity(
+        if policy.allows(roles, name):
+            if requires_human_identity(name, policy) and not has_interactive_human_identity(
                 identity
             ):
                 decision = RbacDecision(
-                    tool_name=tool_name,
-                    email=identity.email,
+                    tool_name=name,
+                    email=identity.subject,
+                    subject_type=identity.subject_type,
+                    login_provider=login_provider,
                     allowed=False,
                     reason=RbacDenialReason.HUMAN_IDENTITY_REQUIRED,
                     roles=roles,
@@ -312,8 +514,10 @@ class RbacMiddleware(Middleware):
                 self._record_decision(decision, operation=operation)
                 return decision
             decision = RbacDecision(
-                tool_name=tool_name,
-                email=identity.email,
+                tool_name=name,
+                email=identity.subject,
+                subject_type=identity.subject_type,
+                login_provider=login_provider,
                 allowed=True,
                 roles=roles,
                 cache_hit=getattr(user, "from_cache", False),
@@ -322,8 +526,9 @@ class RbacMiddleware(Middleware):
             return decision
 
         decision = RbacDecision(
-            tool_name=tool_name,
+            tool_name=name,
             email=identity.email,
+            login_provider=login_provider,
             allowed=False,
             reason=RbacDenialReason.NOT_PERMITTED,
             roles=roles,
@@ -343,6 +548,8 @@ class RbacMiddleware(Middleware):
                 cache_hit=decision.cache_hit,
                 operation=operation,
                 request_id=_request_correlation_id(),
+                login_provider=decision.login_provider,
+                subject_type=decision.subject_type,
             )
             return
         logger.info(

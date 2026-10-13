@@ -79,6 +79,8 @@ class AuthzAuditRecorder:
         operation: str,
         request_id: str | None,
         critical: bool = False,
+        login_provider: str | None = None,
+        subject_type: str | None = None,
     ) -> None:
         if not self.should_emit(allowed=allowed, tool_name=tool_name, operation=operation):
             return
@@ -98,7 +100,13 @@ class AuthzAuditRecorder:
             "cache_hit": cache_hit,
             "operation": operation,
             "request_id": request_id,
+            # The sign-in method's name (X05): lets an operator see *why* a
+            # human_identity_required denial happened without looking up the
+            # token separately, e.g. "signed in with api_key".
+            "login_provider": login_provider,
         }
+        if subject_type is not None:
+            event["subject_type"] = subject_type
         self._emit(event)
 
     def _emit(self, event: dict[str, Any]) -> None:
@@ -134,6 +142,8 @@ class UsersMutationAuditRecorder:
         blocked_before: bool | None = None,
         blocked_after: bool | None = None,
         role: str | None = None,
+        actor_subject_type: str | None = None,
+        key_id: str | None = None,
     ) -> None:
         if not self._enabled:
             return
@@ -156,6 +166,10 @@ class UsersMutationAuditRecorder:
         if blocked_before is not None or blocked_after is not None:
             event["blocked_before"] = blocked_before
             event["blocked_after"] = blocked_after
+        if actor_subject_type is not None:
+            event["actor_subject_type"] = actor_subject_type
+        if key_id is not None:
+            event["key_id"] = key_id
         try:
             logger.info(
                 "rbac audit %s",
@@ -164,3 +178,57 @@ class UsersMutationAuditRecorder:
             )
         except Exception:
             logger.warning("rbac users mutation audit emit failed", exc_info=True)
+
+
+class PolicyMutationAuditRecorder:
+    """Best-effort audit for ``policy_*`` administrative operations.
+
+    Never includes allow-pattern or other glob text, only role names and
+    pattern counts (see
+    :func:`keystone_mcp.rbac.policy_document.describe_change`), so the audit
+    log cannot leak the shape of a policy an operator wanted kept private.
+    """
+
+    def __init__(self, *, enabled: bool, subject_salt: str = "") -> None:
+        self._enabled = enabled
+        self._subject_salt = subject_salt
+
+    def record_mutation(
+        self,
+        *,
+        operation: str,
+        actor_email: str,
+        outcome: str,
+        code: str | None,
+        task_id: str,
+        policy_version_before: str | None,
+        policy_version_after: str | None,
+        content_hash_before: str | None,
+        content_hash_after: str | None,
+        changes: tuple[str, ...],
+        warnings_count: int,
+    ) -> None:
+        if not self._enabled:
+            return
+        event: dict[str, Any] = {
+            "event": "rbac_policy_mutation",
+            "operation": operation,
+            "actor": hash_subject(actor_email, salt=self._subject_salt),
+            "outcome": outcome,
+            "code": code,
+            "task_id": task_id,
+            "policy_version_before": policy_version_before,
+            "policy_version_after": policy_version_after,
+            "content_hash_before": content_hash_before,
+            "content_hash_after": content_hash_after,
+            "changes": list(changes),
+            "warnings_count": warnings_count,
+        }
+        try:
+            logger.info(
+                "rbac audit %s",
+                json.dumps(event, sort_keys=True, separators=(",", ":")),
+                extra={"stream": "audit"},
+            )
+        except Exception:
+            logger.warning("rbac policy mutation audit emit failed", exc_info=True)

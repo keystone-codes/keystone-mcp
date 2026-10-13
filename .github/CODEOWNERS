@@ -1,2 +1,5 @@
 # Default reviewers for every change.
 * @keystone-codes/maintainers
+
+/tests/data/frozen-*.txt @keystone-codes/maintainers
+/docs/compatibility.md @keystone-codes/maintainers

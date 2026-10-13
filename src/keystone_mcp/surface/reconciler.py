@@ -17,11 +17,22 @@ from keystone_mcp.rbac.loader import (
     policy_files_content_hashes,
 )
 from keystone_mcp.router.catalog_fingerprint import tool_fingerprint
+from keystone_mcp.router.stdio_process import UpstreamProcessUnavailableError
 from keystone_mcp.router.upstream import (
     UpstreamListToolsError,
     UpstreamToolSpec,
+    build_upstream_prompt_specs,
+    build_upstream_resource_specs,
+    build_upstream_template_specs,
     build_upstream_tool_specs,
+    fetch_upstream_prompts,
+    fetch_upstream_resource_templates,
+    fetch_upstream_resources,
     fetch_upstream_tools,
+    list_upstream_prompts,
+    list_upstream_resource_templates,
+    list_upstream_resources,
+    list_upstream_tools,
 )
 
 if TYPE_CHECKING:
@@ -29,6 +40,7 @@ if TYPE_CHECKING:
     from keystone_mcp.rbac.loader import RbacPolicyManager
     from keystone_mcp.router.registry import RouterRegistry
     from keystone_mcp.router.upstream import UpstreamRegistry
+    from keystone_mcp.surface.client_sessions import ClientSessionRegistry
     from keystone_mcp.user_directory.revision import RevisionReader
 
 logger = logging.getLogger(__name__)
@@ -48,6 +60,7 @@ class SurfaceReconciler:
     policy_manager: RbacPolicyManager | None
     observability: RbacObservability | None
     revision_reader: RevisionReader | None = None
+    client_sessions: ClientSessionRegistry | None = None
 
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
     _policy_reload_event: asyncio.Event = field(
@@ -61,7 +74,20 @@ class SurfaceReconciler:
     _namespace_fingerprints: dict[str, dict[str, str]] = field(
         default_factory=dict, init=False, repr=False
     )
+    _namespace_prompt_fingerprints: dict[str, dict[str, str]] = field(
+        default_factory=dict, init=False, repr=False
+    )
+    _namespace_resource_fingerprints: dict[str, dict[str, str]] = field(
+        default_factory=dict, init=False, repr=False
+    )
+    _namespace_template_fingerprints: dict[str, dict[str, str]] = field(
+        default_factory=dict, init=False, repr=False
+    )
     _empty_list_streak: dict[str, int] = field(default_factory=dict, init=False, repr=False)
+    _empty_prompt_list_streak: dict[str, int] = field(default_factory=dict, init=False, repr=False)
+    _empty_resource_list_streak: dict[str, int] = field(
+        default_factory=dict, init=False, repr=False
+    )
     _last_users_revision: int | None = field(default=None, init=False, repr=False)
 
     def seed_snapshots(self) -> None:
@@ -69,6 +95,18 @@ class SurfaceReconciler:
         self._policy_hash, self._snapshot_hash = policy_files_content_hashes(self.settings)
         self._namespace_fingerprints = {
             cfg.namespace: self._fingerprint_namespace(cfg.namespace)
+            for cfg in self.upstreams._upstreams
+        }
+        self._namespace_prompt_fingerprints = {
+            cfg.namespace: self._fingerprint_prompts_namespace(cfg.namespace)
+            for cfg in self.upstreams._upstreams
+        }
+        self._namespace_resource_fingerprints = {
+            cfg.namespace: self._fingerprint_resources_namespace(cfg.namespace)
+            for cfg in self.upstreams._upstreams
+        }
+        self._namespace_template_fingerprints = {
+            cfg.namespace: self._fingerprint_templates_namespace(cfg.namespace)
             for cfg in self.upstreams._upstreams
         }
 
@@ -158,31 +196,69 @@ class SurfaceReconciler:
         if force_policy:
             self._policy_reload_event.clear()
 
+        catalog_changed = False
+        prompts_catalog_changed = False
+        resources_catalog_changed = False
         try:
-            await self._refresh_catalogs()
+            (
+                catalog_changed,
+                prompts_catalog_changed,
+                resources_catalog_changed,
+            ) = await self._refresh_catalogs()
         except asyncio.CancelledError:
             raise
         except Exception:
             logger.exception("surface reconciler step %s failed", "refresh_catalogs")
 
+        policy_reloaded = False
         try:
-            await self._maybe_reload_policy(force=force_policy)
+            policy_reloaded = await self._maybe_reload_policy(force=force_policy)
         except asyncio.CancelledError:
             raise
         except Exception:
             logger.exception("surface reconciler step %s failed", "maybe_reload_policy")
 
+        users_revision_changed = False
         try:
-            await self._observe_users_revision()
+            users_revision_changed = await self._observe_users_revision()
         except asyncio.CancelledError:
             raise
         except Exception:
             logger.exception("surface reconciler step %s failed", "observe_users_revision")
 
-    async def _refresh_catalogs(self) -> None:
+        kinds: set[str] = set()
+        if catalog_changed or policy_reloaded or users_revision_changed:
+            kinds.add("tools")
+        if prompts_catalog_changed:
+            kinds.add("prompts")
+        if resources_catalog_changed:
+            kinds.add("resources")
+        if kinds and self.client_sessions is not None:
+            reached = await self.client_sessions.broadcast_list_changed(kinds)
+            logger.info(
+                "sent list_changed kinds=%s to %d session(s) (catalog=%s prompts=%s policy=%s users=%s)",
+                sorted(kinds),
+                reached,
+                catalog_changed,
+                prompts_catalog_changed,
+                policy_reloaded,
+                users_revision_changed,
+            )
+            if self.observability is not None:
+                for kind in kinds:
+                    self.observability.record_list_changed(kind=kind, sessions=reached)
+
+    async def _refresh_catalogs(self) -> tuple[bool, bool, bool]:
+        """Refresh every namespace; return (tools, prompts, resources) changed flags."""
+        tools_changed = False
+        prompts_changed = False
+        resources_changed = False
         for cfg in self.upstreams._upstreams:
             try:
-                await self._refresh_namespace(cfg)
+                tc, pc, rc = await self._refresh_namespace(cfg)
+                tools_changed = tools_changed or tc
+                prompts_changed = prompts_changed or pc
+                resources_changed = resources_changed or rc
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -192,8 +268,10 @@ class SurfaceReconciler:
                     cfg.namespace,
                 )
                 self._record_catalog_outcome(held=True)
+        return tools_changed, prompts_changed, resources_changed
 
-    async def _refresh_namespace(self, cfg: object) -> None:
+    async def _refresh_namespace(self, cfg: object) -> tuple[bool, bool, bool]:
+        """Refresh one namespace's tool, prompt and resource catalogs."""
         from keystone_mcp.router.upstream import UpstreamConfig
 
         assert isinstance(cfg, UpstreamConfig)
@@ -205,17 +283,107 @@ class SurfaceReconciler:
             if cfg.discovery_timeout_seconds is not None
             else self.upstreams.discovery_timeout_seconds
         )
+        prompts_raw: list = []
+        resources_raw: list = []
+        templates_raw: list = []
         try:
-            tools = await fetch_upstream_tools(
-                cfg.url,
-                timeout_seconds=discovery_timeout,
-                httpx_client_factory=(
-                    self.upstreams.http_client_factory(discovery_timeout)
-                    if self.upstreams.http_client_factory
-                    else None
-                ),
-                headers=self.upstreams.upstream_headers(namespace),
-            )
+            if cfg.transport == "stdio":
+                try:
+                    client = self.upstreams.connection(namespace).catalog_client(
+                        timeout=discovery_timeout
+                    )
+                except UpstreamProcessUnavailableError as exc:
+                    self.upstreams.mark_unavailable(namespace, str(exc))
+                    logger.warning(
+                        "upstream refresh failed namespace=%s: %s; keeping previous catalog",
+                        namespace,
+                        exc,
+                    )
+                    self._record_catalog_outcome(held=True)
+                    return False, False, False
+                async with client:
+                    tools = await list_upstream_tools(client, timeout_seconds=discovery_timeout)
+                    try:
+                        prompts_raw = await list_upstream_prompts(
+                            client, timeout_seconds=discovery_timeout
+                        )
+                    except UpstreamListToolsError as exc:
+                        logger.warning(
+                            "upstream prompts refresh failed namespace=%s: %s; "
+                            "keeping previous prompts",
+                            namespace,
+                            exc,
+                        )
+                    try:
+                        resources_raw = await list_upstream_resources(
+                            client, timeout_seconds=discovery_timeout
+                        )
+                        templates_raw = await list_upstream_resource_templates(
+                            client, timeout_seconds=discovery_timeout
+                        )
+                    except UpstreamListToolsError as exc:
+                        logger.warning(
+                            "upstream resources refresh failed namespace=%s: %s; "
+                            "keeping previous resources",
+                            namespace,
+                            exc,
+                        )
+            else:
+                tools = await fetch_upstream_tools(
+                    cfg.url,
+                    timeout_seconds=discovery_timeout,
+                    httpx_client_factory=(
+                        self.upstreams.http_client_factory(discovery_timeout)
+                        if self.upstreams.http_client_factory
+                        else None
+                    ),
+                    headers=self.upstreams.upstream_headers(namespace),
+                )
+                try:
+                    prompts_raw = await fetch_upstream_prompts(
+                        cfg.url,
+                        timeout_seconds=discovery_timeout,
+                        httpx_client_factory=(
+                            self.upstreams.http_client_factory(discovery_timeout)
+                            if self.upstreams.http_client_factory
+                            else None
+                        ),
+                        headers=self.upstreams.upstream_headers(namespace),
+                    )
+                except UpstreamListToolsError as exc:
+                    logger.warning(
+                        "upstream prompts refresh failed namespace=%s: %s; keeping previous prompts",
+                        namespace,
+                        exc,
+                    )
+                try:
+                    resources_raw = await fetch_upstream_resources(
+                        cfg.url,
+                        timeout_seconds=discovery_timeout,
+                        httpx_client_factory=(
+                            self.upstreams.http_client_factory(discovery_timeout)
+                            if self.upstreams.http_client_factory
+                            else None
+                        ),
+                        headers=self.upstreams.upstream_headers(namespace),
+                    )
+                    templates_raw = await fetch_upstream_resource_templates(
+                        cfg.url,
+                        timeout_seconds=discovery_timeout,
+                        httpx_client_factory=(
+                            self.upstreams.http_client_factory(discovery_timeout)
+                            if self.upstreams.http_client_factory
+                            else None
+                        ),
+                        headers=self.upstreams.upstream_headers(namespace),
+                    )
+                except UpstreamListToolsError as exc:
+                    logger.warning(
+                        "upstream resources refresh failed namespace=%s: %s; "
+                        "keeping previous resources",
+                        namespace,
+                        exc,
+                    )
         except UpstreamListToolsError as exc:
             self.upstreams.mark_unavailable(namespace, str(exc))
             logger.warning(
@@ -224,7 +392,7 @@ class SurfaceReconciler:
                 exc,
             )
             self._record_catalog_outcome(held=True)
-            return
+            return False, False, False
 
         became_available = self.upstreams.mark_available(namespace)
         specs = build_upstream_tool_specs(cfg, tools, schema_patches=self.upstreams.schema_patches)
@@ -242,7 +410,11 @@ class SurfaceReconciler:
                 )
                 self._record_catalog_outcome(held=True)
                 self._maybe_log_drift(became_available)
-                return
+                prompts_changed = self._refresh_prompts_for_namespace(cfg, prompts_raw)
+                resources_changed = self._refresh_resources_for_namespace(
+                    cfg, resources_raw, templates_raw
+                )
+                return False, prompts_changed, resources_changed
             logger.warning(
                 "upstream refresh namespace=%s empty twice; removing proxy tools",
                 namespace,
@@ -250,44 +422,48 @@ class SurfaceReconciler:
         elif desired:
             self._empty_list_streak[namespace] = 0
 
+        tools_changed = False
         if desired == previous:
             self._record_catalog_outcome(unchanged=True)
-            # A namespace that came back up with its previous (possibly
-            # empty) catalog unchanged still needs its policy allow patterns
-            # re-verified: nothing else triggers that check for it (P06).
             self._maybe_log_drift(became_available)
-            return
-
-        added, removed, updated, skipped = self._apply_namespace_diff(cfg, specs, previous, desired)
-        # Do not cache a fingerprint for a route that was skipped (an
-        # unpublishable schema) or refused (a published-name collision, P09):
-        # if we did, the next tick would see its fingerprint already matches
-        # "previous" and never retry it. When the route was already
-        # registered under an older, different spec (an update attempt that
-        # failed), keep that *old* fingerprint instead of dropping the key
-        # outright -- the old route is still live in both the registry and
-        # FastMCP (add_route is atomic), and dropping the key would also
-        # drop it out of "previous" for the removal diff above, orphaning it
-        # forever once the upstream really does stop offering it.
-        new_fingerprints = dict(desired)
-        for route_name in skipped:
-            if route_name in previous:
-                new_fingerprints[route_name] = previous[route_name]
-            else:
-                new_fingerprints.pop(route_name, None)
-        self._namespace_fingerprints[namespace] = new_fingerprints
-        if added or removed or updated:
-            logger.info(
-                "upstream catalog refreshed namespace=%s added=%d removed=%d updated=%d",
-                namespace,
-                added,
-                removed,
-                updated,
-            )
-            self._record_catalog_outcome(applied=True, added=added, removed=removed)
         else:
-            self._record_catalog_outcome(unchanged=True)
-        self._maybe_log_drift(became_available, added=added, removed=removed, updated=updated)
+            added, removed, updated, skipped = self._apply_namespace_diff(
+                cfg, specs, previous, desired
+            )
+            # Do not cache a fingerprint for a route that was skipped (an
+            # unpublishable schema) or refused (a published-name collision, P09):
+            # if we did, the next tick would see its fingerprint already matches
+            # "previous" and never retry it. When the route was already
+            # registered under an older, different spec (an update attempt that
+            # failed), keep that *old* fingerprint instead of dropping the key
+            # outright -- the old route is still live in both the registry and
+            # FastMCP (add_route is atomic), and dropping the key would also
+            # drop it out of "previous" for the removal diff above, orphaning it
+            # forever once the upstream really does stop offering it.
+            new_fingerprints = dict(desired)
+            for route_name in skipped:
+                if route_name in previous:
+                    new_fingerprints[route_name] = previous[route_name]
+                else:
+                    new_fingerprints.pop(route_name, None)
+            self._namespace_fingerprints[namespace] = new_fingerprints
+            if added or removed or updated:
+                logger.info(
+                    "upstream catalog refreshed namespace=%s added=%d removed=%d updated=%d",
+                    namespace,
+                    added,
+                    removed,
+                    updated,
+                )
+                self._record_catalog_outcome(applied=True, added=added, removed=removed)
+                tools_changed = True
+            else:
+                self._record_catalog_outcome(unchanged=True)
+            self._maybe_log_drift(became_available, added=added, removed=removed, updated=updated)
+
+        prompts_changed = self._refresh_prompts_for_namespace(cfg, prompts_raw)
+        resources_changed = self._refresh_resources_for_namespace(cfg, resources_raw, templates_raw)
+        return tools_changed, prompts_changed, resources_changed
 
     def _maybe_log_drift(
         self,
@@ -374,7 +550,7 @@ class SurfaceReconciler:
                 self.registry.add_route(
                     spec.route_name,
                     adapter,
-                    pattern=Pattern.M_B,
+                    pattern=Pattern.SYNC,
                     params=spec.params,
                     description=spec.description,
                     mode=cfg.route_mode,
@@ -436,6 +612,111 @@ class SurfaceReconciler:
         self.registry.remove_route(route_key)
         return True
 
+    def _fingerprint_prompts_namespace(self, namespace: str) -> dict[str, str]:
+        return {
+            name: spec.fingerprint
+            for name, spec in self.upstreams.content.prompts(namespace).items()
+        }
+
+    def _refresh_prompts_for_namespace(self, cfg: object, prompts_raw: list) -> bool:
+        from keystone_mcp.router.upstream import UpstreamConfig, resolve_mounted_tool_name
+
+        assert isinstance(cfg, UpstreamConfig)
+        namespace = cfg.namespace
+        previous = self._namespace_prompt_fingerprints.get(namespace, {})
+        prompt_specs = build_upstream_prompt_specs(cfg, prompts_raw)
+        desired = {name: spec.fingerprint for name, spec in prompt_specs.items()}
+
+        if not desired and previous:
+            streak = self._empty_prompt_list_streak.get(namespace, 0) + 1
+            self._empty_prompt_list_streak[namespace] = streak
+            if streak < 2:
+                logger.warning(
+                    "upstream refresh namespace=%s returned zero prompts; "
+                    "holding previous prompts (streak=%d)",
+                    namespace,
+                    streak,
+                )
+                return False
+            logger.warning(
+                "upstream refresh namespace=%s empty prompts twice; removing proxy prompts",
+                namespace,
+            )
+        elif desired:
+            self._empty_prompt_list_streak[namespace] = 0
+
+        if desired == previous:
+            return False
+
+        raw_by_route = {
+            resolve_mounted_tool_name(p.name, cfg.strip_prefix): p
+            for p in prompts_raw
+            if resolve_mounted_tool_name(p.name, cfg.strip_prefix)
+        }
+        changed = self.upstreams._apply_prompt_specs(cfg, prompt_specs, raw_by_route)
+        self._namespace_prompt_fingerprints[namespace] = dict(desired)
+        return changed
+
+    def _fingerprint_resources_namespace(self, namespace: str) -> dict[str, str]:
+        return {
+            uri: spec.fingerprint
+            for uri, spec in self.upstreams.content.resources(namespace).items()
+        }
+
+    def _fingerprint_templates_namespace(self, namespace: str) -> dict[str, str]:
+        return {
+            uri_template: spec.fingerprint
+            for uri_template, spec in self.upstreams.content.templates(namespace).items()
+        }
+
+    def _refresh_resources_for_namespace(
+        self, cfg: object, resources_raw: list, templates_raw: list
+    ) -> bool:
+        from keystone_mcp.router.upstream import UpstreamConfig
+
+        assert isinstance(cfg, UpstreamConfig)
+        namespace = cfg.namespace
+        previous_res = self._namespace_resource_fingerprints.get(namespace, {})
+        previous_tpl = self._namespace_template_fingerprints.get(namespace, {})
+        resource_specs = build_upstream_resource_specs(cfg, resources_raw)
+        template_specs = build_upstream_template_specs(cfg, templates_raw)
+        desired_res = {uri: spec.fingerprint for uri, spec in resource_specs.items()}
+        desired_tpl = {ut: spec.fingerprint for ut, spec in template_specs.items()}
+
+        if not desired_res and not desired_tpl and (previous_res or previous_tpl):
+            streak = self._empty_resource_list_streak.get(namespace, 0) + 1
+            self._empty_resource_list_streak[namespace] = streak
+            if streak < 2:
+                logger.warning(
+                    "upstream refresh namespace=%s returned zero resources; "
+                    "holding previous resources (streak=%d)",
+                    namespace,
+                    streak,
+                )
+                return False
+            logger.warning(
+                "upstream refresh namespace=%s empty resources twice; removing proxy resources",
+                namespace,
+            )
+        elif desired_res or desired_tpl:
+            self._empty_resource_list_streak[namespace] = 0
+
+        if desired_res == previous_res and desired_tpl == previous_tpl:
+            return False
+
+        raw_resources = {str(r.uri): r for r in resources_raw}
+        raw_templates = {t.uri_template: t for t in templates_raw}
+        changed = self.upstreams._apply_resource_specs(
+            cfg,
+            resource_specs,
+            template_specs,
+            raw_resources,
+            raw_templates,
+        )
+        self._namespace_resource_fingerprints[namespace] = dict(desired_res)
+        self._namespace_template_fingerprints[namespace] = dict(desired_tpl)
+        return changed
+
     def _fingerprint_namespace(self, namespace: str) -> dict[str, str]:
         fingerprints: dict[str, str] = {}
         for route_key, route in self.registry.routes.items():
@@ -455,15 +736,16 @@ class SurfaceReconciler:
             )
         return fingerprints
 
-    async def _maybe_reload_policy(self, *, force: bool) -> None:
+    async def _maybe_reload_policy(self, *, force: bool) -> bool:
+        """Reload the RBAC policy if its files changed (or ``force``); return whether it was."""
         if self.policy_manager is None:
-            return
+            return False
         current_policy, current_snapshot = await asyncio.to_thread(
             policy_files_content_hashes, self.settings
         )
         unchanged = current_policy == self._policy_hash and current_snapshot == self._snapshot_hash
         if unchanged and not force:
-            return
+            return False
 
         result = await asyncio.to_thread(self.policy_manager.reload, self.registry)
         if self.observability is not None:
@@ -477,17 +759,19 @@ class SurfaceReconciler:
                 logger.info("rbac policy reloaded after file change")
         else:
             logger.warning("rbac policy reload rejected: %s", result.error)
+        return result.success
 
-    async def _observe_users_revision(self) -> None:
+    async def _observe_users_revision(self) -> bool:
+        """Return whether the users-directory revision changed since the last tick."""
         if self.revision_reader is None:
-            return
+            return False
         try:
             revision = await self.revision_reader.current()
         except Exception:
-            return
+            return False
         if self._last_users_revision is None:
             self._last_users_revision = revision
-            return
+            return False
         if revision != self._last_users_revision:
             logger.info(
                 "users directory revision changed %s -> %s",
@@ -495,6 +779,8 @@ class SurfaceReconciler:
                 revision,
             )
             self._last_users_revision = revision
+            return True
+        return False
 
     def _record_catalog_outcome(
         self,

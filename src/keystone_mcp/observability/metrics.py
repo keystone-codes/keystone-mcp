@@ -57,6 +57,11 @@ _USERS_MUTATION = Counter(
     "users_* administrative mutations",
     ["operation", "outcome"],
 )
+_POLICY_MUTATION = Counter(
+    "keystone_mcp_policy_mutation_total",
+    "policy_* administrative mutations",
+    ["operation", "outcome"],
+)
 _CATALOG_REFRESH = Counter(
     "keystone_mcp_catalog_refresh_total",
     "Upstream catalog reconciliation outcomes",
@@ -67,6 +72,11 @@ _CATALOG_CHANGES = Counter(
     "Tools added or removed by catalog reconciliation",
     ["direction"],
 )
+_LIST_CHANGED_SESSIONS = Counter(
+    "keystone_mcp_list_changed_sessions_total",
+    "Sessions notified that a list of tools/prompts/resources changed",
+    ["kind"],
+)
 _RESOLVE_LATENCY = Histogram(
     "keystone_mcp_rbac_directory_resolve_seconds",
     "User-directory resolve latency",
@@ -76,6 +86,16 @@ _UPSTREAM_AVAILABLE = Gauge(
     "keystone_mcp_upstream_available",
     "1 when the last discovery or refresh of the upstream succeeded, else 0",
     ["namespace"],
+)
+_UPSTREAM_PROCESS_RESTARTS = Counter(
+    "keystone_mcp_upstream_process_restarts_total",
+    "Restarts of stdio upstream processes",
+    ["namespace"],
+)
+_UPSTREAM_ELICITATIONS = Counter(
+    "keystone_mcp_upstream_elicitations_total",
+    "Upstream elicitation rounds forwarded to the Keystone client",
+    ["namespace", "action"],
 )
 _OAUTH_CLIENT_REGISTRATIONS = Counter(
     "keystone_mcp_oauth_client_registrations_total",
@@ -173,6 +193,11 @@ class RbacMetrics:
             return
         _USERS_MUTATION.labels(operation=operation, outcome=outcome).inc()
 
+    def record_policy_mutation(self, *, operation: str, outcome: str) -> None:
+        if not self._enabled:
+            return
+        _POLICY_MUTATION.labels(operation=operation, outcome=outcome).inc()
+
     def record_catalog_refresh(
         self,
         *,
@@ -195,10 +220,25 @@ class RbacMetrics:
         if removed:
             _CATALOG_CHANGES.labels(direction="removed").inc(removed)
 
+    def record_list_changed(self, *, kind: str, sessions: int) -> None:
+        if not self._enabled or sessions <= 0:
+            return
+        _LIST_CHANGED_SESSIONS.labels(kind=kind).inc(sessions)
+
     def set_upstream_available(self, *, namespace: str, available: bool) -> None:
         if not self._enabled:
             return
         _UPSTREAM_AVAILABLE.labels(namespace=namespace).set(1 if available else 0)
+
+    def record_upstream_process_restart(self, *, namespace: str) -> None:
+        if not self._enabled:
+            return
+        _UPSTREAM_PROCESS_RESTARTS.labels(namespace=namespace).inc()
+
+    def record_upstream_elicitation(self, *, namespace: str, action: str) -> None:
+        if not self._enabled:
+            return
+        _UPSTREAM_ELICITATIONS.labels(namespace=namespace, action=action).inc()
 
     def record_oauth_client_registration(self, *, outcome: str) -> None:
         if not self._enabled:
@@ -212,3 +252,8 @@ class RbacMetrics:
 
     def scrape(self) -> tuple[bytes, str]:
         return generate_latest(), CONTENT_TYPE_LATEST
+
+
+def record_upstream_elicitation(*, namespace: str, action: str) -> None:
+    """Increment elicitation counter without an observability handle (proxy path)."""
+    _UPSTREAM_ELICITATIONS.labels(namespace=namespace, action=action).inc()

@@ -3,8 +3,8 @@
 The critical set is the union of two sources:
 
 * ``CORE_CRITICAL_PATTERNS`` — platform primitives registered by the core
-  catalog (user administration and the file upload/download entrypoints).
-  A stale allow decision on these is a privilege or data-exposure risk.
+  catalog (user administration). A stale allow decision on these is a
+  privilege or data-exposure risk.
 * ``critical_tools`` in the active RBAC policy file — per-deployment additions.
 """
 
@@ -14,10 +14,12 @@ from collections.abc import Iterable, Sequence
 from fnmatch import fnmatch
 
 #: Always critical: registered by the core catalog, never customer tools.
+#: policy_* is included so revoking an administrator role takes effect immediately.
 CORE_CRITICAL_PATTERNS: tuple[str, ...] = (
     "users_*",
-    "create_upload_url",
-    "get_download_link",
+    "service_accounts_*",
+    "api_keys_*",
+    "policy_*",
 )
 
 

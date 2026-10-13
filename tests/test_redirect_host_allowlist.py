@@ -22,7 +22,6 @@ from mcp.shared.auth import OAuthClientInformationFull
 from prometheus_client import REGISTRY
 
 from conftest import BASE_URL, REDIRECT_URI, make_pkce, register_client
-from keystone_mcp.auth.identity_provider import StaticIdentityProvider
 from keystone_mcp.auth.keystone_oauth_provider import (
     KeystoneOAuthProvider,
     _redirect_uri_allowed,
@@ -31,6 +30,7 @@ from keystone_mcp.auth.login_pending_store import InMemoryLoginPendingStore
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import ConfigError, Settings
 from keystone_mcp.server import build_server
+from support.login import dev_token_login
 
 VALID_TOKEN = "valid-test-token"
 _REDIRECT_HOST = urlparse(REDIRECT_URI).hostname  # "localhost"
@@ -38,10 +38,10 @@ _REDIRECT_HOST = urlparse(REDIRECT_URI).hostname  # "localhost"
 
 def _build_app(*, oauth_store=None, **settings_overrides):
     settings = Settings(base_url=BASE_URL, refresh_interval_seconds=0, **settings_overrides)
-    idp = StaticIdentityProvider({VALID_TOKEN})
+    _login = dev_token_login({VALID_TOKEN})
     store = oauth_store if oauth_store is not None else InMemoryOAuthStore()
     mcp, *_rest = build_server(
-        identity_provider=idp,
+        login_providers=[_login],
         settings=settings,
         oauth_store=store,
         register_builtin_catalog=False,
@@ -351,7 +351,18 @@ async def test_refresh_exchange_refused_for_preexisting_client_on_unlisted_host(
     settings = Settings(base_url=BASE_URL, oauth_allowed_redirect_hosts=("claude.ai",))
     store = InMemoryOAuthStore()
     provider = KeystoneOAuthProvider(
-        StaticIdentityProvider({VALID_TOKEN}), settings, store, InMemoryLoginPendingStore()
+        settings,
+        store,
+        InMemoryLoginPendingStore(),
+        login_providers=[
+            dev_token_login(
+                {VALID_TOKEN}
+                if isinstance({VALID_TOKEN}, set)
+                else set({VALID_TOKEN})
+                if False
+                else {VALID_TOKEN}
+            )
+        ],
     )
     client = _preexisting_client()
     await store.put_client(client)
@@ -379,7 +390,18 @@ async def test_authorization_code_exchange_refused_for_preexisting_client_on_unl
     settings = Settings(base_url=BASE_URL, oauth_allowed_redirect_hosts=("claude.ai",))
     store = InMemoryOAuthStore()
     provider = KeystoneOAuthProvider(
-        StaticIdentityProvider({VALID_TOKEN}), settings, store, InMemoryLoginPendingStore()
+        settings,
+        store,
+        InMemoryLoginPendingStore(),
+        login_providers=[
+            dev_token_login(
+                {VALID_TOKEN}
+                if isinstance({VALID_TOKEN}, set)
+                else set({VALID_TOKEN})
+                if False
+                else {VALID_TOKEN}
+            )
+        ],
     )
     client = _preexisting_client()
     await store.put_client(client)

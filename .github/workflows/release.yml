@@ -4,6 +4,16 @@ on:
   push:
     tags:
       - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: >-
+          Exercise the release pipeline without publishing anything:
+          version-gate and build-dist run without --tag, the "already on
+          PyPI" check is skipped, and publish, pypi and github-release do
+          not run.
+        type: boolean
+        default: true
 
 env:
   IMAGE_PREFIX: ghcr.io/keystone-codes/keystone-mcp
@@ -20,18 +30,112 @@ jobs:
 
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
 
+      # On a real tag push, GITHUB_REF_NAME is the tag (vX.Y.Z) and must
+      # agree with the version sources. On a manual workflow_dispatch run
+      # (dry run), GITHUB_REF_NAME is just the branch name, so --tag is
+      # omitted and only the file sources are checked against each other.
       - name: Check version consistency with tag
-        run: >-
-          uv run --no-project --python 3.12 python scripts/check_version.py
-          --tag "${GITHUB_REF_NAME}"
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            uv run --no-project --python 3.12 python scripts/check_version.py --tag "${GITHUB_REF_NAME}"
+          else
+            uv run --no-project --python 3.12 python scripts/check_version.py
+          fi
 
   test:
     needs: version-gate
     uses: ./.github/workflows/test-gate.yml
 
+  image-scan:
+    name: Image scan
+    needs: version-gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Build image
+        run: docker build -t keystone-mcp:scan .
+
+      # Same action, pin and parameters as .github/workflows/security.yml's
+      # image-scan job (see the comment there) — the release path must not be
+      # able to publish an image the PR gate would have rejected. A fixable
+      # CRITICAL or HIGH finding fails this job and blocks `publish` below.
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: keystone-mcp:scan
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          format: table
+          exit-code: "1"
+          trivyignores: .trivyignore
+
+  build-dist:
+    name: Build and check the PyPI distribution
+    needs: version-gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+
+      - name: Build wheel and sdist
+        run: uv build
+
+      # Same --tag rule as version-gate above: a dry run has no release tag
+      # to check the dist filenames and METADATA against.
+      - name: Check the built wheel and sdist
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            uv run --no-project --python 3.12 python scripts/check_version.py --tag "${GITHUB_REF_NAME}" --dist-dir dist
+          else
+            uv run --no-project --python 3.12 python scripts/check_version.py --dist-dir dist
+          fi
+
+      - name: Refuse a version that is already on PyPI
+        if: github.event_name == 'push'
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          code=$(curl -s -o /dev/null -w '%{http_code}' "https://pypi.org/pypi/keystone-mcp-gateway/$v/json")
+          if [ "$code" = "200" ]; then echo "keystone-mcp-gateway $v is already on PyPI"; exit 1; fi
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: dist
+          path: dist/
+
+  wheel-smoke:
+    name: Wheel smoke test
+    needs: build-dist
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist/
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install the built wheel into a clean virtualenv
+        run: |
+          python -m venv /tmp/venv
+          /tmp/venv/bin/pip install dist/*.whl
+
+      - name: Smoke test the installed wheel
+        run: bash scripts/smoke_wheel.sh /tmp/venv/bin/keystone-mcp
+
   publish:
     name: Build and publish image
-    needs: [version-gate, test]
+    needs: [version-gate, test, image-scan]
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -119,9 +223,35 @@ jobs:
           provenance: true
           sbom: true
 
+  pypi:
+    name: Publish to PyPI
+    needs: [test, wheel-smoke, publish]
+    # Only on a real tag push (never a dry run), after the image is
+    # published, so the image and the package always carry the same
+    # version. SKIP_PYPI_PUBLISH=true (e.g. a fork without a trusted
+    # publisher configured) skips this job without failing it.
+    if: github.event_name == 'push' && vars.SKIP_PYPI_PUBLISH != 'true'
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      contents: read
+      id-token: write # trusted publishing; no API token in secrets
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+
   github-release:
     name: Create GitHub Release
-    needs: publish
+    needs: [publish, pypi]
+    # pypi may legitimately be skipped (SKIP_PYPI_PUBLISH=true, or this run
+    # is a dry run and publish itself was skipped); only a failed publish
+    # (the image) should block the GitHub Release.
+    if: always() && needs.publish.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -133,6 +263,9 @@ jobs:
           python3 scripts/extract_changelog.py "${GITHUB_REF_NAME#v}" > release-notes.md
           echo "" >> release-notes.md
           echo "Image: ${IMAGE_PREFIX}:${GITHUB_REF_NAME#v} (linux/amd64, linux/arm64)" >> release-notes.md
+          if [ "${{ needs.pypi.result }}" = "success" ]; then
+            echo "PyPI: https://pypi.org/project/keystone-mcp-gateway/${GITHUB_REF_NAME#v}/" >> release-notes.md
+          fi
 
       - name: Create GitHub Release
         env:

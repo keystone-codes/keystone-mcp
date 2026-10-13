@@ -14,6 +14,8 @@ for production and for more than one replica. See
 Migrations run automatically on startup; on PostgreSQL, several replicas
 starting at once do this safely.
 
+Why: [ADR 0001](adr/0001-built-in-users-directory.md).
+
 ## Roles come from the policy file
 
 A role is a name in the RBAC policy file
@@ -28,7 +30,9 @@ missing from the file — the "last administrator" rule and emergency recovery
 depend on it existing. The shipped policy defines that one role, plus a
 commented-out example of a second one (`member`, limited to a couple of
 tools) to copy and adapt. The format is
-[rbac-policy-format.md](rbac-policy-format.md).
+[rbac-policy-format.md](rbac-policy-format.md). To change roles and allow
+patterns from the agent, see [policy-admin.md](policy-admin.md) and the
+`policy_*` tools.
 
 A change to the policy file takes effect on `SIGHUP` (`kill -HUP <pid>`),
 not a new process and not a new account. Names added this way work on the
@@ -106,6 +110,14 @@ before their own first sign-in.
 | Change the name or the note | `users_update` |
 | Take away access | `users_block` |
 | Give access back | `users_unblock` |
+| End every OAuth session without blocking | `users_logout` |
+
+`users_block` and `users_logout` revoke all access and refresh tokens for
+that person immediately. The response includes `revoked_tokens` (a count, or
+`null` if the token store was unavailable during a block — the block still
+applies). `users_unblock` does not restore old sessions; the person signs in
+again for new tokens. `users_logout` does not require the email to still
+exist in the directory.
 
 There is no delete. Removing a person means `users_block`.
 
@@ -115,6 +127,16 @@ role the person currently has.
 
 A failed mutation is not retried blindly. A timeout may mean the change was
 applied. List the person first, then decide.
+
+### Directories that cannot be administered
+
+The built-in directory and the HTTP directory both support administration.
+A directory that only reads (the deprecated `UserDirectoryBackend` wrapper
+from a 0.4.0 fork, or a read-only plugin directory) publishes `users_list`
+alone — the other eight administration tools above are not published at all, rather than
+answering with an error. See
+[user-directory.md](user-directory.md#writing-your-own-directory) for what a
+directory declares about itself.
 
 ## Errors
 
@@ -192,3 +214,77 @@ passed, since silently creating (and writing the new administrator into) an
 unrelated, empty database is exactly the failure mode a break-glass recovery
 command run from the wrong directory would otherwise hit. `import` has no
 such flag: writing into a fresh database is its normal first use.
+
+## Block, unblock, and logout from the host
+
+When RBAC is `off` or no administrator can call `users_*`, an operator on
+the server host can manage access directly:
+
+```bash
+keystone-mcp users block   --email person@example.com
+keystone-mcp users unblock --email person@example.com
+keystone-mcp users logout  --email person@example.com
+```
+
+`block` sets `is_blocked` and revokes every OAuth session for that email
+when `KEYSTONE_MCP_REDIS_URL` is set; without Redis the block still applies,
+but existing tokens live until they expire (the command prints a warning).
+`logout` revokes sessions only and requires Redis. `unblock` lifts the block
+without restoring old tokens — the person signs in again for new ones. The
+same last-administrator rule as `users_block` applies. Re-running `users
+import` that re-applies a block from the source also revokes sessions; the
+import summary includes `revoked_sessions`.
+
+## Service accounts
+
+Machine callers (CI, schedulers, agents without a human at the keyboard) use a
+**service account** instead of a person-shaped user record. Each account is
+identified by `svc:<name>` where `name` matches `^[a-z][a-z0-9-]{1,62}$`
+(lowercase letters, digits, hyphens). Service accounts hold normal RBAC roles
+but **cannot** receive the `administrator` role, and they **never** satisfy
+`requires_human_identity` — even if a token claim says `interactive: true`.
+
+When `KEYSTONE_MCP_RBAC_MODE=enforce` and the built-in directory is active,
+Keystone publishes `service_accounts_list`, `service_accounts_add`, and
+`service_accounts_update` (administrators only, same policy gate as `users_*`).
+The CLI mirrors these operations: `keystone-mcp service-accounts add|list|update`
+(requires `KEYSTONE_MCP_USERS_BACKEND=local`). HTTP-backed directories do not
+support service accounts yet.
+
+How a service account proves itself is covered in the next section.
+
+## API keys
+
+Why: [ADR 0008](adr/0008-api-keys-and-service-accounts.md).
+
+API keys tie a secret to either a person or a service account. Only the
+built-in users directory (`KEYSTONE_MCP_USERS_BACKEND=local`) can store them;
+an HTTP-backed directory does not support issuing or checking keys.
+
+An administrator issues keys with the `api_keys_issue` tool or with
+`keystone-mcp keys issue` on the server host. The full key string is shown
+**once** in the response or on the terminal; Keystone stores only a SHA-256
+hash of the secret. List and revoke through `api_keys_list` / `api_keys_revoke`
+or `keystone-mcp keys list|revoke`. Revocation takes effect on the next
+request — there is no separate token index for Bearer keys.
+
+Default lifetime is 90 days; the maximum is 365 days. For a key with no
+expiry, use the CLI only: `keystone-mcp keys issue --no-expiry …`.
+
+**People** can paste a key on the sign-in page together with their email
+when API-key login is enabled and no interactive provider blocks it (see
+[login-providers.md](login-providers.md)). **Service accounts** send the key
+on every MCP call: `Authorization: Bearer ksk_<key_id>_<secret>`.
+
+**In production** (`KEYSTONE_MCP_DEPLOYMENT_PROFILE=production`), keys are
+still issued from the server with `keystone-mcp keys issue`, but the
+`api_keys_issue` tool is **not** published — do not rely on an agent to mint
+machine credentials. If an interactive sign-in provider (Google or another
+OIDC entry) is configured, API-key sign-in for people is refused at startup;
+machines still use Bearer keys on the service account they were issued for.
+
+A key created through an agent passes through the chat with the model. For
+keys that only ever live on a worker host, prefer the CLI on that server.
+
+Bearer tokens minted for people after OAuth sign-in are unrelated to API keys;
+human Bearer access is not accepted for directory API keys.

@@ -5,12 +5,18 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from urllib.parse import parse_qs, urlparse
 
 import httpx
 import pytest
 import pytest_asyncio
 from asgi_lifespan import LifespanManager
-from mcp.server.auth.provider import AuthorizationCode, RefreshToken
+from mcp.server.auth.provider import (
+    AuthorizationCode,
+    AuthorizationParams,
+    RefreshToken,
+    TokenError,
+)
 from mcp.shared.auth import OAuthClientInformationFull
 
 from conftest import (
@@ -22,22 +28,23 @@ from conftest import (
     refresh_access_token,
     register_client,
 )
-from keystone_mcp.auth.identity_provider import StaticIdentityProvider
 from keystone_mcp.auth.keystone_oauth_provider import KeystoneOAuthProvider
 from keystone_mcp.auth.login_pending_store import InMemoryLoginPendingStore
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import Settings
 from keystone_mcp.server import build_server
+from support.fake_login import FakeRedirectProvider
+from support.login import dev_token_login
 
 
 @pytest_asyncio.fixture
 async def persistence_client():
     """ASGI client backed by a shared InMemoryOAuthStore for restart tests."""
     settings = Settings(base_url=BASE_URL)
-    idp = StaticIdentityProvider({VALID_TOKEN})
+    _login = dev_token_login({VALID_TOKEN})
     store = InMemoryOAuthStore()
     mcp, _registry, oauth, _upstreams, _policy_manager, _observability, _reconciler = build_server(
-        identity_provider=idp, settings=settings, oauth_store=store
+        login_providers=[_login], settings=settings, oauth_store=store
     )
     app = mcp.http_app(path=settings.http_path)
     async with LifespanManager(app):
@@ -70,9 +77,9 @@ async def test_tokens_survive_provider_restart(persistence_client):
     refresh = res["body"]["refresh_token"]
     client_id = res["client_id"]
 
-    idp = StaticIdentityProvider({VALID_TOKEN})
+    _login = dev_token_login({VALID_TOKEN})
     pending = InMemoryLoginPendingStore()
-    oauth2 = KeystoneOAuthProvider(idp, settings, store, pending)
+    oauth2 = KeystoneOAuthProvider(settings, store, pending, login_providers=[_login])
     registered = await oauth2.get_client(client_id)
     assert registered is not None
 
@@ -93,8 +100,8 @@ async def test_pending_txn_survives_shared_store_restart(persistence_client):
     _verifier, challenge = make_pkce()
     txn = await authorize_to_login(client, client_id, challenge, settings.resource_url)
 
-    idp = StaticIdentityProvider({VALID_TOKEN})
-    oauth2 = KeystoneOAuthProvider(idp, settings, store, pending_store)
+    _login = dev_token_login({VALID_TOKEN})
+    oauth2 = KeystoneOAuthProvider(settings, store, pending_store, login_providers=[_login])
     assert await oauth2._get_pending_txn(txn) is not None
 
 
@@ -172,10 +179,18 @@ async def test_auth_method_marker_ttl_equals_the_refresh_token_lifetime():
     settings = Settings(base_url=BASE_URL, refresh_token_ttl_seconds=1234)
     pending = InMemoryLoginPendingStore()
     provider = KeystoneOAuthProvider(
-        StaticIdentityProvider({VALID_TOKEN}),
         settings,
         InMemoryOAuthStore(),
         pending,
+        login_providers=[
+            dev_token_login(
+                {VALID_TOKEN}
+                if isinstance({VALID_TOKEN}, set)
+                else set({VALID_TOKEN})
+                if False
+                else {VALID_TOKEN}
+            )
+        ],
     )
     recorded: list[tuple[str, str, str, int]] = []
     original_put = pending.put
@@ -185,13 +200,15 @@ async def test_auth_method_marker_ttl_equals_the_refresh_token_lifetime():
         await original_put(namespace, key, payload, ttl_seconds)
 
     pending.put = spying_put  # type: ignore[method-assign]
-    await provider._put_refresh_meta("km_rt_marker", auth_method="google", resource=None)
+    await provider._put_refresh_meta(
+        "km_rt_marker", auth_method="google", resource=None, interactive=True
+    )
 
     assert recorded == [
         (
             "refresh_auth",
             "km_rt_marker",
-            json.dumps({"auth_method": "google", "resource": None}),
+            json.dumps({"auth_method": "google", "resource": None, "interactive": True}),
             1234,
         )
     ]
@@ -201,10 +218,18 @@ async def test_expired_refresh_token_is_refused_and_dropped():
     settings = Settings(base_url=BASE_URL, refresh_token_ttl_seconds=30 * 24 * 3600)
     store = InMemoryOAuthStore()
     provider = KeystoneOAuthProvider(
-        StaticIdentityProvider({VALID_TOKEN}),
         settings,
         store,
         InMemoryLoginPendingStore(),
+        login_providers=[
+            dev_token_login(
+                {VALID_TOKEN}
+                if isinstance({VALID_TOKEN}, set)
+                else set({VALID_TOKEN})
+                if False
+                else {VALID_TOKEN}
+            )
+        ],
     )
     registered = OAuthClientInformationFull(
         client_id="client-1",
@@ -229,10 +254,18 @@ async def test_live_refresh_token_is_accepted():
     settings = Settings(base_url=BASE_URL)
     store = InMemoryOAuthStore()
     provider = KeystoneOAuthProvider(
-        StaticIdentityProvider({VALID_TOKEN}),
         settings,
         store,
         InMemoryLoginPendingStore(),
+        login_providers=[
+            dev_token_login(
+                {VALID_TOKEN}
+                if isinstance({VALID_TOKEN}, set)
+                else set({VALID_TOKEN})
+                if False
+                else {VALID_TOKEN}
+            )
+        ],
     )
     registered = OAuthClientInformationFull(
         client_id="client-1",
@@ -259,10 +292,18 @@ async def test_rotation_persists_the_new_token_before_deleting_the_old():
     settings = Settings(base_url=BASE_URL)
     store = InMemoryOAuthStore()
     provider = KeystoneOAuthProvider(
-        StaticIdentityProvider({VALID_TOKEN}),
         settings,
         store,
         InMemoryLoginPendingStore(),
+        login_providers=[
+            dev_token_login(
+                {VALID_TOKEN}
+                if isinstance({VALID_TOKEN}, set)
+                else set({VALID_TOKEN})
+                if False
+                else {VALID_TOKEN}
+            )
+        ],
     )
     registered = OAuthClientInformationFull(
         client_id="client-1",
@@ -306,10 +347,18 @@ async def test_crash_after_minting_leaves_a_usable_refresh_token():
     settings = Settings(base_url=BASE_URL)
     store = InMemoryOAuthStore()
     provider = KeystoneOAuthProvider(
-        StaticIdentityProvider({VALID_TOKEN}),
         settings,
         store,
         InMemoryLoginPendingStore(),
+        login_providers=[
+            dev_token_login(
+                {VALID_TOKEN}
+                if isinstance({VALID_TOKEN}, set)
+                else set({VALID_TOKEN})
+                if False
+                else {VALID_TOKEN}
+            )
+        ],
     )
     registered = OAuthClientInformationFull(
         client_id="client-1",
@@ -359,8 +408,17 @@ async def test_concurrent_refresh_keeps_google_auth_method(persistence_client):
     client_id = res["client_id"]
 
     # obtain_access_token logs in via the api_key form; overwrite the marker
-    # to simulate a session that authenticated through Google.
-    await oauth._put_refresh_meta(refresh_token_str, auth_method="google", resource=None)
+    # to simulate a session that authenticated through Google. This fixture's
+    # server only configures the built-in api_key provider, so "google" is
+    # registered directly on the already-built provider (X05 refuses a
+    # refresh naming a provider that is not currently configured) rather than
+    # rebuilding the whole app with Google turned on, which would also pull
+    # in a real users-directory resolver and change every other login in
+    # this fixture.
+    oauth._providers["google"] = oauth._providers["api_key"]
+    await oauth._put_refresh_meta(
+        refresh_token_str, auth_method="google", resource=None, interactive=True
+    )
 
     registered = await oauth.get_client(client_id)
     assert registered is not None
@@ -446,9 +504,15 @@ async def test_second_refresh_keeps_auth_method_after_first_fully_completes(pers
     refresh_token_str = res["body"]["refresh_token"]
     client_id = res["client_id"]
 
-    # Simulate a session that authenticated through Google.
+    # Simulate a session that authenticated through Google (see the comment
+    # in test_concurrent_refresh_keeps_google_auth_method for why "google" is
+    # registered directly on the provider instead of rebuilding the app).
+    oauth._providers["google"] = oauth._providers["api_key"]
     await oauth._put_refresh_meta(
-        refresh_token_str, auth_method="google", resource=settings.resource_url
+        refresh_token_str,
+        auth_method="google",
+        resource=settings.resource_url,
+        interactive=True,
     )
 
     registered = await oauth.get_client(client_id)
@@ -476,10 +540,18 @@ async def test_client_is_touched_before_refresh_token_is_written():
     settings = Settings(base_url=BASE_URL)
     store = InMemoryOAuthStore()
     provider = KeystoneOAuthProvider(
-        StaticIdentityProvider({VALID_TOKEN}),
         settings,
         store,
         InMemoryLoginPendingStore(),
+        login_providers=[
+            dev_token_login(
+                {VALID_TOKEN}
+                if isinstance({VALID_TOKEN}, set)
+                else set({VALID_TOKEN})
+                if False
+                else {VALID_TOKEN}
+            )
+        ],
     )
     client = OAuthClientInformationFull(
         client_id="client-1",
@@ -514,7 +586,7 @@ async def test_client_is_touched_before_refresh_token_is_written():
         resource=None,
         subject="user@example.com",
     )
-    await provider._put_auth_code(auth_code, auth_method="api_key")
+    await provider._put_auth_code(auth_code, auth_method="api_key", interactive=False)
 
     issued = await provider.exchange_authorization_code(client, auth_code)
 
@@ -531,3 +603,147 @@ async def test_client_is_touched_before_refresh_token_is_written():
     touch_idx = calls.index("touch:client-1")
     put_idx = next(i for i, c in enumerate(calls) if c.startswith("put_refresh:"))
     assert touch_idx < put_idx
+
+
+# ── X05: the interactive claim comes from the provider, and survives refresh ──
+
+
+async def test_refresh_keeps_interactive_flag():
+    """A session opened through an interactive provider keeps interactive=True
+    across two consecutive refreshes -- the claim is carried on the refresh
+    marker (``_put_refresh_meta``), not recomputed from the provider's name.
+    """
+    settings = Settings(base_url=BASE_URL)
+    store = InMemoryOAuthStore()
+    pending = InMemoryLoginPendingStore()
+    okta = FakeRedirectProvider("okta", interactive=True)
+    provider = KeystoneOAuthProvider(settings, store, pending, login_providers=[okta])
+
+    client = OAuthClientInformationFull(
+        client_id="client-1",
+        redirect_uris=["http://localhost:9999/callback"],  # type: ignore[list-item]
+        token_endpoint_auth_method="none",
+    )
+    await store.put_client(client)
+    params = AuthorizationParams(
+        state="s",
+        scopes=[],
+        code_challenge="c",
+        redirect_uri="http://localhost:9999/callback",
+        redirect_uri_provided_explicitly=True,
+        resource=None,
+    )
+    redirect_url = await provider.authorize(client, params)
+    txn_id = parse_qs(urlparse(redirect_url).query)["txn"][0]
+
+    identity = await okta.complete(
+        params={"email": "alice@example.com"}, callback_url="unused", attempt={}
+    )
+    response = await provider._complete_login(
+        txn_id, identity, "en", auth_method="okta", interactive=okta.interactive
+    )
+    code = parse_qs(urlparse(response.headers["location"]).query)["code"][0]
+    auth_code = await provider.load_authorization_code(client, code)
+    assert auth_code is not None
+    issued = await provider.exchange_authorization_code(client, auth_code)
+
+    access = await store.get_access_token(issued.access_token)
+    assert access is not None
+    assert access.claims["interactive"] is True
+
+    refresh = await store.get_refresh_token(issued.refresh_token)
+    assert refresh is not None
+    second = await provider.exchange_refresh_token(client, refresh, [])
+    refresh2 = await store.get_refresh_token(second.refresh_token)
+    assert refresh2 is not None
+    third = await provider.exchange_refresh_token(client, refresh2, [])
+
+    final_access = await store.get_access_token(third.access_token)
+    assert final_access is not None
+    assert final_access.claims["auth_method"] == "okta"
+    assert final_access.claims["interactive"] is True
+
+
+async def test_refresh_marker_from_0_4_is_read():
+    """A 0.4.0 marker (``{"auth_method", "resource"}``, no ``interactive``) and
+    the oldest bare-string marker both rebuild ``interactive`` from the sign-in
+    method's name.
+    """
+    settings = Settings(base_url=BASE_URL)
+    store = InMemoryOAuthStore()
+    pending = InMemoryLoginPendingStore()
+    provider = KeystoneOAuthProvider(
+        settings,
+        store,
+        pending,
+        login_providers=[
+            dev_token_login(
+                {VALID_TOKEN}
+                if isinstance({VALID_TOKEN}, set)
+                else set({VALID_TOKEN})
+                if False
+                else {VALID_TOKEN}
+            )
+        ],
+    )
+
+    await pending.put(
+        "refresh_auth",
+        "km_rt_04_google",
+        json.dumps({"auth_method": "google", "resource": None}),
+        3600,
+    )
+    auth_method, resource, interactive = await provider._read_refresh_meta("km_rt_04_google")
+    assert (auth_method, resource, interactive) == ("google", None, True)
+
+    await pending.put("refresh_auth", "km_rt_oldest_api_key", "api_key", 3600)
+    auth_method, resource, interactive = await provider._read_refresh_meta("km_rt_oldest_api_key")
+    assert (auth_method, resource, interactive) == ("api_key", None, False)
+
+
+async def test_refresh_for_removed_provider_is_refused():
+    """A refresh token opened through a provider that was since removed from
+    the configuration is refused (``invalid_grant``), not silently downgraded
+    to api_key sign-in -- the old X03 fallback this replaces.
+    """
+    settings = Settings(base_url=BASE_URL)
+    store = InMemoryOAuthStore()
+    pending = InMemoryLoginPendingStore()
+    provider = KeystoneOAuthProvider(
+        settings,
+        store,
+        pending,
+        login_providers=[
+            dev_token_login(
+                {VALID_TOKEN}
+                if isinstance({VALID_TOKEN}, set)
+                else set({VALID_TOKEN})
+                if False
+                else {VALID_TOKEN}
+            )
+        ],
+    )
+    client = OAuthClientInformationFull(
+        client_id="client-1",
+        redirect_uris=["http://localhost:9999/callback"],  # type: ignore[list-item]
+        token_endpoint_auth_method="none",
+    )
+    await store.put_client(client)
+    old = RefreshToken(
+        token="km_rt_okta_removed",
+        client_id="client-1",
+        scopes=[],
+        expires_at=int(time.time()) + 600,
+        subject="user@example.com",
+    )
+    await store.put_refresh_token(old)
+    await provider._put_refresh_meta(
+        "km_rt_okta_removed", auth_method="okta", resource=None, interactive=True
+    )
+
+    with pytest.raises(TokenError) as excinfo:
+        await provider.exchange_refresh_token(client, old, [])
+    assert excinfo.value.error == "invalid_grant"
+
+    assert await store.get_refresh_token("km_rt_okta_removed") is None
+    assert await pending.get("refresh_auth", "km_rt_okta_removed") is None

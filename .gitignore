@@ -31,3 +31,6 @@ demo/*
 !examples/demo/**
 internal/
 internal/**
+# Manual check only (docs/connecting-services.md); never installed in CI.
+examples/keystone-identity/typescript/node_modules/
+examples/keystone-identity/typescript/package-lock.json

@@ -3,7 +3,7 @@
 Each MCP tool is one Route:
 
     name       tool name the agent sees
-    inbound    parameter signature + Model M pattern + response contract
+    inbound    parameter signature + response pattern + response contract
     target     the adapter the call is dispatched to
     transform  optional transform(ctx, args) -> outbound request/payload;
                if None, passthrough 1:1 (bypass)
@@ -31,7 +31,7 @@ ConfigMode = Literal["PROXY", "TRANSFORM", "HTTP_METHOD_MAP"]
 class Route:
     name: str
     target: "Adapter"
-    pattern: Pattern = Pattern.M_B
+    pattern: Pattern = Pattern.SYNC
     params: list["Param"] = field(default_factory=list)
     description: str = ""
     transform: Transform | None = None

@@ -57,7 +57,7 @@ async def test_discover_and_register_creates_namespaced_routes(downstream_server
         for tool in tools:
             from keystone_mcp.router.schema import schema_to_params
 
-            params = schema_to_params(tool.inputSchema)
+            params = schema_to_params(tool.input_schema)
             registry.add_route(
                 tool.name,
                 adapter,
@@ -123,8 +123,8 @@ async def test_one_unpublishable_tool_does_not_drop_the_namespace(monkeypatch, c
 
     empty_schema = {"type": "object", "properties": {}}
     tools = [
-        SimpleNamespace(name="bad_tool", description="", inputSchema=empty_schema),
-        SimpleNamespace(name="good_tool", description="", inputSchema=empty_schema),
+        SimpleNamespace(name="bad_tool", description="", input_schema=empty_schema),
+        SimpleNamespace(name="good_tool", description="", input_schema=empty_schema),
     ]
     monkeypatch.setattr(
         "keystone_mcp.router.upstream.fetch_upstream_tools",
@@ -290,7 +290,7 @@ async def test_discovery_skips_tool_whose_published_name_is_taken(monkeypatch, c
 
     tools = [
         SimpleNamespace(
-            name="read", description="", inputSchema={"type": "object", "properties": {}}
+            name="read", description="", input_schema={"type": "object", "properties": {}}
         ),
     ]
     monkeypatch.setattr(
@@ -374,12 +374,12 @@ async def test_nested_object_and_required_are_published_as_is() -> None:
             tools = await client.list_tools()
         tool = next(t for t in tools if t.name == "schema_advanced_search")
 
-        assert tool.inputSchema["required"] == ["filter", "query"]
-        filter_schema = tool.inputSchema["properties"]["filter"]
+        assert tool.input_schema["required"] == ["filter", "query"]
+        filter_schema = tool.input_schema["properties"]["filter"]
         assert filter_schema["required"] == ["owner"]
         assert filter_schema["properties"]["owner"] == {"type": "string"}
         # Required, no default: must not be published as nullable.
-        assert tool.inputSchema["properties"]["query"] == {"type": "string"}
+        assert tool.input_schema["properties"]["query"] == {"type": "string"}
 
 
 async def test_output_schema_published_only_in_transparent_mode() -> None:
@@ -389,7 +389,7 @@ async def test_output_schema_published_only_in_transparent_mode() -> None:
         upstream_tools = await direct_client.list_tools()
     upstream_output_schema = next(
         t for t in upstream_tools if t.name == "advanced_search"
-    ).outputSchema
+    ).output_schema
     assert upstream_output_schema is not None
 
     settings = Settings(base_url="http://localhost:8080")
@@ -411,7 +411,7 @@ async def test_output_schema_published_only_in_transparent_mode() -> None:
         async with Client(main) as client:
             tools = await client.list_tools()
         tool = next(t for t in tools if t.name == "schema_advanced_search")
-        assert tool.outputSchema == upstream_output_schema
+        assert tool.output_schema == upstream_output_schema
 
     # Envelope mode: the response shape no longer matches the upstream's
     # outputSchema (it is wrapped in {state, tool, task_id, result}), so it
@@ -433,7 +433,7 @@ async def test_output_schema_published_only_in_transparent_mode() -> None:
         async with Client(main2) as client2:
             tools2 = await client2.list_tools()
         tool2 = next(t for t in tools2 if t.name == "schema_advanced_search")
-        assert tool2.outputSchema is None
+        assert tool2.output_schema is None
 
 
 async def test_upstream_annotations_and_title_are_published() -> None:
@@ -457,7 +457,7 @@ async def test_upstream_annotations_and_title_are_published() -> None:
 
         assert tool.title == "Advanced Search"
         assert tool.annotations is not None
-        assert tool.annotations.readOnlyHint is True
+        assert tool.annotations.read_only_hint is True
 
 
 async def test_proxy_tool_call_round_trip_with_raw_schema(monkeypatch) -> None:
@@ -485,10 +485,10 @@ async def test_proxy_tool_call_round_trip_with_raw_schema(monkeypatch) -> None:
                 {"filter": {"owner": "ann"}, "query": "docs"},
             )
 
-        assert result.isError is False
+        assert result.is_error is False
         # Transparent by default: the upstream's own structuredContent reaches
         # the client unchanged, not wrapped in the {state, tool, ...} envelope.
-        assert result.structuredContent == {"matches": len("docs") + len("ann")}
+        assert result.structured_content == {"matches": len("docs") + len("ann")}
 
 
 async def test_unauthorized_denial_is_a_tool_error_not_a_schema_mismatch(monkeypatch) -> None:

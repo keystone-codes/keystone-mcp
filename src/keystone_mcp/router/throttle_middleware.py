@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from fastmcp.exceptions import ToolError
+from fastmcp.exceptions import ResourceError, ToolError
 from fastmcp.server.middleware import Middleware, MiddlewareContext
 
 from keystone_mcp.auth.throttle import PerIdentityThrottle
@@ -25,7 +25,7 @@ from keystone_mcp.identity import resolve_verified_identity
 from keystone_mcp.observability.subject import hash_subject
 
 if TYPE_CHECKING:
-    from mcp.types import CallToolRequestParams
+    from mcp.types import CallToolRequestParams, GetPromptRequestParams, ReadResourceRequestParams
 
     from keystone_mcp.observability.service import RbacObservability
 
@@ -59,11 +59,41 @@ class ThrottleMiddleware(Middleware):
         if identity is None:
             return await call_next(context)
 
-        if self._throttle.check(identity.email):
+        if self._throttle.check(identity.subject):
             return await call_next(context)
 
-        self._record_throttled(context.message.name, identity.email)
+        self._record_throttled(context.message.name, identity.subject)
         raise ToolError(THROTTLE_MESSAGE)
+
+    async def on_get_prompt(
+        self,
+        context: MiddlewareContext[GetPromptRequestParams],
+        call_next,
+    ):
+        identity = resolve_verified_identity()
+        if identity is None:
+            return await call_next(context)
+
+        if self._throttle.check(identity.subject):
+            return await call_next(context)
+
+        self._record_throttled(context.message.name, identity.subject)
+        raise ToolError(THROTTLE_MESSAGE)
+
+    async def on_read_resource(
+        self,
+        context: MiddlewareContext[ReadResourceRequestParams],
+        call_next,
+    ):
+        identity = resolve_verified_identity()
+        if identity is None:
+            return await call_next(context)
+
+        if self._throttle.check(identity.subject):
+            return await call_next(context)
+
+        self._record_throttled(str(context.message.uri), identity.subject)
+        raise ResourceError(THROTTLE_MESSAGE)
 
     def _record_throttled(self, tool_name: str, email: str) -> None:
         # Imported here: rbac_middleware owns the denial-reason vocabulary and

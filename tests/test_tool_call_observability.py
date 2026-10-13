@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -13,7 +14,6 @@ from fastmcp.tools.base import ToolResult
 from mcp.types import TextContent
 from prometheus_client import REGISTRY
 
-from keystone_mcp.auth.identity_provider import StaticIdentityProvider
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.auth.throttle import PerIdentityThrottle
 from keystone_mcp.config import Settings
@@ -28,6 +28,7 @@ from keystone_mcp.router.tool_call_observability_middleware import (
 )
 from keystone_mcp.server import build_server
 from keystone_mcp.user_directory import build_in_memory_user_directory_resolver
+from support.login import dev_token_login
 
 ALLOW_POLICY = """\
 version: "tool-obs"
@@ -112,6 +113,10 @@ async def _async_tool_error(_context):
 
 async def _async_error(_context):
     raise RuntimeError("unexpected")
+
+
+async def _async_cancelled(_context):
+    raise asyncio.CancelledError
 
 
 def _ctx(tool_name: str = "reports_read"):
@@ -261,9 +266,18 @@ async def test_error_outcome(observability: RbacObservability):
 
 
 @pytest.mark.asyncio
+async def test_cancelled_call_counts_as_cancelled(observability: RbacObservability):
+    middleware = ToolCallObservabilityMiddleware(observability=observability)
+    before = _invocations("reports_read", "cancelled")
+    with pytest.raises(asyncio.CancelledError):
+        await middleware.on_call_tool(_ctx(), _async_cancelled)
+    assert _invocations("reports_read", "cancelled") == before + 1
+
+
+@pytest.mark.asyncio
 async def test_metrics_endpoint_lists_tool_call_metrics(metrics_settings: Settings):
     mcp, *_rest = build_server(
-        identity_provider=StaticIdentityProvider({"token"}),
+        login_providers=[dev_token_login({"token"})],
         settings=metrics_settings,
         oauth_store=InMemoryOAuthStore(),
         register_builtin_catalog=False,

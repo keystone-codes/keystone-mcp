@@ -18,13 +18,23 @@ MAX_REGISTRY_ENTRIES = 64
 #: "not supported" message other unknown keys get.
 _SECRET_LIKE_AUTH_KEYS = frozenset({"token", "bearer", "secret", "password"})
 
-#: ``auth.bearer_env`` must look like a shell environment variable name AND
-#: live under this reserved prefix. Without this, a registry entry could name
-#: *any* environment variable -- e.g. `bearer_env: KEYSTONE_MCP_GOOGLE_CLIENT_SECRET`
-#: with a matching ``url`` -- and Keystone would send that secret to the
-#: entry's upstream as a bearer token. Requiring the prefix means the only
-#: variables an entry can ever name are ones an operator deliberately created
-#: for this purpose.
+#: ``auth`` keys that name an environment variable (never a secret value
+#: itself) and are validated identically: an optional, independent
+#: ``KEYSTONE_MCP_UPSTREAM_*`` name. An entry may set neither, either, or
+#: both.
+_AUTH_ENV_NAME_KEYS = frozenset({"bearer_env", "identity_secret_env"})
+
+#: Non-secret ``auth`` keys (Y11 ``identity_alg``).
+_AUTH_PLAIN_KEYS = frozenset({"identity_alg"})
+
+#: ``auth.bearer_env`` (and, identically, ``auth.identity_secret_env``) must
+#: look like a shell environment variable name AND live under this reserved
+#: prefix. Without this, a registry entry could name *any* environment
+#: variable -- e.g. `bearer_env: KEYSTONE_MCP_GOOGLE_CLIENT_SECRET` -- with a
+#: matching ``url`` -- and Keystone would send that secret to the entry's
+#: upstream as a bearer token, or sign identity assertions with it. Requiring
+#: the prefix means the only variables an entry can ever name are ones an
+#: operator deliberately created for this purpose.
 _BEARER_ENV_PREFIX = "KEYSTONE_MCP_UPSTREAM_"
 _BEARER_ENV_RE = re.compile(rf"^{re.escape(_BEARER_ENV_PREFIX)}[A-Z0-9_]+$")
 
@@ -51,6 +61,16 @@ _PRIVATE_HOSTNAMES = frozenset({"localhost"})
 
 #: 1-64 chars, A-Z/a-z/0-9/_/-, not starting or ending with '_' or '-'.
 _NAMESPACE_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9_-]{0,62}[A-Za-z0-9])?$")
+
+#: Fields only meaningful for ``transport: stdio`` entries (Y08); forbidden
+#: with ``transport: http`` (the default).
+_STDIO_ONLY_FIELDS = ("command", "args", "env", "cwd")
+
+#: A name in the child process's own environment, set by ``env`` in a
+#: ``transport: stdio`` entry — e.g. ``GITHUB_TOKEN``. Distinct from the name
+#: of the keystone-mcp variable that supplies its value, which is checked the
+#: same way as ``auth.bearer_env`` (see ``_BEARER_ENV_RE`` above).
+_ENV_CHILD_NAME_RE = re.compile(r"^[A-Z_][A-Z0-9_]*$")
 
 
 class ValidationError(ValueError):
@@ -184,7 +204,7 @@ def auth_field_errors(auth: Any) -> list[str]:
 
     errors: list[str] = []
     for key in auth:
-        if key == "bearer_env":
+        if key in _AUTH_ENV_NAME_KEYS or key in _AUTH_PLAIN_KEYS:
             continue
         if key in _SECRET_LIKE_AUTH_KEYS:
             errors.append(
@@ -194,20 +214,227 @@ def auth_field_errors(auth: Any) -> list[str]:
         else:
             errors.append(f"auth.{key} is not supported")
 
+    for key in _AUTH_ENV_NAME_KEYS:
+        errors.extend(_auth_env_name_errors(auth, key))
+
+    identity_alg = auth.get("identity_alg")
+    if identity_alg is not None:
+        if not isinstance(identity_alg, str) or identity_alg.strip() != "ES256":
+            errors.append("auth.identity_alg must be ES256")
+        elif "identity_secret_env" in auth:
+            errors.append("auth: use either identity_secret_env (HS256) or identity_alg: ES256")
+
     bearer_env = auth.get("bearer_env")
-    candidate = bearer_env.strip() if isinstance(bearer_env, str) else ""
-    if not candidate or not _BEARER_ENV_RE.match(candidate):
-        errors.append(
-            "auth.bearer_env must be an environment variable name starting with "
-            f"{_BEARER_ENV_PREFIX!r} (A-Z, 0-9, _ after the prefix)"
-        )
-    elif candidate in _RESERVED_BEARER_ENV_NAMES:
-        errors.append(
-            f"auth.bearer_env must not name {candidate!r}: keystone-mcp's own "
-            "configuration already reads that variable for a different purpose"
-        )
+    identity_secret_env = auth.get("identity_secret_env")
+    if (
+        isinstance(bearer_env, str)
+        and isinstance(identity_secret_env, str)
+        and bearer_env.strip()
+        and bearer_env.strip() == identity_secret_env.strip()
+    ):
+        errors.append("auth.identity_secret_env must differ from auth.bearer_env")
 
     return errors
+
+
+def _auth_env_name_errors(auth: dict[str, Any], key: str) -> list[str]:
+    """Structural errors for one optional ``auth.<key>`` environment-variable name.
+
+    ``key`` absent entirely is not an error -- both ``bearer_env`` and
+    ``identity_secret_env`` are independently optional (an entry may set
+    neither, either, or both).
+    """
+    if key not in auth:
+        return []
+    raw = auth.get(key)
+    candidate = raw.strip() if isinstance(raw, str) else ""
+    if not candidate or not _BEARER_ENV_RE.match(candidate):
+        return [
+            f"auth.{key} must be an environment variable name starting with "
+            f"{_BEARER_ENV_PREFIX!r} (A-Z, 0-9, _ after the prefix)"
+        ]
+    if candidate in _RESERVED_BEARER_ENV_NAMES:
+        return [
+            f"auth.{key} must not name {candidate!r}: keystone-mcp's own "
+            "configuration already reads that variable for a different purpose"
+        ]
+    return []
+
+
+def _normalize_env_shorthand(env: Any) -> dict[Any, Any] | None:
+    """Expand the ``env: [NAME, ...]`` shorthand to ``{NAME: NAME, ...}``.
+
+    Returns ``None`` when ``env`` is neither a mapping nor a list of strings
+    (a structural error the caller reports).
+    """
+    if isinstance(env, dict):
+        return env
+    if isinstance(env, list) and all(isinstance(item, str) for item in env):
+        return {name: name for name in env}
+    return None
+
+
+def env_field_errors(env: Any) -> list[str]:
+    """Structural errors for one ``transport: stdio`` entry's ``env`` field.
+
+    ``env`` maps a name in the child process's environment to the name of the
+    keystone-mcp environment variable that supplies its value (never the
+    value itself — same rule as ``auth.bearer_env``), or is the shorthand list
+    form ``[NAME, ...]`` equivalent to ``{NAME: NAME, ...}``. Messages are not
+    prefixed with ``entries[i].``; see :func:`auth_field_errors`.
+    """
+    if env is None:
+        return []
+    mapping = _normalize_env_shorthand(env)
+    if mapping is None:
+        return ["env must be an object, or an array of environment variable names"]
+
+    errors: list[str] = []
+    for child, value in mapping.items():
+        child_name = child if isinstance(child, str) else str(child)
+        if not isinstance(child, str) or not _ENV_CHILD_NAME_RE.match(child_name):
+            errors.append(
+                f"env.{child_name} is not a valid environment variable name (A-Z, 0-9, _)"
+            )
+            continue
+        candidate = value.strip() if isinstance(value, str) else ""
+        if not candidate or not _BEARER_ENV_RE.match(candidate):
+            errors.append(
+                f"env.{child_name} must name an environment variable of keystone-mcp (A-Z, 0-9, _)"
+            )
+        elif candidate in _RESERVED_BEARER_ENV_NAMES:
+            errors.append(
+                f"env.{child_name} must not name {candidate!r}: keystone-mcp's own "
+                "configuration already reads that variable for a different purpose"
+            )
+
+    return errors
+
+
+def identity_secret_reuse_errors(entries: Sequence[Any]) -> list[str]:
+    """Structural errors when a signing secret named by one entry's
+    ``auth.identity_secret_env`` is reachable from any other entry.
+
+    Every name that appears as some entry's ``auth.identity_secret_env``
+    must occur exactly once in the whole registry -- as that entry's
+    ``auth.identity_secret_env``, as any entry's ``auth.bearer_env``, or as
+    any ``transport: stdio`` entry's ``env`` value. Without this, two
+    entries could point at the same environment variable through different
+    fields (one's ``auth.bearer_env`` naming another's
+    ``auth.identity_secret_env``, or a stdio entry's ``env`` naming a
+    foreign upstream's signing secret) and the upstream holding that value
+    could forge an ``X-Keystone-Identity`` assertion with someone else's
+    ``aud`` (D5) -- exactly what "one secret per upstream" exists to
+    prevent.
+
+    The one exception: a stdio entry's own ``env`` naming its own
+    ``identity_secret_env`` is not reuse -- that process needs the secret
+    itself to verify inbound assertions (D8), not to impersonate anyone.
+
+    Operates on raw entry dicts (as loaded from YAML/JSON, before
+    :func:`~keystone_mcp.upstream_registry.load.parse_upstream_entry`), so
+    this one implementation serves both
+    :func:`validate_upstream_registry` (structural check, messages
+    collected rather than raised) and
+    :func:`keystone_mcp.upstream_registry.load.parse_upstream_entries`
+    (load time, raises on the first message). Messages are already prefixed
+    with ``entries[i].``, unlike the other ``*_errors`` helpers in this
+    module, since they always name a specific entry index.
+    """
+    identity_uses: dict[str, list[int]] = {}
+    bearer_uses: dict[str, list[int]] = {}
+    env_uses: dict[str, list[tuple[int, str]]] = {}
+    entry_names: dict[int, str] = {}
+
+    for index, item in enumerate(entries):
+        if not isinstance(item, dict):
+            continue
+        entry_names[index] = str(item.get("name", "")).strip() or f"entries[{index}]"
+
+        auth = item.get("auth")
+        if isinstance(auth, dict):
+            identity_secret_env = auth.get("identity_secret_env")
+            if isinstance(identity_secret_env, str) and identity_secret_env.strip():
+                identity_uses.setdefault(identity_secret_env.strip(), []).append(index)
+            bearer_env = auth.get("bearer_env")
+            if isinstance(bearer_env, str) and bearer_env.strip():
+                bearer_uses.setdefault(bearer_env.strip(), []).append(index)
+
+        mapping = _normalize_env_shorthand(item.get("env")) if item.get("env") is not None else None
+        if mapping:
+            for child, value in mapping.items():
+                if isinstance(value, str) and value.strip():
+                    env_uses.setdefault(value.strip(), []).append((index, str(child)))
+
+    errors: list[str] = []
+    for secret_name, owners in identity_uses.items():
+        owner_index = owners[0]
+        owner_name = entry_names[owner_index]
+
+        for index in owners[1:]:
+            errors.append(
+                f"entries[{index}].auth.identity_secret_env reuses the signing secret of "
+                f"upstream {owner_name!r} (entries[{owner_index}].auth.identity_secret_env); "
+                f"give upstream {entry_names[index]!r} its own signing secret"
+            )
+
+        for index in bearer_uses.get(secret_name, []):
+            errors.append(
+                f"entries[{index}].auth.bearer_env must not name the identity signing "
+                f"secret of upstream {owner_name!r} (entries[{owner_index}]"
+                f".auth.identity_secret_env)"
+            )
+
+        for index, child in env_uses.get(secret_name, []):
+            if index == owner_index:
+                continue  # a stdio entry's own secret, needed to verify its own assertions
+            errors.append(
+                f"entries[{index}].env.{child} must not name the identity signing secret "
+                f"of upstream {owner_name!r} (entries[{owner_index}].auth.identity_secret_env)"
+            )
+
+    return errors
+
+
+def transport_field_errors(item: dict[str, Any]) -> tuple[str, list[str]]:
+    """Validate the ``transport`` field and the fields it gates.
+
+    Returns the effective transport (``"http"`` when the declared value is
+    invalid, so the rest of :func:`validate_upstream_registry` can still run
+    against a sensible default) and the list of error messages, not prefixed
+    with ``entries[i].``.
+    """
+    errors: list[str] = []
+    transport_raw = item.get("transport", "http")
+    transport = transport_raw.strip() if isinstance(transport_raw, str) else transport_raw
+    if transport not in ("http", "stdio"):
+        errors.append(f"transport must be 'http' or 'stdio' (got {transport_raw!r})")
+        transport = "http"
+
+    if transport == "stdio":
+        command = item.get("command")
+        if not isinstance(command, str) or not command.strip() or "\n" in command:
+            errors.append("command is required for transport: stdio")
+        if item.get("url"):
+            errors.append("url is not allowed with transport: stdio")
+        args = item.get("args")
+        if args is not None and not (
+            isinstance(args, list) and all(isinstance(a, str) for a in args)
+        ):
+            errors.append("args must be an array of strings")
+        cwd = item.get("cwd")
+        if cwd is not None and not isinstance(cwd, str):
+            errors.append("cwd must be a string")
+        errors.extend(env_field_errors(item.get("env")))
+        auth = item.get("auth")
+        if isinstance(auth, dict) and "bearer_env" in auth:
+            errors.append("auth.bearer_env is not supported with transport: stdio")
+    else:
+        for field_name in _STDIO_ONLY_FIELDS:
+            if item.get(field_name) is not None:
+                errors.append(f"{field_name} requires transport: stdio")
+
+    return transport, errors
 
 
 def namespace_errors(namespaces: Sequence[str]) -> list[str]:
@@ -319,7 +546,14 @@ def validate_upstream_registry(
             seen_namespaces.add(namespace)
             all_namespaces.append(namespace)
 
-        if not url:
+        transport, transport_errors = transport_field_errors(item)
+        for message in transport_errors:
+            errors.append(f"{prefix}.{message}")
+
+        if transport == "stdio":
+            # transport_field_errors already rejects a non-empty url above.
+            pass
+        elif not url:
             errors.append(f"{prefix}.url is required")
         else:
             for message in validate_upstream_url(url, policy=policy):
@@ -345,6 +579,7 @@ def validate_upstream_registry(
             errors.append(f"{prefix}.enabled must be a boolean")
 
     errors.extend(namespace_errors(all_namespaces))
+    errors.extend(identity_secret_reuse_errors(entries))
 
     return errors
 

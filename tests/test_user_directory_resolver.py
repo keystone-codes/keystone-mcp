@@ -14,9 +14,9 @@ from keystone_mcp.user_directory import (
     build_user_directory_resolver,
     is_critical_tool,
 )
-from keystone_mcp.user_directory.cache import ResolutionCache
+from keystone_mcp.user_directory.cache import ApiKeyVerificationCache, ResolutionCache
 from keystone_mcp.user_directory.circuit_breaker import CircuitBreaker
-from keystone_mcp.user_directory.http import HttpUserDirectoryBackend
+from keystone_mcp.user_directory.http import HttpUserDirectory
 from keystone_mcp.user_directory.memory import InMemoryUserDirectoryBackend
 from keystone_mcp.user_directory.models import UserResolveResult
 from keystone_mcp.user_directory.resolver import CachedUserDirectoryResolver
@@ -48,8 +48,6 @@ class _FakeRedis:
     [
         ("users_list", True),
         ("users_block", True),
-        ("create_upload_url", True),
-        ("get_download_link", True),
         ("reports_read", False),
         ("documents_write", False),
         ("ledger_commit", False),
@@ -128,7 +126,7 @@ async def test_fail_closed_on_timeout() -> None:
         base_url="http://users.test",
         headers={"Authorization": "Bearer token"},
     )
-    backend = HttpUserDirectoryBackend(
+    backend = HttpUserDirectory(
         base_url="http://users.test",
         service_token="token",
         timeout_seconds=1.0,
@@ -139,6 +137,7 @@ async def test_fail_closed_on_timeout() -> None:
         revision_reader=InMemoryRevisionReader(),
         cache=ResolutionCache(allow_ttl_seconds=60, deny_ttl_seconds=30),
         circuit_breaker=CircuitBreaker(failure_threshold=5, recovery_seconds=30),
+        api_key_cache=ApiKeyVerificationCache(allow_ttl_seconds=60, deny_ttl_seconds=30),
     )
 
     with pytest.raises(UserDirectoryUnavailableError) as exc_info:
@@ -248,7 +247,7 @@ async def test_http_backend_parses_contract_response() -> None:
         base_url="http://users.test",
         headers={"Authorization": "Bearer secret"},
     )
-    backend = HttpUserDirectoryBackend(
+    backend = HttpUserDirectory(
         base_url="http://users.test",
         service_token="secret",
         timeout_seconds=2.0,
@@ -262,7 +261,9 @@ async def test_http_backend_parses_contract_response() -> None:
 
 
 def test_build_resolver_from_settings(monkeypatch) -> None:
-    monkeypatch.setenv("KEYSTONE_MCP_USERS_SERVICE_URL", "http://mcp-users:8080")
+    monkeypatch.setenv(
+        "KEYSTONE_MCP_USERS_SERVICE_URL", "http://users-directory.internal.example:8080"
+    )
     monkeypatch.setenv("KEYSTONE_MCP_USERS_SERVICE_TOKEN", "token")
     monkeypatch.setenv("KEYSTONE_MCP_USERS_CACHE_ALLOW_TTL_SECONDS", "120")
     monkeypatch.setenv("KEYSTONE_MCP_USERS_SERVICE_TIMEOUT_SECONDS", "5")
@@ -352,6 +353,7 @@ async def test_resolver_propagates_revision_unavailable() -> None:
         ),
         cache=ResolutionCache(allow_ttl_seconds=60, deny_ttl_seconds=30),
         circuit_breaker=CircuitBreaker(failure_threshold=5, recovery_seconds=30),
+        api_key_cache=ApiKeyVerificationCache(allow_ttl_seconds=60, deny_ttl_seconds=30),
     )
 
     with pytest.raises(UserDirectoryUnavailableError) as exc_info:
@@ -372,7 +374,7 @@ async def test_http_backend_maps_error_status_to_unavailable(status_code: int) -
         base_url="http://users.test",
         headers={"Authorization": "Bearer secret"},
     )
-    backend = HttpUserDirectoryBackend(
+    backend = HttpUserDirectory(
         base_url="http://users.test",
         service_token="secret",
         timeout_seconds=2.0,
@@ -396,7 +398,7 @@ async def test_http_backend_maps_invalid_json_to_unavailable() -> None:
         base_url="http://users.test",
         headers={"Authorization": "Bearer secret"},
     )
-    backend = HttpUserDirectoryBackend(
+    backend = HttpUserDirectory(
         base_url="http://users.test",
         service_token="secret",
         timeout_seconds=2.0,
@@ -420,7 +422,7 @@ async def test_http_backend_maps_invalid_payload_shape_to_unavailable() -> None:
         base_url="http://users.test",
         headers={"Authorization": "Bearer secret"},
     )
-    backend = HttpUserDirectoryBackend(
+    backend = HttpUserDirectory(
         base_url="http://users.test",
         service_token="secret",
         timeout_seconds=2.0,

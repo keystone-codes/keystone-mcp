@@ -1,4 +1,4 @@
-"""Adapter protocol, Model M patterns, and canonical stub responses."""
+"""Adapter protocol, status-envelope stubs, and canonical stub responses."""
 
 from __future__ import annotations
 
@@ -13,20 +13,24 @@ if TYPE_CHECKING:
 
 
 class Pattern(str, Enum):
-    """Model M response sub-patterns."""
+    """Response shape a route promises. Selects the canonical stub answer while the route is in stub mode."""
 
-    M_B = "M-B"  # synchronous wrap
-    M_E = "M-E"  # continuation (awaiting_user)
-    M_D = "M-D"  # file-reference
-    M_U = "M-U"  # upload
+    SYNC = "sync"  # the call returns its result directly
+    CONTINUATION = "continuation"  # the call waits for the user (awaiting_user)
 
 
 @runtime_checkable
 class Adapter(Protocol):
     """A router target. Receives the transformed *request* (or raw args on
-    passthrough) plus the transport context and returns a Model-M-shaped dict,
+    passthrough) plus the transport context and returns a status-envelope dict,
     or a ``ToolResult`` for transparent proxies (see
-    ``keystone_mcp.adapters.mcp_proxy.McpProxyAdapter``)."""
+    ``keystone_mcp.adapters.mcp_proxy.McpProxyAdapter``).
+
+    The status envelope is the dict every built-in route returns: ``state``
+    (``done``, ``error``, ``pending``, ``awaiting_user``, ``file_ready``),
+    ``tool``, ``task_id``, plus route-specific fields. Proxied upstream tools
+    return it only when ``KEYSTONE_MCP_PROXY_STATUS_ENVELOPE=true``.
+    """
 
     async def execute(
         self,
@@ -42,7 +46,7 @@ def http_error_result(
     ctx: "RouteContext",
     exc: Exception,
 ) -> dict[str, Any]:
-    """Map a failed downstream HTTP call to the Model-M error envelope.
+    """Map a failed downstream HTTP call to the status-envelope error shape.
 
     Without this, a non-2xx ``raise_for_status()`` or a connect/read failure
     escaped the adapter as an exception, surfacing to the client as an opaque
@@ -75,18 +79,8 @@ def http_error_result(
 
 
 def stub_response(pattern: Pattern, task_id: str, tool_name: str) -> dict[str, Any]:
-    """Canonical stub response by Model M pattern (default 'until live')."""
-    if pattern is Pattern.M_U:
-        return {"state": "done", "stub": True, "tool": tool_name, "file_id": f"stub_file_{task_id}"}
-    if pattern is Pattern.M_D:
-        return {
-            "state": "file_ready",
-            "stub": True,
-            "tool": tool_name,
-            "task_id": task_id,
-            "file_url": f"https://stub.local/files/{task_id}",
-        }
-    if pattern is Pattern.M_E:
+    """Canonical stub response by pattern (default 'until live')."""
+    if pattern is Pattern.CONTINUATION:
         return {
             "state": "awaiting_user",
             "stub": True,

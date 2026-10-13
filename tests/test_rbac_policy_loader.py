@@ -14,7 +14,7 @@ from fastmcp import FastMCP
 
 from keystone_mcp.adapters.base import Pattern
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
-from keystone_mcp.catalog.builtin import register_catalog
+from keystone_mcp.catalog.builtin import BUILTIN_TOOL_NAMES, register_catalog
 from keystone_mcp.config import Settings
 from keystone_mcp.rbac.catalog import collect_live_tool_names
 from keystone_mcp.rbac.catalog_snapshot import CatalogSnapshot
@@ -110,9 +110,9 @@ def _make_registry_with_tools(
     registry = RouterRegistry(engine, mcp)
     adapter = _StubAdapter()
     for name in sorted(tool_names):
-        registry.add_route(name, adapter, pattern=Pattern.M_B, mode="live")
+        registry.add_route(name, adapter, pattern=Pattern.SYNC, mode="live")
     for name in sorted(stub_names):
-        registry.add_route(name, adapter, pattern=Pattern.M_B, mode="stub")
+        registry.add_route(name, adapter, pattern=Pattern.SYNC, mode="stub")
     return registry
 
 
@@ -371,7 +371,7 @@ roles:
     upstreams.add_upstream("bad-mcp", "http://unused", namespace="ns")
 
     harmless_schema = {"type": "object", "properties": {}}
-    tools = [SimpleNamespace(name="bad_tool", description="", inputSchema=harmless_schema)]
+    tools = [SimpleNamespace(name="bad_tool", description="", input_schema=harmless_schema)]
 
     original_register_tool = RouterRegistry._register_tool
 
@@ -913,7 +913,7 @@ async def test_bootstrap_platform_loads_policy_after_upstream_discovery(
     async def fake_discover_all() -> dict[str, int]:
         adapter = _StubAdapter()
         for tool in sorted(LIVE_TOOLS):
-            registry.add_route(tool, adapter, pattern=Pattern.M_B, mode="live")
+            registry.add_route(tool, adapter, pattern=Pattern.SYNC, mode="live")
         return {"fixture": len(LIVE_TOOLS)}
 
     monkeypatch.setattr(upstreams, "discover_all", fake_discover_all)
@@ -935,10 +935,7 @@ def test_build_server_skips_policy_manager_when_rbac_disabled():
 def test_shipped_default_policy_loads_against_the_core_catalog(tmp_path: Path):
     """The default policy validates against the tools the core catalog registers."""
     policy = load_policy_file(default_policy_path())
-    assert_live_catalog_validation(
-        policy,
-        frozenset({"create_upload_url", "get_download_link", "users_list"}),
-    )
+    assert_live_catalog_validation(policy, BUILTIN_TOOL_NAMES)
 
 
 # --- startup with an unreachable upstream (P05) ------------------------------------
@@ -960,7 +957,7 @@ async def _register_fixed_tools(upstreams, registry, cfg, names: tuple[str, ...]
         registry.add_route(
             name,
             adapter,
-            pattern=Pattern.M_B,
+            pattern=Pattern.SYNC,
             mode="live",
             namespace=cfg.namespace,
             config_mode="PROXY",
@@ -1141,12 +1138,11 @@ async def test_require_all_refuses_when_one_upstream_is_down():
 
 
 def test_default_policy_loads_against_builtin_catalog_in_enforce(tmp_path: Path):
-    """A fresh enforce deployment, no file API and no upstream, still starts.
+    """A fresh enforce deployment, no upstream, still starts.
 
-    ``register_catalog`` then publishes only the users_* admin tools (the file
-    tools are skipped without ``KEYSTONE_MCP_FILE_API_URL``), and the shipped
-    default policy (administrator: allow "*") must validate against that
-    catalog without any "unmatched allow patterns" refusal.
+    ``register_catalog`` publishes only the users_* admin tools, and the
+    shipped default policy (administrator: allow "*") must validate against
+    that catalog without any "unmatched allow patterns" refusal.
     """
     settings = Settings(
         base_url="http://localhost:8080",

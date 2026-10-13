@@ -3,9 +3,12 @@
 
 Drives the release readiness scenario against a *running* server: DEV-token
 OAuth sign-in (DCR -> authorize -> login -> token, the same sequence a real
-MCP client runs), a call to every ``hello_*`` tool from the sample upstream,
-adding a second user with a role that cannot see ``users_*``, and a check
-that the new role really is denied those tools.
+MCP client runs), a call to every ``hello_*`` tool from the sample upstream, a
+check that ``hello_whoami`` shows the administrator's identity as verified by
+hello-upstream (the demo's ``X-Keystone-Identity`` signing secret, see
+``docker-compose.demo.yml`` and ``examples/demo/upstreams.yaml``), adding a
+second user with a role that cannot see ``users_*``, and a check that the new
+role really is denied those tools.
 
 Usage::
 
@@ -27,6 +30,7 @@ import argparse
 import asyncio
 import base64
 import hashlib
+import json
 import os
 import secrets
 import sys
@@ -52,7 +56,7 @@ class SmokeError(Exception):
 
 
 def build_minimal_args(input_schema: dict[str, Any] | None) -> dict[str, Any]:
-    """Build the smallest argument dict that satisfies a tool's ``inputSchema``.
+    """Build the smallest argument dict that satisfies a tool's ``input_schema``.
 
     Only required properties are filled in, with one fixed placeholder value
     per JSON Schema type, so this script never needs to know a tool's actual
@@ -396,7 +400,7 @@ async def run(args: argparse.Namespace) -> int:
             log.fail(step, "200 with access_token", repr(exc))
             return 1
 
-        # 8-10 run inside one administrator MCP session.
+        # 8-11 run inside one administrator MCP session.
         try:
             async with Client(StreamableHttpTransport(transport_url, auth=admin_token)) as admin:
                 # 8. Administrator sees hello_* and users_*
@@ -417,7 +421,7 @@ async def run(args: argparse.Namespace) -> int:
                 step = "Call every hello_* tool"
                 try:
                     for tool in hello_tools:
-                        tool_args = build_minimal_args(tool.inputSchema)
+                        tool_args = build_minimal_args(tool.input_schema)
                         result = await admin.call_tool(tool.name, tool_args)
                         if result.is_error:
                             raise SmokeError(f"{tool.name} returned an error: {result.data}")
@@ -428,7 +432,68 @@ async def run(args: argparse.Namespace) -> int:
                     log.fail(step, "every hello_* call succeeds with non-empty content", repr(exc))
                     return 1
 
-                # 10. users_add for the member
+                # 10. hello_whoami shows the identity Keystone verified
+                step = "hello_whoami shows the verified administrator identity"
+                try:
+                    result = await admin.call_tool("hello_whoami", {})
+                    if result.is_error:
+                        raise SmokeError(f"hello_whoami returned an error: {result.content}")
+                    text = result.content[0].text if result.content else ""
+                    payload = json.loads(text)
+                    roles = payload.get("roles") or []
+                    sub = (payload.get("sub") or "").lower()
+                    if (
+                        not payload.get("verified")
+                        or "administrator" not in roles
+                        or sub != args.admin_email.lower()
+                    ):
+                        raise SmokeError(f"unexpected hello_whoami payload: {payload}")
+                    log.ok(step)
+                except Exception as exc:  # noqa: BLE001
+                    log.fail(
+                        step,
+                        "verified, roles include 'administrator', sub == admin email",
+                        repr(exc),
+                    )
+                    return 1
+
+                # 11. Administrator sees notes_* from the stdio upstream
+                step = "Administrator tool list has notes_list and notes_read"
+                try:
+                    tools = await admin.list_tools()
+                    names = {t.name for t in tools}
+                    if "notes_list" not in names or "notes_read" not in names:
+                        raise SmokeError(f"tool list was: {sorted(names)}")
+                    log.ok(step)
+                except Exception as exc:  # noqa: BLE001
+                    log.fail(step, "notes_list and notes_read present", repr(exc))
+                    return 1
+
+                # 12. notes_list returns the two demo note names
+                step = "notes_list returns two note names"
+                try:
+                    result = await admin.call_tool("notes_list", {})
+                    if result.is_error:
+                        raise SmokeError(f"notes_list returned an error: {result.data}")
+                    payload: object = []
+                    if result.content:
+                        payload = json.loads(result.content[0].text)
+                    elif result.structured_content is not None:
+                        payload = result.structured_content
+                        if isinstance(payload, dict) and "result" in payload:
+                            payload = payload["result"]
+                    elif getattr(result, "data", None) is not None:
+                        payload = result.data
+                    names = set(payload) if isinstance(payload, list) else set()
+                    expected = {"alpha.txt", "beta.txt"}
+                    if names != expected:
+                        raise SmokeError(f"expected {expected}, got {names}")
+                    log.ok(step)
+                except Exception as exc:  # noqa: BLE001
+                    log.fail(step, "['alpha.txt', 'beta.txt']", repr(exc))
+                    return 1
+
+                # 13. users_add for the member
                 step = "users_add (member)"
                 try:
                     added = await admin.call_tool(
@@ -452,7 +517,7 @@ async def run(args: argparse.Namespace) -> int:
             log.fail(step, "-", repr(exc))
             return 1
 
-        # 11. Repeat steps 4-7 for the member
+        # 14. Repeat steps 4-7 for the member
         step = "Repeat DEV-token login (member)"
         try:
             member_token = await oauth_login(
@@ -463,20 +528,21 @@ async def run(args: argparse.Namespace) -> int:
             log.fail(step, "DCR, authorize, login and token exchange all succeed", repr(exc))
             return 1
 
-        # 12. Member session: hello_* only, no users_*
-        step = "Member sees only hello_*, users_* is denied"
+        # 15. Member session: hello_* only, no users_* or notes_*
+        step = "Member sees only hello_*, users_* and notes_* denied"
         try:
             async with Client(StreamableHttpTransport(transport_url, auth=member_token)) as member:
                 tools = await member.list_tools()
                 names = {t.name for t in tools}
                 has_hello = any(n.startswith("hello_") for n in names)
                 has_users = any(n.startswith("users_") for n in names)
-                if not has_hello or has_users:
+                has_notes = any(n.startswith("notes_") for n in names)
+                if not has_hello or has_users or has_notes:
                     raise SmokeError(f"tool list was: {sorted(names)}")
 
                 first_hello = next(t for t in tools if t.name.startswith("hello_"))
                 result = await member.call_tool(
-                    first_hello.name, build_minimal_args(first_hello.inputSchema)
+                    first_hello.name, build_minimal_args(first_hello.input_schema)
                 )
                 if result.is_error:
                     raise SmokeError(f"{first_hello.name} returned an error: {result.data}")
@@ -492,12 +558,12 @@ async def run(args: argparse.Namespace) -> int:
         except Exception as exc:  # noqa: BLE001
             log.fail(
                 step,
-                "hello_* visible and callable, users_* absent, users_list call denied",
+                "hello_* visible and callable, users_* and notes_* absent, users_list denied",
                 repr(exc),
             )
             return 1
 
-    print(f"{log.passed}/12 steps passed.")
+    print(f"{log.passed}/15 steps passed.")
     return 0
 
 

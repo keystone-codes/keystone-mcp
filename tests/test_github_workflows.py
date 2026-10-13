@@ -102,3 +102,63 @@ def test_release_job_permissions_are_not_widened_by_the_top_level_block():
     jobs = doc["jobs"]
     assert jobs["publish"]["permissions"] == {"contents": "read", "packages": "write"}
     assert jobs["github-release"]["permissions"] == {"contents": "write"}
+    # wheel-smoke only installs and probes the already-built wheel: no job
+    # permissions of its own, so it inherits the restrictive top-level
+    # 'contents: read' instead of whatever the repository's default token
+    # scope happens to be.
+    assert "permissions" not in jobs["wheel-smoke"]
+    # pypi needs no repository contents beyond read and exchanges its OIDC
+    # token for a PyPI one (trusted publishing) via id-token: write.
+    assert jobs["pypi"]["permissions"] == {"contents": "read", "id-token": "write"}
+
+
+def _find_trivy_step(doc: dict) -> dict:
+    for job in doc.get("jobs", {}).values():
+        for step in job.get("steps") or []:
+            if str(step.get("uses", "")).startswith("aquasecurity/trivy-action@"):
+                return step
+    raise AssertionError("no aquasecurity/trivy-action step found")
+
+
+@pytest.mark.parametrize("name", ["security.yml", "release.yml"])
+def test_trivy_scan_step_is_blocking(name: str):
+    """A fixable HIGH/CRITICAL finding must fail the job, in both workflows (Z10).
+
+    ``continue-on-error`` would make the step always report success whatever
+    Trivy finds, and ``exit-code``/``trivyignores`` control whether a finding
+    is treated as a failure at all and where the accepted exceptions live.
+    """
+    doc = _load(name)
+    step = _find_trivy_step(doc)
+    assert "continue-on-error" not in step, (
+        f"{name}: the Trivy step must not set 'continue-on-error' — a "
+        "fixable HIGH/CRITICAL finding must fail the job, not just be reported"
+    )
+    with_block = step.get("with", {})
+    assert with_block.get("exit-code") == "1", (
+        f'{name}: the Trivy step must set exit-code: "1" so a finding fails the step'
+    )
+    assert with_block.get("trivyignores") == ".trivyignore", (
+        f"{name}: the Trivy step must read temporary exceptions from .trivyignore"
+    )
+
+
+def test_release_publish_depends_on_the_image_scan():
+    """release.yml must not be able to publish an image the PR gate would reject (Z10)."""
+    doc = _load("release.yml")
+    jobs = doc["jobs"]
+
+    def _needs(job_name: str) -> list[str]:
+        needs = jobs[job_name].get("needs")
+        if needs is None:
+            return []
+        return [needs] if isinstance(needs, str) else list(needs)
+
+    assert "image-scan" in _needs("publish"), (
+        "release.yml: 'publish' must declare 'image-scan' in its 'needs' so a "
+        "blocked scan blocks the release"
+    )
+    # pypi and github-release only run once publish has succeeded, so they
+    # depend on the image scan transitively through it.
+    assert "publish" in _needs("pypi")
+    assert "publish" in _needs("github-release")

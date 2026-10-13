@@ -12,21 +12,22 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import httpx
+import httpx2
 import pytest
 import pytest_asyncio
 from asgi_lifespan import LifespanManager
+from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
 from fastmcp.exceptions import ToolError
-from httpx import ASGITransport, AsyncClient
+from httpx2 import ASGITransport, AsyncClient
 
-from conftest import BASE_URL, mcp_client_session, obtain_access_token
+from conftest import BASE_URL, obtain_access_token
 from keystone_mcp.adapters.stub import StubAdapter
-from keystone_mcp.auth.identity_provider import StaticIdentityProvider
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import Settings
 from keystone_mcp.server import bootstrap_rbac_policy, build_server
 from keystone_mcp.user_directory import build_in_memory_user_directory_resolver
+from support.login import dev_token_login
 
 VALID_TOKEN = "valid-test-token"
 VIEWER_EMAIL = "viewer@example.com"
@@ -79,29 +80,19 @@ class EnforceHarness:
                 transport=ASGITransport(app=app),
                 base_url=BASE_URL,
                 headers=headers,
-                timeout=timeout or httpx.Timeout(30.0),
+                timeout=timeout or httpx2.Timeout(30.0),
                 auth=auth,
                 follow_redirects=True,
             )
 
         return factory
 
-    def transport_factory_for(self, token: str):
-        """A factory building a fresh transport per connection attempt.
-
-        ``mcp_client_session`` retries brief transport flakes by calling this
-        again, so it must not hand back an already-used transport instance.
-        """
-        client_factory = self.mcp_client_factory()
-
-        def factory():
-            return StreamableHttpTransport(
-                self.settings.transport_url,
-                auth=token,
-                httpx_client_factory=client_factory,
-            )
-
-        return factory
+    def transport_for(self, token: str) -> StreamableHttpTransport:
+        return StreamableHttpTransport(
+            self.settings.transport_url,
+            auth=token,
+            httpx_client_factory=self.mcp_client_factory(),
+        )
 
 
 @pytest_asyncio.fixture
@@ -121,11 +112,11 @@ async def enforce_harness(tmp_path: Path):
     resolver, backend, revision = build_in_memory_user_directory_resolver()
     backend.seed(VIEWER_EMAIL, roles=("viewer",))
 
-    idp = StaticIdentityProvider({VALID_TOKEN})
+    _login = dev_token_login({VALID_TOKEN})
     store = InMemoryOAuthStore()
 
     mcp, registry, _oauth, _upstreams, policy_manager, _observability, _reconciler = build_server(
-        identity_provider=idp,
+        login_providers=[_login],
         settings=settings,
         oauth_store=store,
         user_resolver=resolver,
@@ -162,9 +153,7 @@ async def _viewer_token(harness: EnforceHarness) -> str:
 
 async def test_viewer_lists_only_allowed_tools(enforce_harness):
     token = await _viewer_token(enforce_harness)
-    transport_factory = enforce_harness.transport_factory_for(token)
-
-    async with mcp_client_session(transport_factory=transport_factory) as client:
+    async with Client(enforce_harness.transport_for(token)) as client:
         tools = await client.list_tools()
         names = {t.name for t in tools}
         assert "e2e_ping" in names
@@ -173,9 +162,7 @@ async def test_viewer_lists_only_allowed_tools(enforce_harness):
 
 async def test_viewer_call_to_forbidden_tool_is_denied(enforce_harness):
     token = await _viewer_token(enforce_harness)
-    transport_factory = enforce_harness.transport_factory_for(token)
-
-    async with mcp_client_session(transport_factory=transport_factory) as client:
+    async with Client(enforce_harness.transport_for(token)) as client:
         with pytest.raises(ToolError, match="access denied"):
             await client.call_tool("e2e_secret", {})
 
@@ -184,20 +171,17 @@ async def test_viewer_call_to_forbidden_tool_is_denied(enforce_harness):
 
 async def test_viewer_call_to_allowed_tool_succeeds(enforce_harness):
     token = await _viewer_token(enforce_harness)
-    transport_factory = enforce_harness.transport_factory_for(token)
-
-    async with mcp_client_session(transport_factory=transport_factory) as client:
+    async with Client(enforce_harness.transport_for(token)) as client:
         result = await client.call_tool("e2e_ping", {})
         assert result.data["state"] == "done"
 
 
 async def test_blocked_user_is_denied_with_live_token(enforce_harness):
     token = await _viewer_token(enforce_harness)
-    transport_factory = enforce_harness.transport_factory_for(token)
 
     enforce_harness.backend.block(VIEWER_EMAIL)
     enforce_harness.revision.bump()
 
-    async with mcp_client_session(transport_factory=transport_factory) as client:
+    async with Client(enforce_harness.transport_for(token)) as client:
         with pytest.raises(ToolError):
             await client.call_tool("e2e_ping", {})

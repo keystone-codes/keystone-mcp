@@ -3,7 +3,8 @@
 Normative specification of the keystone-mcp RBAC policy file, the optional
 catalog snapshot file, and the environment variables that select them. This
 document is the contract a downstream deployment repository implements when it
-ships its own policy as an overlay.
+ships its own policy as an overlay. The file can also be changed through the
+`policy_*` tools — see [policy-admin.md](policy-admin.md).
 
 The platform hardcodes no role name and no tool name, with one exception named
 in [Core critical built-ins](#core-critical-built-ins).
@@ -66,7 +67,10 @@ the administrative tools into a separate registry entry with their own
 namespace (not starting with `billing_`) using `include_prefixes`/
 `strip_prefix`.
 
-
+Allow patterns match tools, prompts and resources by their published name
+(`<namespace>_<name>` for tools, prompts, static resources and resource
+templates — see [facade.md](facade.md)). Example: upstream resource
+`handbook` in namespace `hello` is allowed with `hello_handbook`, not by URI.
 
 ### 2.2 `version`
 
@@ -108,6 +112,8 @@ other role.
 the allow patterns of all roles assigned to them. A user with no roles is
 denied everything.
 
+Why: [ADR 0002](adr/0002-roles-in-the-policy-file.md).
+
 ### 2.5 `deny`
 
 Global kill list. A tool matching any `deny` pattern is denied for every role,
@@ -117,10 +123,13 @@ including a role whose `allow` is `*`. Applied before allow evaluation.
 
 Tools that additionally require an interactive human login. A call that the
 role union permits is still denied with reason `human_identity_required`
-unless the verified token carries `auth_method == "google"`
-(`INTERACTIVE_AUTH_METHOD` in `src/keystone_mcp/rbac/human_identity.py`). Use
-it for irreversible confirming operations that must never run under a machine
-token.
+unless the verified token carries `interactive: true` — a claim every
+interactive sign-in provider sets (Google and any configured OIDC provider;
+see `login-providers.md`), never a machine's api_key sign-in
+(`has_interactive_human_identity` in
+`src/keystone_mcp/rbac/human_identity.py`). Use it for irreversible
+confirming operations that must never run under a machine token. Service
+accounts never satisfy `requires_human_identity`.
 
 ### 2.7 `critical_tools`
 
@@ -131,12 +140,10 @@ one directory round trip per invocation.
 #### Core critical built-ins
 
 The following are **always** critical, whatever the policy says, because the
-core catalog (`src/keystone_mcp/catalog/builtin.py`) registers them as platform
-primitives: `users_*`, `create_upload_url`, `get_download_link`. `users_*` is
-published only when `KEYSTONE_MCP_RBAC_MODE=enforce`; `create_upload_url` and
-`get_download_link` only when `KEYSTONE_MCP_FILE_API_URL` is set. They are
-critical whenever they are published, and need not be repeated in
-`critical_tools`; listing them is harmless.
+core catalog (`src/keystone_mcp/catalog/builtin.py`) registers them as a
+platform primitive: `users_*` and `policy_*`, published only when
+`KEYSTONE_MCP_RBAC_MODE=enforce`. They are critical whenever they are published, and
+need not be repeated in `critical_tools`; listing them is harmless.
 
 ### 2.8 `reserved_allow_patterns`
 
@@ -293,6 +300,20 @@ from the catalog is simply denied by `default_deny`.
   serving. A rejected reload never leaves the process without a policy.
 - Startup is different: a failure there is fatal (`PolicyLoadError`).
 - Requests in flight see either the old or the new policy, never a mix.
+
+**Tool writes.** A later release's administration tools (`policy_*`) change
+this same file from inside the process, through
+`keystone_mcp.rbac.policy_store.PolicyStore` (gated by
+`KEYSTONE_MCP_POLICY_TOOLS`, see [environment.md](environment.md)). A write is
+atomic (`.tmp` in the same directory, `fsync`, `os.replace`), keeps exactly one
+backup generation (`<policy>.bak`, overwritten on every write), and reloads the
+new file in place through the same `RbacPolicyManager.reload` — and therefore
+the same structural and live-catalog gate — a hot-reload runs. Hand-written
+YAML comments are never preserved across a tool write (the writer is plain
+PyYAML, not `ruamel.yaml`): the file as it looked immediately before the write
+survives in `.bak`. Other replicas sharing the same file on a common volume
+pick the change up on their own next background tick, exactly as they would
+pick up a hand edit.
 
 ## 6. Migrating from v1
 

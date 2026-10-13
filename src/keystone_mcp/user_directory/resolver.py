@@ -2,15 +2,27 @@
 
 from __future__ import annotations
 
+import hashlib
+
 import httpx
 
-from keystone_mcp.user_directory.cache import ResolutionCache
+from keystone_mcp.user_directory.cache import _MISSING, ApiKeyVerificationCache, ResolutionCache
 from keystone_mcp.user_directory.circuit_breaker import CircuitBreaker
 from keystone_mcp.user_directory.errors import UserDirectoryUnavailableError
-from keystone_mcp.user_directory.models import UserResolveResult
-from keystone_mcp.user_directory.protocol import UserDirectoryBackend
+from keystone_mcp.user_directory.protocol import ApiKeyDirectory, UserDirectory
 from keystone_mcp.user_directory.revision import RevisionReader
+from keystone_mcp.user_directory.types import (
+    ApiKeyVerification,
+    UserResolveResult,
+    parse_service_subject,
+)
 from keystone_mcp.user_directory.util import normalize_email
+
+
+def _normalize_subject(subject: str) -> str:
+    if parse_service_subject(subject) is not None:
+        return subject.strip().lower()
+    return normalize_email(subject)
 
 
 class CachedUserDirectoryResolver:
@@ -18,25 +30,30 @@ class CachedUserDirectoryResolver:
 
     def __init__(
         self,
-        backend: UserDirectoryBackend,
+        backend: UserDirectory,
         *,
         revision_reader: RevisionReader,
         cache: ResolutionCache,
         circuit_breaker: CircuitBreaker,
+        api_key_cache: ApiKeyVerificationCache | None = None,
     ) -> None:
         self._backend = backend
         self._revision_reader = revision_reader
         self._cache = cache
+        self._api_key_cache = api_key_cache or ApiKeyVerificationCache(
+            allow_ttl_seconds=cache._allow_ttl,
+            deny_ttl_seconds=cache._deny_ttl,
+        )
         self._circuit = circuit_breaker
         self._seen_revision: int | None = None
 
     @property
-    def backend(self) -> UserDirectoryBackend:
+    def backend(self) -> UserDirectory:
         """The wrapped backend, for callers that need it (e.g. readiness checks)."""
         return self._backend
 
     async def resolve(self, email: str, *, critical: bool = False) -> UserResolveResult:
-        normalized = normalize_email(email)
+        normalized = _normalize_subject(email)
         revision = await self._revision_reader.current()
         await self._sync_revision(revision)
 
@@ -71,6 +88,7 @@ class CachedUserDirectoryResolver:
             exists=result.exists,
             roles=result.roles,
             is_blocked=result.is_blocked,
+            subject_type=result.subject_type,
             from_cache=False,
             revision=revision,
         )
@@ -83,7 +101,42 @@ class CachedUserDirectoryResolver:
             return
         if revision != self._seen_revision:
             self._cache.clear()
+            self._api_key_cache.clear()
             self._seen_revision = revision
+
+    async def verify_api_key(self, key: str) -> ApiKeyVerification | None:
+        if "api_keys" not in self._backend.capabilities:
+            return None
+        if not isinstance(self._backend, ApiKeyDirectory):
+            return None
+        revision = await self._revision_reader.current()
+        await self._sync_revision(revision)
+        digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
+        cached = self._api_key_cache.get(digest, revision=revision)
+        if cached is not _MISSING:
+            return cached
+
+        if self._circuit.is_open():
+            raise UserDirectoryUnavailableError(
+                "users directory circuit breaker is open",
+                code="circuit_open",
+            )
+
+        try:
+            result = await self._backend.verify_api_key(key)
+        except UserDirectoryUnavailableError:
+            self._circuit.record_failure()
+            raise
+        except (httpx.HTTPError, OSError) as exc:
+            self._circuit.record_failure()
+            raise UserDirectoryUnavailableError(
+                "users directory is unavailable",
+                code="catalog_unavailable",
+            ) from exc
+
+        self._circuit.record_success()
+        self._api_key_cache.put(digest, result, revision=revision)
+        return result
 
     async def aclose(self) -> None:
         await self._backend.aclose()

@@ -13,11 +13,22 @@ With ``--tag``, additionally checks that the tag starts with ``v`` and that
 ``tag[1:]`` matches all three sources, and that the matching CHANGELOG
 heading carries a release date.
 
+With ``--dist-dir``, additionally checks the wheel and sdist built by
+``uv build`` into that directory: exactly one of each for this project's
+distribution (``keystone-mcp-gateway``), their filenames and the wheel's
+``METADATA`` agree with ``pyproject.toml``'s version, the wheel carries the
+files in ``REQUIRED_WHEEL_FILES``, and the sdist does not leak
+``internal/``, ``tests/`` or ``.env*``.
+
     python scripts/check_version.py
     python scripts/check_version.py --tag v0.4.0
+    python scripts/check_version.py --dist-dir dist
+    python scripts/check_version.py --tag v0.4.0 --dist-dir dist
 
 Exit codes: 0 everything agrees, 1 a mismatch was found, 2 a source file is
-missing, unparsable, or the CHANGELOG has no released heading at all.
+missing or unparsable, the CHANGELOG has no released heading at all, or
+``--dist-dir`` does not contain exactly one wheel and one sdist of this
+project's distribution.
 """
 
 from __future__ import annotations
@@ -25,7 +36,9 @@ from __future__ import annotations
 import argparse
 import re
 import sys
+import tarfile
 import tomllib
+import zipfile
 from pathlib import Path
 
 _VERSION_RE = re.compile(r"^\d+\.\d+\.\d+$")
@@ -38,6 +51,42 @@ _CHANGELOG_HEADING_RE = re.compile(
 PYPROJECT_SOURCE = "pyproject.toml"
 DUNDER_SOURCE = "src/keystone_mcp/__init__.py"
 CHANGELOG_SOURCE = "CHANGELOG.md"
+
+# The project's PyPI distribution name (S14 / X10): "keystone-mcp" was
+# already taken by an unrelated project, so the distribution is named
+# differently from the importable module (`keystone_mcp`) and the `keystone-mcp`
+# command. PEP 427/625 normalize both the wheel and the sdist filename to
+# this form (hyphens and dots become underscores).
+DIST_NAME = "keystone-mcp-gateway"
+NORMALIZED_DIST_NAME = "keystone_mcp_gateway"
+
+_WHEEL_RE = re.compile(rf"^{re.escape(NORMALIZED_DIST_NAME)}-(?P<version>[^-]+)-py3-none-any\.whl$")
+_SDIST_RE = re.compile(rf"^{re.escape(NORMALIZED_DIST_NAME)}-(?P<version>.+)\.tar\.gz$")
+
+# Files the wheel must carry so that `pip install keystone-mcp-gateway` ships
+# a usable, typed package: type information for plugin authors (X10) and the
+# Alembic migrations for the built-in users directory (U01's
+# ``test_migration_files_are_packaged`` checks the same thing on an installed
+# checkout; this constant checks it on the *built* wheel instead). Later
+# cards append their own required files here (X09: ``entry_points.txt``;
+# X11: contract-test modules) rather than adding a second constant.
+REQUIRED_WHEEL_FILES: tuple[str, ...] = (
+    "keystone_mcp/py.typed",
+    "keystone_mcp/users/migrations/env.py",
+    "keystone_mcp/users/migrations/versions/0001_initial.py",
+    "keystone_mcp/contract_tests/__init__.py",
+    "keystone_mcp/contract_tests/fake_oidc.py",
+)
+
+_REQUIRED_ENTRY_POINT_GROUPS: dict[str, frozenset[str]] = {
+    "keystone_mcp.login_providers": frozenset({"oidc", "google", "api_key"}),
+    "keystone_mcp.user_directories": frozenset({"local", "http"}),
+}
+
+# A sdist must not leak the operator-facing repository layout: internal task
+# cards, the test suite (large, and no use to an installed package) or any
+# flavour of a real or example .env file.
+FORBIDDEN_SDIST_PREFIXES: tuple[str, ...] = ("internal/", "tests/", ".env")
 
 
 class VersionCheckError(Exception):
@@ -112,16 +161,165 @@ def read_versions(root: Path) -> dict[str, str]:
     }
 
 
-def check(root: Path, tag: str | None) -> list[str]:
-    """Check version agreement across sources (and ``tag``, if given).
+def _find_dist_files(dist_dir: Path, *, pattern: re.Pattern[str], kind: str) -> Path:
+    """Return the single file under ``dist_dir`` matching ``pattern``.
+
+    Raises :class:`VersionCheckError` (a usage error, exit code 2) if
+    ``dist_dir`` does not exist or does not contain exactly one match —
+    including zero matches or two wheels for the same distribution.
+    """
+    if not dist_dir.is_dir():
+        raise VersionCheckError(f"--dist-dir {dist_dir}: not a directory")
+
+    matches = sorted(p for p in dist_dir.iterdir() if pattern.match(p.name))
+    if len(matches) != 1:
+        found = ", ".join(p.name for p in matches) or "(none)"
+        raise VersionCheckError(
+            f"--dist-dir {dist_dir}: expected exactly one {NORMALIZED_DIST_NAME} {kind}, "
+            f"found {len(matches)}: {found}"
+        )
+    return matches[0]
+
+
+def _check_wheel(wheel_path: Path, pyproject_version: str) -> list[str]:
+    """Check a built wheel's filename version, METADATA and required files."""
+    errors: list[str] = []
+
+    match = _WHEEL_RE.match(wheel_path.name)
+    assert match is not None  # guaranteed by _find_dist_files's pattern
+    wheel_version = match.group("version")
+    if wheel_version != pyproject_version:
+        errors.append(
+            f"{wheel_path.name}: wheel filename version ({wheel_version}) != "
+            f"{PYPROJECT_SOURCE} ({pyproject_version})"
+        )
+
+    try:
+        with zipfile.ZipFile(wheel_path) as archive:
+            names = frozenset(archive.namelist())
+            metadata_name = next(
+                (name for name in names if name.endswith(".dist-info/METADATA")), None
+            )
+            if metadata_name is None:
+                errors.append(f"{wheel_path.name}: no *.dist-info/METADATA found")
+            else:
+                metadata_lines = archive.read(metadata_name).decode("utf-8").splitlines()
+                if f"Version: {pyproject_version}" not in metadata_lines:
+                    errors.append(
+                        f"{wheel_path.name}: {metadata_name} does not declare "
+                        f"'Version: {pyproject_version}'"
+                    )
+                if f"Name: {DIST_NAME}" not in metadata_lines:
+                    errors.append(
+                        f"{wheel_path.name}: {metadata_name} does not declare 'Name: {DIST_NAME}'"
+                    )
+    except zipfile.BadZipFile as exc:
+        raise VersionCheckError(f"{wheel_path}: not a valid wheel (zip) file: {exc}") from exc
+
+    missing_files = [name for name in REQUIRED_WHEEL_FILES if name not in names]
+    if missing_files:
+        errors.append(f"{wheel_path.name}: missing required file(s): {', '.join(missing_files)}")
+
+    entry_points_name = next(
+        (name for name in names if name.endswith(".dist-info/entry_points.txt")), None
+    )
+    if entry_points_name is None:
+        errors.append(f"{wheel_path.name}: no *.dist-info/entry_points.txt found")
+    else:
+        try:
+            with zipfile.ZipFile(wheel_path) as archive:
+                body = archive.read(entry_points_name).decode("utf-8")
+        except zipfile.BadZipFile:
+            body = ""
+        parsed_groups: dict[str, set[str]] = {}
+        current_group: str | None = None
+        for line in body.splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            if stripped.startswith("[") and stripped.endswith("]"):
+                current_group = stripped[1:-1]
+                parsed_groups.setdefault(current_group, set())
+                continue
+            if current_group is not None and "=" in stripped:
+                entry_name = stripped.split("=", 1)[0].strip()
+                parsed_groups[current_group].add(entry_name)
+        for group, required_names in _REQUIRED_ENTRY_POINT_GROUPS.items():
+            found = parsed_groups.get(group, set())
+            missing = sorted(required_names - found)
+            if missing:
+                errors.append(
+                    f"{wheel_path.name}: {entry_points_name} group {group!r} "
+                    f"missing entry point(s): {', '.join(missing)}"
+                )
+
+    return errors
+
+
+def _check_sdist(sdist_path: Path, pyproject_version: str) -> list[str]:
+    """Check a built sdist's filename version and absence of forbidden paths."""
+    errors: list[str] = []
+
+    match = _SDIST_RE.match(sdist_path.name)
+    assert match is not None  # guaranteed by _find_dist_files's pattern
+    sdist_version = match.group("version")
+    if sdist_version != pyproject_version:
+        errors.append(
+            f"{sdist_path.name}: sdist filename version ({sdist_version}) != "
+            f"{PYPROJECT_SOURCE} ({pyproject_version})"
+        )
+
+    try:
+        with tarfile.open(sdist_path, mode="r:gz") as archive:
+            member_names = archive.getnames()
+    except tarfile.TarError as exc:
+        raise VersionCheckError(f"{sdist_path}: not a valid sdist (tar.gz) file: {exc}") from exc
+
+    forbidden: list[str] = []
+    for name in member_names:
+        # Each entry is "<dist>-<version>/<relative path>"; strip that one
+        # top-level directory before matching against forbidden prefixes.
+        _root_dir, _, relative = name.partition("/")
+        if relative.startswith(FORBIDDEN_SDIST_PREFIXES):
+            forbidden.append(name)
+    if forbidden:
+        errors.append(
+            f"{sdist_path.name}: contains forbidden path(s): {', '.join(sorted(forbidden))}"
+        )
+
+    return errors
+
+
+def check_dist_dir(root: Path, dist_dir: Path) -> list[str]:
+    """Check the wheel and sdist built into ``dist_dir`` against ``root``.
+
+    Raises :class:`VersionCheckError` (exit code 2) if ``dist_dir`` is
+    missing or does not contain exactly one wheel and one sdist of this
+    project's distribution, or if either archive cannot be opened. Returns a
+    list of mismatch messages otherwise (exit code 1 if non-empty).
+    """
+    pyproject_version = _read_pyproject_version(root)
+
+    wheel_path = _find_dist_files(dist_dir, pattern=_WHEEL_RE, kind="wheel")
+    sdist_path = _find_dist_files(dist_dir, pattern=_SDIST_RE, kind="sdist")
+
+    return [
+        *_check_wheel(wheel_path, pyproject_version),
+        *_check_sdist(sdist_path, pyproject_version),
+    ]
+
+
+def check(root: Path, tag: str | None, dist_dir: Path | None = None) -> list[str]:
+    """Check version agreement across sources (``tag`` and ``dist_dir`` optional).
 
     Returns a list of human-readable error messages; empty means everything
     agrees. Raises :class:`VersionCheckError` only for a missing or
-    unparsable source file, or a CHANGELOG with no released heading at all
-    (usage errors, exit code 2). A malformed ``X.Y.Z`` version or tag (for
-    example a pre-release) is reported as an ordinary entry in the returned
-    list (exit code 1), since 0.4.0 simply refuses to release it rather than
-    treating it as a setup mistake.
+    unparsable source file, a CHANGELOG with no released heading at all, or
+    a ``dist_dir`` that does not hold exactly one wheel and one sdist of this
+    project's distribution (usage errors, exit code 2). A malformed
+    ``X.Y.Z`` version or tag (for example a pre-release) is reported as an
+    ordinary entry in the returned list (exit code 1), since 0.4.0 simply
+    refuses to release it rather than treating it as a setup mistake.
     """
     versions = read_versions(root)
     _changelog_version, changelog_date = _read_changelog_version(root)
@@ -171,10 +369,15 @@ def check(root: Path, tag: str | None) -> list[str]:
                         f"{CHANGELOG_SOURCE}: heading for {changelog_version} has no release date"
                     )
 
+    if dist_dir is not None:
+        errors.extend(check_dist_dir(root, dist_dir))
+
     return errors
 
 
-def _format_report(root: Path, tag: str | None) -> tuple[list[str], int]:
+def _format_report(
+    root: Path, tag: str | None, dist_dir: Path | None = None
+) -> tuple[list[str], int]:
     """Build the printable report lines and the resulting exit code."""
     lines: list[str] = []
 
@@ -193,9 +396,11 @@ def _format_report(root: Path, tag: str | None) -> tuple[list[str], int]:
         lines.append(f"{CHANGELOG_SOURCE}: {changelog_version}")
     if tag is not None:
         lines.append(f"tag: {tag}")
+    if dist_dir is not None:
+        lines.append(f"dist-dir: {dist_dir}")
 
     try:
-        errors = check(root, tag)
+        errors = check(root, tag, dist_dir)
     except VersionCheckError as exc:
         lines.append(str(exc))
         return lines, 2
@@ -222,9 +427,16 @@ def main(argv: list[str] | None = None) -> int:
         default=Path(__file__).resolve().parent.parent,
         help="Repository root (default: parent of this script's directory)",
     )
+    parser.add_argument(
+        "--dist-dir",
+        type=Path,
+        default=None,
+        help="Directory holding a wheel and sdist built by 'uv build' (e.g. dist/) to"
+        " check against pyproject.toml's version; omit to skip this check",
+    )
     args = parser.parse_args(argv)
 
-    lines, exit_code = _format_report(args.root, args.tag)
+    lines, exit_code = _format_report(args.root, args.tag, args.dist_dir)
     for line in lines:
         print(line)
     return exit_code

@@ -23,10 +23,10 @@ import pytest
 from asgi_lifespan import LifespanManager
 
 from conftest import BASE_URL, VALID_TOKEN, make_pkce
-from keystone_mcp.auth.identity_provider import StaticIdentityProvider
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import Settings
 from keystone_mcp.server import _http_asgi_middleware, build_server
+from support.login import dev_token_login
 
 pytestmark = pytest.mark.asyncio
 
@@ -36,9 +36,9 @@ _GOOD_HOST = "localhost:8080"
 
 def _build_app(**settings_overrides):
     settings = Settings(base_url=BASE_URL, refresh_interval_seconds=0, **settings_overrides)
-    idp = StaticIdentityProvider({VALID_TOKEN})
+    _login = dev_token_login({VALID_TOKEN})
     mcp, *_rest = build_server(
-        identity_provider=idp,
+        login_providers=[_login],
         settings=settings,
         oauth_store=InMemoryOAuthStore(),
     )

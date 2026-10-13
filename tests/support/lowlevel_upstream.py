@@ -16,16 +16,20 @@ Python framework.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import contextlib
 import json
+import time
 from collections.abc import AsyncIterator, Callable, Collection
 from typing import Any
 
-import httpx
+import anyio
+import httpx2
 from mcp import types
 from mcp.server.lowlevel import Server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+from mcp_types.version import MODERN_PROTOCOL_VERSIONS
 from starlette.applications import Starlette
 from starlette.routing import Route
 from starlette.types import Receive, Scope, Send
@@ -81,6 +85,39 @@ ODD_NAMES_SCHEMA: dict[str, Any] = {
     "required": ["from"],
 }
 
+#: Y03: a tool that reports progress while it runs, to exercise
+#: ``notifications/progress`` forwarding. ``steps`` is keyword-only from the
+#: caller's point of view (JSON Schema has no positional arguments).
+COUNT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "steps": {"type": "integer", "default": 3},
+    },
+}
+
+SLOW_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "tag": {"type": "string", "default": ""},
+    },
+}
+
+ASK_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "ok": {"type": "boolean"},
+        "choice": {"type": "string", "enum": ["a", "b"], "default": "a"},
+    },
+    "required": ["ok"],
+}
+
+ASK_WEIRD_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {"x": {"type": ["string", "null"]}},
+}
+
+_EMPTY_ASK_SCHEMA: dict[str, Any] = {"type": "object", "properties": {}}
+
 _TOOL_DEFINITIONS: dict[str, types.Tool] = {
     "greet": types.Tool(
         name="greet",
@@ -112,25 +149,62 @@ _TOOL_DEFINITIONS: dict[str, types.Tool] = {
         description="Echo arguments whose names are not Python identifiers.",
         inputSchema=ODD_NAMES_SCHEMA,
     ),
+    "count": types.Tool(
+        name="count",
+        description="Count to `steps`, reporting progress along the way.",
+        inputSchema=COUNT_SCHEMA,
+    ),
+    "slow": types.Tool(
+        name="slow",
+        description="Sleep for a long time; used to exercise cancellation.",
+        inputSchema=SLOW_SCHEMA,
+    ),
+    "ask": types.Tool(
+        name="ask",
+        description="Ask the client a form question (Y07 elicitation tests).",
+        inputSchema=_EMPTY_ASK_SCHEMA,
+    ),
+    "ask_url": types.Tool(
+        name="ask_url",
+        description="Ask the client via URL elicitation (declined by Keystone).",
+        inputSchema=_EMPTY_ASK_SCHEMA,
+    ),
+    "ask_weird": types.Tool(
+        name="ask_weird",
+        description="Ask with a schema json_schema_to_type cannot parse.",
+        inputSchema=_EMPTY_ASK_SCHEMA,
+    ),
 }
 
-#: ``list_tools`` publishes tools in this order.
+#: ``list_tools`` publishes tools in this order when all of them are selected.
+#: ``count`` is deliberately excluded from the *default* selection (``tools=None``
+#: below) so the long-standing tool count every existing test asserts does not
+#: shift just because Y03 added a tool; pass it explicitly via ``tools`` or
+#: ``extra_tools`` to include it.
 _TOOL_ORDER: tuple[str, ...] = ("greet", "search", "report", "fail", "whoami", "odd_names")
 
 
 def build_lowlevel_upstream_app(
     *,
     tools: Collection[str] | None = None,
+    extra_tools: Collection[str] | None = None,
+    prompts: bool = False,
+    resources: bool = False,
     observed: dict[str, Any] | None = None,
     require_bearer: str | None = None,
+    stateless: bool = True,
+    json_response: bool = True,
 ) -> Starlette:
     """Build a Starlette app around a low-level ``mcp.server.lowlevel.Server``.
 
-    ``tools`` restricts which of the five tools are registered (default: all
-    of them), so a test can target one tool without depending on fixes the
-    others still need. ``observed``, when given, receives the last call's
-    request headers (lower-cased keys) under ``observed["headers"]`` — written
-    by the ``whoami`` tool.
+    ``tools`` restricts which tools are registered (default: the original six
+    -- ``count`` is not one of them, see ``_TOOL_ORDER``), so a test can
+    target one tool without depending on fixes the others still need.
+    ``extra_tools`` adds tools on top of the default six without changing it
+    (e.g. ``extra_tools={"count"}``). ``observed``, when given, receives the
+    last call's request headers (lower-cased keys) under
+    ``observed["headers"]`` — written by the ``whoami`` tool — and, for a
+    tokenless ``count`` call, ``observed["progress_token"] = None``.
 
     ``require_bearer``, when given, makes both ``list_tools`` and
     ``call_tool`` reject a request whose ``Authorization`` header is not
@@ -141,33 +215,54 @@ def build_lowlevel_upstream_app(
     call-tool wrapper always turns a raised exception into one, the same way
     the ``fail`` tool below does).
 
+    ``stateless`` and ``json_response`` are passed straight through to
+    ``StreamableHTTPSessionManager`` (default: unchanged from before Y03). A
+    progress notification can only reach the client before the final response
+    when ``json_response=False`` -- a ``json_response=True`` session buffers
+    the whole answer and sends it as one JSON body, on both protocol eras.
+
     ``StreamableHTTPSessionManager.run()`` can only be entered once per
     instance, so call this again to get a fresh app for each test.
     """
     selected = set(_TOOL_ORDER) if tools is None else set(tools)
-    unknown = selected - set(_TOOL_ORDER)
+    if extra_tools:
+        selected |= set(extra_tools)
+    unknown = selected - set(_TOOL_DEFINITIONS)
     if unknown:
         raise ValueError(f"unknown tool(s): {sorted(unknown)}")
 
-    server: Server = Server("hello-upstream")
+    # The low-level SDK v2 `Server` no longer takes handlers via the
+    # `@server.list_tools()` / `@server.call_tool()` decorators (removed); it
+    # takes `on_list_tools` / `on_call_tool` in its constructor instead, each
+    # called as `(ctx, params) -> result`. The old decorator-based `Server`
+    # also turned a raised exception into an error `CallToolResult`
+    # automatically; SDK v2's low-level `Server` does not (only the separate,
+    # higher-level `mcp.server.mcpserver` does), so `_on_call_tool` below does
+    # that wrapping itself to keep the `fail` tool and the bearer check
+    # behaving the same as before.
 
-    def _check_bearer() -> None:
+    def _check_bearer(ctx: Any) -> None:
         if require_bearer is None:
             return
-        request = server.request_context.request
+        request = ctx.request
         headers = {k.lower(): v for k, v in request.headers.items()} if request else {}
         if headers.get("authorization") != f"Bearer {require_bearer}":
             raise PermissionError("missing or invalid bearer token")
 
-    @server.list_tools()
-    async def _list_tools() -> list[types.Tool]:
-        _check_bearer()
-        return [_TOOL_DEFINITIONS[name] for name in _TOOL_ORDER if name in selected]
+    async def _on_list_tools(ctx: Any, _params: Any) -> types.ListToolsResult:
+        _check_bearer(ctx)
+        # Ordered by _TOOL_DEFINITIONS' own (insertion) order, not _TOOL_ORDER,
+        # so an explicitly-selected tool outside the default six (e.g. just
+        # {"count"}) is still found.
+        tools = [_TOOL_DEFINITIONS[name] for name in _TOOL_DEFINITIONS if name in selected]
+        return types.ListToolsResult(tools=tools)
 
-    @server.call_tool()
-    async def _call_tool(name: str, arguments: dict[str, Any]) -> list[types.ContentBlock]:
-        _check_bearer()
+    async def _run_tool(ctx: Any, name: str, arguments: dict[str, Any]) -> list[types.ContentBlock]:
         if name == "greet":
+            if observed is not None:
+                request = ctx.request
+                headers = {k.lower(): v for k, v in request.headers.items()} if request else {}
+                observed["headers"] = headers
             return [types.TextContent(type="text", text=f"Hello, {arguments['name']}!")]
 
         if name == "search":
@@ -206,7 +301,7 @@ def build_lowlevel_upstream_app(
             ]
 
         if name == "whoami":
-            request = server.request_context.request
+            request = ctx.request
             headers = {k.lower(): v for k, v in request.headers.items()} if request else {}
             if observed is not None:
                 observed["headers"] = headers
@@ -222,9 +317,266 @@ def build_lowlevel_upstream_app(
                 )
             ]
 
+        if name == "slow":
+            tag = arguments.get("tag", "")
+            if observed is not None:
+                observed["slow_running"] = observed.get("slow_running", 0) + 1
+                started = observed.get("slow_started")
+                if isinstance(started, asyncio.Event):
+                    started.set()
+            try:
+                await anyio.sleep(30)
+            except anyio.get_cancelled_exc_class():
+                if observed is not None:
+                    observed["slow_cancelled_at"] = time.monotonic()
+                    observed.setdefault("slow_cancelled_tags", []).append(tag)
+                raise
+            finally:
+                if observed is not None:
+                    observed["slow_running"] = max(0, observed.get("slow_running", 1) - 1)
+            return [types.TextContent(type="text", text=f"slow done {tag}")]
+
+        if name == "count":
+            steps = arguments.get("steps", 3)
+            # ServerRequestContext.meta is the SDK's own RequestParamsMeta --
+            # unlike the client-side request context's raw wire _meta dict,
+            # it is validated and its key is already snake_case regardless of
+            # the wire's camelCase progressToken (mcp_types/_types.py,
+            # RequestParamsMeta).
+            token = ctx.meta.get("progress_token") if ctx.meta else None
+            if token is not None:
+                for i in range(1, steps + 1):
+                    await ctx.session.report_progress(i, steps, f"step {i}")
+            elif observed is not None:
+                observed["progress_token"] = None
+            return [types.TextContent(type="text", text=f"counted {steps}")]
+
         raise ValueError(f"unknown tool: {name}")
 
-    manager = StreamableHTTPSessionManager(app=server, stateless=True, json_response=True)
+    def _client_supports_elicitation(ctx: Any) -> bool:
+        return ctx.session.check_client_capability(
+            types.ClientCapabilities(
+                elicitation=types.ElicitationCapability(
+                    form=types.FormElicitationCapability(),
+                )
+            )
+        )
+
+    def _format_elicit_answer(result: types.ElicitResult) -> str:
+        content = result.content
+        if isinstance(content, dict):
+            payload = json.dumps(content, sort_keys=True)
+        elif content is None:
+            payload = ""
+        else:
+            payload = str(content)
+        return f"answer={result.action}:{payload}"
+
+    async def _ask_tool(
+        ctx: Any,
+        params: types.CallToolRequestParams,
+        *,
+        schema: dict[str, Any],
+        url_mode: bool = False,
+    ) -> types.CallToolResult | types.InputRequiredResult:
+        if not _client_supports_elicitation(ctx):
+            return types.CallToolResult(
+                content=[types.TextContent(type="text", text="no-elicitation")],
+            )
+
+        modern = ctx.protocol_version in MODERN_PROTOCOL_VERSIONS
+        if modern:
+            if params.input_responses is None:
+                if url_mode:
+                    request = types.ElicitRequest(
+                        params=types.ElicitRequestURLParams(
+                            message="Proceed?",
+                            url="https://upstream.test/confirm",
+                        )
+                    )
+                else:
+                    request = types.ElicitRequest(
+                        params=types.ElicitRequestFormParams(
+                            message="Proceed?",
+                            requested_schema=schema,
+                        )
+                    )
+                return types.InputRequiredResult(input_requests={"q": request})
+            response = params.input_responses.get("q")
+            if not isinstance(response, types.ElicitResult):
+                return types.CallToolResult(
+                    content=[types.TextContent(type="text", text="no-answer")],
+                    is_error=True,
+                )
+            return types.CallToolResult(
+                content=[types.TextContent(type="text", text=_format_elicit_answer(response))],
+            )
+
+        if url_mode:
+            result = await ctx.session.elicit_url(
+                "Proceed?",
+                "https://upstream.test/confirm",
+                related_request_id=ctx.request_id,
+            )
+        else:
+            result = await ctx.session.elicit_form(
+                "Proceed?",
+                schema,
+                related_request_id=ctx.request_id,
+            )
+        return types.CallToolResult(
+            content=[types.TextContent(type="text", text=_format_elicit_answer(result))],
+        )
+
+    async def _on_call_tool(ctx: Any, params: types.CallToolRequestParams) -> types.CallToolResult:
+        try:
+            _check_bearer(ctx)
+            if params.name == "ask":
+                asked = await _ask_tool(ctx, params, schema=ASK_SCHEMA)
+                if isinstance(asked, types.InputRequiredResult):
+                    return asked
+                return asked
+            if params.name == "ask_url":
+                asked = await _ask_tool(ctx, params, schema=ASK_SCHEMA, url_mode=True)
+                if isinstance(asked, types.InputRequiredResult):
+                    return asked
+                return asked
+            if params.name == "ask_weird":
+                asked = await _ask_tool(ctx, params, schema=ASK_WEIRD_SCHEMA)
+                if isinstance(asked, types.InputRequiredResult):
+                    return asked
+                return asked
+            content = await _run_tool(ctx, params.name, params.arguments or {})
+        except Exception as exc:  # noqa: BLE001 — mirrors the old SDK's auto-wrap
+            return types.CallToolResult(
+                content=[types.TextContent(type="text", text=str(exc))],
+                is_error=True,
+            )
+        return types.CallToolResult(content=content)
+
+    async def _on_list_prompts(
+        ctx: Any, _params: types.PaginatedRequestParams | None
+    ) -> types.ListPromptsResult:
+        _check_bearer(ctx)
+        if observed is not None:
+            observed["list_prompts_calls"] = observed.get("list_prompts_calls", 0) + 1
+        return types.ListPromptsResult(
+            prompts=[
+                types.Prompt(
+                    name="summarize",
+                    description="Summarize a topic.",
+                    arguments=[
+                        types.PromptArgument(
+                            name="topic",
+                            description="Topic to summarize",
+                            required=True,
+                        )
+                    ],
+                )
+            ]
+        )
+
+    async def _on_get_prompt(
+        ctx: Any, params: types.GetPromptRequestParams
+    ) -> types.GetPromptResult:
+        _check_bearer(ctx)
+        request = ctx.request
+        headers = {k.lower(): v for k, v in request.headers.items()} if request else {}
+        if observed is not None:
+            observed["prompt_headers"] = headers
+            meta = getattr(params, "meta", None)
+            if meta is not None:
+                observed["prompt_meta"] = dict(meta)
+            else:
+                observed["prompt_meta"] = {}
+        topic = (params.arguments or {}).get("topic", "")
+        return types.GetPromptResult(
+            messages=[
+                types.PromptMessage(
+                    role="user",
+                    content=types.TextContent(type="text", text=f"Summarize {topic}"),
+                )
+            ]
+        )
+
+    server_kwargs: dict[str, Any] = {
+        "on_list_tools": _on_list_tools,
+        "on_call_tool": _on_call_tool,
+    }
+
+    async def _on_list_resources(
+        ctx: Any, _params: types.PaginatedRequestParams | None
+    ) -> types.ListResourcesResult:
+        _check_bearer(ctx)
+        if observed is not None:
+            observed["list_resources_calls"] = observed.get("list_resources_calls", 0) + 1
+        return types.ListResourcesResult(
+            resources=[
+                types.Resource(
+                    uri="file:///handbook.md",
+                    name="handbook",
+                    description="Handbook",
+                    mime_type="text/plain",
+                )
+            ]
+        )
+
+    async def _on_list_resource_templates(
+        ctx: Any, _params: types.PaginatedRequestParams | None
+    ) -> types.ListResourceTemplatesResult:
+        _check_bearer(ctx)
+        return types.ListResourceTemplatesResult(
+            resource_templates=[
+                types.ResourceTemplate(
+                    uri_template="notes://items/{id}",
+                    name="note",
+                    description="Note item",
+                    mime_type="text/plain",
+                )
+            ]
+        )
+
+    async def _on_read_resource(
+        ctx: Any, params: types.ReadResourceRequestParams
+    ) -> types.ReadResourceResult:
+        _check_bearer(ctx)
+        request = ctx.request
+        headers = {k.lower(): v for k, v in request.headers.items()} if request else {}
+        if observed is not None:
+            observed["resource_headers"] = headers
+            meta = getattr(params, "meta", None)
+            observed["resource_meta"] = dict(meta) if meta is not None else {}
+        uri = str(params.uri)
+        if uri == "file:///handbook.md":
+            text = "Handbook"
+        elif uri.startswith("notes://items/"):
+            item_id = uri.rsplit("/", 1)[-1]
+            text = f"Note {item_id}"
+        else:
+            raise ValueError(f"unknown resource: {uri}")
+        return types.ReadResourceResult(
+            contents=[
+                types.TextResourceContents(
+                    uri=uri,
+                    text=text,
+                    mime_type="text/plain",
+                )
+            ]
+        )
+
+    if prompts:
+        server_kwargs["on_list_prompts"] = _on_list_prompts
+        server_kwargs["on_get_prompt"] = _on_get_prompt
+    if resources:
+        server_kwargs["on_list_resources"] = _on_list_resources
+        server_kwargs["on_list_resource_templates"] = _on_list_resource_templates
+        server_kwargs["on_read_resource"] = _on_read_resource
+
+    server: Server = Server("hello-upstream", **server_kwargs)
+
+    manager = StreamableHTTPSessionManager(
+        app=server, stateless=stateless, json_response=json_response
+    )
 
     class _McpEndpoint:
         """Raw ASGI endpoint handing the request straight to the session manager.
@@ -250,27 +602,43 @@ def build_lowlevel_upstream_app(
 
 def asgi_http_client_factory(
     app: Starlette,
-) -> Callable[[float], Callable[..., httpx.AsyncClient]]:
+    *,
+    streaming: bool = False,
+) -> Callable[[float], Callable[..., httpx2.AsyncClient]]:
     """``HttpClientFactoryBuilder`` that routes every request into *app* in-process.
 
     Mirrors the shape of ``keystone_mcp.adapters.mcp_proxy._http_client_factory``:
     the returned builder is called with a resolved per-call timeout (seconds)
-    and produces the actual httpx client factory, which always uses that
+    and produces the actual http client factory, which always uses that
     timeout and ignores whatever timeout the caller passed in.
+
+    The client handed to the proxy client's HTTP transport (MCP SDK 2 era)
+    must be an ``httpx2.AsyncClient`` -- an ``httpx.AsyncClient`` rejects the
+    ``auth`` object that transport passes in with ``TypeError``.
     """
 
-    def builder(timeout_seconds: float) -> Callable[..., httpx.AsyncClient]:
+    def builder(timeout_seconds: float) -> Callable[..., httpx2.AsyncClient]:
+        # Keep the socket read budget above the MCP call timeout so courtesy
+        # cancel can be sent before httpx2 gives up (Y04 timeout test).
+        httpx_timeout = timeout_seconds + (5.0 if streaming else 0.0)
+
         def factory(
             headers: dict[str, str] | None = None,
             timeout: Any = None,  # noqa: ARG001 — superseded by timeout_seconds
             auth: Any = None,
             **_kwargs: Any,
-        ) -> httpx.AsyncClient:
-            return httpx.AsyncClient(
-                transport=httpx.ASGITransport(app=app),
+        ) -> httpx2.AsyncClient:
+            if streaming:
+                from fastmcp.utilities.asgi_transport import StreamingASGITransport
+
+                transport: httpx2.AsyncBaseTransport = StreamingASGITransport(app=app)
+            else:
+                transport = httpx2.ASGITransport(app=app)
+            return httpx2.AsyncClient(
+                transport=transport,
                 base_url=UPSTREAM_BASE_URL,
                 headers=headers,
-                timeout=httpx.Timeout(timeout_seconds),
+                timeout=httpx2.Timeout(httpx_timeout),
                 auth=auth,
                 follow_redirects=False,
             )

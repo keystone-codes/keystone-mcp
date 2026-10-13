@@ -15,8 +15,11 @@ updates:
       interval: "weekly"
     open-pull-requests-limit: 5
     versioning-strategy: "lockfile-only"
+    # Major upgrades of fastmcp and mcp are planned releases, not weekly bumps.
     ignore:
       - dependency-name: "fastmcp"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "mcp"
         update-types: ["version-update:semver-major"]
     groups:
       python-minor-and-patch:

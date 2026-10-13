@@ -74,6 +74,28 @@ Start order does not matter. A service that is down at startup is logged as a
 warning and its tools appear on the next refresh
 (`KEYSTONE_MCP_REFRESH_INTERVAL_SECONDS`).
 
+## Prompts and resources
+
+Upstream prompts, resources and resource templates are published like tools:
+the client sees prompts as `<namespace>_<name>`; resource URIs receive the
+namespace (`scheme://<namespace>/...`, e.g. upstream `file:///handbook.md` becomes
+`file://hello//handbook.md`). RBAC uses the same allow patterns as tools —
+`<namespace>_<resource.name>` for both static resources and templates (the policy
+file has no separate prompts or resources section). Two upstream resources that
+share the same `name` get one RBAC name and one policy decision. Why:
+[ADR 0011](adr/0011-rbac-by-name-for-prompts-and-resources.md).
+
+`resources/read` is allowed only for URIs that match a published resource or
+template; any other URI is denied in `enforce` mode.
+
+Keystone does not publish `notifications/resources/updated` and does not
+implement `resources/subscribe`. On MCP 2026-07-28 a client may subscribe via
+`subscriptions/listen`, but Keystone never emits resource-update events.
+
+Stdio upstreams do not receive a signed identity assertion on `prompts/get` or
+`resources/read` (HTTP headers are not available on the stdio transport); only
+the unsigned subject headers reach HTTP upstreams as today.
+
 ## Discovery
 
 Keystone-MCP calls `list_tools()` on every enabled upstream and registers a live
@@ -92,6 +114,13 @@ configured upstream is unreachable with RBAC on, or when
 `KEYSTONE_MCP_UPSTREAM_REQUIRE_ALL=true` and at least one upstream is
 unreachable. Each upstream's reachability is exposed as
 `keystone_mcp_upstream_available{namespace}` (1 = reachable).
+
+**Stdio upstreams** (`transport: stdio` in the registry) are discovered the same
+way: at process start, before the HTTP server loop, Keystone-MCP may spawn a
+short-lived child only to run `list_tools`, then tear it down so bootstrap does
+not leak processes across event loops. After startup, the lifespan hook starts
+one persistent supervised process per stdio entry; the reconciler reuses that
+process on each refresh tick instead of starting a new one.
 
 An RBAC allow pattern that belongs only to an upstream namespace that is
 currently unavailable does not refuse the policy either — it is logged as
@@ -112,9 +141,16 @@ timer when their bytes change, and immediately when you send `SIGHUP`
 (`kill -HUP <pid>`). A file that fails validation is rejected and the last
 good policy stays.
 
-Clients that cache `list_tools` at connect time see new tools on the next
-`list_tools` call or after reconnect; background refresh does not push
-`notifications/tools/list_changed` to every session.
+After a refresh tick that changed the tool catalog, reloaded the RBAC policy
+or saw a users-directory change, Keystone-MCP sends
+`notifications/tools/list_changed` to every open connection on that instance.
+Clients on the handshake protocol receive it on the standalone SSE stream
+(`GET` on the MCP endpoint); clients on MCP 2026-07-28 receive it on a
+`subscriptions/listen` stream they open. A client that opens neither sees the
+change on its next `tools/list`. Both the standalone `GET` stream and a
+`subscriptions/listen` stream are long-lived connections — a load balancer
+with an idle timeout should account for that (the SDK sends its own pings on
+a `subscriptions/listen` stream while it waits).
 
 Proxied tools are published with the upstream's own `inputSchema` (after
 `KEYSTONE_MCP_PROXY_SCHEMA_PATCHES`), `outputSchema` (only when
@@ -124,16 +160,23 @@ does.
 
 ## Built-in tools
 
-Two groups are Keystone-MCP's own, not proxied:
+Keystone-MCP's own, not proxied:
 
 - `users_list`, `users_add`, `users_update`, `users_block`, `users_unblock`,
   `users_set_roles`, `users_grant_role`, `users_revoke_role` — the users
   directory, from the agent. Published only when
   `KEYSTONE_MCP_RBAC_MODE=enforce`. Who may call them is the policy file. See
   [users.md](users.md).
-- `create_upload_url` and `get_download_link` — short-lived signed URLs, so
-  a large file does not travel inside a tool-call payload. Published only
-  when `KEYSTONE_MCP_FILE_API_URL` points at your own file API.
+- `policy_read`, `policy_catalog`, `policy_validate`, `policy_role_set`,
+  `policy_role_delete`, `policy_allow_add`, `policy_allow_remove`,
+  `policy_list_set`, `policy_rollback` — change the RBAC policy from the agent.
+  Published only when `KEYSTONE_MCP_RBAC_MODE=enforce` and
+  `KEYSTONE_MCP_POLICY_TOOLS` is not `off`; mutation tools need `full` and a
+  writable policy file. See [policy-admin.md](policy-admin.md) and
+  [rbac-policy-format.md](rbac-policy-format.md).
+
+File transfer is not built in: run a file service as an upstream MCP server
+(see [connecting-services.md](connecting-services.md)). Why: [ADR 0006](adr/0006-no-file-api-in-the-core.md).
 
 ## A call, end to end
 
@@ -142,7 +185,11 @@ Two groups are Keystone-MCP's own, not proxied:
 3. RBAC, when it is on, allows or denies. The catalog filter uses the same decision.
 4. The router dispatches to a built-in tool or to the upstream proxy.
 5. The proxy forwards the call with `X-Author-Email` and the configured timeout.
-6. The upstream's answer goes back unchanged: every content block,
+6. Progress notifications from the upstream are relayed to the client while
+   the call runs, when the client asked for them.
+7. If the client cancels or the per-tool timeout expires, Keystone-MCP forwards
+   that cancellation to the upstream request (see the table below).
+8. The upstream's answer goes back unchanged: every content block,
    `structuredContent`, `isError`. With `KEYSTONE_MCP_PROXY_STATUS_ENVELOPE=true`
    it is wrapped in `{state, tool, task_id, result}` and a `status` of
    `error`, `refused` or `accepted` is mapped to an error, a rate-limit
@@ -151,6 +198,39 @@ Two groups are Keystone-MCP's own, not proxied:
 `task_id` is derived from the verified identity, the tool name and the
 canonical arguments, so a retry is recognizable as the same task.
 
+## What passes through the door
+
+Keystone-MCP is a full MCP server on both sides, not a dumb pipe: only the
+parts of the protocol listed below cross it. Anything not listed is either
+not implemented yet or deliberately never forwarded.
+
+| Mechanism | Status |
+|---|---|
+| `tools/list`, `tools/call` | yes |
+| `notifications/progress` (upstream → client) | yes, when the client sends a `progressToken`; both protocol eras |
+| `notifications/tools/list_changed` | yes, after a catalog change, an RBAC policy reload or a users-directory change; both protocol eras — see "Discovery" above |
+| `notifications/cancelled` (client → upstream) | yes: a client cancel or a keystone-mcp timeout is forwarded to the upstream request (as `notifications/cancelled` on the handshake protocol, by closing the request stream on MCP 2026-07-28) |
+| `prompts/list`, `prompts/get` | yes |
+| `notifications/prompts/list_changed` | yes, after an upstream prompt catalog change; both protocol eras |
+| `resources/list`, `resources/read`, `resources/templates/list` | yes |
+| `notifications/resources/list_changed` | yes, after an upstream resource catalog change; both protocol eras |
+| `resources/subscribe`, `notifications/resources/updated` | no |
+| `elicitation/create` (upstream → user) | yes for HTTP upstreams: form mode only, prefixed with `[namespace]`; URL mode is declined; not for stdio upstreams. On MCP 2026-07-28 the question reaches the client as an `input_required` result of the tool call; a 2026-07-28 client cannot be asked by an upstream that speaks the handshake protocol (the upstream gets `decline`) |
+| `sampling/createMessage`, `roots/list` | no, by design: needs its own trust model |
+| `notifications/message` (upstream logs) | no: upstream logs stay with the upstream |
+| `completion/complete` | no |
+| MCP tasks (`tasks/*`) | no |
+
+Same rows apply to **stdio upstreams**, except `elicitation/create` (upstream →
+user), which is not forwarded for stdio either.
+
+Upstream elicitation text is written by the service; the human sees the
+service namespace in the question prefix. Time spent answering counts against
+the tool-call timeout (on MCP 2026-07-28 each guard round is a separate call).
+With more than one Keystone replica, a repeat call after a question must hit
+the same instance — `request_state` is sealed with a process-local key unless
+you configure shared state elsewhere.
+
 ## Custom routes
 
 The usual path is a whole upstream server. A custom route is for a tool
@@ -158,16 +238,10 @@ Keystone-MCP itself should execute. Every route goes through the `Adapter`
 protocol in `src/keystone_mcp/adapters/base.py`. The built-in catalog in
 `src/keystone_mcp/catalog/builtin.py` is the pattern.
 
-The repository also ships reference adapters that are not registered until
-something calls `registry.add_route` with one of them:
-
-| Adapter | What it does |
-|---|---|
-| `webhook.WebhookAdapter` | Submit to an async webhook, then long-poll for the result. |
-| `external_http.ExternalHttpAdapter` | Call an external HTTP API. |
-| `det_internal.DetInternalAdapter` | Placeholder for a synchronous internal call. |
-| `chat_attachment.ChatAttachmentAdapter` | Signal outbound file delivery. Keystone-MCP itself is session-blind. |
-| `stub.StubAdapter` | A stand-in response until the real adapter exists. |
+`stub.StubAdapter` is a stand-in response until the real adapter exists.
+Reference adapters for forks (`WebhookAdapter`, `ExternalHttpAdapter`) live in
+`keystone_mcp.contrib.adapters`: see
+[contrib/adapters.md](contrib/adapters.md).
 
 Register with `mode="stub"` while the target is being built, then
 `registry.set_mode(name, "live")`. Transport, identity and `task_id` stay
@@ -200,8 +274,9 @@ except `/healthz`/`/readyz`, by the `Host` allowlist
 - When RBAC is enabled, startup is refused only if every configured upstream
   is unreachable, not running with an empty live catalog; a single
   unreachable upstream among several is a warning, not a refusal.
-- Access and refresh tokens are opaque and Redis-backed. There is no bulk
-  revocation of every session for one person.
+- Access and refresh tokens are opaque and Redis-backed. Blocking a person or
+  calling `users_logout` revokes every access and refresh token for that
+  person immediately (see [users.md](users.md)).
 - Refresh tokens have an idle TTL (`KEYSTONE_MCP_REFRESH_TOKEN_TTL`): each
   use resets the clock.
 - The policy and catalog snapshot shipped in this repository cover the
