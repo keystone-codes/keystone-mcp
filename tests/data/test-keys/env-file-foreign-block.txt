@@ -1,0 +1,3 @@
+-----BEGIN PRIVATE KEY-----
+super-secret-key-material-ABCDEF
+-----END PRIVATE KEY-----

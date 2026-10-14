@@ -279,7 +279,7 @@ def test_security_fuzz_nightly_job_runs_marked_tests_with_redis():
     env = job.get("env") or {}
     assert env.get("HYPOTHESIS_PROFILE") == "nightly"
     run_text = _job_step_run_text(doc, "fuzz-nightly")
-    assert '-m fuzz' in run_text or '-m "fuzz"' in run_text
+    assert "-m fuzz" in run_text or '-m "fuzz"' in run_text
     assert "tests/security" in run_text
 
 
@@ -360,6 +360,27 @@ def test_compose_smoke_runs_mcp_python_sdk_client_e2e():
     assert "scripts/client_e2e.py" in run_text
     assert "--protocol modern" in run_text
     assert "--protocol legacy" in run_text
+
+
+@pytest.mark.parametrize("workflow", [p.name for p in WORKFLOW_FILES])
+def test_checkout_does_not_persist_credentials(workflow: str) -> None:
+    doc = _load(workflow)
+    for job in doc.get("jobs", {}).values():
+        for step in job.get("steps") or []:
+            uses = str(step.get("uses", ""))
+            if not uses.startswith("actions/checkout@"):
+                continue
+            with_block = step.get("with") or {}
+            assert with_block.get("persist-credentials") is False, (
+                f"{workflow}: checkout step missing persist-credentials: false"
+            )
+
+
+def test_github_release_skips_after_failed_pypi() -> None:
+    doc = _load("release.yml")
+    condition = str(doc["jobs"]["github-release"]["if"])
+    assert "needs.publish.result == 'success'" in condition
+    assert "needs.pypi.result != 'failure'" in condition
 
 
 def test_coverage_threshold_is_enforced():

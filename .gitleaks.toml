@@ -1,0 +1,6 @@
+title = "keystone-mcp"
+[extend]
+useDefault = true
+[allowlist]
+description = "Test-only key material, see tests/data/test-keys/README.md"
+paths = ['''^tests/data/test-keys/''']
