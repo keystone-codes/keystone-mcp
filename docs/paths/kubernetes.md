@@ -5,8 +5,36 @@ that path; only the packaging differs.
 
 ## Install with Helm
 
+From the published OCI chart (replace the version with yours):
+
+```bash
+helm install keystone oci://ghcr.io/keystone-codes/charts/keystone-mcp --version 0.6.0 -f my-values.yaml
+```
+
+From a checkout of this repository:
+
 ```bash
 helm install keystone ./charts/keystone-mcp -f my-values.yaml
+```
+
+### Local kind smoke (same as CI)
+
+```bash
+kind create cluster --name keystone-mcp-f13 --image kindest/node:v1.30.0
+docker build -t keystone-mcp:ci .
+docker build -t keystone-hello-upstream:ci examples/hello-upstream
+kind load docker-image --name keystone-mcp-f13 keystone-mcp:ci keystone-hello-upstream:ci
+kubectl apply -f charts/keystone-mcp/ci/hello-upstream.yaml
+helm install keystone charts/keystone-mcp \
+  -f charts/keystone-mcp/values-kind.yaml \
+  --set image.repository=keystone-mcp --set image.tag=ci --set image.pullPolicy=Never \
+  --wait --timeout 5m
+kubectl port-forward svc/keystone-keystone-mcp 8080:80 &
+uv run python scripts/smoke_demo.py --dev-token demo-token --admin-email admin@example.com
+helm upgrade keystone charts/keystone-mcp -f charts/keystone-mcp/values-kind.yaml \
+  --set replicaCount=3 --set image.repository=keystone-mcp --set image.tag=ci --set image.pullPolicy=Never \
+  --wait --timeout 5m
+uv run python scripts/smoke_demo.py --dev-token demo-token --admin-email admin@example.com
 ```
 
 **Required values:** `baseUrl` (`KEYSTONE_MCP_BASE_URL`) and either

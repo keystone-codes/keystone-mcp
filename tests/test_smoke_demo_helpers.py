@@ -84,6 +84,28 @@ def test_build_minimal_args_required_enum_uses_first_value() -> None:
     assert build_minimal_args(schema) == {"query": "smoke", "filter": "all"}
 
 
+def test_parse_args_base_url_default_and_env(monkeypatch) -> None:
+    monkeypatch.delenv("SMOKE_BASE_URL", raising=False)
+    args = smoke_demo._parse_args(["--dev-token", "tok", "--admin-email", "a@example.com"])
+    assert args.base_url == smoke_demo.DEFAULT_BASE_URL
+
+    monkeypatch.setenv("SMOKE_BASE_URL", "http://127.0.0.1:9090")
+    args = smoke_demo._parse_args(["--dev-token", "tok", "--admin-email", "a@example.com"])
+    assert args.base_url == "http://127.0.0.1:9090"
+
+    args = smoke_demo._parse_args(
+        [
+            "--base-url",
+            "http://example.test:8080",
+            "--dev-token",
+            "tok",
+            "--admin-email",
+            "a@example.com",
+        ]
+    )
+    assert args.base_url == "http://example.test:8080"
+
+
 def test_build_minimal_args_mixed_types_all_required() -> None:
     schema = {
         "type": "object",

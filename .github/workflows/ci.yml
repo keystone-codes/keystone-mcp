@@ -45,6 +45,9 @@ jobs:
         run: |
           set -euo pipefail
           for values in charts/keystone-mcp/ci/*.yaml; do
+            case "${values}" in
+              *hello-upstream.yaml) continue ;;
+            esac
             echo "==> helm lint --strict -f ${values}"
             helm lint charts/keystone-mcp --strict -f "${values}"
             echo "==> helm template -f ${values}"
@@ -54,6 +57,131 @@ jobs:
 
       - name: Helm chart tests
         run: uv run --extra dev pytest tests/test_helm_chart.py -q
+
+  helm-kind-changes:
+    name: Helm kind path filter
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/master')
+    outputs:
+      helm_kind: ${{ steps.decide.outputs.helm_kind }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
+        if: github.event_name == 'pull_request'
+        id: filter
+        with:
+          filters: |
+            helm_kind:
+              - 'charts/**'
+              - 'Dockerfile'
+              - 'src/**'
+              - 'scripts/smoke_demo.py'
+      - name: Decide whether helm-kind runs
+        id: decide
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "helm_kind=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "helm_kind=${{ steps.filter.outputs.helm_kind }}" >> "$GITHUB_OUTPUT"
+          fi
+
+  helm-kind:
+    name: Helm kind smoke
+    runs-on: ubuntu-latest
+    needs: [test, helm-kind-changes]
+    if: |
+      always() && needs.test.result == 'success' &&
+      needs.helm-kind-changes.result == 'success' &&
+      needs.helm-kind-changes.outputs.helm_kind == 'true'
+    timeout-minutes: 20
+    env:
+      HELM_VERSION: v3.16.4
+      KIND_VERSION: v0.26.0
+      NODE_IMAGE: kindest/node:v1.30.0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: azure/setup-helm@fe7b79cd5ee1e45176fcad797de68ecaf3ca4814 # v4.2.0
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - uses: helm/kind-action@0025e74a8c7512023d06dc019c617aa3cf561fde # v1.10.0
+        with:
+          version: ${{ env.KIND_VERSION }}
+          node_image: ${{ env.NODE_IMAGE }}
+          cluster_name: keystone-mcp-f13
+
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.11.22"
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: uv sync --locked --extra dev
+
+      - name: Build and load images
+        run: |
+          set -euo pipefail
+          docker build -t keystone-mcp:ci .
+          docker build -t keystone-hello-upstream:ci examples/hello-upstream
+          kind load docker-image --name keystone-mcp-f13 keystone-mcp:ci
+          kind load docker-image --name keystone-mcp-f13 keystone-hello-upstream:ci
+
+      - name: Deploy hello-upstream
+        run: kubectl apply -f charts/keystone-mcp/ci/hello-upstream.yaml
+
+      - name: Helm install
+        run: |
+          helm install keystone charts/keystone-mcp \
+            -f charts/keystone-mcp/values-kind.yaml \
+            --set image.repository=keystone-mcp \
+            --set image.tag=ci \
+            --set image.pullPolicy=Never \
+            --wait --timeout 5m
+
+      - name: Port-forward and wait for readyz
+        id: pf
+        run: |
+          set -euo pipefail
+          nohup kubectl port-forward svc/keystone-keystone-mcp 8080:80 > /tmp/port-forward.log 2>&1 &
+          echo $! > /tmp/port-forward.pid
+          for i in $(seq 1 60); do
+            if curl -fsS -o /dev/null http://127.0.0.1:8080/readyz; then
+              echo "ready after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "timed out waiting for /readyz"
+          exit 1
+
+      - name: Demo smoke
+        run: >-
+          uv run python scripts/smoke_demo.py
+          --dev-token demo-token
+          --admin-email admin@example.com
+
+      - name: Helm upgrade to three replicas
+        run: helm upgrade keystone charts/keystone-mcp -f charts/keystone-mcp/values-kind.yaml --set replicaCount=3 --set image.repository=keystone-mcp --set image.tag=ci --set image.pullPolicy=Never --wait --timeout 5m
+
+      - name: Demo smoke after upgrade
+        run: >-
+          uv run python scripts/smoke_demo.py
+          --dev-token demo-token
+          --admin-email admin@example.com
+
+      - name: Stop port-forward
+        if: always() && steps.pf.outcome != 'skipped'
+        run: |
+          if [ -f /tmp/port-forward.pid ]; then
+            kill "$(cat /tmp/port-forward.pid)" || true
+          fi
+
+      - name: Cluster debug logs
+        if: failure()
+        run: |
+          kubectl get pods,events -A
+          kubectl logs -l app.kubernetes.io/name=keystone-mcp --all-containers --tail=200 || true
 
   docker-build:
     name: Docker build smoke
