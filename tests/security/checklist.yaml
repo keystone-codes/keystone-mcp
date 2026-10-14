@@ -60,8 +60,8 @@
     - tests/security/test_login_csrf_state_nonce.py::test_login_redirect_post_with_wrong_origin_rejected
     - tests/test_oauth_consent.py::test_post_login_google_requires_matching_csrf
     - tests/test_google_oidc_login.py::test_google_callback_without_csrf_cookie_is_refused
-  status: open
-  finding: SEC-06
+  status: closed
+  finding: null
 
 - id: SEC-07
   attack: "Client-forged identity headers and _meta"
