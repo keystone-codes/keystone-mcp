@@ -5,8 +5,9 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import time
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastmcp import Client, FastMCP
@@ -17,6 +18,7 @@ from keystone_mcp.rbac.loader import RbacPolicyManager
 from keystone_mcp.router.engine import RouterEngine
 from keystone_mcp.router.registry import RouterRegistry
 from keystone_mcp.router.upstream import (
+    UpstreamCatalogRead,
     UpstreamListToolsError,
     UpstreamRegistry,
     fetch_upstream_tools,
@@ -232,6 +234,84 @@ async def test_one_failing_namespace_does_not_block_others(reconciler_stack):
         await reconciler.tick()
 
     assert "ledger:do_thing" in registry.routes
+
+
+# --- parallel catalog refresh (C06 step 6) -------------------------------------------
+
+
+async def test_hanging_namespace_does_not_delay_others(reconciler_stack):
+    """A namespace that hangs on listing must not block others past its own budget."""
+    reconciler, registry, _policy_path, _policy_manager, upstreams = reconciler_stack
+    discovery_timeout = 1.0
+    upstreams.discovery_timeout_seconds = discovery_timeout
+    budget = reconciler_module._REFRESH_BUDGET_MULTIPLIER * discovery_timeout
+
+    upstreams.add_upstream("ledger", "http://ledger:8082/mcp", namespace="ledger")
+    reports_before = set(registry.routes.keys())
+
+    async def _read_catalog(cfg, *, allow_temporary_process: bool):
+        if cfg.namespace == "reports":
+            await asyncio.sleep(budget + 5.0)
+            return UpstreamCatalogRead(
+                tools=[_FakeTool("reports_read"), _FakeTool("reports_write")],
+                prompts=[],
+                resources=[],
+                templates=[],
+            )
+        return UpstreamCatalogRead(
+            tools=[_FakeTool("new_tool")],
+            prompts=[],
+            resources=[],
+            templates=[],
+        )
+
+    with patch.object(upstreams, "read_catalog", side_effect=_read_catalog):
+        started = time.monotonic()
+        await reconciler.tick()
+        elapsed = time.monotonic() - started
+
+    assert elapsed <= budget + 1.0
+    assert "ledger:new_tool" in registry.routes
+    assert set(registry.routes.keys()) & reports_before == reports_before
+    unavailable = upstreams.unavailable_namespaces()
+    assert "reports" in unavailable
+    assert unavailable["reports"] == f"refresh timed out after {budget:g}s"
+
+
+async def test_parallel_refresh_announces_changes_once(reconciler_stack):
+    """Two namespaces changing in one tick must produce a single tools list_changed."""
+    reconciler, registry, _policy_path, _policy_manager, upstreams = reconciler_stack
+    upstreams.add_upstream("ledger", "http://ledger:8082/mcp", namespace="ledger")
+
+    sessions = MagicMock()
+    sessions.broadcast_list_changed = AsyncMock(return_value=0)
+    reconciler.client_sessions = sessions
+
+    async def _read_catalog(cfg, *, allow_temporary_process: bool):
+        if cfg.namespace == "reports":
+            return UpstreamCatalogRead(
+                tools=[
+                    _FakeTool("reports_read"),
+                    _FakeTool("reports_write"),
+                    _FakeTool("reports_extra"),
+                ],
+                prompts=[],
+                resources=[],
+                templates=[],
+            )
+        return UpstreamCatalogRead(
+            tools=[_FakeTool("ledger_tool")],
+            prompts=[],
+            resources=[],
+            templates=[],
+        )
+
+    with patch.object(upstreams, "read_catalog", side_effect=_read_catalog):
+        await reconciler.tick()
+
+    assert "ledger:ledger_tool" in registry.routes
+    assert "reports:reports_extra" in registry.routes
+    sessions.broadcast_list_changed.assert_awaited_once_with({"tools"})
 
 
 # --- atomic add_route: no "ghost tool" after a skipped/rejected route (FX-proxy #1) --
