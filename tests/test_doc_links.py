@@ -380,6 +380,99 @@ def test_docs_do_not_mention_removed_variables() -> None:
     assert not violations, "removed variable mentioned without context:\n" + "\n".join(violations)
 
 
+_METRIC_TOKEN_RE = re.compile(r"\b(keystone_mcp_[a-z0-9_]+)\b")
+_METRIC_SELECTOR_RE = re.compile(r"(keystone_mcp_[a-z0-9_]+)\{([^}]*)\}")
+_FENCE_BLOCK_RE = re.compile(r"```(?:promql)?\s*\n(.*?)```", re.DOTALL)
+_HISTOGRAM_SUFFIXES = ("_bucket", "_sum", "_count")
+
+
+@lru_cache(maxsize=1)
+def _metrics_label_index() -> dict[str, frozenset[str]]:
+    """Export name -> label names defined in ``keystone_mcp.observability.metrics``."""
+    from prometheus_client.metrics import MetricWrapperBase
+
+    import keystone_mcp.observability.metrics as metrics_module
+
+    index: dict[str, frozenset[str]] = {}
+    for obj in vars(metrics_module).values():
+        if not isinstance(obj, MetricWrapperBase):
+            continue
+        export_name = obj._name
+        metric_type = getattr(obj, "_type", obj.__class__.__name__)
+        if metric_type == "counter" and not export_name.endswith("_total"):
+            export_name = f"{export_name}_total"
+        labels = frozenset(obj._labelnames)
+        index[export_name] = labels
+        if metric_type == "histogram":
+            for suffix in _HISTOGRAM_SUFFIXES:
+                index[f"{export_name}{suffix}"] = labels
+    return index
+
+
+def _metric_base_name(token: str) -> str | None:
+    index = _metrics_label_index()
+    if token in index:
+        return token
+    for suffix in _HISTOGRAM_SUFFIXES:
+        if token.endswith(suffix):
+            base = token[: -len(suffix)]
+            if base in index:
+                return base
+    return None
+
+
+def _selector_label_keys(selector: str) -> list[str]:
+    keys: list[str] = []
+    for part in selector.split(","):
+        piece = part.strip()
+        if not piece:
+            continue
+        key = re.split(r"[!~]?=", piece, maxsplit=1)[0].strip()
+        if key and key != "__name__":
+            keys.append(key)
+    return keys
+
+
+def _observability_alert_rules_section() -> str:
+    path = REPO_ROOT / "docs" / "observability-rbac.md"
+    text = path.read_text(encoding="utf-8")
+    heading = "## Example PromQL alert rules"
+    start = text.index(heading)
+    end = text.index("## Log-based investigation", start)
+    return text[start:end]
+
+
+def test_alert_examples_use_existing_metrics() -> None:
+    """PromQL examples under Example PromQL alert rules use real metric and label names."""
+    section = _observability_alert_rules_section()
+    blocks = _FENCE_BLOCK_RE.findall(section)
+    assert blocks, "no PromQL code blocks in Example PromQL alert rules"
+
+    index = _metrics_label_index()
+    problems: list[str] = []
+
+    for block in blocks:
+        for match in _METRIC_SELECTOR_RE.finditer(block):
+            metric_token = match.group(1)
+            base = _metric_base_name(metric_token)
+            if base is None:
+                problems.append(f"unknown metric {metric_token!r} in selector")
+                continue
+            allowed = index[base]
+            for key in _selector_label_keys(match.group(2)):
+                if key not in allowed:
+                    problems.append(
+                        f"metric {base!r} has no label {key!r} (selector {match.group(0)!r})"
+                    )
+
+        for match in _METRIC_TOKEN_RE.finditer(block):
+            token = match.group(1)
+            if _metric_base_name(token) is None:
+                problems.append(f"unknown metric {token!r}")
+
+    assert not problems, "PromQL alert metric problems:\n" + "\n".join(sorted(set(problems)))
+
+
 def test_readme_is_short() -> None:
     """``README.md`` stays short enough to read in one sitting.
 
