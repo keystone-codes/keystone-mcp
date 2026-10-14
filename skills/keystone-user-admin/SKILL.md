@@ -1,13 +1,18 @@
 ---
 name: keystone-user-admin
-description: Manage Keystone-MCP users and roles - add, update, block/unblock, grant, revoke or replace roles, or delete a person when they ask for erasure. Use when asked to give someone access, change a role, disable a user, or remove personal data in Keystone-MCP.
+description: Manage Keystone-MCP users, service accounts, API keys and roles — add, update, block/unblock, grant, revoke or replace roles, create a service account, revoke an API key, or delete a person when they ask for erasure. Use when asked to give someone access, change a role, disable a user, create a service account, revoke an API key, or remove personal data in Keystone-MCP.
 ---
 
 # Keystone-MCP user and role administration
 
-The Keystone-MCP connector exposes ten `users_*` tools backed by the shared users
-directory. Pick the tool from the table below and call it once with exactly the
-listed arguments. Do not probe other tools and do not guess argument names.
+The Keystone-MCP connector exposes built-in `users_*`, `service_accounts_*`, and
+`api_keys_*` tools backed by the shared users directory. Pick the tool from the
+tables below and call it once with exactly the listed arguments. Do not probe
+other tools and do not guess argument names.
+
+When the RBAC policy refuses a tool (your roles do not allow it), the MCP client
+gets a tool error with text like **access denied** — not a
+`{"state": "error", "code": "..."}` envelope from the adapter.
 
 Only a **full administrator** (every administration tool allowed by policy,
 whatever the role names) may grant or revoke a **management role**, change,
@@ -41,10 +46,39 @@ permissions are the union of each role's allow patterns.
 | Remove one role, keep the rest | `users_revoke_role` | `{"email": "...", "role": "administrator"}` |
 | Set the exact role set | `users_set_roles` | `{"email": "...", "roles": ["administrator"]}` |
 | Change name or note | `users_update` | `{"email": "...", "full_name": "..."}` or `{"email": "...", "note": "..."}` |
-| Revoke access | `users_block` | `{"email": "..."}` — also ends all OAuth sessions (`revoked_tokens` in the response) |
+| Revoke access | `users_block` | `{"email": "..."}` — blocks the person and revokes OAuth sessions (`revoked_tokens` on success) |
 | End sessions only | `users_logout` | `{"email": "..."}` — revokes tokens; person can sign in again; directory entry not required |
 | Restore access | `users_unblock` | `{"email": "..."}` — does not restore old sessions |
 | Delete or anonymize a person | `users_delete` | `{"email": "..."}` — see below; irreversible |
+
+## Service accounts
+
+Machine callers use subject `svc:<name>`. Only a human full administrator may
+create or change them (`service_accounts_*` mutations are refused for service
+accounts in code).
+
+| Request | Tool | Arguments |
+| --- | --- | --- |
+| List service accounts | `service_accounts_list` | `{}` or `{"is_blocked": true}` |
+| Create a service account | `service_accounts_add` | `{"name": "...", "roles": ["..."], "description": "..."}` — `roles` and `description` optional |
+| Change roles, description, or block | `service_accounts_update` | `{"name": "...", "roles": [...], "description": "...", "is_blocked": true}` — send only fields that change |
+
+Service accounts cannot hold the `administrator` role (or any role that would
+make them a full administrator). Issue API keys for them with `api_keys_issue`
+or the operator CLI.
+
+## API keys
+
+| Request | Tool | Arguments |
+| --- | --- | --- |
+| Issue a key (secret shown once) | `api_keys_issue` | `{"subject": "person@example.com"}` or `{"subject": "svc:ci", "label": "...", "expires_in_days": 90}` — not published in `production`; use `keystone-mcp keys issue` there |
+| List keys (no secrets) | `api_keys_list` | `{}` or `{"subject": "...", "include_revoked": true}` |
+| Revoke a key | `api_keys_revoke` | `{"key_id": "..."}` — ends Bearer use and sign-in sessions opened with that key |
+
+Confirm before `api_keys_revoke`. On success the response includes
+`revoked_tokens` (session count). If the session store fails during revoke,
+you get `service_unavailable` with a retry message while the key is already
+revoked.
 
 ## `users_delete`
 
@@ -94,9 +128,14 @@ that would drop roles the person currently has. State which roles disappear, the
 Success is `{"state": "done", "user": {...}}`, or `{"state": "done", "users": [...],
 "total": N}` for `users_list`, or `{"state": "done", "email": "...", "revoked_tokens": N}`
 for `users_logout`, or `{"state": "confirmation_required", ...}` / `{"state": "done",
-"pseudonym": "...", ...}` for `users_delete`. `users_block` may add top-level
-`revoked_tokens` (or `null` if the token store failed during revoke). Failure is
-`{"state": "error", "code": "...", "message": "..."}`.
+"pseudonym": "...", ...}` for `users_delete`. Successful `users_block` and
+`users_logout` include `revoked_tokens` (count). `users_grant_role` /
+`users_revoke_role` return `changed: false` when the role was already present or
+absent. Failure is `{"state": "error", "code": "...", "message": "..."}`.
+
+If `users_block` blocked the person but could not reach the session store, you
+get `service_unavailable` with a message that sessions were not revoked — the
+person is already blocked. Call `users_block` again; it is safe to repeat.
 
 Report the resulting roles and blocked status back to the user — do not just say
 "done".
@@ -105,13 +144,17 @@ Report the resulting roles and blocked status back to the user — do not just s
 
 | Code | Meaning | Action |
 | --- | --- | --- |
-| `user_not_found` | No such email | Check spelling; retry `users_list` with `{"is_blocked": true}` |
-| `conflict` | Already exists, or role already present | Read current state with `users_list`; usually nothing to do |
+| `actor_email_required` | The server could not tell who you are | Sign in again as a human administrator |
+| `user_not_found` | No such email or service account | Check spelling; retry `users_list` or `service_accounts_list` with `{"is_blocked": true}` |
+| `conflict` | Person or service account already exists | Read current state; usually nothing to do |
 | `validation_error` | Missing or malformed argument, unknown role | Fix the argument; verify the role exists in the deployment's RBAC policy |
-| `last_administrator` | Would leave no active administrator | Refuse; ask for another administrator to be appointed first |
+| `bad_request` | The external users directory rejected the request | Report it to whoever operates the directory; do not retry blindly |
+| `service_error` | The external users directory returned an unexpected error | Report it to whoever operates the directory; do not retry blindly |
+| `last_administrator` | Would leave no active full administrator | Refuse; ask for another full administrator to be appointed first |
 | `self_admin_mutation_forbidden` | Actor is removing their own full administrator access | Refuse; another full administrator must do it |
-| `forbidden` | You are not a full administrator, and the change touches a management role or a person/service account holding one, or the role gives permissions you do not have yourself; ask a full administrator. Stop and report; do not retry. |
-| `service_timeout`, `service_unavailable` | Directory unreachable | Report it; see the retry rule below |
+| `forbidden` | You are not a full administrator, and the change touches a management role or a person/service account holding one, or the role gives permissions you do not have yourself; or a service account called a mutating admin tool. Stop and report; do not retry. |
+| `service_timeout` | Directory timed out | Report it; see the retry rule below |
+| `service_unavailable` | Directory or session store unreachable | Report it; see the retry rule below |
 | `service_unconfigured` | Server is missing directory settings | Report to whoever operates the server |
 
 **Never retry a failed mutation blindly.** A timeout may mean the change was

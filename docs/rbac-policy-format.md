@@ -176,6 +176,11 @@ first matching label wins; a tool matching nothing is labelled `W`
 
 ### 2.10 Management roles and full administrators
 
+**Who can grant what:** only a full administrator may change who holds a
+management role or change any account that already holds one; other roles may
+grant ordinary roles only within their own permissions (below). Why:
+[ADR 0013](adr/0013-management-roles-from-the-policy.md).
+
 A **management role** is any declared role that reaches at least one
 *mutating* built-in administration tool (`users_*`, `service_accounts_*`,
 `api_keys_*`, `policy_*`, excluding read-only tools such as `users_list`,

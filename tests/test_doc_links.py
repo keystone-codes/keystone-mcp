@@ -26,6 +26,8 @@ from pathlib import Path
 
 import pytest
 
+from keystone_mcp.config import REMOVED_VARIABLES
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 _ROOT_FILES = ("README.md", "SECURITY.md", "CHANGELOG.md")
@@ -333,6 +335,49 @@ def test_adr_has_required_sections() -> None:
             if heading not in text:
                 problems.append(f"{rel}: missing {heading}")
     assert not problems, "ADR section gaps:\n" + "\n".join(problems)
+
+
+_REMOVED_NEARBY_RE = re.compile(r"\bremoved\b|\bRemoved\b", re.IGNORECASE)
+
+
+def _docs_public_markdown_paths() -> list[Path]:
+    paths: list[Path] = []
+    for name in ("README.md", "SECURITY.md"):
+        path = REPO_ROOT / name
+        if path.is_file():
+            paths.append(path)
+    for dirname in ("docs",):
+        base = REPO_ROOT / dirname
+        if not base.is_dir():
+            continue
+        for path in base.rglob("*.md"):
+            rel_parts = path.relative_to(REPO_ROOT).parts
+            if any(part in _EXCLUDED_DIR_NAMES for part in rel_parts):
+                continue
+            paths.append(path)
+    return sorted({p.resolve() for p in paths})
+
+
+def test_docs_do_not_mention_removed_variables() -> None:
+    """Removed env names appear only in ``docs/environment.md`` or beside the word *removed*."""
+    env_removed_path = (REPO_ROOT / "docs" / "environment.md").resolve()
+    violations: list[str] = []
+    for path in _docs_public_markdown_paths():
+        text = path.read_text(encoding="utf-8")
+        if path.resolve() == env_removed_path:
+            continue
+        for name in REMOVED_VARIABLES:
+            start = 0
+            while True:
+                idx = text.find(name, start)
+                if idx < 0:
+                    break
+                window = text[max(0, idx - 120) : idx + len(name) + 120]
+                if not _REMOVED_NEARBY_RE.search(window):
+                    rel = path.relative_to(REPO_ROOT).as_posix()
+                    violations.append(f"{rel}: {name}")
+                start = idx + len(name)
+    assert not violations, "removed variable mentioned without context:\n" + "\n".join(violations)
 
 
 def test_readme_is_short() -> None:

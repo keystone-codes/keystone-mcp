@@ -76,10 +76,13 @@ a per-replica rate limit instead of caching refusals by `key_id` alone.
 [`KEYSTONE_MCP_RBAC_POLICY_PATH`](rbac-policy-format.md) lists roles and the
 tool-name patterns each one may call. Everything not matched by a pattern is
 refused. A role can be granted to a person only if that name already exists
-in the file (`unknown role: <name>` otherwise); the one name the directory
-always accepts, file or no file, is `administrator` — reserved, and the
-system refuses to block or demote the last active administrator, or let one
-remove their own `administrator` role.
+in the file (`unknown role: <name>` otherwise). **Full administrators** and
+**management roles** come from which built-in administration tools each role
+reaches in this file, not from the literal name `administrator` — see
+[Who can manage whom](#who-can-manage-whom) and
+[rbac-policy-format.md §2.10](rbac-policy-format.md#210-management-roles-and-full-administrators).
+The system refuses to block or demote the last active full administrator, or
+let one remove their own full administration.
 
 ### Who can manage whom
 
@@ -207,8 +210,13 @@ Keystone-MCP **executes** `command` with `args` and optional `cwd` as a child
 process of itself. That process runs as the **same OS user** as Keystone-MCP,
 with **no sandbox**: it can read anything that user can read, spawn other
 programs, and use any environment variables you map in through the entry's
-`env` block (child name → parent variable name only — nothing else from
-Keystone-MCP's environment is copied in).
+`env` block (child name → parent variable name only). The MCP stdio client
+also sets `HOME`, `LOGNAME`, `PATH`, `SHELL`, `TERM`, and `USER` for the
+child. That map does not copy Keystone's secrets wholesale, but on Linux any
+process running as the same OS user may read `/proc/<pid>/environ` on the
+Keystone parent and any file that user can open — treat stdio upstreams as
+same-trust as Keystone, or run them under a dedicated OS user / in a separate
+HTTP container (see [ADR 0012](adr/0012-stdio-upstreams-run-unsandboxed.md)).
 
 Treat a stdio upstream like Keystone-MCP itself: only mount code and secrets
 you trust at that privilege level. The demo's `notes` service is an example of
@@ -231,6 +239,20 @@ unsigned `X-Author-Email` is not sent on stdio. See
 | `off` | No RBAC deny | All published tools visible |
 | `observe` | Allowed and logged; the identity assertion carries no roles and `rbac_decision: "deny"` for a call enforce would refuse | Catalog: not filtered |
 | `enforce` | Denied when the policy or the user's roles say so | Filtered per role |
+
+When `auth.identity_secret_env` or ES256 is configured, proxied calls that
+reach an upstream carry a signed `X-Keystone-Identity` JWT (or the stdio
+`_meta["keystone-mcp/identity"]` equivalent):
+
+| Mode | Assertion sent | `roles` in assertion | `rbac_decision` |
+|---|---|---|---|
+| `off` | When configured | As evaluated for the call | omitted |
+| `observe` | When configured | Full list on `"allow"`; `[]` on `"deny"` | `"allow"` or `"deny"` |
+| `enforce` | When configured | Full list when the call is allowed | `"allow"` on allowed calls |
+
+Upstream verifiers should treat `rbac_decision: "deny"` in `observe` like a
+refusal unless they explicitly opt in — see
+[connecting-services.md](connecting-services.md#services-behind-a-keystone-in-observe).
 
 Production profile requires **`enforce`** (below). Built-in `users_*` admin
 tools are published **only in `enforce`**; in `off` and `observe` they do
