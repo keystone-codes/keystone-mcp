@@ -756,8 +756,12 @@ def test_check_environment_false_skips_runtime_checks(tmp_path: Path, permissive
     cfg = parse_upstream_entry(item, policy=permissive_policy, check_environment=False)
     assert cfg.command == "this-command-does-not-exist-anywhere"
 
-    with pytest.raises(ValueError, match="not found or not executable"):
+    with pytest.raises(ValueError, match="is not a directory"):
         parse_upstream_entry(item, policy=permissive_policy, check_environment=True)
+
+    item_valid_cwd = {**item, "cwd": str(tmp_path)}
+    with pytest.raises(ValueError, match="not found or not executable"):
+        parse_upstream_entry(item_valid_cwd, policy=permissive_policy, check_environment=True)
 
 
 def test_stdio_rejects_url(permissive_policy):
@@ -870,6 +874,59 @@ def test_env_list_shorthand(permissive_policy):
     assert cfg.env_from == (
         ("KEYSTONE_MCP_UPSTREAM_NOTES_TOKEN", "KEYSTONE_MCP_UPSTREAM_NOTES_TOKEN"),
     )
+
+
+def test_stdio_relative_command_is_resolved_against_cwd(
+    tmp_path: Path, permissive_policy, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    svc = tmp_path / "svc"
+    svc.mkdir()
+    run_sh = svc / "run.sh"
+    run_sh.write_text("#!/bin/sh\n", encoding="utf-8")
+    run_sh.chmod(0o755)
+
+    other = tmp_path / "other"
+    other.mkdir()
+    decoy = other / "run.sh"
+    decoy.write_text("#!/bin/sh\n", encoding="utf-8")
+    decoy.chmod(0o755)
+    monkeypatch.chdir(other)
+
+    item = {
+        "name": "notes",
+        "namespace": "notes",
+        "transport": "stdio",
+        "command": "./run.sh",
+        "cwd": str(svc),
+    }
+    cfg = parse_upstream_entry(item, policy=permissive_policy, check_environment=True)
+    assert cfg.command == "./run.sh"
+    assert cfg.cwd == str(svc)
+
+
+def test_stdio_relative_command_missing_in_cwd_is_refused(
+    tmp_path: Path, permissive_policy, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    svc = tmp_path / "svc"
+    svc.mkdir()
+    other = tmp_path / "other"
+    other.mkdir()
+    decoy = other / "run.sh"
+    decoy.write_text("#!/bin/sh\n", encoding="utf-8")
+    decoy.chmod(0o755)
+    monkeypatch.chdir(other)
+
+    item = {
+        "name": "notes",
+        "namespace": "notes",
+        "transport": "stdio",
+        "command": "./run.sh",
+        "cwd": str(svc),
+    }
+    with pytest.raises(ValueError, match="not found or not executable"):
+        parse_upstream_entry(item, policy=permissive_policy, check_environment=True)
+    with pytest.raises(ValueError, match="resolved against cwd"):
+        parse_upstream_entry(item, policy=permissive_policy, check_environment=True)
 
 
 def test_load_refuses_unknown_command(tmp_path: Path, permissive_policy):
@@ -1156,7 +1213,9 @@ def test_limits_non_positive_rejected(permissive_policy):
     }
     with pytest.raises(ValidationError) as exc:
         assert_valid_upstream_registry(document, policy=permissive_policy)
-    assert any("limits.rate must be a positive integer" in message for message in exc.value.messages)
+    assert any(
+        "limits.rate must be a positive integer" in message for message in exc.value.messages
+    )
 
 
 def test_limits_in_upstreams_env_json(monkeypatch, permissive_policy):
@@ -1184,6 +1243,7 @@ def test_limits_in_upstreams_env_json(monkeypatch, permissive_policy):
     assert upstreams[0].limits is not None
     assert upstreams[0].limits.rate == 10
     assert upstreams[0].limits.window_seconds == 30.0
+
 
 def test_upstream_validate_cli_reports_limits_error(tmp_path: Path):
     from keystone_mcp.cli import main

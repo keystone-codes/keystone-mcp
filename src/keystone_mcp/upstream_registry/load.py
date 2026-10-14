@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -27,6 +28,40 @@ from keystone_mcp.upstream_registry.validate import (
 )
 
 RouteMode = Literal["live", "stub"]
+
+
+def _command_has_path_separator(command: str) -> bool:
+    if os.sep in command:
+        return True
+    alt = os.altsep
+    return bool(alt and alt in command)
+
+
+def _stdio_command_not_executable_error(
+    *,
+    name: str,
+    command: str,
+    cwd: str | None,
+    resolved_against_cwd: bool,
+) -> ValueError:
+    message = f"upstream {name!r}: command {command!r} not found or not executable"
+    if resolved_against_cwd and cwd is not None:
+        message += f" (resolved against cwd {cwd!r})"
+    return ValueError(message)
+
+
+def _stdio_command_is_runnable(command: str, *, cwd: str | None) -> tuple[bool, bool]:
+    """Return (runnable, resolved_against_cwd_for_error)."""
+    if _command_has_path_separator(command):
+        if os.path.isabs(command):
+            path = command
+            resolved_against_cwd = False
+        else:
+            base = cwd if cwd is not None else os.getcwd()
+            path = os.path.join(base, command)
+            resolved_against_cwd = cwd is not None
+        return os.path.isfile(path) and os.access(path, os.X_OK), resolved_against_cwd
+    return shutil.which(command) is not None, False
 
 
 def _parse_enabled(raw: object) -> bool:
@@ -212,13 +247,6 @@ def parse_upstream_entry(
         command = command_raw.strip() if isinstance(command_raw, str) else ""
         if not command or "\n" in command:
             raise ValueError(f"upstream {name!r}: command is required for transport: stdio")
-        if check_environment and shutil.which(command) is None:
-            raise ValueError(f"upstream {name!r}: command {command!r} not found or not executable")
-
-        args_raw = item.get("args", [])
-        if not (isinstance(args_raw, list) and all(isinstance(a, str) for a in args_raw)):
-            raise ValueError(f"upstream {name!r}: args must be an array of strings")
-        args = tuple(args_raw)
 
         cwd_raw = item.get("cwd")
         if cwd_raw is not None and not isinstance(cwd_raw, str):
@@ -226,6 +254,21 @@ def parse_upstream_entry(
         cwd = cwd_raw.strip() or None if isinstance(cwd_raw, str) else None
         if cwd is not None and check_environment and not Path(cwd).is_dir():
             raise ValueError(f"upstream {name!r}: cwd {cwd!r} is not a directory")
+
+        if check_environment:
+            runnable, resolved_against_cwd = _stdio_command_is_runnable(command, cwd=cwd)
+            if not runnable:
+                raise _stdio_command_not_executable_error(
+                    name=name,
+                    command=command,
+                    cwd=cwd,
+                    resolved_against_cwd=resolved_against_cwd,
+                )
+
+        args_raw = item.get("args", [])
+        if not (isinstance(args_raw, list) and all(isinstance(a, str) for a in args_raw)):
+            raise ValueError(f"upstream {name!r}: args must be an array of strings")
+        args = tuple(args_raw)
 
         env_from = _parse_env_from(item, name=name, check_environment=check_environment)
     else:
