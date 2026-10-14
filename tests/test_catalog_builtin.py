@@ -185,6 +185,7 @@ def test_read_only_directory_publishes_only_users_list(tmp_path, caplog):
         register_catalog(reg, settings, directory=_ReadOnlyDirectory())
 
     assert reg.get("users_list") is not None
+    assert reg.get("users_export") is not None
     for name in (
         "users_add",
         "users_update",
@@ -207,6 +208,7 @@ def test_admin_directory_publishes_all_users_tools(tmp_path):
 
     for name in (
         "users_list",
+        "users_export",
         "users_add",
         "users_update",
         "users_block",
