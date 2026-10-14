@@ -1,0 +1,39 @@
+# section=db-columns source=v0.5.0 generator=1
+keystone_api_key
+keystone_api_key.created_at	nullable=no pk=no type=DATETIME
+keystone_api_key.created_by	nullable=yes pk=no type=VARCHAR(330)
+keystone_api_key.expires_at	nullable=yes pk=no type=DATETIME
+keystone_api_key.key_id	nullable=no pk=yes type=VARCHAR(12)
+keystone_api_key.label	nullable=yes pk=no type=VARCHAR(255)
+keystone_api_key.revoked_at	nullable=yes pk=no type=DATETIME
+keystone_api_key.revoked_by	nullable=yes pk=no type=VARCHAR(330)
+keystone_api_key.secret_hash	nullable=no pk=no type=VARCHAR(64)
+keystone_api_key.subject	nullable=no pk=no type=VARCHAR(330)
+keystone_service_account
+keystone_service_account.created_at	nullable=no pk=no type=DATETIME
+keystone_service_account.created_by	nullable=yes pk=no type=VARCHAR(330)
+keystone_service_account.description	nullable=yes pk=no type=TEXT
+keystone_service_account.is_blocked	nullable=no pk=no type=BOOLEAN
+keystone_service_account.name	nullable=no pk=yes type=VARCHAR(63)
+keystone_service_account.updated_at	nullable=no pk=no type=DATETIME
+keystone_service_account_role
+keystone_service_account_role.id	nullable=no pk=yes type=INTEGER
+keystone_service_account_role.name	nullable=no pk=no type=VARCHAR(63)
+keystone_service_account_role.role	nullable=no pk=no type=VARCHAR(64)
+keystone_user
+keystone_user.created_at	nullable=no pk=no type=DATETIME
+keystone_user.created_by	nullable=yes pk=no type=VARCHAR(320)
+keystone_user.email	nullable=no pk=yes type=VARCHAR(320)
+keystone_user.full_name	nullable=no pk=no type=VARCHAR(255)
+keystone_user.is_blocked	nullable=no pk=no type=BOOLEAN
+keystone_user.note	nullable=yes pk=no type=TEXT
+keystone_user.updated_at	nullable=no pk=no type=DATETIME
+keystone_user_role
+keystone_user_role.email	nullable=no pk=no type=VARCHAR(320)
+keystone_user_role.id	nullable=no pk=yes type=INTEGER
+keystone_user_role.role	nullable=no pk=no type=VARCHAR(64)
+keystone_users_alembic_version
+keystone_users_alembic_version.version_num	nullable=no pk=yes type=VARCHAR(32)
+migration:0001_initial
+migration:0002_service_accounts
+migration:0003_api_keys

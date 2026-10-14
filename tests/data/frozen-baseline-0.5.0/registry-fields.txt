@@ -1,0 +1,24 @@
+# section=registry-fields source=v0.5.0 generator=1
+auth.bearer_env	required=no
+auth.identity_alg	required=no
+auth.identity_secret_env	required=no
+discovery_timeout_seconds	required=no
+enabled	required=no
+exclude_prefixes	required=no
+include_prefixes	required=no
+name	required=yes
+namespace	required=yes
+publish_resources	required=no
+resource_exclude_prefixes	required=no
+resource_include_prefixes	required=no
+route_mode	required=no
+schema_version	required=yes
+stdio.args	required=no
+stdio.command	required=yes
+stdio.cwd	required=no
+stdio.env	required=no
+strip_prefix	required=no
+tool_prefix	required=no
+tool_timeout_seconds	required=no
+transport	required=no
+url	required=yes

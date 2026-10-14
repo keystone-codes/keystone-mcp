@@ -13,6 +13,22 @@ from keystone_mcp.user_directory.errors import UsersError
 from keystone_mcp.user_directory.protocol import ApiKeyDirectory, UserDirectory
 from keystone_mcp.user_directory.types import subject_type_of
 
+API_KEYS_ADMIN_ERROR_CODES: frozenset[str] = frozenset(
+    {
+        "actor_email_required",
+        "bad_request",
+        "conflict",
+        "forbidden",
+        "last_administrator",
+        "self_admin_mutation_forbidden",
+        "service_error",
+        "service_timeout",
+        "service_unavailable",
+        "user_not_found",
+        "validation_error",
+    }
+)
+
 if TYPE_CHECKING:
     from keystone_mcp.auth.sessions import SessionRevoker
     from keystone_mcp.observability.service import RbacObservability

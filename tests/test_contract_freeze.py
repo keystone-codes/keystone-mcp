@@ -338,3 +338,80 @@ def test_every_cli_command_is_documented() -> None:
     snapshot = _run_section_subprocess("cli-commands", SRC_ROOT, "worktree")
     missing = sorted(command for command in snapshot if command not in section)
     assert not missing, f"CLI command missing from compatibility.md: {missing}"
+
+
+def _http_routes_section(text: str) -> str:
+    start = text.index("## HTTP routes")
+    end = text.index("## CLI")
+    return text[start:end]
+
+
+def _error_codes_section(text: str) -> str:
+    start = text.index("### Built-in tools")
+    end = text.index("## Headers sent to upstream services")
+    return text[start:end]
+
+
+def test_every_error_code_is_documented() -> None:
+    text = COMPATIBILITY_PATH.read_text(encoding="utf-8")
+    section = _error_codes_section(text)
+    snapshot = _run_section_subprocess("error-codes", SRC_ROOT, "worktree")
+    missing: list[str] = []
+    for key in sorted(snapshot):
+        _family, code = key.split(":", 1)
+        if f"`{code}`" not in section and code not in section:
+            missing.append(key)
+    assert not missing, f"error code missing from compatibility.md: {missing}"
+
+
+def test_every_route_is_documented() -> None:
+    text = COMPATIBILITY_PATH.read_text(encoding="utf-8")
+    section = _http_routes_section(text)
+    snapshot = _run_section_subprocess("routes", SRC_ROOT, "worktree")
+    missing: list[str] = []
+    for key in sorted(snapshot):
+        method, path = key.split(" ", 1)
+        if path == "<KEYSTONE_MCP_HTTP_PATH>":
+            needle = "KEYSTONE_MCP_HTTP_PATH"
+        elif path == "<KEYSTONE_MCP_METRICS_PATH>":
+            needle = "KEYSTONE_MCP_METRICS_PATH"
+        elif "/login/<provider>" in path:
+            needle = "/login/<provider>"
+        else:
+            needle = path
+        if needle not in section and f"`{needle}`" not in section:
+            missing.append(key)
+    assert not missing, f"HTTP route missing from compatibility.md: {missing}"
+
+
+def _documented_frozen_cli_flags(section: str) -> set[str]:
+    """Flags compatibility.md explicitly freezes (doc promises must exist in code)."""
+    flags: set[str] = set()
+    catalog_parent_flags = ("--policy", "--snapshot", "--live-file", "--live-url")
+    for command in ("catalog validate", "catalog diff"):
+        for option in catalog_parent_flags:
+            flags.add(f"{command} {option}")
+    flags.add("catalog validate --strict-unreachable")
+    flags.add("catalog export --live-file")
+    flags.add("catalog export --tier")
+    for option in ("--from-url", "--token", "--policy", "--dry-run"):
+        flags.add(f"users import {option}")
+    flags.add("users grant-admin --role")
+    flags.add("users admins --json")
+    if "upstream validate --path" in section or "--path <file>" in section:
+        flags.add("upstream validate --path")
+    assert "--email" not in section.split("users import", 1)[-1].split("##", 1)[0], (
+        "docs/compatibility.md must not freeze a removed users import --email flag"
+    )
+    return flags
+
+
+def test_every_cli_flag_is_documented() -> None:
+    text = COMPATIBILITY_PATH.read_text(encoding="utf-8")
+    start = text.index("## CLI")
+    end = text.index("## Users directory database")
+    section = text[start:end]
+    snapshot = _run_section_subprocess("cli-flags", SRC_ROOT, "worktree")
+    promised = _documented_frozen_cli_flags(section)
+    missing = sorted(flag for flag in promised if flag not in snapshot)
+    assert not missing, f"documented CLI flag missing from snapshot: {missing}"

@@ -198,21 +198,28 @@ Published only when `KEYSTONE_MCP_RBAC_MODE=enforce` unless noted.
 `users_add`, `users_update`,
 `users_block`, `users_unblock`, `users_set_roles`, `users_grant_role`,
 `users_revoke_role`, and `users_logout` require the `admin` capability.
-Arguments and error codes
-(`user_not_found`, `conflict`, `validation_error`, `last_administrator`,
-`self_admin_mutation_forbidden`, `forbidden`, `service_timeout`,
-`service_unavailable`, `service_unconfigured`) match
-[keystone-user-admin skill](../skills/keystone-user-admin/SKILL.md).
+Arguments and error codes match
+[keystone-user-admin skill](../skills/keystone-user-admin/SKILL.md). The
+`users_*` tools may return: `actor_email_required`, `bad_request`, `conflict`,
+`forbidden`, `last_administrator`, `self_admin_mutation_forbidden`,
+`service_error`, `service_timeout`, `service_unavailable`, `service_unconfigured`,
+`user_not_found`, `validation_error`.
 
 **Service accounts** (built-in directory with `service_accounts` capability):
 `service_accounts_list`, `service_accounts_add`, `service_accounts_update`.
+Error codes: `actor_email_required`, `bad_request`, `conflict`, `forbidden`,
+`last_administrator`, `self_admin_mutation_forbidden`, `service_error`,
+`service_timeout`, `service_unavailable`, `user_not_found`, `validation_error`.
 Mutating tools answer `forbidden` to service accounts.
 
 **API keys** (built-in directory with `api_keys` capability):
 `api_keys_list`, `api_keys_revoke` always; `api_keys_issue` is **not**
 published when `KEYSTONE_MCP_DEPLOYMENT_PROFILE=production` (issue keys with
-`keystone-mcp keys` on the server instead). Mutating tools answer `forbidden`
-to service accounts.
+`keystone-mcp keys` on the server instead). Error codes: `actor_email_required`,
+`bad_request`, `conflict`, `forbidden`, `last_administrator`,
+`self_admin_mutation_forbidden`, `service_error`, `service_timeout`,
+`service_unavailable`, `user_not_found`, `validation_error`. Mutating tools
+answer `forbidden` to service accounts.
 
 **Policy administration** (`policy_*`): `policy_read`, `policy_catalog`,
 `policy_validate`, `policy_role_set`, `policy_role_delete`, `policy_allow_add`,
