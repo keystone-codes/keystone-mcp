@@ -122,7 +122,7 @@ stronger check when configured.
 
 `X-Author-Email` is unsigned: anything on the same network can send that
 header and impersonate any user, and it carries no roles. **Deprecated since
-0.5.0** (kept until the next major version) — verify `X-Keystone-Identity`
+0.5.0** (removed in 2.0) — verify `X-Keystone-Identity`
 instead.
 
 A registry entry's optional `auth.identity_secret_env` makes Keystone-MCP

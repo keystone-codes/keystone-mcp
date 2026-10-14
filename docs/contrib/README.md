@@ -2,7 +2,7 @@
 
 `keystone_mcp.contrib` is reference code for forks. It ships in the same
 package as everything else, but it is **not covered by the compatibility
-promise** (`docs/compatibility.md`): a class, a function signature or a
+promise** ([compatibility.md](../compatibility.md)): a class, a function signature or a
 variable name under `contrib/` can change in a minor release, with a note in
 [CHANGELOG.md](../../CHANGELOG.md).
 

@@ -196,7 +196,7 @@ only once the stronger ones configured for it have passed.
    Keystone-MCP alone controls, and only after checking the two headers
    above when they are configured. It carries no roles: RBAC is decided on
    Keystone-MCP before the call is forwarded, not re-checked by the
-   upstream. **Deprecated since 0.5.0** (kept until the next major version)
+   upstream. **Deprecated since 0.5.0** (removed in 2.0)
    — prefer `X-Keystone-Identity`.
 
 The proxy itself never follows a redirect an upstream sends back.

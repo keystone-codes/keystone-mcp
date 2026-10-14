@@ -65,8 +65,8 @@ in `keystone_mcp.contract_tests` and the [plugin template](plugins.md#plugin-tem
 - Normalize the subject on input (`strip().lower()` for an email); every
   email returned is already lower-cased.
 - `resolve_user`'s argument is named `subject`, not `email`: in this release
-  it is always a person's email, but a service-account directory (a later
-  release) answers it too, with an identifier of the form `svc:<name>`. An
+  it is a person's email or, for a service account, an identifier of the form
+  `svc:<name>`. An
   implementation that only knows about people answers `exists=False` for
   anything it does not recognize — it never raises for an unknown subject.
 - `resolve_user` never raises for an unknown subject — only for an
@@ -161,7 +161,7 @@ class StaticFileUserDirectory:
 A richer example (LDAP, a ticketing system's user table) looks the same
 shape, just backed by a real connection instead of a file. Registering a
 directory from your own package without editing Keystone's core: see
-plugins.md.
+[plugins.md](plugins.md).
 
 ## Errors
 

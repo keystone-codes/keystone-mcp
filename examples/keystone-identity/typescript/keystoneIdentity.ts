@@ -66,6 +66,25 @@ export interface VerifyKeystoneIdentityOptions {
   acceptObserveDenials?: boolean;
 }
 
+function validateJwksUrl(jwksUrl: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(jwksUrl);
+  } catch {
+    throw new IdentityError("jwks_url must use https (plain http only on loopback)");
+  }
+  if (parsed.protocol === "https:") {
+    return;
+  }
+  if (parsed.protocol === "http:") {
+    const host = parsed.hostname.toLowerCase();
+    if (host === "localhost" || host === "127.0.0.1" || host === "[::1]") {
+      return;
+    }
+  }
+  throw new IdentityError("jwks_url must use https (plain http only on loopback)");
+}
+
 function remoteJwkSet(jwksUrl: string): ReturnType<typeof createRemoteJWKSet> {
   let set = remoteJwkSets.get(jwksUrl);
   if (!set) {
@@ -104,6 +123,7 @@ export async function verifyKeystoneIdentity(
   }
 
   if (jwksUrl) {
+    validateJwksUrl(jwksUrl);
     const allowed = algorithms ?? ES256_ALGORITHMS;
     try {
       const { payload, protectedHeader } = await jwtVerify(token, remoteJwkSet(jwksUrl), {

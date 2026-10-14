@@ -197,7 +197,12 @@ Clients on the handshake protocol receive it on the standalone SSE stream
 change on its next `tools/list`. Both the standalone `GET` stream and a
 `subscriptions/listen` stream are long-lived connections — a load balancer
 with an idle timeout should account for that (the SDK sends its own pings on
-a `subscriptions/listen` stream while it waits).
+a `subscriptions/listen` stream while it waits). Each Keystone-MCP process
+serves up to 1024 concurrent `subscriptions/listen` streams (the MCP SDK
+default); a further `subscriptions/listen` request gets the error "Subscription
+limit reached", and each stream buffers at most 1024 undelivered events before
+it is closed (the client listens again). Old-protocol `GET` streams are not
+affected.
 
 Proxied tools are published with the upstream's own `inputSchema` (after
 `KEYSTONE_MCP_PROXY_SCHEMA_PATCHES`), `outputSchema` (only when

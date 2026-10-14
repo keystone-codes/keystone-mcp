@@ -53,3 +53,11 @@ may still integrate externally).
 - [users.md](../users.md), [user-directory.md](../user-directory.md)
 - [environment.md](../environment.md#users-directory)
 - `src/keystone_mcp/users/`, `src/keystone_mcp/user_directory/`
+
+## Amendment (0.6.0)
+
+Since 0.5.0 the built-in directory also stores service accounts and API keys
+(migrations `0002`, `0003`, `0004`; see [0008](0008-api-keys-and-service-accounts.md)).
+Directories other than `local` and `http` are installed as packages and
+discovered through the `keystone_mcp.user_directories` entry point (see
+[0009](0009-plugins-via-entry-points.md)).

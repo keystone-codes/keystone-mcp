@@ -105,8 +105,8 @@ _users_store_holder: dict[str, UsersStore | None] = {"store": None}
 _login_providers_holder: dict[str, list[LoginProvider] | None] = {"providers": None}
 _client_sessions_holder: dict[str, ClientSessionRegistry | None] = {"registry": None}
 #: The PolicyStore built by the most recent build_server() call, for whatever
-#: wants to reach it outside the return tuple (a later card's policy_* tool
-#: adapter, a CLI). None whenever RBAC does not enforce or POLICY_TOOLS=off.
+#: wants to reach it outside the return tuple (the ``policy_*`` tool adapter,
+#: a CLI). None whenever RBAC does not enforce or POLICY_TOOLS=off.
 _policy_store_holder: dict[str, PolicyStore | None] = {"store": None}
 _session_revoker_holder: dict[str, SessionRevoker | None] = {"revoker": None}
 _bootstrap_state_holder: dict[str, BootstrapState | None] = {"state": None}
@@ -252,7 +252,7 @@ def build_server(
     # The built-in users directory is built whenever it is the configured
     # backend, independent of Google login / RBAC: it is also where the
     # initial administrator is seeded at startup (bootstrap_platform) and,
-    # in a later card, where DEV-token login looks a caller's email up.
+    # where DEV-token login looks the caller's email up in the users directory.
     shared_revision: InMemoryRevisionReader | None = None
     if settings.users_directory_is_local and users_store is None:
         if settings.redis_url.strip():
@@ -578,7 +578,7 @@ def build_server(
         )
 
     # Core of changing the RBAC policy through the agent instead of a server
-    # login: lets a later release's policy_* tools read and change the policy
+    # login: lets the ``policy_*`` tools read and change the policy
     # file with the same validation a hot-reload runs. Built whenever RBAC
     # actually enforces (nothing to administer otherwise) and policy_tools !=
     # "off" (an operator who wants no policy_* tools at all skips this too).
