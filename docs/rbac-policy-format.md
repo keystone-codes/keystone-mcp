@@ -137,6 +137,13 @@ A production example lists `users_*`, `service_accounts_*`, `api_keys_*`, and
 `policy_*` with a comment that administrators who sign in non-interactively are
 refused those tools unless an entry is removed.
 
+Through `policy_*`, a change that would leave no role able to call an
+administering tool (`users_*` / `policy_*`) — because every role that could
+reach it is gated here and no interactive login provider is configured — is
+refused (`policy_invariant`). A change that would remove the acting
+administrator's own `policy_*` access because of this list is refused when they
+are not signed in interactively (`self_lockout_forbidden`).
+
 ### 2.7 `critical_tools`
 
 Tools whose role resolution must be synchronous: the user-directory allow cache

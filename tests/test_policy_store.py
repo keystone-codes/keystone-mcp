@@ -949,3 +949,59 @@ async def test_change_reload_failure_keeps_backup(
     assert exc_info.value.code == "policy_invalid"
     assert policy_path.read_bytes() == original
     assert policy_path.with_suffix(policy_path.suffix + ".bak").is_file()
+
+
+@pytest.mark.asyncio
+async def test_store_passes_interactive_flags(settings: Settings, directory, monkeypatch) -> None:
+    store, _registry, _manager = _build_store(settings, directory=directory)
+    store = PolicyStore(
+        settings=settings,
+        policy_manager=_manager,
+        registry=_registry,
+        observability=None,
+        directory=directory,
+        interactive_login_available=False,
+    )
+    seen: dict[str, object] = {}
+
+    def fake_no_role_can_administer(
+        candidate, live_tool_names, *, interactive_login_available=True
+    ):
+        seen["interactive_login_available"] = interactive_login_available
+
+    def fake_self_lockout(candidate, actor_roles, live_tool_names, *, actor_interactive=True):
+        seen["actor_interactive"] = actor_interactive
+
+    monkeypatch.setattr(
+        "keystone_mcp.rbac.policy_store.check_no_role_can_administer",
+        fake_no_role_can_administer,
+    )
+    monkeypatch.setattr(
+        "keystone_mcp.rbac.policy_store.check_self_lockout_forbidden",
+        fake_self_lockout,
+    )
+
+    async def noop_full_admin_remains(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(
+        "keystone_mcp.rbac.policy_store.check_full_administrator_remains",
+        noop_full_admin_remains,
+    )
+
+    async def noop_role_in_use(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr("keystone_mcp.rbac.policy_store.check_role_in_use", noop_role_in_use)
+
+    await store.change(
+        changes=[AllowAdd("editor", ["users_list"])],
+        actor="admin@example.com",
+        actor_roles=ADMIN_ROLES,
+        expected_hash=None,
+        operation="policy_allow_add",
+        task_id="flags",
+        actor_interactive=False,
+    )
+    assert seen["interactive_login_available"] is False
+    assert seen["actor_interactive"] is False

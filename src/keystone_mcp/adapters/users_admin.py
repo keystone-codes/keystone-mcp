@@ -20,6 +20,7 @@ from keystone_mcp.adapters.guards import (
     CatalogNamesSource,
     check_delegation,
     check_management_authority,
+    check_self_demotion,
     delegation_roles_granted,
     require_human_actor,
     resolve_admin_call,
@@ -225,6 +226,15 @@ class UsersAdminAdapter:
                 if delegation_refusal is not None:
                     self._record_mutation_audit(route, ctx, spec, delegation_refusal)
                     return delegation_refusal
+            if isinstance(admin_call, AdminCall) and name in (
+                "users_block",
+                "users_set_roles",
+                "users_revoke_role",
+            ):
+                self_refusal = check_self_demotion(route, ctx, admin_call=admin_call, spec=spec)
+                if self_refusal is not None:
+                    self._record_mutation_audit(route, ctx, spec, self_refusal)
+                    return self_refusal
 
         if name == "users_logout":
             return await self._execute_logout(route, ctx, spec)

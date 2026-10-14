@@ -270,9 +270,35 @@ async def test_policy_role_delete_in_use_then_after_block(tmp_path: Path) -> Non
     assert in_use["code"] == "role_in_use"
 
     directory.block("editor@example.com")
+    still_in_use = await _call(registry, settings, "policy_role_delete", {"role": "editor"})
+    assert still_in_use["code"] == "role_in_use"
+
+    await _call(
+        registry,
+        settings,
+        "users_revoke_role",
+        {"email": "editor@example.com", "role": "editor"},
+    )
     deleted = await _call(registry, settings, "policy_role_delete", {"role": "editor"})
     assert deleted["state"] == "done"
     assert deleted["changed"] is True
+
+
+@pytest.mark.asyncio
+async def test_non_interactive_admin_cannot_gate_policy_tools_behind_interactive_login(
+    tmp_path: Path,
+) -> None:
+    registry, _store, _manager, directory, settings = _build_harness(tmp_path)
+    directory.seed("admin@example.com", roles=("administrator",))
+    non_interactive = VerifiedIdentity(email="admin@example.com", claims={"interactive": False})
+    result = await _call(
+        registry,
+        settings,
+        "policy_list_set",
+        {"list": "requires_human_identity", "patterns": ["policy_*"]},
+        identity=non_interactive,
+    )
+    assert result["code"] == "self_lockout_forbidden"
 
 
 @pytest.mark.asyncio

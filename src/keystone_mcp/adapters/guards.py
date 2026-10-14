@@ -33,6 +33,10 @@ MANAGEMENT_FORBIDDEN_MESSAGE = (
 
 DELEGATION_FORBIDDEN_MESSAGE = "you can grant only roles whose permissions you already have: {role}"
 
+SELF_DEMOTION_FORBIDDEN_MESSAGE = (
+    "you cannot remove your own full administration; another full administrator must do it"
+)
+
 
 @dataclass(frozen=True, slots=True)
 class AdminCall:
@@ -229,3 +233,56 @@ def check_delegation(
                 "message": DELEGATION_FORBIDDEN_MESSAGE.format(role=role_name),
             }
     return None
+
+
+def check_self_demotion(
+    route: Route,
+    ctx: RouteContext,
+    *,
+    admin_call: AdminCall,
+    spec: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Refuse when a full administrator removes their own full administration.
+
+    A separate ``last full administrator`` guard for ``users_*`` is not needed:
+    after A02 only an active full administrator can change holders of management
+    roles, and this rule blocks self-demotion — so any successful mutation leaves
+    at least the acting administrator in place. Built-in ``users/service.py``
+    checks against the literal ``administrator`` role name remain a second line
+    for the local directory only.
+    """
+    tool_name = route.name
+    if tool_name not in ("users_block", "users_set_roles", "users_revoke_role"):
+        return None
+    if not admin_call.view.policies:
+        return None
+
+    actor = normalize_email(ctx.verified_identity.subject)
+    target_email = normalize_email(str(spec["email"]))
+    if actor != target_email:
+        return None
+    if not admin_call.view.is_full_administrator(admin_call.actor_roles):
+        return None
+
+    if tool_name == "users_block":
+        still_full = False
+    elif tool_name == "users_set_roles":
+        raw = spec.get("roles") or []
+        roles_after = frozenset(
+            item.strip() for item in raw if isinstance(item, str) and item.strip()
+        )
+        still_full = admin_call.view.is_full_administrator(roles_after)
+    else:
+        role = str(spec["role"]).strip()
+        roles_after = frozenset(admin_call.target_roles - {role})
+        still_full = admin_call.view.is_full_administrator(roles_after)
+
+    if still_full:
+        return None
+    return {
+        "state": "error",
+        "tool": route.name,
+        "task_id": ctx.task_id,
+        "code": "self_admin_mutation_forbidden",
+        "message": SELF_DEMOTION_FORBIDDEN_MESSAGE,
+    }
