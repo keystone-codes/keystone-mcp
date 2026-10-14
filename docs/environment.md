@@ -85,7 +85,51 @@ reached from outside this machine. Two further rules are warnings — logged by
 
 `server.main` logs every line returned by `startup_warnings()` at WARNING after
 logging is configured. Warnings do not stop startup. Later releases may add
-more rows (W20+).
+more rows (W20+). `keystone-mcp config check` lists all of them for the current
+environment.
+
+## Checking a configuration
+
+Run `keystone-mcp config check` with the same environment and `.env` file the
+server will use. It prints every startup refusal and warning without starting
+the process, connecting to Redis, Postgres, upstream MCP servers, or OIDC
+discovery endpoints (reachability is what `/readyz` reports after deploy).
+
+```bash
+keystone-mcp config check
+keystone-mcp config check --strict
+keystone-mcp config check --env-file /opt/keystone-mcp/.env
+keystone-mcp config check --admins
+```
+
+Output is plain text on stdout: `env file:` (path or `none`), then one line per
+problem — `ERROR` for refusals, `WARNING` for startup warnings, `INFO` for the
+administrator report when `--admins` is set — and a summary
+`config check: N errors, M warnings`. Secrets are redacted from every line.
+
+| Flag | Meaning |
+|---|---|
+| `--env-file PATH` | Load `KEYSTONE_MCP_*` from PATH for this run (same as `KEYSTONE_MCP_ENV_FILE=PATH`). |
+| `--strict` | Exit with code `1` when warnings are present (default: warnings are allowed). |
+| `--admins` | With `KEYSTONE_MCP_USERS_BACKEND=local`, read the users database (without migrations) and require at least one active full administrator. |
+
+Exit codes: `0` when there are no errors (warnings allowed unless `--strict`);
+`1` when any error is listed, or when warnings are present with `--strict`;
+`2` when the command cannot run (missing `--env-file` target, malformed `.env`).
+
+Examples:
+
+```bash
+docker run --rm --env-file .env ghcr.io/keystone-codes/keystone-mcp:<version> \
+  keystone-mcp config check
+```
+
+```bash
+kubectl run config-check --rm -it --restart=Never \
+  --image=ghcr.io/keystone-codes/keystone-mcp:<version> \
+  --env-from=configmap/keystone-mcp-env --env-from=secret/keystone-mcp-secrets -- \
+  keystone-mcp config check
+```
 
 | # | Profile | Logged when | What to do |
 |---|---|---|---|
