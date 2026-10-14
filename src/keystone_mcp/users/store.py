@@ -149,6 +149,9 @@ class UsersStore:
     async def count_person_references(self, email: str) -> int:
         return await self._read(service.count_person_references, email=email)
 
+    async def person_authored_records(self, email: str) -> dict[str, int]:
+        return await self._read(service.person_authored_records, email=email)
+
     async def delete_user(
         self,
         *,

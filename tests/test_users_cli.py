@@ -15,6 +15,7 @@ pattern applied to settings instead of logging).
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import uuid
 from datetime import UTC, datetime
@@ -1598,3 +1599,27 @@ roles:
     exit_code = main(["users", "admins"])
     assert exit_code == 1
     assert "no active full administrator" in capsys.readouterr().err
+
+
+def test_export_writes_file_with_0600(tmp_path: Path, monkeypatch) -> None:
+    db_path = tmp_path / "keystone-users.db"
+    monkeypatch.setenv("KEYSTONE_MCP_USERS_DB_URL", f"sqlite:///{db_path}")
+    monkeypatch.setenv("KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT", "cli-export-salt")
+    _seed_user(db_path, email="person@example.com", roles=["member"])
+    out_file = tmp_path / "export.json"
+    exit_code = main(
+        [
+            "users",
+            "export",
+            "--email",
+            "person@example.com",
+            "--output",
+            str(out_file),
+        ]
+    )
+    assert exit_code == 0
+    assert out_file.exists()
+    assert (out_file.stat().st_mode & 0o777) == 0o600
+    payload = json.loads(out_file.read_text(encoding="utf-8"))
+    assert payload["email"] == "person@example.com"
+    assert payload["format"] == "keystone-person-export/1"

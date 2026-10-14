@@ -40,6 +40,7 @@ from keystone_mcp.rbac.management import (
     is_full_administrator,
 )
 from keystone_mcp.rbac.policy import PolicyContractError, load_policy_file
+from keystone_mcp.user_directory.local import LocalUserDirectory
 from keystone_mcp.users.db import (
     UsersConfigError,
     check_users_db_url,
@@ -53,6 +54,7 @@ from keystone_mcp.users.errors import (
     UserNotFoundError,
     UsersError,
 )
+from keystone_mcp.users.export import build_person_export
 from keystone_mcp.users.factory import build_users_store
 from keystone_mcp.users.importer import ImportSourceError, fetch_source_users
 from keystone_mcp.users.roles import ROLE_ADMINISTRATOR
@@ -514,6 +516,70 @@ def _cmd_unbind_identity(args: argparse.Namespace) -> int:
         store.dispose()
 
 
+def _cmd_export(args: argparse.Namespace) -> int:
+    try:
+        settings = _settings_for_users_cli()
+    except _CliExit as exc:
+        return exc.code
+
+    email = (args.email or "").strip()
+    if not email:
+        print("an email is required", file=sys.stderr)
+        return EXIT_USAGE
+
+    try:
+        store = _open_store(settings)
+    except _CliExit as exc:
+        return exc.code
+
+    oauth_store = None
+    if settings.redis_url.strip():
+        try:
+
+            async def _open_oauth() -> object:
+                oauth, _pending = build_shared_auth_stores(settings)
+                return oauth
+
+            oauth_store = asyncio.run(_open_oauth())
+        except (RedisError, OSError) as exc:
+            print(
+                f"warning: session counts unavailable ({type(exc).__name__})",
+                file=sys.stderr,
+            )
+
+    directory = LocalUserDirectory(store)
+    try:
+        try:
+            payload = asyncio.run(
+                build_person_export(
+                    email,
+                    directory=directory,
+                    oauth_store=oauth_store,
+                    settings=settings,
+                )
+            )
+        except UserNotFoundError:
+            print(f"User not found: {email}", file=sys.stderr)
+            return EXIT_STORE
+        except UsersError as exc:
+            print(str(exc), file=sys.stderr)
+            return EXIT_STORE
+
+        text = json.dumps(payload, indent=2, sort_keys=True) + "\n"
+        output_path = (args.output or "").strip()
+        if output_path:
+            path = Path(output_path)
+            path.write_text(text, encoding="utf-8")
+            path.chmod(0o600)
+        else:
+            sys.stdout.write(text)
+        return EXIT_OK
+    finally:
+        if oauth_store is not None:
+            asyncio.run(oauth_store.aclose())
+        store.dispose()
+
+
 def _cmd_delete(args: argparse.Namespace) -> int:
     try:
         settings = _settings_for_users_cli()
@@ -897,6 +963,18 @@ def add_users_commands(subparsers: argparse._SubParsersAction) -> None:
         "--email", required=True, help="Email of the person whose binding to clear"
     )
     unbind_cmd.set_defaults(handler=_cmd_unbind_identity)
+
+    export_cmd = users_sub.add_parser(
+        "export",
+        help="Export everything Keystone holds about a person as JSON",
+    )
+    export_cmd.add_argument("--email", required=True, help="Email of the person to export")
+    export_cmd.add_argument(
+        "--output",
+        default=None,
+        help="Write JSON to this file (mode 0600) instead of stdout",
+    )
+    export_cmd.set_defaults(handler=_cmd_export)
 
     delete_cmd = users_sub.add_parser(
         "delete",

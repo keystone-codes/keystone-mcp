@@ -34,6 +34,7 @@ from keystone_mcp.user_directory.protocol import (
     UserDirectoryAdmin,
 )
 from keystone_mcp.user_directory.util import normalize_email
+from keystone_mcp.users.export import build_person_export
 from keystone_mcp.users.roles import check_role_name, normalize_roles
 
 if TYPE_CHECKING:
@@ -47,6 +48,16 @@ if TYPE_CHECKING:
     from keystone_mcp.router.route import Route
 
 logger = logging.getLogger(__name__)
+
+
+class _ExportSettings:
+    """Minimal settings surface for :func:`keystone_mcp.users.export.build_person_export`."""
+
+    __slots__ = ("rbac_audit_subject_salt",)
+
+    def __init__(self, rbac_audit_subject_salt: str) -> None:
+        self.rbac_audit_subject_salt = rbac_audit_subject_salt
+
 
 # Returns the role names the active RBAC policy knows about, or ``None`` when
 # no policy check should be performed (RBAC off). Raised exceptions (e.g.
@@ -168,6 +179,9 @@ class UsersAdminAdapter:
 
         if name == "users_delete":
             return await self._execute_delete(route, ctx, spec)
+
+        if name == "users_export":
+            return await self._execute_export(route, ctx, spec)
 
         if name != "users_list" and not (
             "admin" in directory.capabilities and not missing_members(directory, UserDirectoryAdmin)
@@ -360,6 +374,63 @@ class UsersAdminAdapter:
             before_roles=mutation.roles_before,
             blocked_before=mutation.blocked_before,
         )
+        return result
+
+    async def _execute_export(
+        self,
+        route: Route,
+        ctx: RouteContext,
+        spec: dict[str, Any],
+    ) -> dict[str, Any]:
+        directory = self._directory
+        assert directory is not None
+        validation_error = self._validate_args(route, ctx, spec)
+        if validation_error is not None:
+            self._record_mutation_audit(
+                route, ctx, spec, validation_error, operation_override="export"
+            )
+            return validation_error
+
+        target_email = normalize_email(str(spec["email"]))
+        admin_call = await resolve_admin_call(
+            route,
+            ctx,
+            directory=directory,
+            management_source=self._management_source,
+            target_subject=target_email,
+        )
+        if isinstance(admin_call, dict):
+            self._record_mutation_audit(route, ctx, spec, admin_call, operation_override="export")
+            return admin_call
+        if self._management_source is not None and not admin_call.view.is_full_administrator(
+            admin_call.actor_roles
+        ):
+            result = self._error(
+                route,
+                ctx,
+                code="forbidden",
+                message=(
+                    "only a full administrator can export a person's data; "
+                    "you hold management roles but not full administration"
+                ),
+            )
+            self._record_mutation_audit(route, ctx, spec, result, operation_override="export")
+            return result
+
+        try:
+            export_doc = await build_person_export(
+                target_email,
+                directory=directory,
+                oauth_store=self._oauth_store,
+                settings=_ExportSettings(self._rbac_audit_subject_salt),
+            )
+        except UsersError as exc:
+            result = self._error(route, ctx, code=exc.code, message=self._error_message(exc))
+            self._record_mutation_audit(route, ctx, spec, result, operation_override="export")
+            return result
+
+        result = self._done(route, ctx, export=export_doc)
+        self._record_mutation_audit(route, ctx, spec, result, operation_override="export")
         return result
 
     async def _execute_logout(
@@ -653,7 +724,7 @@ class UsersAdminAdapter:
             if not has_full_name and not has_note:
                 return err("at least one of full_name or note is required")
             return None
-        if name in ("users_block", "users_unblock", "users_logout", "users_delete"):
+        if name in ("users_block", "users_unblock", "users_logout", "users_delete", "users_export"):
             if not spec.get("email"):
                 return err("email is required")
             return None
