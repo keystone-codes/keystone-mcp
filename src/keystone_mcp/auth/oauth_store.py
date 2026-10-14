@@ -19,6 +19,7 @@ from pydantic import ConfigDict, Field
 from redis.asyncio import Redis
 from redis.exceptions import WatchError
 
+from keystone_mcp.observability.metrics import record_oauth_token_key_migration
 from keystone_mcp.redis_client import redis_from_url
 from keystone_mcp.user_directory.util import normalize_email
 
@@ -310,12 +311,28 @@ class InMemoryOAuthStore:
         nbf = self._subject_nbf.get(sub)
         return nbf is not None and iat < nbf
 
+    def _migrate_access_storage_key(self, token: str, access: AccessToken) -> AccessToken:
+        ref = token_digest(token)
+        stored = access.model_copy(update={"token": ref})
+        self._access_tokens.pop(token, None)
+        self._access_tokens[ref] = stored
+        if access.subject:
+            norm = _subject_key(access.subject)
+            members = self._subject_index.setdefault(norm, set())
+            members.discard(f"at:{token}")
+            members.add(f"at:{ref}")
+        return stored
+
     async def get_access_token(self, token: str) -> AccessToken | None:
-        access = self._access_tokens.get(token)
+        ref = token_digest(token)
+        access = self._access_tokens.get(ref)
         if access is None:
-            return None
+            legacy = self._access_tokens.get(token)
+            if legacy is None:
+                return None
+            access = self._migrate_access_storage_key(token, legacy)
         if access.expires_at is not None and access.expires_at < time.time():
-            self._access_tokens.pop(token, None)
+            await self.delete_access_token(token)
             return None
         sub = access.subject
         if sub:
@@ -327,37 +344,54 @@ class InMemoryOAuthStore:
             claims = dict(access.claims or {})
             if "iat" not in claims and iat is not None:
                 claims["iat"] = iat
-                access = AccessToken(
-                    token=access.token,
-                    client_id=access.client_id,
-                    scopes=access.scopes,
-                    expires_at=access.expires_at,
-                    resource=access.resource,
-                    subject=access.subject,
-                    claims=claims,
-                )
-                self._access_tokens[token] = access
-            self._add_subject_member(norm, f"at:{token}")
-        return access
+                access = access.model_copy(update={"claims": claims})
+                self._access_tokens[ref] = access
+            self._add_subject_member(norm, f"at:{ref}")
+        return access.model_copy(update={"token": token})
 
     async def put_access_token(self, access: AccessToken) -> None:
-        self._access_tokens[access.token] = access
+        ref = token_digest(access.token)
+        stored = access.model_copy(update={"token": ref})
+        self._access_tokens[ref] = stored
         if access.subject:
-            self._add_subject_member(_subject_key(access.subject), f"at:{access.token}")
+            self._add_subject_member(_subject_key(access.subject), f"at:{ref}")
+
+    async def _delete_access_suffix(self, suffix: str) -> None:
+        access = self._access_tokens.pop(suffix, None)
+        if access is not None and access.subject:
+            self._remove_subject_member(_subject_key(access.subject), f"at:{suffix}")
 
     async def delete_access_token(self, token: str) -> None:
-        access = self._access_tokens.pop(token, None)
-        if access is not None and access.subject:
-            self._remove_subject_member(_subject_key(access.subject), f"at:{token}")
+        if token.startswith("km_at_"):
+            await self._delete_access_suffix(token_digest(token))
+        await self._delete_access_suffix(token)
+
+    def _migrate_refresh_storage_key(self, token: str, refresh: RefreshToken) -> RefreshToken:
+        ref = token_digest(token)
+        stored = refresh.model_copy(update={"token": ref})
+        legacy_exp = self._refresh_expires_at.pop(token, None)
+        self._refresh_tokens.pop(token, None)
+        self._refresh_tokens[ref] = stored
+        if legacy_exp is not None:
+            self._refresh_expires_at[ref] = legacy_exp
+        if refresh.subject:
+            norm = _subject_key(refresh.subject)
+            members = self._subject_index.setdefault(norm, set())
+            members.discard(f"rt:{token}")
+            members.add(f"rt:{ref}")
+        return stored
 
     async def get_refresh_token(self, token: str) -> RefreshToken | None:
-        refresh = self._refresh_tokens.get(token)
+        ref = token_digest(token)
+        refresh = self._refresh_tokens.get(ref)
         if refresh is None:
-            return None
-        expires_at = self._refresh_expires_at.get(token)
+            legacy = self._refresh_tokens.get(token)
+            if legacy is None:
+                return None
+            refresh = self._migrate_refresh_storage_key(token, legacy)
+        expires_at = self._refresh_expires_at.get(ref)
         if expires_at is not None and expires_at < time.time():
-            self._refresh_tokens.pop(token, None)
-            self._refresh_expires_at.pop(token, None)
+            await self.delete_refresh_token(token)
             return None
         if refresh.subject:
             norm = _subject_key(refresh.subject)
@@ -365,24 +399,31 @@ class InMemoryOAuthStore:
             if self._reject_if_before_nbf(norm, iat):
                 await self.delete_refresh_token(token)
                 return None
-            self._add_subject_member(norm, f"rt:{token}")
-        return refresh
+            self._add_subject_member(norm, f"rt:{ref}")
+        return refresh.model_copy(update={"token": token})
 
     async def put_refresh_token(self, refresh: RefreshToken) -> None:
-        self._refresh_tokens[refresh.token] = refresh
+        ref = token_digest(refresh.token)
+        stored = refresh.model_copy(update={"token": ref})
+        self._refresh_tokens[ref] = stored
         if refresh.expires_at is not None:
             ttl = max(refresh.expires_at - time.time(), 1)
         else:
             ttl = self._refresh_ttl_seconds
-        self._refresh_expires_at[refresh.token] = time.time() + ttl
+        self._refresh_expires_at[ref] = time.time() + ttl
         if refresh.subject:
-            self._add_subject_member(_subject_key(refresh.subject), f"rt:{refresh.token}")
+            self._add_subject_member(_subject_key(refresh.subject), f"rt:{ref}")
+
+    async def _delete_refresh_suffix(self, suffix: str) -> None:
+        refresh = self._refresh_tokens.pop(suffix, None)
+        self._refresh_expires_at.pop(suffix, None)
+        if refresh is not None and refresh.subject:
+            self._remove_subject_member(_subject_key(refresh.subject), f"rt:{suffix}")
 
     async def delete_refresh_token(self, token: str) -> None:
-        refresh = self._refresh_tokens.pop(token, None)
-        self._refresh_expires_at.pop(token, None)
-        if refresh is not None and refresh.subject:
-            self._remove_subject_member(_subject_key(refresh.subject), f"rt:{token}")
+        if token.startswith("km_rt_"):
+            await self._delete_refresh_suffix(token_digest(token))
+        await self._delete_refresh_suffix(token)
 
     async def revoke_subject(self, subject: str, *, now: int) -> RevokedTokens:
         sub = _subject_key(subject)
@@ -423,7 +464,7 @@ class InMemoryOAuthStore:
     async def revoke_refresh_grant(self, subject: str, client_id: str, refresh_token: str) -> None:
         async with self._commit_lock:
             await self.revoke_client_tokens(subject, client_id)
-            self._refresh_revoked.add(refresh_token)
+            self._refresh_revoked.add(token_digest(refresh_token))
             await self.delete_refresh_token(refresh_token)
 
     async def subject_not_before(self, subject: str) -> int | None:
@@ -479,13 +520,18 @@ class InMemoryOAuthStore:
                 if replace_refresh_token is not None:
                     await self.delete_refresh_token(replace_refresh_token)
                 raise CredentialRevokedError()
-            if replace_refresh_token is not None and replace_refresh_token in self._refresh_revoked:
-                raise CredentialRevokedError()
-            if (
-                replace_refresh_token is not None
-                and replace_refresh_token not in self._refresh_tokens
-            ):
-                raise RefreshTokenAlreadyRotatedError()
+            if replace_refresh_token is not None:
+                replace_ref = token_digest(replace_refresh_token)
+                if (
+                    replace_ref in self._refresh_revoked
+                    or replace_refresh_token in self._refresh_revoked
+                ):
+                    raise CredentialRevokedError()
+                if (
+                    replace_ref not in self._refresh_tokens
+                    and replace_refresh_token not in self._refresh_tokens
+                ):
+                    raise RefreshTokenAlreadyRotatedError()
             await self.put_access_token(access)
             await self.put_refresh_token(refresh)
             if replace_refresh_token is not None:
@@ -556,7 +602,7 @@ class InMemoryOAuthStore:
                 else:
                     revoked_ttl = max(int(refresh.expires_at - time.time()), 1)
                 self._refresh_revoked.add(tok)
-                await self.delete_refresh_token(tok)
+                await self._delete_refresh_suffix(tok)
                 refresh_tokens.append(tok)
                 _ = revoked_ttl
         return RevokedTokens(access=access_count, refresh_tokens=tuple(refresh_tokens))
@@ -566,7 +612,7 @@ class InMemoryOAuthStore:
 
 
 class RedisOAuthStore:
-    """OAuth sessions in shared Redis (key prefix isolates from backend keys)."""
+    """OAuth sessions in Redis (key prefix isolates from other applications)."""
 
     def __init__(
         self,
@@ -697,6 +743,142 @@ class RedisOAuthStore:
         ttl = int(access.expires_at - time.time())
         return ttl if ttl > 0 else 1
 
+    def _token_key(self, kind: str, ref: str) -> str:
+        if kind == "access":
+            return self._access_key(ref)
+        if kind == "refresh":
+            return self._refresh_key(ref)
+        raise ValueError(f"unknown token kind {kind!r}")
+
+    def _index_member_prefix(self, kind: str) -> str:
+        return "at:" if kind == "access" else "rt:"
+
+    async def _load_with_migration(self, kind: str, bearer: str) -> str | None:
+        digest = token_digest(bearer)
+        hash_key = self._token_key(kind, digest)
+        raw = await self._redis.get(hash_key)
+        if raw is not None:
+            return raw
+        plain_key = self._token_key(kind, bearer)
+        for _attempt in range(_COMMIT_MAX_WATCH_RETRIES):
+            raw = await self._redis.get(plain_key)
+            if raw is None:
+                return await self._redis.get(hash_key)
+            pttl = await self._redis.pttl(plain_key)
+            if pttl == 0:
+                return None
+            if kind == "access":
+                model = AccessToken.model_validate_json(raw)
+                stored = model.model_copy(update={"token": digest})
+                payload = stored.model_dump_json()
+                subject = model.subject
+            else:
+                model = KeystoneRefreshToken.model_validate_json(raw)
+                stored = model.model_copy(update={"token": digest})
+                payload = stored.model_dump_json()
+                subject = model.subject
+            idx_key = self._subject_index_key(_subject_key(subject)) if subject else None
+            member_prefix = self._index_member_prefix(kind)
+            revoked_plain = self._refresh_revoked_key(bearer) if kind == "refresh" else None
+            revoked_hash = self._refresh_revoked_key(digest) if kind == "refresh" else None
+            meta_plain = (
+                self._refresh_meta_redis_key(bearer)
+                if kind == "refresh" and self.writes_refresh_meta
+                else None
+            )
+            meta_hash = (
+                self._refresh_meta_redis_key(digest)
+                if kind == "refresh" and self.writes_refresh_meta
+                else None
+            )
+            revoked_pttl: int | None = None
+            if revoked_plain is not None and await self._redis.exists(revoked_plain):
+                revoked_pttl = await self._redis.pttl(revoked_plain)
+            meta_raw: str | None = None
+            meta_pttl: int | None = None
+            if meta_plain is not None:
+                meta_raw = await self._redis.get(meta_plain)
+                if meta_raw is not None:
+                    meta_pttl = await self._redis.pttl(meta_plain)
+            watch_keys = [plain_key]
+            if revoked_plain is not None and revoked_pttl is not None and revoked_pttl != 0:
+                watch_keys.append(revoked_plain)
+            if meta_plain is not None and meta_raw is not None and meta_pttl != 0:
+                watch_keys.append(meta_plain)
+            try:
+                async with self._redis.pipeline() as pipe:
+                    await pipe.watch(*watch_keys)
+                    if await self._redis.get(plain_key) is None:
+                        await pipe.unwatch()
+                        return await self._redis.get(hash_key)
+                    pipe.multi()
+                    if pttl > 0:
+                        pipe.set(hash_key, payload, px=pttl)
+                    else:
+                        pipe.set(hash_key, payload)
+                    pipe.delete(plain_key)
+                    if idx_key is not None:
+                        pipe.srem(idx_key, f"{member_prefix}{bearer}")
+                        pipe.sadd(idx_key, f"{member_prefix}{digest}")
+                        pipe.expire(idx_key, self._client_ttl_seconds)
+                    if (
+                        kind == "refresh"
+                        and revoked_plain is not None
+                        and revoked_hash is not None
+                        and revoked_pttl is not None
+                        and revoked_pttl != 0
+                    ):
+                        if revoked_pttl > 0:
+                            pipe.set(revoked_hash, "1", px=revoked_pttl)
+                        else:
+                            pipe.set(revoked_hash, "1")
+                        pipe.delete(revoked_plain)
+                    if (
+                        kind == "refresh"
+                        and meta_plain is not None
+                        and meta_hash is not None
+                        and meta_raw is not None
+                        and meta_pttl != 0
+                    ):
+                        if meta_pttl is not None and meta_pttl > 0:
+                            pipe.set(meta_hash, meta_raw, px=meta_pttl)
+                        else:
+                            pipe.set(meta_hash, meta_raw)
+                        pipe.delete(meta_plain)
+                    await pipe.execute()
+                    record_oauth_token_key_migration(kind=kind, direction="to_hashed")
+                    return payload
+            except WatchError:
+                cached = await self._redis.get(hash_key)
+                if cached is not None:
+                    return cached
+                continue
+        return await self._redis.get(hash_key)
+
+    async def _delete_access_suffix(self, suffix: str) -> None:
+        key = self._access_key(suffix)
+        raw = await self._redis.get(key)
+        if raw is None:
+            return
+        access = AccessToken.model_validate_json(raw)
+        async with self._redis.pipeline(transaction=True) as pipe:
+            pipe.delete(key)
+            if access.subject:
+                pipe.srem(self._subject_index_key(_subject_key(access.subject)), f"at:{suffix}")
+            await pipe.execute()
+
+    async def _delete_refresh_suffix(self, suffix: str) -> None:
+        key = self._refresh_key(suffix)
+        raw = await self._redis.get(key)
+        if raw is None:
+            return
+        refresh = RefreshToken.model_validate_json(raw)
+        async with self._redis.pipeline(transaction=True) as pipe:
+            pipe.delete(key)
+            if refresh.subject:
+                pipe.srem(self._subject_index_key(_subject_key(refresh.subject)), f"rt:{suffix}")
+            await pipe.execute()
+
     async def get_client(self, client_id: str) -> OAuthClientInformationFull | None:
         key = self._client_key(client_id)
         async with self._redis.pipeline(transaction=False) as pipe:
@@ -768,11 +950,11 @@ class RedisOAuthStore:
         return None
 
     async def get_access_token(self, token: str) -> AccessToken | None:
-        key = self._access_key(token)
-        raw = await self._redis.get(key)
+        raw = await self._load_with_migration("access", token)
         if raw is None:
             return None
         access = AccessToken.model_validate_json(raw)
+        ref = token_digest(token)
         if access.expires_at is not None and access.expires_at < time.time():
             await self.delete_access_token(token)
             return None
@@ -785,27 +967,21 @@ class RedisOAuthStore:
             claims = access.claims or {}
             if "iat" not in claims and iat is not None:
                 claims = {**claims, "iat": iat}
-                access = AccessToken(
-                    token=access.token,
-                    client_id=access.client_id,
-                    scopes=access.scopes,
-                    expires_at=access.expires_at,
-                    resource=access.resource,
-                    subject=access.subject,
-                    claims=claims,
-                )
-                await self._redis.set(key, access.model_dump_json(), keepttl=True)
+                access = access.model_copy(update={"claims": claims})
+                await self._redis.set(self._access_key(ref), access.model_dump_json(), keepttl=True)
             idx = self._subject_index_key(sub)
             async with self._redis.pipeline(transaction=True) as pipe:
-                pipe.sadd(idx, f"at:{token}")
+                pipe.sadd(idx, f"at:{ref}")
                 pipe.expire(idx, self._client_ttl_seconds)
                 await pipe.execute()
-        return access
+        return access.model_copy(update={"token": token})
 
     async def put_access_token(self, access: AccessToken) -> None:
+        ref = token_digest(access.token)
+        stored = access.model_copy(update={"token": ref})
         ttl = self._access_ttl(access)
-        payload = access.model_dump_json()
-        key = self._access_key(access.token)
+        payload = stored.model_dump_json()
+        key = self._access_key(ref)
         sub = access.subject
         norm = _subject_key(sub) if sub else None
         async with self._redis.pipeline(transaction=True) as pipe:
@@ -815,35 +991,26 @@ class RedisOAuthStore:
                 pipe.set(key, payload, ex=ttl)
             if norm:
                 idx = self._subject_index_key(norm)
-                pipe.sadd(idx, f"at:{access.token}")
+                pipe.sadd(idx, f"at:{ref}")
                 pipe.expire(idx, self._client_ttl_seconds)
             await pipe.execute()
         if norm:
             await self._prune_subject_index(norm)
 
     async def delete_access_token(self, token: str) -> None:
-        key = self._access_key(token)
-        raw = await self._redis.get(key)
-        if raw is None:
-            return
-        access = AccessToken.model_validate_json(raw)
-        async with self._redis.pipeline(transaction=True) as pipe:
-            pipe.delete(key)
-            if access.subject:
-                pipe.srem(self._subject_index_key(_subject_key(access.subject)), f"at:{token}")
-            await pipe.execute()
+        if token.startswith("km_at_"):
+            await self._delete_access_suffix(token_digest(token))
+        await self._delete_access_suffix(token)
 
     async def get_refresh_token(self, token: str) -> RefreshToken | None:
-        key = self._refresh_key(token)
-        async with self._redis.pipeline(transaction=False) as pipe:
-            pipe.get(key)
-            pipe.ttl(key)
-            raw, ttl = await pipe.execute()
+        raw = await self._load_with_migration("refresh", token)
         if raw is None:
             return None
+        ref = token_digest(token)
+        key = self._refresh_key(ref)
+        ttl = await self._redis.ttl(key)
         refresh = KeystoneRefreshToken.model_validate_json(raw)
         if ttl == -1:
-            # Legacy record written without a TTL.
             if refresh.expires_at is not None:
                 if refresh.expires_at < time.time():
                     await self._redis.delete(key)
@@ -859,42 +1026,37 @@ class RedisOAuthStore:
                 return None
             idx = self._subject_index_key(sub)
             async with self._redis.pipeline(transaction=True) as pipe:
-                pipe.sadd(idx, f"rt:{token}")
+                pipe.sadd(idx, f"rt:{ref}")
                 pipe.expire(idx, self._client_ttl_seconds)
                 await pipe.execute()
-        return refresh
+        return refresh.model_copy(update={"token": token})
 
     async def put_refresh_token(self, refresh: RefreshToken) -> None:
+        ref = token_digest(refresh.token)
+        stored = refresh.model_copy(update={"token": ref})
         if refresh.expires_at is None:
             ttl = self._refresh_ttl_seconds
         else:
             ttl = int(refresh.expires_at - time.time())
             ttl = ttl if ttl > 0 else 1
-        key = self._refresh_key(refresh.token)
-        payload = refresh.model_dump_json()
+        key = self._refresh_key(ref)
+        payload = stored.model_dump_json()
         sub = refresh.subject
         norm = _subject_key(sub) if sub else None
         async with self._redis.pipeline(transaction=True) as pipe:
             pipe.set(key, payload, ex=ttl)
             if norm:
                 idx = self._subject_index_key(norm)
-                pipe.sadd(idx, f"rt:{refresh.token}")
+                pipe.sadd(idx, f"rt:{ref}")
                 pipe.expire(idx, self._client_ttl_seconds)
             await pipe.execute()
         if norm:
             await self._prune_subject_index(norm)
 
     async def delete_refresh_token(self, token: str) -> None:
-        key = self._refresh_key(token)
-        raw = await self._redis.get(key)
-        if raw is None:
-            return
-        refresh = RefreshToken.model_validate_json(raw)
-        async with self._redis.pipeline(transaction=True) as pipe:
-            pipe.delete(key)
-            if refresh.subject:
-                pipe.srem(self._subject_index_key(_subject_key(refresh.subject)), f"rt:{token}")
-            await pipe.execute()
+        if token.startswith("km_rt_"):
+            await self._delete_refresh_suffix(token_digest(token))
+        await self._delete_refresh_suffix(token)
 
     async def revoke_subject(self, subject: str, *, now: int) -> RevokedTokens:
         sub = _subject_key(subject)
@@ -947,13 +1109,20 @@ class RedisOAuthStore:
     async def revoke_refresh_grant(self, subject: str, client_id: str, refresh_token: str) -> None:
         sub = _subject_key(subject)
         idx_key = self._subject_index_key(sub)
-        rt_key = self._refresh_key(refresh_token)
-        revoked_key = self._refresh_revoked_key(refresh_token)
+        ref = token_digest(refresh_token)
+        rt_key = self._refresh_key(ref)
+        rt_legacy = self._refresh_key(refresh_token)
+        revoked_key = self._refresh_revoked_key(ref)
+        revoked_legacy = self._refresh_revoked_key(refresh_token)
 
         raw = await self._redis.get(rt_key)
         if raw is None:
+            raw = await self._redis.get(rt_legacy)
+        if raw is None:
             await self.revoke_client_tokens(subject, client_id)
-            if not await self._redis.exists(revoked_key):
+            if not await self._redis.exists(revoked_key) and not await self._redis.exists(
+                revoked_legacy
+            ):
                 await self._redis.set(revoked_key, "1", ex=self._refresh_ttl_seconds)
             return
 
@@ -983,13 +1152,15 @@ class RedisOAuthStore:
         for _attempt in range(_COMMIT_MAX_WATCH_RETRIES):
             try:
                 async with self._redis.pipeline() as pipe:
-                    await pipe.watch(rt_key)
+                    await pipe.watch(rt_key, rt_legacy)
                     pipe.multi()
                     for tok, member in to_delete:
                         pipe.delete(self._access_key(tok))
                         pipe.srem(idx_key, member)
                     pipe.set(revoked_key, "1", ex=revoked_ttl)
                     pipe.delete(rt_key)
+                    pipe.delete(rt_legacy)
+                    pipe.srem(idx_key, f"rt:{ref}")
                     pipe.srem(idx_key, f"rt:{refresh_token}")
                     await pipe.execute()
                     return
@@ -1002,9 +1173,11 @@ class RedisOAuthStore:
         return self._refresh_iat(refresh)
 
     def _pipe_put_access(self, pipe: object, access: AccessToken) -> None:
+        ref = token_digest(access.token)
+        stored = access.model_copy(update={"token": ref})
         ttl = self._access_ttl(access)
-        key = self._access_key(access.token)
-        payload = access.model_dump_json()
+        key = self._access_key(ref)
+        payload = stored.model_dump_json()
         if ttl is None:
             pipe.set(key, payload)
         else:
@@ -1012,32 +1185,38 @@ class RedisOAuthStore:
         if access.subject:
             sub = _subject_key(access.subject)
             idx = self._subject_index_key(sub)
-            pipe.sadd(idx, f"at:{access.token}")
+            pipe.sadd(idx, f"at:{ref}")
             pipe.expire(idx, self._client_ttl_seconds)
 
     def _pipe_put_refresh(self, pipe: object, refresh: RefreshToken) -> None:
+        ref = token_digest(refresh.token)
+        stored = refresh.model_copy(update={"token": ref})
         if refresh.expires_at is None:
             ttl = self._refresh_ttl_seconds
         else:
             ttl = int(refresh.expires_at - time.time())
             ttl = ttl if ttl > 0 else 1
-        key = self._refresh_key(refresh.token)
-        pipe.set(key, refresh.model_dump_json(), ex=ttl)
+        key = self._refresh_key(ref)
+        pipe.set(key, stored.model_dump_json(), ex=ttl)
         if refresh.subject:
             sub = _subject_key(refresh.subject)
             idx = self._subject_index_key(sub)
-            pipe.sadd(idx, f"rt:{refresh.token}")
+            pipe.sadd(idx, f"rt:{ref}")
             pipe.expire(idx, self._client_ttl_seconds)
 
     def _pipe_delete_refresh(self, pipe: object, token: str, subject: str | None) -> None:
+        ref = token_digest(token)
+        pipe.delete(self._refresh_key(ref))
         pipe.delete(self._refresh_key(token))
         if subject:
-            pipe.srem(self._subject_index_key(_subject_key(subject)), f"rt:{token}")
+            idx = self._subject_index_key(_subject_key(subject))
+            pipe.srem(idx, f"rt:{ref}")
+            pipe.srem(idx, f"rt:{token}")
 
     def _pipe_put_refresh_meta(
         self, pipe: object, refresh_token: str, payload: str, ttl: int
     ) -> None:
-        key = self._refresh_meta_redis_key(refresh_token)
+        key = self._refresh_meta_redis_key(token_digest(refresh_token))
         pipe.set(key, payload, ex=ttl)
 
     async def commit_token_pair(
@@ -1053,10 +1232,13 @@ class RedisOAuthStore:
     ) -> None:
         sub = _subject_key(subject)
         nbf_key = self._subject_nbf_key(sub)
-        revoked_key = (
+        replace_ref = token_digest(replace_refresh_token) if replace_refresh_token else None
+        revoked_key = self._refresh_revoked_key(replace_ref) if replace_ref else None
+        revoked_legacy = (
             self._refresh_revoked_key(replace_refresh_token) if replace_refresh_token else None
         )
-        rt_key = self._refresh_key(replace_refresh_token) if replace_refresh_token else None
+        rt_key = self._refresh_key(replace_ref) if replace_ref else None
+        rt_legacy = self._refresh_key(replace_refresh_token) if replace_refresh_token else None
         old_refresh_subject = subject if replace_refresh_token else None
         meta_ttl: int | None = None
         if refresh_meta is not None and self.writes_refresh_meta:
@@ -1071,10 +1253,16 @@ class RedisOAuthStore:
                 watch_keys = [nbf_key]
                 if revoked_key is not None:
                     watch_keys.append(revoked_key)
+                if revoked_legacy is not None:
+                    watch_keys.append(revoked_legacy)
                 if rt_key is not None:
                     watch_keys.append(rt_key)
+                if rt_legacy is not None:
+                    watch_keys.append(rt_legacy)
                 await pipe.watch(*watch_keys)
-                if rt_key is not None and not await self._redis.exists(rt_key):
+                if replace_refresh_token is not None and not (
+                    await self._redis.exists(rt_key) or await self._redis.exists(rt_legacy)
+                ):
                     await pipe.unwatch()
                     raise RefreshTokenAlreadyRotatedError()
                 nbf_raw = await self._redis.get(nbf_key)
@@ -1084,7 +1272,10 @@ class RedisOAuthStore:
                     if replace_refresh_token is not None:
                         await self.delete_refresh_token(replace_refresh_token)
                     raise CredentialRevokedError()
-                if revoked_key is not None and await self._redis.exists(revoked_key):
+                if revoked_key is not None and (
+                    await self._redis.exists(revoked_key)
+                    or (revoked_legacy is not None and await self._redis.exists(revoked_legacy))
+                ):
                     await pipe.unwatch()
                     raise CredentialRevokedError()
                 pipe.multi()
@@ -1121,7 +1312,7 @@ class RedisOAuthStore:
                 except WatchError:
                     continue
         if replace_refresh_token is not None:
-            if rt_key is not None and not await self._redis.exists(rt_key):
+            if not (await self._redis.exists(rt_key) or await self._redis.exists(rt_legacy)):
                 raise RefreshTokenAlreadyRotatedError()
             await self.delete_refresh_token(replace_refresh_token)
         raise CredentialRevokedError()

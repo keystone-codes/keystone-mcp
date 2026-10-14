@@ -35,6 +35,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 - Registry fields `publish_resources`, `resource_include_prefixes`, `resource_exclude_prefixes` (optional; by default every upstream resource is published, as before).
 - Stdio upstreams receive the signed identity assertion in `params._meta["keystone-mcp/identity"]` on `prompts/get` and `resources/read` too.
 - Metric `keystone_mcp_upstream_input_rounds_exceeded_total{namespace}`.
+- Metric `keystone_mcp_oauth_token_keys_migrated_total{kind,direction}` when legacy OAuth token keys are moved to the hashed layout on first use.
 - CI: the contract freeze gate now compares the public surface generated from the code — environment variables (found by AST), policy keys, CLI commands, plugin protocol signatures, built-in tool arguments, metrics and their labels — with a baseline generated from the `v0.5.0` tag.
 - Startup warnings W8–W19 (`docs/environment.md#startup-warnings`).
 - Plugin API: base classes `UserDirectoryBase`, `UserDirectoryAdminBase`, `ServiceAccountDirectoryBase`, `ApiKeyDirectoryBase`, `LoginProviderBase`, `RedirectLoginProviderBase`, `FormLoginProviderBase`; `keystone_mcp.user_directory.normalize_email`; `FakeTamper.unavailable`; marker `keystone_contract_lenient(reason=…)`; `docs/compatibility.md#plugin-api` lists the frozen plugin surface, including `OidcLoginProvider` and `OidcProviderConfig` as the base for OIDC plugins.
@@ -115,6 +116,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 - In `production`, an API-key sign-in provider is refused next to any interactive sign-in provider, including one from a plugin.
 - An upstream resource whose RBAC name equals a published tool or prompt name is no longer published, so one policy rule cannot open both by accident.
 - In `enforce` mode a resource without an RBAC name is no longer listed.
+- OAuth access and refresh tokens are stored in Redis under their SHA-256 hash; production warns when `KEYSTONE_MCP_REDIS_URL` has no password on a non-loopback host (W22).
 
 ### Migration
 
@@ -127,6 +129,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 - Upstream resources and templates whose URI has no `scheme://` part are no longer published (a startup warning names each one). Give them a scheme, e.g. `file:///…` or `myapp://…`.
 - If an upstream names a resource like one of its tools or prompts, that resource disappears (startup warning, metric `reason="rbac_name_collision"`); ask the upstream to rename it.
 - In `enforce` mode, a resource keystone-mcp has no RBAC name for no longer appears in `resources/list` or `resources/templates/list` (reading it was already refused); a client that relied on seeing it in the list must not.
+- Upgrading to 0.6.0 keeps OAuth sessions: legacy keys are moved on first use (`keystone_mcp_oauth_token_keys_migrated_total`). Rolling back to 0.5.x after upgrading signs everyone out. Give Keystone-MCP its own Redis or an ACL user limited to its key prefixes.
 - To limit which resources an upstream publishes, use the new `resource_include_prefixes`/`resource_exclude_prefixes` or `publish_resources: false`; tool filters still do not apply to resources.
 - A read of a URI that matches several templates of one upstream now needs all of their names allowed; add the missing names (or a glob such as `ns_*`) to roles that read such URIs.
 - A tool whose schema exceeds 64 KiB, has a `pattern` longer than 512 characters or nests deeper than 64 levels is no longer published (warning and metric); raise `KEYSTONE_MCP_UPSTREAM_MAX_SCHEMA_BYTES` if needed.

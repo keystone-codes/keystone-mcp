@@ -253,11 +253,24 @@ row per rule here:
 | P5 | `production` | With the built-in users backend, `KEYSTONE_MCP_USERS_DB_URL` must be PostgreSQL; an empty or SQLite URL is refused. |
 | W5 | `local` | `KEYSTONE_MCP_HOST` bound to every interface (`0.0.0.0`/`::`) while `KEYSTONE_MCP_DEV_TOKENS` is set only warns — anyone who can reach the port signs in as any directory member. |
 | W20 | `production` | `KEYSTONE_MCP_USERS_SERVICE_URL` uses `http` on a non-loopback host while `KEYSTONE_MCP_USERS_BACKEND=http` — the directory token and role answers travel in cleartext unless `KEYSTONE_MCP_USERS_SERVICE_ALLOW_INSECURE_HTTP=true`. |
+| W22 | `production` | `KEYSTONE_MCP_REDIS_URL` points at a non-loopback host without a password in the URL — anyone who can reach that Redis can read and forge sessions. |
 
 The built-in users directory accepts a SQLite file under `local` only; under
 `production` it needs PostgreSQL and startup refuses a SQLite URL (rule P5 in
 [environment.md](environment.md#deployment-profile)). An external users
 service (`KEYSTONE_MCP_USERS_BACKEND=http`) is not affected by this rule.
+
+## Redis is the root of trust
+
+Keystone-MCP stores OAuth access and refresh tokens in Redis under their
+SHA-256 hash, not the bearer string. A Redis snapshot or `SCAN` therefore
+does not reveal usable tokens. Anyone who can **write** to the OAuth or
+login-pending key prefixes can still create a session — treat Redis (or a
+dedicated ACL user limited to `KEYSTONE_MCP_REDIS_KEY_PREFIX`,
+`KEYSTONE_MCP_LOGIN_PENDING_KEY_PREFIX`, and the users/policy revision keys)
+as confidential: password, TLS (`rediss://`), and no access from other
+services on the host. Example ACL:
+`ACL SETUSER keystone on >secret ~km:* +@all -@dangerous`.
 
 ## Sessions, codes and tokens
 

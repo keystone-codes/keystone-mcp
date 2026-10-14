@@ -325,7 +325,9 @@ Keystone-MCP writes only under `KEYSTONE_MCP_REDIS_KEY_PREFIX` (default
 `KEYSTONE_MCP_POLICY_REDIS_REVISION_KEY` (default `km:rbac:policy:revision`).
 The layout under those prefixes is internal, but minor
 version upgrades are expected to keep existing OAuth sessions and in-flight
-login transactions valid.
+login transactions valid. From 0.6.0, OAuth tokens are stored under their
+SHA-256; upgrading moves legacy keys on first use. Rolling back to 0.5.x after
+0.6.0 signs everyone out.
 
 ## Extension points
 
@@ -400,6 +402,7 @@ Frozen since 0.5.0. Metric names and label keys (not log message text):
 | `keystone_mcp_oauth_client_registrations_total` | `outcome` |
 | `keystone_mcp_oauth_client_evictions_total` | (counter, no labels) |
 | `keystone_mcp_oauth_token_exchange_total` | `grant_type`, `outcome` |
+| `keystone_mcp_oauth_token_keys_migrated_total` | `kind`, `direction` |
 | `keystone_mcp_oauth_clients` | (gauge, no labels) |
 | `keystone_mcp_api_key_verifications_total` | `outcome` |
 | `keystone_mcp_api_key_cache_entries` | `cache` |
