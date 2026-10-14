@@ -622,7 +622,7 @@ The signal handler is installed when the mode is `observe` or `enforce`.
 | `KEYSTONE_MCP_USERS_DELETE_MODE` | `anonymize` | Built-in directory only: `anonymize` (replace the row with `deleted:<pseudonym>`) or `delete` (remove the row). Used by `users_delete` and `keystone-mcp users delete`. |
 | `KEYSTONE_MCP_POLICY_REDIS_REVISION_KEY` | `km:rbac:policy:revision` | Shared Redis hash that publishes RBAC policy revisions after `policy_*` writes so other replicas reload their local file. |
 | `KEYSTONE_MCP_USERS_CIRCUIT_FAILURE_THRESHOLD` | `5` | Consecutive failures before the directory circuit breaker opens. |
-| `KEYSTONE_MCP_USERS_CIRCUIT_RECOVERY_SECONDS` | `30` | Time before the circuit breaker retries after opening. |
+| `KEYSTONE_MCP_USERS_CIRCUIT_RECOVERY_SECONDS` | `30` | Pause after the circuit opens; then one probe request is allowed. A failed probe starts a new pause. |
 
 Who is created first, and how later people are added, is [users.md](users.md).
 

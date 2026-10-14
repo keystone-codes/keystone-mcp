@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 
 import httpx
@@ -445,3 +446,79 @@ async def test_factory_closes_owned_redis_client() -> None:
     )
     await reader.aclose()
     assert reader._client.closed is True
+
+
+@pytest.mark.asyncio
+async def test_resolver_sends_one_request_after_recovery() -> None:
+    resolver, backend, _ = build_in_memory_user_directory_resolver(
+        failure_threshold=1,
+        recovery_seconds=0.05,
+    )
+    backend.seed("user@example.com", roles=("operator",))
+    backend.unavailable = True
+    with pytest.raises(UserDirectoryUnavailableError):
+        await resolver.resolve("user@example.com")
+
+    await asyncio.sleep(0.06)
+    backend.unavailable = False
+
+    release = asyncio.Event()
+    resolve_calls = 0
+    original_resolve = backend.resolve_user
+
+    async def slow_resolve(subject: str) -> UserResolveResult:
+        nonlocal resolve_calls
+        resolve_calls += 1
+        await release.wait()
+        return await original_resolve(subject)
+
+    backend.resolve_user = slow_resolve  # type: ignore[method-assign]
+
+    tasks = [asyncio.create_task(resolver.resolve("user@example.com")) for _ in range(20)]
+    await asyncio.sleep(0.05)
+    assert resolve_calls == 1
+
+    finished = [task for task in tasks if task.done()]
+    assert len(finished) == 19
+    for task in finished:
+        with pytest.raises(UserDirectoryUnavailableError) as exc_info:
+            task.result()
+        assert exc_info.value.code == "circuit_open"
+
+    release.set()
+    pending = [task for task in tasks if not task.done()]
+    await asyncio.gather(*pending)
+
+
+@pytest.mark.asyncio
+async def test_cancelled_probe_counts_as_failure() -> None:
+    resolver, backend, _ = build_in_memory_user_directory_resolver(
+        failure_threshold=1,
+        recovery_seconds=0.05,
+    )
+    backend.seed("user@example.com", roles=("operator",))
+    backend.unavailable = True
+    with pytest.raises(UserDirectoryUnavailableError):
+        await resolver.resolve("user@example.com")
+
+    await asyncio.sleep(0.06)
+    backend.unavailable = False
+
+    hang_forever = asyncio.Event()
+
+    async def hang(subject: str) -> UserResolveResult:
+        await hang_forever.wait()
+        return UserResolveResult(exists=False, roles=(), is_blocked=False)
+
+    backend.resolve_user = hang  # type: ignore[method-assign]
+
+    task = asyncio.create_task(resolver.resolve("user@example.com"))
+    await asyncio.sleep(0.02)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert resolver._circuit.is_open() is False  # noqa: SLF001
+    assert resolver._circuit.allow_request() is False
+    await asyncio.sleep(0.06)
+    assert resolver._circuit.allow_request() is True

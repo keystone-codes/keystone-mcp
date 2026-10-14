@@ -15,6 +15,8 @@ fixture.
 
 from __future__ import annotations
 
+import asyncio
+
 from keystone_mcp.catalog.builtin import register_catalog
 from keystone_mcp.config import Settings
 from keystone_mcp.identity import VerifiedIdentity
@@ -207,3 +209,23 @@ async def test_list_defaults_to_non_blocked(users_engine) -> None:  # noqa: ANN0
     assert blocked_listing["state"] == "done"
     blocked_emails = {u["email"] for u in blocked_listing["users"]}
     assert blocked_emails == {"to-block@example.com"}
+
+
+async def test_parallel_users_add_same_email_conflict(users_engine) -> None:  # noqa: ANN001, F811
+    engine, registry, _store, _revision = _build_stack(users_engine)
+    add_route = registry.get("users_add")
+    assert add_route is not None
+
+    args = {
+        "email": "parallel-dup@example.com",
+        "full_name": "Parallel Dup",
+        "roles": [],
+    }
+    first, second = await asyncio.gather(
+        engine.execute(add_route, args, identity=ADMIN),
+        engine.execute(add_route, args, identity=ADMIN),
+    )
+    states = sorted(result["state"] for result in (first, second))
+    codes = sorted(result.get("code") for result in (first, second) if result["state"] == "error")
+    assert states == ["done", "error"]
+    assert codes == ["conflict"]
