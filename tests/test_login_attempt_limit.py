@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock
+
 import httpx
 import pytest
+import redis
 from asgi_lifespan import LifespanManager
+from redis.exceptions import RedisError
 
 from conftest import (
     BASE_URL,
@@ -14,10 +18,12 @@ from conftest import (
     make_pkce,
     register_client,
 )
-from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
+from keystone_mcp.auth.oauth_store import InMemoryOAuthStore, build_shared_auth_stores
+from keystone_mcp.auth.throttle import RedisLoginFailureLimiter
 from keystone_mcp.config import ConfigError, Settings, load_settings, validate_settings
 from keystone_mcp.server import build_server
 from support.login import dev_token_login
+from support.test_env import redis_key_prefix, require_redis_url
 
 
 def _build_app(**settings_overrides):
@@ -140,6 +146,7 @@ async def test_login_throttle_disabled_when_limits_are_zero():
 def test_negative_login_throttle_settings_are_refused():
     settings = Settings(
         base_url=BASE_URL,
+        redis_url=require_redis_url(),
         login_throttle_ip_max=-1,
         login_throttle_email_max=10,
         login_throttle_window_seconds=300,
@@ -330,7 +337,180 @@ async def test_register_ipv6_counted_per_64():
 def test_negative_oauth_throttle_setting_is_refused():
     settings = Settings(
         base_url=BASE_URL,
+        redis_url=require_redis_url(),
         oauth_throttle_ip_max=-1,
     )
     with pytest.raises(ConfigError, match="OAUTH_THROTTLE_IP_MAX"):
         validate_settings(settings)
+
+
+async def _failed_login(
+    client: httpx.AsyncClient,
+    *,
+    email: str,
+    token: str = "bad",
+) -> httpx.Response:
+    r = await client.post(
+        "/register",
+        json={"redirect_uris": [REDIRECT_URI], "token_endpoint_auth_method": "none"},
+    )
+    client_id = r.json()["client_id"]
+    _verifier, challenge = make_pkce()
+    txn = await authorize_to_login(client, client_id, challenge, BASE_URL)
+    return await client.post(
+        "/login",
+        data={"txn": txn, "api_token": token, "email": email},
+    )
+
+
+@pytest.mark.asyncio
+async def test_failures_from_other_network_do_not_lock_person():
+    app = _build_app(
+        login_throttle_ip_max=0,
+        login_throttle_email_max=10,
+        login_throttle_window_seconds=300,
+    )
+    email = "alice@example.com"
+    async with LifespanManager(app):
+        transport_a = httpx.ASGITransport(app=app, client=("198.51.100.7", 12345))
+        transport_b = httpx.ASGITransport(app=app, client=("203.0.113.9", 12345))
+        async with httpx.AsyncClient(transport=transport_a, base_url=BASE_URL) as client_a:
+            for _ in range(10):
+                assert (await _failed_login(client_a, email=email)).status_code == 401
+            blocked = await _failed_login(client_a, email=email)
+            assert blocked.status_code == 429
+        async with httpx.AsyncClient(transport=transport_b, base_url=BASE_URL) as client_b:
+            ok = await _failed_login(client_b, email=email, token=VALID_TOKEN)
+            assert ok.status_code == 302
+
+
+@pytest.mark.asyncio
+async def test_failures_ipv6_same_64_share_budget():
+    app = _build_app(
+        login_throttle_ip_max=0,
+        login_throttle_email_max=2,
+        login_throttle_window_seconds=300,
+    )
+    email = "ipv6@example.com"
+    async with LifespanManager(app):
+        transport_a = httpx.ASGITransport(app=app, client=("2001:db8::1", 12345))
+        transport_b = httpx.ASGITransport(app=app, client=("2001:db8::2", 12345))
+        async with httpx.AsyncClient(transport=transport_a, base_url=BASE_URL) as c1:
+            assert (await _failed_login(c1, email=email)).status_code == 401
+            assert (await _failed_login(c1, email=email)).status_code == 401
+        async with httpx.AsyncClient(transport=transport_b, base_url=BASE_URL) as c2:
+            blocked = await _failed_login(c2, email=email)
+            assert blocked.status_code == 429
+
+
+@pytest.mark.asyncio
+async def test_email_failures_shared_across_replicas(redis_url: str):
+    prefix = redis_key_prefix("login-fail-b07")
+    settings = Settings(
+        base_url=BASE_URL,
+        refresh_interval_seconds=0,
+        redis_url=redis_url,
+        redis_key_prefix=redis_key_prefix("oauth-b07"),
+        login_pending_key_prefix=prefix,
+        login_throttle_ip_max=0,
+        login_throttle_email_max=10,
+        login_throttle_window_seconds=300,
+    )
+    oauth_store, pending_store = build_shared_auth_stores(settings)
+    login = dev_token_login({VALID_TOKEN})
+
+    def _make_app():
+        mcp, *_rest = build_server(
+            login_providers=[login],
+            settings=settings,
+            oauth_store=oauth_store,
+            login_pending_store=pending_store,
+            register_builtin_catalog=False,
+        )
+        return mcp.http_app(path=settings.http_path)
+
+    app_a = _make_app()
+    app_b = _make_app()
+    email = "replica@example.com"
+    async with LifespanManager(app_a):
+        async with LifespanManager(app_b):
+            transport = httpx.ASGITransport(app=app_a, client=("198.51.100.50", 12345))
+            async with httpx.AsyncClient(transport=transport, base_url=BASE_URL) as client:
+                for _ in range(5):
+                    assert (await _failed_login(client, email=email)).status_code == 401
+            transport_b = httpx.ASGITransport(app=app_b, client=("198.51.100.50", 12345))
+            async with httpx.AsyncClient(transport=transport_b, base_url=BASE_URL) as client_b:
+                for _ in range(5):
+                    assert (await _failed_login(client_b, email=email)).status_code == 401
+                blocked = await _failed_login(client_b, email=email)
+                assert blocked.status_code == 429
+    await oauth_store.aclose()
+
+
+@pytest.mark.asyncio
+async def test_email_limiter_redis_down_allows(caplog: pytest.LogCaptureFixture):
+    from keystone_mcp.auth.keystone_oauth_provider import KeystoneOAuthProvider
+    from keystone_mcp.auth.login_pending_store import InMemoryLoginPendingStore
+
+    failing_redis = AsyncMock()
+    failing_redis.get.side_effect = RedisError("down")
+    limiter = RedisLoginFailureLimiter(
+        failing_redis,
+        key_prefix="km:test:",
+        max_failures=1,
+        window_seconds=300,
+    )
+    settings = Settings(base_url=BASE_URL, login_throttle_email_max=1)
+    store = InMemoryOAuthStore()
+    pending = InMemoryLoginPendingStore()
+    login = dev_token_login({VALID_TOKEN})
+    KeystoneOAuthProvider(
+        settings,
+        store,
+        pending,
+        login_providers=[login],
+        login_failure_limiter=limiter,
+    )
+    allowed, _retry = await limiter.check("a@example.com", "198.51.100.1")
+    assert allowed
+    assert sum(1 for r in caplog.records if "login failure limiter Redis error" in r.message) == 1
+
+
+@pytest.mark.asyncio
+async def test_email_key_has_no_plain_email(redis_url: str):
+    prefix = redis_key_prefix("login-fail-keys")
+    settings = Settings(
+        base_url=BASE_URL,
+        refresh_interval_seconds=0,
+        redis_url=redis_url,
+        redis_key_prefix=redis_key_prefix("oauth-keys"),
+        login_pending_key_prefix=prefix,
+        login_throttle_ip_max=0,
+        login_throttle_email_max=10,
+        login_throttle_window_seconds=300,
+    )
+    oauth_store, pending_store = build_shared_auth_stores(settings)
+    login = dev_token_login({VALID_TOKEN})
+    mcp, *_rest = build_server(
+        login_providers=[login],
+        settings=settings,
+        oauth_store=oauth_store,
+        login_pending_store=pending_store,
+        register_builtin_catalog=False,
+    )
+    app = mcp.http_app(path=settings.http_path)
+    email = "secret.person@example.com"
+    async with LifespanManager(app):
+        transport = httpx.ASGITransport(app=app, client=("198.51.100.88", 12345))
+        async with httpx.AsyncClient(transport=transport, base_url=BASE_URL) as client:
+            assert (await _failed_login(client, email=email)).status_code == 401
+    sync = redis.from_url(require_redis_url(), decode_responses=True)
+    try:
+        keys = list(sync.scan_iter(match=f"{prefix}login_fail:*"))
+        assert keys
+        joined = " ".join(keys)
+        assert email not in joined
+        assert "secret.person" not in joined
+    finally:
+        sync.close()
+    await oauth_store.aclose()

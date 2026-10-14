@@ -447,6 +447,7 @@ Frozen since 0.5.0. Metric names and label keys (not log message text):
 | `keystone_mcp_api_key_cache_evictions_total` | `cache` |
 | `keystone_mcp_users_revision_bump_failed_total` | — |
 | `keystone_mcp_throttle_backend_errors_total` | `kind` |
+| `keystone_mcp_http_origin_null_total` | `route` |
 
 Label value `unknown` is reserved for names that are not published.
 
