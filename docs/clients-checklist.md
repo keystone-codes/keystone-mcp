@@ -1,5 +1,8 @@
 # Release checklist — tested MCP clients
 
+Steps 1–7 for the Python `mcp` SDK run in CI (`scripts/client_e2e.py`); repeat
+them by hand for desktop clients.
+
 Run this checklist on a fresh deployment (stage or the local compose demo with
 public HTTPS when you need Claude Desktop's cloud connector) before each
 release. Record the outcome as rows in the [Tested clients](clients.md#tested-clients)
