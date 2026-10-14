@@ -17,6 +17,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 COPY pyproject.toml uv.lock README.md LICENSE ./
 COPY config ./config
 COPY src ./src
+COPY examples/hello-stdio /opt/hello-stdio
 
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --extra otel
