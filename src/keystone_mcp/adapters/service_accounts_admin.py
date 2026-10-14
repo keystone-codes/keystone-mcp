@@ -22,6 +22,22 @@ RoleSource = Callable[[], frozenset[str] | None]
 
 _ROLE_CHECKED_TOOLS = frozenset({"service_accounts_add", "service_accounts_update"})
 
+SERVICE_ACCOUNTS_ADMIN_ERROR_CODES: frozenset[str] = frozenset(
+    {
+        "actor_email_required",
+        "bad_request",
+        "conflict",
+        "forbidden",
+        "last_administrator",
+        "self_admin_mutation_forbidden",
+        "service_error",
+        "service_timeout",
+        "service_unavailable",
+        "user_not_found",
+        "validation_error",
+    }
+)
+
 
 class ServiceAccountsAdminAdapter:
     def __init__(

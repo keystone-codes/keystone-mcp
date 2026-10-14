@@ -36,6 +36,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 - Stdio upstreams receive the signed identity assertion in `params._meta["keystone-mcp/identity"]` on `prompts/get` and `resources/read` too.
 - Metric `keystone_mcp_upstream_input_rounds_exceeded_total{namespace}`.
 - CI: the contract freeze gate now compares the public surface generated from the code — environment variables (found by AST), policy keys, CLI commands, plugin protocol signatures, built-in tool arguments, metrics and their labels — with a baseline generated from the `v0.5.0` tag.
+- Contract freeze gate also covers error codes of the built-in tools, users-directory database columns and migrations, upstream registry fields, HTTP routes, CLI flags, and defaults and allowed values of environment variables.
 - Startup warnings W8–W19 (`docs/environment.md#startup-warnings`).
 - Plugin API: base classes `UserDirectoryBase`, `UserDirectoryAdminBase`, `ServiceAccountDirectoryBase`, `ApiKeyDirectoryBase`, `LoginProviderBase`, `RedirectLoginProviderBase`, `FormLoginProviderBase`; `keystone_mcp.user_directory.normalize_email`; `FakeTamper.unavailable`; marker `keystone_contract_lenient(reason=…)`; `docs/compatibility.md#plugin-api` lists the frozen plugin surface, including `OidcLoginProvider` and `OidcProviderConfig` as the base for OIDC plugins.
 
@@ -71,6 +72,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ### Fixed
 
+- `docs/compatibility.md` lists the error codes the built-in tools actually return.
 - Contract test `test_provider_unavailable_on_complete` no longer touches a private field of the provider.
 - A hung stdio upstream with a call in flight is now detected within one ping interval of the third missed ping: calls in flight fail at once and the process is restarted; a single slow ping no longer restarts it.
 - A stdio upstream is reported available only once its catalog has been read; a process that comes up after a failed discovery is discovered immediately instead of on the next refresh tick.
