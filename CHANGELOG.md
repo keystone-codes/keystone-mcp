@@ -8,11 +8,6 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ## [Unreleased]
 
-### Security
-
-- keystone-mcp no longer re-validates an upstream's tool result against the upstream's own `outputSchema` on its event loop, so a pathological schema can no longer stall the whole process (including `/healthz`).
-- Upstream answers, catalogs and tool schemas are bounded: `KEYSTONE_MCP_UPSTREAM_MAX_RESPONSE_BYTES`, `KEYSTONE_MCP_UPSTREAM_MAX_CATALOG_ITEMS`, `KEYSTONE_MCP_UPSTREAM_MAX_SCHEMA_BYTES`.
-
 ### Added
 
 - `keystone-mcp users admins` lists full administrators, management roles and their holders; exits 1 when there is no active full administrator.
@@ -62,6 +57,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ### Fixed
 
+- OAuth refresh now keeps the access token `subject_type` aligned with the session subject.
 - An upstream's `serverInfo` stamp no longer reaches the client in tool and prompt results.
 - `service_accounts_list`, `service_accounts_add` and `service_accounts_update` work when called over MCP.
 - The HTTP port opens right after the users-directory migrations; upstream discovery, login provider warm-up (now in parallel) and policy loading run in the background, so a hanging upstream no longer keeps the port closed long enough for a liveness probe to restart the pod.
@@ -83,6 +79,8 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ### Security
 
+- keystone-mcp no longer re-validates an upstream's tool result against the upstream's own `outputSchema` on its event loop, so a pathological schema can no longer stall the whole process (including `/healthz`).
+- Upstream answers, catalogs and tool schemas are bounded: `KEYSTONE_MCP_UPSTREAM_MAX_RESPONSE_BYTES`, `KEYSTONE_MCP_UPSTREAM_MAX_CATALOG_ITEMS`, `KEYSTONE_MCP_UPSTREAM_MAX_SCHEMA_BYTES`.
 - Refresh-token rotation is atomic: a refresh token is exchanged at most once. A second exchange within `KEYSTONE_MCP_OAUTH_REFRESH_GRACE_SECONDS` (default 10 s) gets the same response; a reuse after that revokes every token of that person at that OAuth client and is audited (`oauth_session`). Reusing an authorization code returns `invalid_grant` and revokes the tokens issued from it.
 - Release images are scanned by Trivy per platform (amd64 and arm64) on the exact digest that is then tagged; base images are pinned by digest and updated by Dependabot.
 - The HTTP users directory's `resolve` answer is checked strictly: a non-boolean `exists`, `is_blocked` or a non-string role is treated as the directory being unavailable instead of granting access. `0`/`1` are still accepted with a warning; a missing `is_blocked` is read as `false` with a warning.
