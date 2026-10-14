@@ -278,7 +278,7 @@ def _redirect_provider_html(
     txn: str,
     csrf: str,
 ) -> str:
-    button_text = html.escape(t["login_with"].format(provider=html.escape(provider.title)))
+    button_text = html.escape(t["login_with"].format(provider=provider.title))
     icon = _GOOGLE_SVG if provider.name == "google" else ""
     return f"""
     <form method="post" action="/login/{html.escape(provider.name)}">

@@ -8,16 +8,27 @@ email budget.
 
 from __future__ import annotations
 
+import hashlib
 import ipaddress
+import logging
 import math
 import threading
 import time
 from collections import OrderedDict, defaultdict, deque
+from typing import Protocol
 
+from redis.asyncio import Redis
+from redis.exceptions import RedisError
 from starlette.requests import Request
 from starlette.responses import Response
 
 from keystone_mcp.auth.rate_window import InMemorySlidingWindow, RedisSlidingWindow, SlidingWindow
+
+logger = logging.getLogger(__name__)
+
+_ERROR_LOG_INTERVAL_SECONDS = 60.0
+_last_login_fail_error_log_at = 0.0
+_login_fail_error_log_lock = threading.Lock()
 
 # Bounds on `LoginAttemptThrottle._ip_hits` (A11 finding #6). Without them, an
 # attacker who never repeats a source address — trivial with IPv6, which
@@ -285,6 +296,87 @@ class LoginAttemptThrottle:
             retry = max(1, int(math.ceil(bucket[0] + self._window_seconds - ts)))
             return False, retry
         return True, 0
+
+
+class LoginFailureLimiter(Protocol):
+    async def check(self, email: str, ip: str) -> tuple[bool, int]: ...
+
+    async def record_failure(self, email: str, ip: str) -> None: ...
+
+
+def _log_login_failure_redis_error_once(exc: BaseException) -> None:
+    global _last_login_fail_error_log_at
+    with _login_fail_error_log_lock:
+        now = time.monotonic()
+        if now - _last_login_fail_error_log_at < _ERROR_LOG_INTERVAL_SECONDS:
+            return
+        _last_login_fail_error_log_at = now
+    logger.warning("login failure limiter Redis error: %s", exc)
+
+
+class InMemoryLoginFailureLimiter:
+    def __init__(self, throttle: LoginAttemptThrottle) -> None:
+        self._throttle = throttle
+
+    async def check(self, email: str, ip: str) -> tuple[bool, int]:
+        key = f"{_normalize_email_key(email)}|{ip_bucket(ip)}"
+        return self._throttle.check_email_failures(key)
+
+    async def record_failure(self, email: str, ip: str) -> None:
+        key = f"{_normalize_email_key(email)}|{ip_bucket(ip)}"
+        self._throttle.record_login_failure(key)
+
+
+class RedisLoginFailureLimiter:
+    def __init__(
+        self,
+        redis: Redis,
+        *,
+        key_prefix: str,
+        max_failures: int,
+        window_seconds: int,
+    ) -> None:
+        self._redis = redis
+        self._key_prefix = key_prefix if key_prefix.endswith(":") else f"{key_prefix}:"
+        self._max_failures = max_failures
+        self._window_seconds = window_seconds
+
+    def _redis_key(self, email: str, ip: str) -> str:
+        digest = hashlib.sha256(_normalize_email_key(email).encode()).hexdigest()
+        return f"{self._key_prefix}login_fail:{digest}:{ip_bucket(ip)}"
+
+    async def check(self, email: str, ip: str) -> tuple[bool, int]:
+        if self._max_failures <= 0:
+            return True, 0
+        key = self._redis_key(email, ip)
+        try:
+            raw = await self._redis.get(key)
+        except RedisError as exc:
+            _log_login_failure_redis_error_once(exc)
+            return True, 0
+        if raw is None:
+            return True, 0
+        count = int(raw)
+        if count >= self._max_failures:
+            try:
+                ttl = await self._redis.ttl(key)
+            except RedisError as exc:
+                _log_login_failure_redis_error_once(exc)
+                return True, 0
+            return False, max(1, ttl if ttl > 0 else 1)
+        return True, 0
+
+    async def record_failure(self, email: str, ip: str) -> None:
+        if self._max_failures <= 0:
+            return
+        key = self._redis_key(email, ip)
+        try:
+            async with self._redis.pipeline(transaction=True) as pipe:
+                pipe.set(key, 0, ex=self._window_seconds, nx=True)
+                pipe.incr(key)
+                await pipe.execute()
+        except RedisError as exc:
+            _log_login_failure_redis_error_once(exc)
 
 
 def peer_host(request: Request) -> str:

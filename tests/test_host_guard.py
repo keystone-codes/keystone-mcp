@@ -20,6 +20,7 @@ real server assembled the way `server.main` assembles one.
 from __future__ import annotations
 
 import pytest
+from prometheus_client import REGISTRY
 from starlette.applications import Starlette
 from starlette.responses import PlainTextResponse
 from starlette.routing import Route
@@ -61,6 +62,7 @@ async def _ok(_request):
 def _guarded_app(
     allowed_hosts: tuple[str, ...],
     *,
+    mcp_path: str = "/mcp",
     internal_paths: tuple[str, ...] = (),
     internal_prefixes: tuple[str, ...] = (),
 ) -> HostGuardMiddleware:
@@ -70,16 +72,24 @@ def _guarded_app(
             Route("/healthz", _ok),
             Route("/readyz", _ok),
             Route("/metrics", _ok),
-            Route("/token", _ok),
+            Route("/register", _ok, methods=["POST"]),
+            Route("/token", _ok, methods=["POST"]),
+            Route("/login", _ok, methods=["POST"]),
+            Route(mcp_path, _ok, methods=["POST"]),
             Route("/internal/live-published-names", _ok),
         ]
     )
     return HostGuardMiddleware(
         base,
         allowed_hosts=allowed_hosts,
+        mcp_path=mcp_path,
         internal_paths=internal_paths,
         internal_prefixes=internal_prefixes,
     )
+
+
+def _origin_null_count(route: str) -> float:
+    return REGISTRY.get_sample_value("keystone_mcp_http_origin_null_total", {"route": route}) or 0.0
 
 
 def test_allowed_host_passes() -> None:
@@ -250,6 +260,28 @@ def test_internal_prefix_accepts_ip_literal() -> None:
             headers={"Host": "10.1.2.3:8080"},
         )
     assert response.status_code == 200
+
+
+def test_origin_null_is_counted_per_route() -> None:
+    mcp_path = "/custom-mcp"
+    app = _guarded_app(("example.com:8080",), mcp_path=mcp_path)
+    headers = {"Host": "example.com:8080", "Origin": "null"}
+    with TestClient(app, base_url="http://example.com:8080") as client:
+        before = {route: _origin_null_count(route) for route in ("register", "token", "login", "mcp")}
+        assert client.post("/register", headers=headers).status_code == 200
+        assert client.post("/token", headers=headers).status_code == 200
+        assert client.post("/login", headers=headers).status_code == 200
+        assert client.post(mcp_path, headers=headers).status_code == 200
+        after = {route: _origin_null_count(route) for route in before}
+    assert after["register"] == before["register"] + 1
+    assert after["token"] == before["token"] + 1
+    assert after["login"] == before["login"] + 1
+    assert after["mcp"] == before["mcp"] + 1
+
+
+def test_origin_null_behaviour_unchanged() -> None:
+    test_null_origin_is_treated_as_absent()
+    test_null_origin_does_not_excuse_a_foreign_host()
 
 
 def test_allowed_hosts_env_parsing_refuses_scheme_or_path(monkeypatch) -> None:

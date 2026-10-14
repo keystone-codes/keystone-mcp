@@ -128,6 +128,7 @@ OAuth rotation and replay events. Fields: `action` (`grace_reissue`,
 | `keystone_mcp_api_key_cache_entries` | `cache` | Entries in the positive/negative API key verification caches (`positive`, `negative`) |
 | `keystone_mcp_api_key_cache_evictions_total` | `cache` | LRU evictions from those caches |
 | `keystone_mcp_users_revision_bump_failed_total` | — | Users-directory revision `INCR` failed after a successful mutation on this replica |
+| `keystone_mcp_http_origin_null_total` | `route` | Requests whose `Origin` header was the literal string `null`, grouped by route (`register`, `token`, `authorize`, `revoke`, `login`, `login_provider`, `mcp`, `other`) |
 
 `keystone_mcp_oauth_clients` is a per-replica gauge: it is set to the result of
 the store's client count right after each registration attempt on that
