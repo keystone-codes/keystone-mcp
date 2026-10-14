@@ -12,7 +12,8 @@ that.
 A client — Claude Desktop, Cursor, Claude Code, or any other MCP client —
 connects to one address and sees one tool catalog. The catalog is split
 into sections, one per upstream service, named `<namespace>_<tool>`. How
-sections, discovery and the proxy work: [facade.md](facade.md).
+sections, discovery and the proxy work: [facade.md](facade.md). Tested
+clients and versions: [clients.md](clients.md).
 
 ## Any users directory
 

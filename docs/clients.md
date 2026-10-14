@@ -7,6 +7,63 @@ has that path appended, e.g. `https://mcp.example.com/mcp/`. Every client
 below registers itself with the server and then opens your browser for
 sign-in — you never type a password into the client itself.
 
+## Tested clients
+
+Cell values: `yes`, `no`, `n/a` (the client does not support this), or `—`
+(not checked this release). Use a footnote when behaviour differs from the
+norm. Column **How**: `manual (stage)` or `CI`.
+
+| Client | Version | MCP protocol | Sign-in | Token refresh | Tools | `list_changed` | Progress | Cancel | Elicitation | Checked with Keystone-MCP | Date | How |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| Claude Code | — | — | — | — | — | — | — | — | — | — | — | — |
+| Claude Desktop (connector) | — | — | — | — | — | — | — | — | — | — | — | — |
+| Claude Desktop (`mcp-remote`) | — | — | — | — | — | — | — | — | — | — | — | — |
+| Cursor (desktop) | — | — | — | — | — | — | — | — | — | — | — | — |
+| MCP Inspector | — | — | — | — | — | — | — | — | — | — | — | — |
+| Python `mcp` SDK | — | — | — | — | — | — | — | — | — | — | — | CI |
+| MCP 2026-07-28 client | — | 2026-07-28 | — | — | — | — | — | — | — | — | — | — |
+| Handshake-protocol client | — | handshake | — | — | — | — | — | — | — | — | — | — |
+
+When one product supports both protocol eras, add separate rows and note the
+era in **MCP protocol**.
+
+### How this table is maintained
+
+Before each release, an operator runs the [release checklist](clients-checklist.md)
+on stage (or the compose demo with public HTTPS for the Claude Desktop
+connector). Each verified client gets a row with the Keystone-MCP version and
+date. Rows not re-checked in a release keep the previous **Checked with
+Keystone-MCP** value so stale entries stay visible.
+
+## Known client behaviour
+
+**Redirect URIs.** Each OAuth client returns to a different host or custom
+scheme. When the operator sets `KEYSTONE_MCP_OAUTH_ALLOWED_REDIRECT_HOSTS`, they
+must allow the host each client uses — see
+[Allowed redirect hosts](#keystone_mcp_oauth_allowed_redirect_hosts) below.
+
+**`Origin: null`.** Some desktop clients built on Electron send
+`Origin: null` on HTTP requests. Which routes and user agents do this is
+recorded after the stage measurement described in the release checklist
+(step 4); until that run, treat it as unknown.
+
+**Dynamic registration.** Keystone expires unused registered OAuth clients
+after 24 hours of non-use. Clients that cache registration may register again on
+the next connect after idle — this is expected, not a sign-in failure.
+
+**`list_changed`.** Keystone sends `notifications/tools/list_changed` when
+the catalog changes, but only clients that keep a live notification stream
+(or MCP 2026-07-28 `subscriptions/listen`) update without reconnecting. Others
+need disable/enable or a new session — see [If sign-in does not work](#if-sign-in-does-not-work).
+
+**Elicitation.** Form-mode questions from upstream tools appear only when the
+client declared elicitation support; Keystone prefixes proxied messages with
+`[namespace]`. URL-mode elicitation is declined. Not every client shows
+service questions.
+
+**Cancellation.** Whether closing a chat cancels an in-flight tool call depends
+on the client; verify on the checklist with `hello_slow_count`.
+
 ## Before you start
 
 You need:
@@ -16,9 +73,9 @@ You need:
   client that reaches `/login` with an email the directory does not know
   still gets refused — sign-in and "being a known user" are two separate
   checks.
-- Either a Google account or a **DEV token**, depending on which sign-in
-  method the operator turned on (`KEYSTONE_MCP_ENABLED_LOGIN_METHODS`). Ask
-  the operator which one applies to you.
+- Access through one of the sign-in methods the operator configured (Google,
+  any OpenID Connect provider, or the API-key form). See
+  [login-providers.md](login-providers.md).
 
 Every sign-in goes through the same page on the server, regardless of which
 client opened it. Keystone-MCP shows which application is asking and, in
@@ -92,8 +149,8 @@ has the toggle to enable or disable it.
 Keystone-MCP needs no client id or secret from you — Cursor discovers the
 OAuth requirement itself from the server. The first time you use a
 `keystone`-published tool, Cursor opens your browser to Keystone-MCP's
-sign-in page: enter your email and your Google account or DEV token, then
-**Authorize**.
+sign-in page: enter your email, complete the sign-in method your operator
+enabled, then **Authorize**.
 
 ### Sign in as someone else
 
@@ -117,8 +174,8 @@ for a local one.
    e.g. `https://mcp.example.com/`.
 4. Review the authentication Claude detected and continue.
 5. Under **Authentication**, choose **Sign in now**.
-6. Click **Add**, then sign in with your Google account or DEV token on the
-   page that opens.
+6. Click **Add**, then sign in on the page that opens using the sign-in
+   methods your operator configured.
 
 The server must be reachable over the public internet by HTTPS — a server
 behind a firewall or VPN, or on `http://`, does not work here.
@@ -221,7 +278,7 @@ service account that holds the roles your automation needs.
 | Symptom | Fix |
 |---|---|
 | The browser did not open | Copy the URL the client printed (Claude Code and `mcp-remote` both print "visit this URL to authorize") and open it yourself. |
-| Refused after sign-in, or "unknown user" | Your email is not yet in the users directory. Ask an administrator to add it — this applies to Google and DEV-token sign-in alike. |
+| Refused after sign-in, or "unknown user" | Your email is not yet in the users directory. Ask an administrator to add it — this applies to every sign-in method alike. |
 | Google sign-in fails with `redirect_uri_mismatch` | This is on the operator's side: the Google OAuth client's redirect URI does not match. See [google-oauth.md](google-oauth.md). |
 | The client shows an old or missing tool list | Keystone-MCP sends `notifications/tools/list_changed` after a catalog change, but only a client that is connected and listening for it (the standalone SSE stream, or a `subscriptions/listen` stream on MCP 2026-07-28) receives it live; otherwise reconnect (disable, then enable, the server). See [facade.md](facade.md). |
 | `http://` to a public address is refused | Use `https://`. A `production`-profile server refuses a plain-`http` address once it is reachable publicly. |
