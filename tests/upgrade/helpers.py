@@ -215,7 +215,27 @@ def redis_hashed_access_key(prefix: str, access_token: str) -> str:
     return f"{prefix}at:{token_digest(access_token)}"
 
 
+def _unwrap_call_tool_result(payload: Any) -> Any:
+    structured = getattr(payload, "structured_content", None)
+    if isinstance(structured, dict):
+        return structured
+    data = getattr(payload, "data", None)
+    if data is not None:
+        return data
+    content = getattr(payload, "content", None)
+    if content:
+        for block in content:
+            text = getattr(block, "text", None)
+            if text:
+                try:
+                    return json.loads(text)
+                except json.JSONDecodeError:
+                    return text
+    return payload
+
+
 def parse_users_list_result(payload: Any) -> list[dict[str, Any]]:
+    payload = _unwrap_call_tool_result(payload)
     if isinstance(payload, str):
         payload = json.loads(payload)
     if isinstance(payload, dict) and "users" in payload:
