@@ -354,6 +354,14 @@ def test_ci_helm_job_pins_setup_helm_and_runs_chart_checks():
     assert "test_helm_chart.py" in run_text
 
 
+def test_compose_smoke_runs_mcp_python_sdk_client_e2e():
+    doc = _load("ci.yml")
+    run_text = _job_step_run_text(doc, "compose-smoke")
+    assert "scripts/client_e2e.py" in run_text
+    assert "--protocol modern" in run_text
+    assert "--protocol legacy" in run_text
+
+
 def test_coverage_threshold_is_enforced():
     pyproject = (Path(__file__).resolve().parent.parent / "pyproject.toml").read_text(
         encoding="utf-8"
