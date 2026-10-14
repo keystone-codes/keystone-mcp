@@ -121,6 +121,13 @@ Keystone-MCP calls `list_tools()` on every enabled upstream and registers a live
 proxy route for each tool that passes the filters. You do not register proxy
 tools one by one.
 
+**Stdio upstreams** use the same persistent child process for discovery and
+proxying (no throwaway startup process). A stdio namespace becomes available
+only after its catalog has been read; when the process comes up after a failed
+discovery, the reconciler (or a one-shot discovery hook when refresh is
+disabled) refreshes that namespace immediately instead of waiting for the next
+tick.
+
 Upstreams are discovered in parallel, each retried on its own
 (`KEYSTONE_MCP_UPSTREAM_DISCOVERY_RETRIES`, default 3). An upstream that stays
 unreachable does not block startup or the other upstreams: it is logged with
@@ -139,13 +146,6 @@ still unreachable at startup ends the process (after `/healthz` responds), and
 after startup `/readyz` answers `503` while any configured upstream is
 unavailable. Each upstream's reachability is exposed as
 `keystone_mcp_upstream_available{namespace}` (1 = reachable).
-
-**Stdio upstreams** (`transport: stdio` in the registry) are discovered the same
-way: at process start, before the HTTP server loop, Keystone-MCP may spawn a
-short-lived child only to run `list_tools`, then tear it down so bootstrap does
-not leak processes across event loops. After startup, the lifespan hook starts
-one persistent supervised process per stdio entry; the reconciler reuses that
-process on each refresh tick instead of starting a new one.
 
 An RBAC allow pattern that belongs only to an upstream namespace that is
 currently unavailable does not refuse the policy either — it is logged as

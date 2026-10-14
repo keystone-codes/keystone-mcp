@@ -30,6 +30,22 @@ _TOKEN_KV_RE = re.compile(
 )
 _EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
 _REDIS_URL_RE = re.compile(r"\bredis(?:s)?://[^\s]+", re.IGNORECASE)
+#: Bare third-party tokens often printed in diagnostics (GitHub, GitLab, Slack,
+#: OpenAI, Anthropic, AWS access key id).
+_WELL_KNOWN_TOKEN_RE = re.compile(
+    r"\b("
+    r"ghp_[A-Za-z0-9_\-]{20,}|"
+    r"gho_[A-Za-z0-9_\-]{20,}|"
+    r"ghu_[A-Za-z0-9_\-]{20,}|"
+    r"ghs_[A-Za-z0-9_\-]{20,}|"
+    r"ghr_[A-Za-z0-9_\-]{20,}|"
+    r"github_pat_[A-Za-z0-9_\-]{20,}|"
+    r"glpat-[A-Za-z0-9_\-]{20,}|"
+    r"xox[abprs]-[A-Za-z0-9_\-]{20,}|"
+    r"sk-(?:proj-|ant-)?[A-Za-z0-9_\-]{20,}|"
+    r"AKIA[0-9A-Z]{16}"
+    r")\b"
+)
 _REDACTED = "***REDACTED***"
 
 
@@ -42,6 +58,7 @@ def redact_string(value: str) -> str:
     out = _EMAIL_RE.sub("***@***", out)
     out = _TOKEN_KV_RE.sub(lambda m: f"{m.group(1)}={_REDACTED}", out)
     out = _JWT_RE.sub(_REDACTED, out)
+    out = _WELL_KNOWN_TOKEN_RE.sub(_REDACTED, out)
     return out
 
 

@@ -34,10 +34,13 @@ import anyio
 import fastmcp
 from fastmcp.client.transports import StdioTransport
 
+from keystone_mcp.observability.logging.redact import redact_string
+from keystone_mcp.observability.metrics import record_upstream_stderr_suppressed
+
 logger = logging.getLogger(__name__)
 _stderr_logger = logging.getLogger("keystone_mcp.upstream.stderr")
 
-ProcessState = Literal["stopped", "starting", "running", "backoff"]
+ProcessState = Literal["stopped", "starting", "running", "stopping", "backoff"]
 StateCallback = Callable[[ProcessState, str | None], None]
 
 #: Restart delay schedule in seconds: 1, 2, 4, 8, 16, 32, then 60 forever.
@@ -54,12 +57,19 @@ _PING_INTERVAL_SECONDS = 15.0
 #: Max time to wait for one ping to answer before treating it as a hang.
 _PING_TIMEOUT_SECONDS = 5.0
 
+#: Consecutive missed pings before the process is restarted.
+_PING_FAILURES_TO_RESTART = 3
+
 #: Max time to wait for the supervisor task to wind down in ``stop()``.
 _STOP_TIMEOUT_SECONDS = 5.0
 
 #: Stderr lines are logged truncated, matching the redaction module's cap for
 #: one log field; a runaway writer cannot blow up log storage.
 _MAX_STDERR_LINE_CHARS = 2000
+
+#: Token-bucket rate for stderr log lines (sustained rate and burst capacity).
+_STDERR_LINES_PER_SECOND = 50.0
+_STDERR_BURST = 200
 
 #: ``asyncio.StreamReader`` buffer limit for one stderr line. Generous on
 #: purpose: the asyncio default (64 KiB) is tight enough that a single long
@@ -73,6 +83,42 @@ class UpstreamProcessUnavailableError(RuntimeError):
     """Raised by :meth:`StdioUpstreamProcess.client` when not ``running``."""
 
 
+class _StderrRateLimiter:
+    def __init__(self, *, clock: Callable[[], float]) -> None:
+        self._clock = clock
+        self._tokens = float(_STDERR_BURST)
+        self._last_refill = clock()
+        self._suppressed_since_report = 0
+
+    def take_line(self) -> bool:
+        now = self._clock()
+        elapsed = now - self._last_refill
+        if elapsed > 0:
+            self._tokens = min(
+                float(_STDERR_BURST),
+                self._tokens + elapsed * _STDERR_LINES_PER_SECOND,
+            )
+            self._last_refill = now
+        if self._tokens >= 1.0:
+            self._tokens -= 1.0
+            return True
+        self._suppressed_since_report += 1
+        return False
+
+    def flush_suppressed_report(self) -> int:
+        count = self._suppressed_since_report
+        self._suppressed_since_report = 0
+        return count
+
+
+def _mask_process_env_values(text: str, env: Mapping[str, str]) -> str:
+    out = text
+    for value in env.values():
+        if len(value) >= 8 and value in out:
+            out = out.replace(value, "***REDACTED***")
+    return redact_string(out)
+
+
 class StdioUpstreamProcess:
     """Keeps one stdio upstream process alive and exposes its MCP client.
 
@@ -80,6 +126,9 @@ class StdioUpstreamProcess:
     this class does not read ``KEYSTONE_MCP_*`` itself — resolving an
     entry's ``env_from`` pairs into values is Y09's job, at the call site
     that constructs this object.
+
+    ``start()`` after ``stop()`` is not supported: it returns ``False`` and
+    does nothing.
     """
 
     def __init__(
@@ -141,7 +190,8 @@ class StdioUpstreamProcess:
         """Start the supervisor loop; wait up to ``wait`` seconds for ``running``.
 
         Returns whether the process reached ``running`` within that window.
-        Starting again while already started is a no-op.
+        Starting again while already started is a no-op. After ``stop()``, returns
+        ``False`` without starting again.
         """
         if self._task_handle is not None:
             return self._state == "running"
@@ -224,6 +274,13 @@ class StdioUpstreamProcess:
             await self._sleep(delay)
             tg.cancel_scope.cancel()
 
+    async def _teardown_client(self, client: fastmcp.Client, reason: str) -> None:
+        self._client = None
+        self._set_state("stopping", None if reason == "stopped" else reason)
+        with anyio.move_on_after(_STOP_TIMEOUT_SECONDS):
+            with contextlib.suppress(Exception):
+                await client.close()
+
     async def _run_once(self) -> tuple[str, float | None]:
         """Run one attempt: start the process, serve while healthy, return why it stopped.
 
@@ -243,6 +300,7 @@ class StdioUpstreamProcess:
         writer: Any = os.fdopen(write_fd, "w", buffering=1)
         started_at: float | None = None
         eof_event = anyio.Event()
+        client: fastmcp.Client | None = None
 
         async def watch_stderr() -> None:
             await self._read_stderr_until_eof(read_fd)
@@ -260,25 +318,24 @@ class StdioUpstreamProcess:
                     log_file=writer,
                 )
                 client = fastmcp.Client(transport, init_timeout=self._init_timeout, mode="legacy")
-                async with client:
-                    # The child now holds its own copy of the write end;
-                    # closing ours here is what lets stderr's read end see
-                    # EOF once the child exits. It cannot cause a premature
-                    # EOF by itself: the child's copy is still open.
-                    writer.close()
-                    writer = None
-                    self._client = client
-                    started_at = self._clock()
-                    self._set_state("running", None)
-                    reason = await self._supervise_running(client, eof_event)
+                await client.__aenter__()
+                writer.close()
+                writer = None
+                self._client = client
+                started_at = self._clock()
+                self._set_state("running", None)
+                reason = await self._supervise_running(client, eof_event)
+                assert client is not None
+                await self._teardown_client(client, reason)
                 return reason, started_at
             except Exception as exc:  # noqa: BLE001 - becomes a logged restart reason
+                if client is not None:
+                    await self._teardown_client(client, "start failed")
                 return (
                     f"start failed: {type(exc).__name__} running {os.path.basename(self._command)}",
                     started_at,
                 )
             finally:
-                self._client = None
                 if writer is not None:
                     with contextlib.suppress(OSError):
                         writer.close()
@@ -291,6 +348,7 @@ class StdioUpstreamProcess:
         watches it, it does not own stderr.
         """
         outcome: dict[str, str] = {}
+        ping_failures = 0
 
         async def watch_eof(tg: anyio.abc.TaskGroup) -> None:
             await eof_event.wait()
@@ -298,6 +356,7 @@ class StdioUpstreamProcess:
             tg.cancel_scope.cancel()
 
         async def watch_ping(tg: anyio.abc.TaskGroup) -> None:
+            nonlocal ping_failures
             while True:
                 await self._sleep(_PING_INTERVAL_SECONDS)
                 if eof_event.is_set() or self._stop_requested:
@@ -307,10 +366,22 @@ class StdioUpstreamProcess:
                         ok = await client.ping()
                     if not ok:
                         raise RuntimeError("ping returned a falsy result")
-                except Exception as exc:  # noqa: BLE001 - any failure ends the run
-                    outcome["reason"] = f"ping failed: {type(exc).__name__}"
-                    tg.cancel_scope.cancel()
-                    return
+                except Exception as exc:  # noqa: BLE001 - count toward restart threshold
+                    ping_failures += 1
+                    logger.warning(
+                        "upstream process namespace=%s missed ping %d/%d",
+                        self._namespace,
+                        ping_failures,
+                        _PING_FAILURES_TO_RESTART,
+                    )
+                    if ping_failures >= _PING_FAILURES_TO_RESTART:
+                        outcome["reason"] = (
+                            f"ping failed {_PING_FAILURES_TO_RESTART} times: {type(exc).__name__}"
+                        )
+                        tg.cancel_scope.cancel()
+                        return
+                else:
+                    ping_failures = 0
 
         async def watch_stop(tg: anyio.abc.TaskGroup) -> None:
             await self._stop_event.wait()
@@ -336,27 +407,52 @@ class StdioUpstreamProcess:
         protocol = asyncio.StreamReaderProtocol(reader)
         read_file = os.fdopen(read_fd, "rb", buffering=0)
         transport, _ = await loop.connect_read_pipe(lambda: protocol, read_file)
-        try:
+        limiter = _StderrRateLimiter(clock=self._clock)
+
+        async def _emit_suppressed_report() -> None:
             while True:
-                try:
-                    line = await reader.readline()
-                except ValueError:
-                    # A line longer than _STDERR_READER_LIMIT with no
-                    # newline: asyncio's readline() has already discarded
-                    # the oversized chunk from its internal buffer before
-                    # raising, so the stream itself is still fine to read --
-                    # only the one line is lost. Treating this as fatal
-                    # would kill and restart a perfectly healthy process
-                    # over a single noisy log line.
+                await asyncio.sleep(1.0)
+                suppressed = limiter.flush_suppressed_report()
+                if suppressed:
                     _stderr_logger.warning(
-                        "namespace=%s <stderr line exceeded %d bytes without a newline; skipped>",
+                        "namespace=%s suppressed %d stderr line(s)",
                         self._namespace,
-                        _STDERR_READER_LIMIT,
+                        suppressed,
                     )
-                    continue
-                if not line:
-                    return
-                text = line.decode("utf-8", errors="replace")[:_MAX_STDERR_LINE_CHARS].rstrip("\n")
-                _stderr_logger.info("namespace=%s %s", self._namespace, text)
+                    record_upstream_stderr_suppressed(namespace=self._namespace, count=suppressed)
+
+        try:
+            async with anyio.create_task_group() as report_tg:
+                report_tg.start_soon(_emit_suppressed_report)
+                while True:
+                    try:
+                        line = await reader.readline()
+                    except ValueError:
+                        _stderr_logger.warning(
+                            "namespace=%s <stderr line exceeded %d bytes without a newline; skipped>",
+                            self._namespace,
+                            _STDERR_READER_LIMIT,
+                        )
+                        continue
+                    if not line:
+                        report_tg.cancel_scope.cancel()
+                        suppressed = limiter.flush_suppressed_report()
+                        if suppressed:
+                            _stderr_logger.warning(
+                                "namespace=%s suppressed %d stderr line(s)",
+                                self._namespace,
+                                suppressed,
+                            )
+                            record_upstream_stderr_suppressed(
+                                namespace=self._namespace, count=suppressed
+                            )
+                        return
+                    if not limiter.take_line():
+                        continue
+                    text = line.decode("utf-8", errors="replace")[:_MAX_STDERR_LINE_CHARS].rstrip(
+                        "\n"
+                    )
+                    text = _mask_process_env_values(text, self._env)
+                    _stderr_logger.info("namespace=%s %s", self._namespace, text)
         finally:
             transport.close()
