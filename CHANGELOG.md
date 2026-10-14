@@ -8,6 +8,18 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ## [Unreleased]
 
+### Fixed
+
+- Host install (`docs/deploy.md`, `scripts/deploy.sh`): install straight into `/opt` without editable mode; `deploy.sh` deploys a tag (`DEPLOY_REF`), refuses a directory without git and waits for `/readyz`.
+
+### Changed
+
+- Upper bounds on the next major version of `starlette`, `pydantic`, `redis`, `sqlalchemy`, `alembic`.
+
+### Migration
+
+- Host installs from 0.5 docs: reinstall with `uv sync --locked --no-dev --no-editable` in the deployed checkout and change `ExecStart` to `.venv/bin/python -m keystone_mcp.server`. `scripts/deploy.sh` now stops when run outside a git clone; set `DEPLOY_REF` to the release tag.
+
 ## [0.5.0] - 2026-10-13
 
 ### Added
