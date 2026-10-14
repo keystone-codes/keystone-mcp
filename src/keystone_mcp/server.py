@@ -345,6 +345,17 @@ def build_server(
             "providers or switch the directory."
         )
 
+    identity_binder = None
+    if settings.login_identity_binding == "bind":
+        if directory is None or "identity_binding" not in directory.capabilities:
+            backend_name = settings.users_backend
+            raise ConfigError(
+                "KEYSTONE_MCP_LOGIN_IDENTITY_BINDING=bind needs a users directory "
+                "with the 'identity_binding' capability; the built-in directory has it, "
+                f"{backend_name!r} does not"
+            )
+        identity_binder = directory
+
     _login_providers_holder["providers"] = list(login_providers)
 
     # Built before the OAuth provider (rather than alongside registry/upstream
@@ -398,6 +409,7 @@ def build_server(
         login_providers=login_providers,
         user_resolver=directory_resolver,
         observability=rbac_observability,
+        identity_binder=identity_binder,
     )
     mcp = FastMCP(
         name="keystone-mcp",

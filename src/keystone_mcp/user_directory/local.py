@@ -24,6 +24,7 @@ from keystone_mcp.user_directory.errors import UserDirectoryUnavailableError
 from keystone_mcp.user_directory.types import (
     ApiKeyRecord,
     ApiKeyVerification,
+    IdentityBinding,
     IssuedApiKey,
     MutationResult,
     ServiceAccountMutation,
@@ -49,7 +50,7 @@ class LocalUserDirectory(UserDirectoryAdminBase):
 
     @property
     def capabilities(self) -> frozenset[str]:
-        return frozenset({"admin", "service_accounts", "api_keys"})
+        return frozenset({"admin", "service_accounts", "api_keys", "identity_binding"})
 
     async def ping(self) -> None:
         """Delegate to :meth:`UsersStore.ping` (``SELECT 1``) for readiness checks."""
@@ -209,6 +210,15 @@ class LocalUserDirectory(UserDirectoryAdminBase):
 
     async def active_api_key_ids(self) -> frozenset[str]:
         return await self._store.active_api_key_ids()
+
+    async def get_identity_binding(self, email: str) -> IdentityBinding | None:
+        return await self._store.get_identity_binding(email)
+
+    async def bind_identity(self, *, email: str, issuer: str, subject: str) -> IdentityBinding:
+        return await self._store.bind_identity(email=email, issuer=issuer, subject=subject)
+
+    async def clear_identity_binding(self, *, email: str, actor: str) -> bool:
+        return await self._store.clear_identity_binding(email=email, actor=actor)
 
     async def aclose(self) -> None:
         # The store's engine is owned by whoever built it (the server), not

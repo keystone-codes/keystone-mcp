@@ -141,6 +141,11 @@ _OAUTH_TOKEN_EXCHANGE = Counter(
     "OAuth /token exchanges by grant type and outcome",
     ["grant_type", "outcome"],
 )
+_LOGIN_IDENTITY_BINDING = Counter(
+    "keystone_mcp_login_identity_binding_total",
+    "OIDC login identity binding outcomes",
+    ["outcome"],
+)
 _OAUTH_CLIENTS = Gauge(
     "keystone_mcp_oauth_clients",
     "Live (non-expired) registered OAuth clients, as seen by this replica",
@@ -333,6 +338,11 @@ class RbacMetrics:
         if not self._enabled:
             return
         _OAUTH_TOKEN_EXCHANGE.labels(grant_type=grant_type, outcome=outcome).inc()
+
+    def record_login_identity_binding(self, *, outcome: str) -> None:
+        if not self._enabled:
+            return
+        _LOGIN_IDENTITY_BINDING.labels(outcome=outcome).inc()
 
     def set_oauth_clients_gauge(self, count: int) -> None:
         if not self._enabled:

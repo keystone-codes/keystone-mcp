@@ -69,6 +69,15 @@ def _iso_utc(value: datetime) -> str:
 
 
 @dataclass(frozen=True, slots=True)
+class IdentityBinding:
+    """A person's bound identity-provider account (iss + sub)."""
+
+    issuer: str
+    subject: str
+    bound_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
 class UserRecord:
     """A directory entry shaped for tool and API responses.
 

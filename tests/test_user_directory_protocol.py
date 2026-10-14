@@ -98,6 +98,28 @@ def test_declared_admin_without_methods_is_refused() -> None:
         validate_directory_capabilities(_AdminlessDirectory())
 
 
+class _BindinglessDirectory:
+    name = "fake-binding"
+    capabilities = frozenset({"identity_binding"})
+
+    async def resolve_user(self, subject: str) -> UserResolveResult:
+        return UserResolveResult(exists=False, roles=(), is_blocked=False)
+
+    async def list_users(self, *, is_blocked=False, role=None, email_contains=None):
+        return []
+
+    async def ping(self) -> None:
+        return None
+
+    async def aclose(self) -> None:
+        return None
+
+
+def test_declared_identity_binding_without_methods_is_refused() -> None:
+    with pytest.raises(ConfigError, match="bind_identity"):
+        validate_directory_capabilities(_BindinglessDirectory())
+
+
 def test_missing_admin_methods_are_named() -> None:
     with pytest.raises(ConfigError, match="grant_role"):
         validate_directory_capabilities(_AdminlessDirectory())

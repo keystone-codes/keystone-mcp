@@ -44,7 +44,12 @@ from keystone_mcp.users.db import (
     describe_db_url,
     sqlite_file_path,
 )
-from keystone_mcp.users.errors import InvalidUserFieldError, LastAdministratorError, UsersError
+from keystone_mcp.users.errors import (
+    InvalidUserFieldError,
+    LastAdministratorError,
+    UserNotFoundError,
+    UsersError,
+)
 from keystone_mcp.users.factory import build_users_store
 from keystone_mcp.users.importer import ImportSourceError, fetch_source_users
 from keystone_mcp.users.roles import ROLE_ADMINISTRATOR
@@ -450,6 +455,44 @@ def _cmd_unblock(args: argparse.Namespace) -> int:
         store.dispose()
 
 
+def _cmd_unbind_identity(args: argparse.Namespace) -> int:
+    try:
+        settings = _settings_for_users_cli()
+    except _CliExit as exc:
+        return exc.code
+
+    try:
+        store = _open_store(settings)
+    except _CliExit as exc:
+        return exc.code
+
+    email = (args.email or "").strip()
+    if not email:
+        print("an email is required", file=sys.stderr)
+        return EXIT_USAGE
+
+    try:
+        try:
+            cleared = asyncio.run(store.clear_identity_binding(email=email, actor="system:cli"))
+        except InvalidUserFieldError as exc:
+            print(str(exc), file=sys.stderr)
+            return EXIT_USAGE
+        except UserNotFoundError:
+            print(f"User not found: {email}", file=sys.stderr)
+            return EXIT_USAGE
+        except UsersError as exc:
+            print(str(exc), file=sys.stderr)
+            return EXIT_STORE
+
+        if cleared:
+            print(f"Cleared identity binding for {email}")
+        else:
+            print(f"No identity binding for {email}")
+        return EXIT_OK
+    finally:
+        store.dispose()
+
+
 def _cmd_logout(args: argparse.Namespace) -> int:
     try:
         settings = _settings_for_users_cli()
@@ -724,3 +767,12 @@ def add_users_commands(subparsers: argparse._SubParsersAction) -> None:
     )
     logout_cmd.add_argument("--email", required=True, help="Email of the person to sign out")
     logout_cmd.set_defaults(handler=_cmd_logout)
+
+    unbind_cmd = users_sub.add_parser(
+        "unbind-identity",
+        help="Clear the identity-provider account bound to a person",
+    )
+    unbind_cmd.add_argument(
+        "--email", required=True, help="Email of the person whose binding to clear"
+    )
+    unbind_cmd.set_defaults(handler=_cmd_unbind_identity)

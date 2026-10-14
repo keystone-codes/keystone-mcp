@@ -65,7 +65,8 @@ refusal).
 ### `oauth_session`
 
 OAuth rotation and replay events. Fields: `action` (`grace_reissue`,
-`refresh_replay`, `code_replay`, …), hashed `subject`, `client_id`,
+`refresh_replay`, `code_replay`, `identity_mismatch`, …), hashed `subject`,
+`client_id`, optional `login_provider` (for `identity_mismatch`),
 `revoked_tokens` when tokens were dropped, optional `reason` and `delay_ms`
 (grace reissue only). Never includes raw tokens or email.
 
@@ -96,6 +97,7 @@ OAuth rotation and replay events. Fields: `action` (`grace_reissue`,
 | `keystone_mcp_oauth_client_registrations_total` | `outcome` | `POST /register` outcomes (`created`, `rejected_limit`, `rejected_redirect_host`, `rejected_metadata`) |
 | `keystone_mcp_oauth_client_evictions_total` | (counter) | Unused OAuth clients evicted to admit a new registration at `KEYSTONE_MCP_OAUTH_MAX_CLIENTS` |
 | `keystone_mcp_oauth_token_exchange_total` | `grant_type`, `outcome` | OAuth `/token` exchanges (`issued`, `grace_reissue`, `replay_revoked`, `code_replay`, …) |
+| `keystone_mcp_login_identity_binding_total` | `outcome` | OIDC login identity binding (`bound`, `matched`, `mismatch`, `conflict`) |
 | `keystone_mcp_oauth_clients` | (gauge) | Live registered OAuth clients, refreshed on every registration attempt on this replica |
 | `keystone_mcp_api_key_verifications_total` | `outcome` | API key checks at the directory resolver (`valid`, `invalid`, `malformed`, `unknown_key_id`, `limited`, `unavailable`) |
 | `keystone_mcp_api_key_cache_entries` | `cache` | Entries in the positive/negative API key verification caches (`positive`, `negative`) |

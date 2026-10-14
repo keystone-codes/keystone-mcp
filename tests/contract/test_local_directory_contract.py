@@ -10,6 +10,7 @@ import pytest
 from keystone_mcp.contract_tests import (
     AdminDirectoryContract,
     ApiKeyDirectoryContract,
+    IdentityBindingDirectoryContract,
     ServiceAccountDirectoryContract,
     seed_contract_dataset,
 )
@@ -57,6 +58,9 @@ def keystone_unavailable_directory_factory(tmp_path) -> Callable[[], Awaitable[U
 
 
 class TestLocalSqlite(
-    AdminDirectoryContract, ServiceAccountDirectoryContract, ApiKeyDirectoryContract
+    AdminDirectoryContract,
+    ServiceAccountDirectoryContract,
+    ApiKeyDirectoryContract,
+    IdentityBindingDirectoryContract,
 ):
     pass

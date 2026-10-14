@@ -399,6 +399,17 @@ class RbacObservability:
                 exc_info=True,
             )
 
+    def record_login_identity_binding(self, *, outcome: str) -> None:
+        try:
+            self.metrics.record_login_identity_binding(outcome=outcome)
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "login identity binding metric failed",
+                exc_info=True,
+            )
+
     def record_session_event(
         self,
         *,
@@ -408,6 +419,7 @@ class RbacObservability:
         revoked_tokens: int | None = None,
         reason: str | None = None,
         delay_ms: int | None = None,
+        login_provider: str | None = None,
     ) -> None:
         try:
             self.session_audit.record_session_event(
@@ -417,6 +429,7 @@ class RbacObservability:
                 revoked_tokens=revoked_tokens,
                 reason=reason,
                 delay_ms=delay_ms,
+                login_provider=login_provider,
             )
         except Exception:
             import logging
