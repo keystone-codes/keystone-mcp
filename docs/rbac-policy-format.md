@@ -185,8 +185,10 @@ built-in administration tool name except those blocked by the policy-wide
 **Rule:** only a full administrator may perform a change after which someone
 would gain or lose a management role, or change any account that already
 holds a management role (including granting or revoking an ordinary role on
-such a person). Delegated roles such as `hr: ["users_*"]` may still create,
-block, or update people who hold only non-management roles.
+such a person). The same rule applies to `policy_*` changes that touch
+administration (see [policy-admin.md](policy-admin.md#who-can-change-what)).
+Delegated roles such as `hr: ["users_*"]` may still create, block, or update
+people who hold only non-management roles.
 
 Use patterns that cover whole administration families (`api_keys_*`, not a
 hand-picked subset of key tools) so a full administrator is recognized

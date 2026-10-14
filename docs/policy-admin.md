@@ -23,10 +23,29 @@ this page is for whoever runs the server.
 
 See [rbac-policy-format.md](rbac-policy-format.md) for file layout.
 
+## Who can change what
+
+Changes that touch **administration** may only be applied by a **full
+administrator** (see [rbac-policy-format.md §2.10](rbac-policy-format.md#210-management-roles-and-full-administrators)).
+That includes:
+
+- Any role gaining or losing mutating administration tools (`users_*`,
+  `service_accounts_*`, `api_keys_*`, mutating `policy_*`).
+- Allow-pattern edits on a role that is (or becomes) a management role.
+- Edits to the policy-wide `deny` list.
+- Edits to `requires_human_identity` for administration tools.
+
+A **policy editor** (someone with `policy_*` but not full administration) may
+still change ordinary data-access roles, global `critical_tools`, and
+`requires_human_identity` for non-administration tools. **`policy_rollback`**
+is checked the same way: rolling back a change that touched administration
+requires a full administrator.
+
 ## What happens on each change
 
 1. The candidate document is validated like a hot-reload (catalog match,
-   invariants, self-lockout checks).
+   invariants, self-lockout checks, and the full-administrator gate above when
+   the change touches administration).
 2. Only one mutation runs at a time in a process (`asyncio` lock) and, on
    platforms with `flock`, across processes on the same volume (lock file
    `<policy-path>.lock` — do not delete it while the server runs; the policy

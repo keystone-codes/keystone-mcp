@@ -11,6 +11,7 @@ from keystone_mcp.rbac.management import (
     full_administrator_roles,
     is_full_administrator,
     is_management_role,
+    management_change_reasons,
 )
 from keystone_mcp.rbac.policy import parse_policy_yaml
 from keystone_mcp.user_directory.types import ServiceAccountRecord, UserRecord
@@ -142,6 +143,217 @@ roles:
         )
     )
     assert full_administrator_roles(policy) == frozenset({"owner"})
+
+
+def test_management_change_reasons_role_reaches_mutating_admin_tools() -> None:
+    before = parse_policy_yaml(
+        _policy(
+            """\
+version: "t"
+default_deny: true
+roles:
+  analyst: {allow: ["docs_read"]}
+"""
+        )
+    )
+    after = parse_policy_yaml(
+        _policy(
+            """\
+version: "t"
+default_deny: true
+roles:
+  analyst: {allow: ["docs_read", "users_block"]}
+"""
+        )
+    )
+    reasons = management_change_reasons(before, after)
+    assert reasons == (
+        "management role 'analyst' changes its allow patterns",
+        "role 'analyst' changes which administration tools that change state it reaches",
+    )
+
+
+def test_management_change_reasons_management_role_allow_patterns() -> None:
+    before = parse_policy_yaml(
+        _policy(
+            """\
+version: "t"
+default_deny: true
+roles:
+  hr: {allow: ["users_*"]}
+"""
+        )
+    )
+    after = parse_policy_yaml(
+        _policy(
+            """\
+version: "t"
+default_deny: true
+roles:
+  hr: {allow: ["users_*", "users_list"]}
+"""
+        )
+    )
+    reasons = management_change_reasons(before, after)
+    assert reasons == ("management role 'hr' changes its allow patterns",)
+
+
+def test_management_change_reasons_requires_human_identity_for_admin_tools() -> None:
+    before = parse_policy_yaml(
+        _policy(
+            """\
+version: "t"
+default_deny: true
+roles:
+  administrator: {allow: ["*"]}
+requires_human_identity: []
+"""
+        )
+    )
+    after = parse_policy_yaml(
+        _policy(
+            """\
+version: "t"
+default_deny: true
+roles:
+  administrator: {allow: ["*"]}
+requires_human_identity: ["users_*"]
+"""
+        )
+    )
+    reasons = management_change_reasons(before, after)
+    assert reasons == ("requires_human_identity changes for administration tools",)
+
+
+def test_management_change_reasons_deny_list() -> None:
+    before = parse_policy_yaml(
+        _policy(
+            """\
+version: "t"
+default_deny: true
+roles:
+  administrator: {allow: ["*"]}
+deny: []
+"""
+        )
+    )
+    after = parse_policy_yaml(
+        _policy(
+            """\
+version: "t"
+default_deny: true
+roles:
+  administrator: {allow: ["*"]}
+deny: ["docs_read"]
+"""
+        )
+    )
+    reasons = management_change_reasons(before, after)
+    assert reasons == ("deny list changes",)
+
+
+def test_management_change_reasons_description_only_is_empty() -> None:
+    before = parse_policy_yaml(
+        _policy(
+            """\
+version: "t"
+default_deny: true
+roles:
+  hr:
+    description: before
+    allow: ["users_*"]
+"""
+        )
+    )
+    after = parse_policy_yaml(
+        _policy(
+            """\
+version: "t"
+default_deny: true
+roles:
+  hr:
+    description: after
+    allow: ["users_*"]
+"""
+        )
+    )
+    assert management_change_reasons(before, after) == ()
+
+
+def test_management_change_reasons_ordinary_role_edit_is_empty() -> None:
+    before = parse_policy_yaml(
+        _policy(
+            """\
+version: "t"
+default_deny: true
+roles:
+  analyst: {allow: ["docs_read"]}
+"""
+        )
+    )
+    after = parse_policy_yaml(
+        _policy(
+            """\
+version: "t"
+default_deny: true
+roles:
+  analyst: {allow: ["docs_read", "docs_search"]}
+"""
+        )
+    )
+    assert management_change_reasons(before, after) == ()
+
+
+def test_management_change_reasons_critical_tools_is_empty() -> None:
+    before = parse_policy_yaml(
+        _policy(
+            """\
+version: "t"
+default_deny: true
+roles:
+  analyst: {allow: ["docs_read"]}
+critical_tools: []
+"""
+        )
+    )
+    after = parse_policy_yaml(
+        _policy(
+            """\
+version: "t"
+default_deny: true
+roles:
+  analyst: {allow: ["docs_read"]}
+critical_tools: ["docs_read"]
+"""
+        )
+    )
+    assert management_change_reasons(before, after) == ()
+
+
+def test_management_change_reasons_requires_human_identity_docs_only_is_empty() -> None:
+    before = parse_policy_yaml(
+        _policy(
+            """\
+version: "t"
+default_deny: true
+roles:
+  analyst: {allow: ["docs_read"]}
+requires_human_identity: []
+"""
+        )
+    )
+    after = parse_policy_yaml(
+        _policy(
+            """\
+version: "t"
+default_deny: true
+roles:
+  analyst: {allow: ["docs_read"]}
+requires_human_identity: ["docs_read"]
+"""
+        )
+    )
+    assert management_change_reasons(before, after) == ()
 
 
 def test_build_admins_report_is_pure() -> None:

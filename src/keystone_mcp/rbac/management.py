@@ -101,6 +101,42 @@ def _holder_label(subject: str, *, is_blocked: bool) -> str:
     return subject
 
 
+def _mutating_admin_tools_for_role(policy: RbacPolicy, role: str) -> frozenset[str]:
+    if role not in policy.role_names:
+        return frozenset()
+    return frozenset(tool for tool in MANAGEMENT_TOOL_NAMES if policy.allows_role(role, tool))
+
+
+def management_change_reasons(before: RbacPolicy, after: RbacPolicy) -> tuple[str, ...]:
+    """Why a policy change touches administration; empty when it does not."""
+    reasons: list[str] = []
+    all_roles = before.role_names | after.role_names
+    for role in sorted(all_roles):
+        if _mutating_admin_tools_for_role(before, role) != _mutating_admin_tools_for_role(
+            after, role
+        ):
+            reasons.append(
+                f"role '{role}' changes which administration tools that change state it reaches"
+            )
+    for role in sorted(all_roles):
+        if not (is_management_role(before, role) or is_management_role(after, role)):
+            continue
+        before_role = before.role(role)
+        after_role = after.role(role)
+        before_patterns = before_role.allow_patterns if before_role is not None else ()
+        after_patterns = after_role.allow_patterns if after_role is not None else ()
+        if before_patterns != after_patterns:
+            reasons.append(f"management role '{role}' changes its allow patterns")
+    if any(
+        before.requires_human_identity(tool) != after.requires_human_identity(tool)
+        for tool in MANAGEMENT_TOOL_NAMES
+    ):
+        reasons.append("requires_human_identity changes for administration tools")
+    if before.deny_patterns != after.deny_patterns:
+        reasons.append("deny list changes")
+    return tuple(sorted(reasons))
+
+
 def build_admins_report(
     policy: RbacPolicy,
     people: Sequence[UserRecord],
