@@ -915,13 +915,19 @@ def build_oauth_store(settings: object) -> OAuthStore:
             "KEYSTONE_MCP_REDIS_URL is required for OAuth session persistence. "
             "Set it to the shared keystone Redis (e.g. redis://redis:6379/0)."
         )
+    from keystone_mcp.auth.login_pending_store import normalize_login_key_prefix
+
     prefix = getattr(settings, "redis_key_prefix", "km:oauth:")
+    login_prefix = normalize_login_key_prefix(
+        getattr(settings, "login_pending_key_prefix", "km:login:")
+    )
     return RedisOAuthStore(
         redis_url,
         key_prefix=prefix,
         client_ttl_seconds=client_ttl_seconds(settings),
         refresh_ttl_seconds=getattr(settings, "refresh_token_ttl_seconds", 30 * 86400),
         access_ttl_seconds=getattr(settings, "token_cache_ttl_seconds", 3600),
+        refresh_meta_key_prefix=f"{login_prefix}refresh_auth:",
     )
 
 
