@@ -19,4 +19,5 @@ service-accounts list
 service-accounts update
 plugins list
 config check
+oauth register-client
 serve

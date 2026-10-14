@@ -542,42 +542,26 @@ by running this from the installation directory, with the server's own
 environment loaded (so it points at the same Redis):
 
 ```bash
-uv run python - <<'PY'
-import asyncio
-from mcp.shared.auth import OAuthClientInformationFull
-from keystone_mcp.config import Settings
-from keystone_mcp.auth.oauth_store import build_oauth_store
-
-async def main() -> None:
-    store = build_oauth_store(Settings())
-    client = OAuthClientInformationFull(
-        client_id="claude-desktop",
-        redirect_uris=["https://claude.ai/api/mcp/auth_callback"],
-        token_endpoint_auth_method="none",
-        grant_types=["authorization_code", "refresh_token"],
-        response_types=["code"],
-        client_name="Claude",
-    )
-    await store.put_client(client)
-    await store.aclose()
-
-asyncio.run(main())
-PY
+keystone-mcp oauth register-client \
+  --client-id claude-desktop \
+  --redirect-uri https://claude.ai/api/mcp/auth_callback \
+  --name Claude
 ```
+
+Run this where the server's environment is loaded (the same
+`KEYSTONE_MCP_REDIS_URL` and key prefix as the running replicas). Each
+`--redirect-uri` is checked against `KEYSTONE_MCP_OAUTH_ALLOWED_REDIRECT_HOSTS`
+the same way as `POST /register`. The client is public (PKCE on the server,
+no client secret). Its lifetime matches a self-registered client and is
+renewed on every sign-in. Running the command again with the same
+`--client-id` updates the record and restores a client that had expired.
 
 The redirect URI above is Claude's own connector callback (example only);
 substitute the redirect URI of whatever client you are registering.
 `client_id` and `redirect_uris` are the only fields a connecting client
 strictly needs to match; adjust `client_name` freely.
 
-A manually registered client has no special lifetime: it expires on the same
-schedule as a self-registered one (`KEYSTONE_MCP_REFRESH_TOKEN_TTL` /
-`KEYSTONE_MCP_TOKEN_TTL`, whichever is longer, plus one day), and that
-lifetime is renewed on every token issuance. If nobody has used the client
-for longer than that, re-run the script with the same `client_id` — writing
-the client again is idempotent and simply restores it. A dedicated CLI
-(`keystone-mcp oauth register-client`) is planned for a later release; until
-then this script is the supported path.
+The same can be done from Python with `put_client` and `touch_client`.
 
 ## RBAC, audit and metrics
 

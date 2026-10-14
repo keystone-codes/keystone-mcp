@@ -417,9 +417,7 @@ def build_server(
     if settings.throttle_backend == "redis":
         redis_client = getattr(store, "redis", None)
         if redis_client is None:
-            raise RuntimeError(
-                "KEYSTONE_MCP_THROTTLE_BACKEND=redis requires a Redis OAuth store"
-            )
+            raise RuntimeError("KEYSTONE_MCP_THROTTLE_BACKEND=redis requires a Redis OAuth store")
         prefix = settings.redis_key_prefix
         tool_sliding_window = RedisSlidingWindow(redis_client, key_prefix=prefix, kind="tool")
         upstream_sliding_window = RedisSlidingWindow(
@@ -1018,9 +1016,7 @@ def install_reload_signal(
             logger.info("SIGHUP ignored: startup still in progress")
             return
         reconciler_running = (
-            reconciler is not None
-            and reconciler._task is not None
-            and not reconciler._task.done()
+            reconciler is not None and reconciler._task is not None and not reconciler._task.done()
         )
         if reconciler_running and reconciler._loop is not None:
             reconciler._loop.call_soon_threadsafe(reconciler._policy_reload_event.set)
@@ -1261,7 +1257,8 @@ def main() -> None:
     if not settings.oauth_dcr_enabled:
         logger.info(
             "dynamic client registration is disabled; register OAuth clients "
-            "manually (docs/environment.md#registering-a-client-manually)"
+            "with keystone-mcp oauth register-client "
+            "(docs/environment.md#registering-a-client-manually)"
         )
     bootstrap_state = BootstrapState(deferred=True)
     _bootstrap_state_holder["state"] = bootstrap_state

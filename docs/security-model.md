@@ -101,7 +101,8 @@ It grants no access to any tool by itself: a registered client still has to
 send a real person through `/login` before it can call anything, and that
 person still has to exist in the users directory. An operator who registers
 every client by hand can turn DCR off entirely with
-`KEYSTONE_MCP_OAUTH_DCR_ENABLED=false`; see [Registering a client
+`KEYSTONE_MCP_OAUTH_DCR_ENABLED=false` and register clients with
+`keystone-mcp oauth register-client`; see [Registering a client
 manually](environment.md#registering-a-client-manually). Client records are
 not kept forever — registration metadata is bounded (request ≤ 16 KB,
 `client_name` ≤ 100 characters, ≤ 10 `redirect_uris`), unlisted RFC 7591
