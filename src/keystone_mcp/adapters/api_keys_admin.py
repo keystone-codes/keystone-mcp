@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from keystone_mcp.adapters.guards import require_human_actor
 from keystone_mcp.user_directory.errors import UsersError
 from keystone_mcp.user_directory.protocol import ApiKeyDirectory, UserDirectory
 
@@ -51,6 +52,12 @@ class ApiKeysAdminAdapter:
     ) -> dict[str, Any]:
         spec = request if isinstance(request, dict) else dict(args)
         name = route.name
+
+        refusal = require_human_actor(route, ctx, observability=self._observability)
+        if refusal is not None:
+            self._record_mutation_audit(route, ctx, spec, refusal)
+            return refusal
+
         directory = self._directory
         if directory is None or not isinstance(directory, ApiKeyDirectory):
             return self._error(

@@ -8,6 +8,22 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ## [Unreleased]
 
+### Added
+
+- Metric `keystone_mcp_admin_refusals_total`; audit field `actor_subject_type` on `rbac_policy_mutation`.
+
+### Changed
+
+- Service accounts get `forbidden` from every administration tool that changes state (`users_*`, `service_accounts_*`, `api_keys_*`, `policy_*`); reading stays available. `tools/list` no longer shows a caller the tools it will be refused for lack of an interactive sign-in.
+
+### Fixed
+
+- `service_accounts_list`, `service_accounts_add` and `service_accounts_update` work when called over MCP.
+
+### Migration
+
+- Automation that changed users, service accounts or API keys through MCP with a service-account key now gets `forbidden`; do it from a person's session or with the `keystone-mcp` CLI on the host.
+
 ## [0.5.0] - 2026-10-13
 
 ### Added

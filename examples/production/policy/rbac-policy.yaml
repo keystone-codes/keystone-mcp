@@ -32,8 +32,14 @@ roles:
 #      - your_service_search
 #      - your_service_read
 
-# Tools that may only run under an interactive human login. Empty by default.
-requires_human_identity: []
+# Only if every administrator signs in through an interactive provider (Google,
+# OIDC). An administrator who signs in with a DEV token or an API key gets
+# interactive=false and is refused these tools. Remove an entry if that is your case.
+requires_human_identity:
+  - users_*
+  - service_accounts_*
+  - api_keys_*
+  - policy_*
 
 # Tools whose role resolution must bypass the allow cache. The platform
 # always treats users_* as critical.

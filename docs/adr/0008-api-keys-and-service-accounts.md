@@ -44,6 +44,8 @@ takes effect on the next directory-backed verification.
 HTTP-backed `UserDirectory` implementations do not store keys or service
 accounts; only the built-in `local` backend does.
 
+Mutating administration tools refuse service accounts in code (0.6.0).
+
 ## Alternatives considered
 
 **Separate auth microservice for keys** — Extra moving part; rejected for 0.5.0

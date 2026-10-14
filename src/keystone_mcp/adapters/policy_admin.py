@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
+from keystone_mcp.adapters.guards import require_human_actor
 from keystone_mcp.rbac.catalog import collect_live_tool_names
 from keystone_mcp.rbac.loader import PolicyLoadError
 from keystone_mcp.rbac.policy import PolicyContractError
@@ -112,18 +113,22 @@ class PolicyAdminAdapter:
         spec = request if isinstance(request, dict) else dict(args)
         name = route.name
 
+        if name in _MUTATION_TOOLS:
+            refusal = require_human_actor(
+                route,
+                ctx,
+                observability=self._observability,
+                message="policy changes require a human administrator",
+            )
+            if refusal is not None:
+                self._record_refusal(route, ctx, code=str(refusal["code"]))
+                return refusal
+
         validation_error = self._validate_args(route, ctx, spec)
         if validation_error is not None:
             return validation_error
 
         if name in _MUTATION_TOOLS:
-            if ctx.verified_identity.subject_type == "service":
-                return self._error(
-                    route,
-                    ctx,
-                    code="forbidden",
-                    message="policy changes require a human administrator",
-                )
             actor_roles, roles_error = await self._actor_roles(route, ctx)
             if roles_error is not None:
                 return roles_error
@@ -314,6 +319,18 @@ class PolicyAdminAdapter:
             return self._error(route, ctx, code=exc.code, message=message)
         except (PolicyLoadError, PolicyContractError) as exc:
             return self._error(route, ctx, code="policy_invalid", message=str(exc))
+
+    def _record_refusal(self, route: Route, ctx: RouteContext, *, code: str) -> None:
+        if self._observability is None:
+            return
+        self._observability.record_policy_mutation(
+            operation=route.name,
+            actor_email=ctx.verified_identity.subject,
+            outcome="refused",
+            code=code,
+            task_id=ctx.task_id,
+            actor_subject_type=ctx.verified_identity.subject_type,
+        )
 
     async def _actor_roles(
         self, route: Route, ctx: RouteContext

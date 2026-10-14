@@ -193,11 +193,13 @@ Arguments and error codes
 
 **Service accounts** (built-in directory with `service_accounts` capability):
 `service_accounts_list`, `service_accounts_add`, `service_accounts_update`.
+Mutating tools answer `forbidden` to service accounts.
 
 **API keys** (built-in directory with `api_keys` capability):
 `api_keys_list`, `api_keys_revoke` always; `api_keys_issue` is **not**
 published when `KEYSTONE_MCP_DEPLOYMENT_PROFILE=production` (issue keys with
-`keystone-mcp keys` on the server instead).
+`keystone-mcp keys` on the server instead). Mutating tools answer `forbidden`
+to service accounts.
 
 **Policy administration** (`policy_*`): `policy_read`, `policy_catalog`,
 `policy_validate`, `policy_role_set`, `policy_role_delete`, `policy_allow_add`,
@@ -327,6 +329,7 @@ Frozen since 0.5.0. Metric names and label keys (not log message text):
 | `keystone_mcp_rbac_policy_reload_total` | `success` |
 | `keystone_mcp_users_mutation_total` | `operation`, `outcome` |
 | `keystone_mcp_policy_mutation_total` | `operation`, `outcome` |
+| `keystone_mcp_admin_refusals_total` | `operation`, `reason` |
 | `keystone_mcp_catalog_refresh_total` | `outcome` |
 | `keystone_mcp_catalog_refresh_changes_total` | `direction` |
 | `keystone_mcp_list_changed_sessions_total` | `kind` |

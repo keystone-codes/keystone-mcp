@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 from redis.exceptions import RedisError
 
+from keystone_mcp.adapters.guards import require_human_actor
 from keystone_mcp.user_directory.errors import UsersError
 from keystone_mcp.user_directory.protocol import UserDirectory, UserDirectoryAdmin
 from keystone_mcp.user_directory.util import normalize_email
@@ -100,6 +101,11 @@ class UsersAdminAdapter:
     ) -> dict[str, Any]:
         spec = request if isinstance(request, dict) else dict(args)
         name = route.name
+
+        refusal = require_human_actor(route, ctx, observability=self._observability)
+        if refusal is not None:
+            self._record_mutation_audit(route, ctx, spec, refusal)
+            return refusal
 
         directory = self._directory
         if directory is None:

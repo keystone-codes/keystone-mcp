@@ -244,6 +244,11 @@ identified by `svc:<name>` where `name` matches `^[a-z][a-z0-9-]{1,62}$`
 but **cannot** receive the `administrator` role, and they **never** satisfy
 `requires_human_identity` — even if a token claim says `interactive: true`.
 
+Service accounts can read (`users_list`, `service_accounts_list`, `api_keys_list`,
+`policy_read`) but every tool that changes people, service accounts, API keys or
+the policy answers `forbidden` to them, whatever their roles. This is enforced in
+code, not by the policy file.
+
 When `KEYSTONE_MCP_RBAC_MODE=enforce` and the built-in directory is active,
 Keystone publishes `service_accounts_list`, `service_accounts_add`, and
 `service_accounts_update` (administrators only, same policy gate as `users_*`).
@@ -275,6 +280,9 @@ expiry, use the CLI only: `keystone-mcp keys issue --no-expiry …`.
 when API-key login is enabled and no interactive provider blocks it (see
 [login-providers.md](login-providers.md)). **Service accounts** send the key
 on every MCP call: `Authorization: Bearer ksk_<key_id>_<secret>`.
+
+Mutating tools answer `forbidden` to service accounts (see **Service accounts**
+above); people use keys under the same RBAC rules as other sign-in methods.
 
 **In production** (`KEYSTONE_MCP_DEPLOYMENT_PROFILE=production`), keys are
 still issued from the server with `keystone-mcp keys issue`, but the
