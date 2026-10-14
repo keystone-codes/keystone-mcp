@@ -47,10 +47,12 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ### Migration
 
+- Delegated administrators (for example a role with `users_*` only) can no longer grant roles that give more than they have; give them those permissions too, or have a full administrator make the grant.
 - A stdio upstream that blocks for more than ~35 s without answering pings is now restarted only after three missed pings (about a minute).
 
 ### Changed
 
+- A person who is not a full administrator can grant (through `users_*` and `service_accounts_*`) only roles whose permissions they already have. Removing roles is not limited.
 - Management roles: a role that reaches any built-in administration tool is a management role, and a person whose roles reach all of them is a full administrator — both derived from the active policy, whatever the role names. Only a full administrator can give or take away a management role, or change, block, unblock, log out, or manage API keys of an account that holds one.
 - `resources/read` requires every RBAC name of the matching resources and templates in the URI's own namespace to be allowed.
 - Service accounts get `forbidden` from every administration tool that changes state (`users_*`, `service_accounts_*`, `api_keys_*`, `policy_*`); reading stays available. `tools/list` no longer shows a caller the tools it will be refused for lack of an interactive sign-in.

@@ -268,6 +268,20 @@ def live_catalog_names(
     return names | extra()
 
 
+def delegation_catalog_names(
+    policy_manager: RbacPolicyManager,
+    registry: RouterRegistry,
+) -> frozenset[str]:
+    """Live tool names plus catalog snapshot names used for delegation checks."""
+    snapshot = policy_manager.catalog_snapshot()
+    return (
+        live_catalog_names(policy_manager, registry)
+        | snapshot.active
+        | snapshot.reserved
+        | snapshot.wip
+    )
+
+
 _live_catalog_names = live_catalog_names
 
 
@@ -410,7 +424,9 @@ class RbacPolicyManager:
             return PolicyReloadResult(success=True, active=candidate)
 
         logger.warning("rbac policy hot-reload rejected: %s", last_error)
-        return PolicyReloadResult(success=False, active=previous, error=last_error or "reload failed")
+        return PolicyReloadResult(
+            success=False, active=previous, error=last_error or "reload failed"
+        )
 
     def _load_and_validate(self, registry: RouterRegistry) -> PolicySnapshot:
         path = self.policy_path()

@@ -31,9 +31,9 @@ roles:
   owner:
     allow: ["*"]
   hr:
-    allow: ["users_*"]
+    allow: ["users_*", "docs_read"]
   sam:
-    allow: ["service_accounts_*", "users_list"]
+    allow: ["service_accounts_*", "users_list", "docs_read"]
   keys:
     allow: ["api_keys_*"]
   member:

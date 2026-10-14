@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from keystone_mcp.catalog.names import MUTATING_ADMIN_TOOL_NAMES
+from keystone_mcp.rbac.management import ManagementView
 from keystone_mcp.user_directory.util import normalize_email
 
 if TYPE_CHECKING:
@@ -18,6 +20,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+CatalogNamesSource = Callable[[], frozenset[str]]
+
 HUMAN_ACTOR_REQUIRED_MESSAGE = (
     "this change requires a human administrator; service accounts can only read"
 )
@@ -26,6 +30,15 @@ MANAGEMENT_FORBIDDEN_MESSAGE = (
     "only a full administrator can grant or remove a management role "
     "or change an account that holds one"
 )
+
+DELEGATION_FORBIDDEN_MESSAGE = "you can grant only roles whose permissions you already have: {role}"
+
+
+@dataclass(frozen=True, slots=True)
+class AdminCall:
+    view: ManagementView
+    actor_roles: frozenset[str]
+    target_roles: frozenset[str]
 
 
 def require_human_actor(
@@ -68,64 +81,76 @@ async def _holder_roles(directory: UserDirectory, subject: str) -> tuple[str, ..
     return resolved.roles
 
 
-async def check_management_authority(
+def _service_unavailable(
+    route: Route,
+    ctx: RouteContext,
+    *,
+    message: str,
+) -> dict[str, Any]:
+    return {
+        "state": "error",
+        "tool": route.name,
+        "task_id": ctx.task_id,
+        "code": "service_unavailable",
+        "message": message,
+    }
+
+
+async def resolve_admin_call(
     route: Route,
     ctx: RouteContext,
     *,
     directory: UserDirectory,
     management_source: ManagementSource | None,
-    observability: RbacObservability | None,
     target_subject: str | None,
-    roles_touched: Sequence[str] = (),
-) -> dict[str, Any] | None:
+) -> AdminCall | dict[str, Any]:
     if management_source is None:
-        return None
-    try:
-        view = await management_source()
-    except Exception:  # noqa: BLE001
-        return {
-            "state": "error",
-            "tool": route.name,
-            "task_id": ctx.task_id,
-            "code": "service_unavailable",
-            "message": "role catalog is not loaded",
-        }
+        view = ManagementView(())
+    else:
+        try:
+            view = await management_source()
+        except Exception:  # noqa: BLE001
+            return _service_unavailable(route, ctx, message="role catalog is not loaded")
 
     actor = normalize_email(ctx.verified_identity.subject)
     try:
-        actor_roles = await _actor_roles(directory, actor)
+        actor_role_tuple = await _actor_roles(directory, actor)
     except Exception:  # noqa: BLE001
-        return {
-            "state": "error",
-            "tool": route.name,
-            "task_id": ctx.task_id,
-            "code": "service_unavailable",
-            "message": "users directory is unavailable",
-        }
-
-    if view.is_full_administrator(actor_roles):
-        return None
+        return _service_unavailable(route, ctx, message="users directory is unavailable")
 
     target_roles: tuple[str, ...] = ()
     if target_subject is not None:
         try:
             target_roles = await _holder_roles(directory, target_subject)
         except Exception:  # noqa: BLE001
-            return {
-                "state": "error",
-                "tool": route.name,
-                "task_id": ctx.task_id,
-                "code": "service_unavailable",
-                "message": "users directory is unavailable",
-            }
+            return _service_unavailable(route, ctx, message="users directory is unavailable")
 
-    touched = view.management_roles(r.strip() for r in roles_touched if r.strip())
-    if view.management_roles(target_roles) or touched:
+    return AdminCall(
+        view=view,
+        actor_roles=frozenset(actor_role_tuple),
+        target_roles=frozenset(target_roles),
+    )
+
+
+def check_management_authority(
+    route: Route,
+    ctx: RouteContext,
+    *,
+    call: AdminCall,
+    observability: RbacObservability | None,
+    roles_touched: Sequence[str] = (),
+) -> dict[str, Any] | None:
+    if not call.view.policies:
+        return None
+
+    if call.view.is_full_administrator(call.actor_roles):
+        return None
+
+    touched = call.view.management_roles(r.strip() for r in roles_touched if r.strip())
+    if call.view.management_roles(call.target_roles) or touched:
         if observability is not None:
             try:
-                observability.record_admin_refusal(
-                    operation=route.name, reason="management_role"
-                )
+                observability.record_admin_refusal(operation=route.name, reason="management_role")
             except Exception:
                 logger.warning("admin refusal metric failed", exc_info=True)
         return {
@@ -135,4 +160,72 @@ async def check_management_authority(
             "code": "forbidden",
             "message": MANAGEMENT_FORBIDDEN_MESSAGE,
         }
+    return None
+
+
+def delegation_roles_granted(
+    tool_name: str,
+    spec: dict[str, Any],
+    *,
+    target_roles: frozenset[str],
+) -> tuple[str, ...]:
+    if tool_name == "users_revoke_role":
+        return ()
+    if tool_name == "users_grant_role":
+        return (str(spec["role"]).strip(),)
+    if tool_name in ("users_add", "service_accounts_add"):
+        raw = spec.get("roles") or []
+        if not isinstance(raw, list):
+            return ()
+        return tuple(item.strip() for item in raw if isinstance(item, str) and item.strip())
+    if tool_name == "users_set_roles":
+        raw = spec.get("roles") or []
+        if not isinstance(raw, list):
+            return ()
+        new_roles = {item.strip() for item in raw if isinstance(item, str) and item.strip()}
+        return tuple(sorted(new_roles - target_roles))
+    if tool_name == "service_accounts_update":
+        raw = spec.get("roles")
+        if raw is None or not isinstance(raw, list):
+            return ()
+        new_roles = {item.strip() for item in raw if isinstance(item, str) and item.strip()}
+        return tuple(sorted(new_roles - target_roles))
+    return ()
+
+
+def check_delegation(
+    route: Route,
+    ctx: RouteContext,
+    *,
+    call: AdminCall,
+    roles_granted: Sequence[str],
+    catalog_names_source: CatalogNamesSource | None,
+    observability: RbacObservability | None,
+) -> dict[str, Any] | None:
+    if catalog_names_source is None:
+        return None
+    if call.view.is_full_administrator(call.actor_roles):
+        return None
+    try:
+        catalog_names = catalog_names_source()
+    except Exception:  # noqa: BLE001
+        return _service_unavailable(route, ctx, message="role catalog is not loaded")
+
+    for role in roles_granted:
+        role_name = role.strip()
+        if not role_name:
+            continue
+        if call.view.role_exceeds_actor(role_name, call.actor_roles, catalog_names):
+            if observability is not None:
+                try:
+                    observability.record_admin_refusal(operation=route.name, reason="delegation")
+                except Exception:
+                    logger.warning("admin refusal metric failed", exc_info=True)
+            return {
+                "state": "error",
+                "tool": route.name,
+                "task_id": ctx.task_id,
+                "code": "forbidden",
+                "message": DELEGATION_FORBIDDEN_MESSAGE.format(role=role_name),
+            }
     return None
