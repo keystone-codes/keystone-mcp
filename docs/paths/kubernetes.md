@@ -12,7 +12,8 @@ the same, only the packaging differs.
 |---|---|
 | `kustomization.yaml` | Lists the applied resources, in the `keystone` namespace. |
 | `namespace.yaml` | Creates the `keystone` namespace. |
-| `configmap.yaml` | `rbac-policy.yaml` and `upstreams.yaml`, same content as [`examples/production/`](../../examples/production/). |
+| `configmap.yaml` | `rbac-policy.yaml`, `login-providers.yaml`, and `upstreams.yaml`, aligned with [`examples/production/`](../../examples/production/). |
+| `pdb.yaml` | `PodDisruptionBudget` with `minAvailable: 1` during voluntary disruptions. |
 | `deployment.yaml` | Two replicas of the pinned `0.5.0` image, probes, resource limits. |
 | `service.yaml` | ClusterIP on port 8080. |
 | `secret.example.yaml` | Template for the Secret below — not applied by `kustomization.yaml`. |
@@ -27,12 +28,16 @@ workload.
 
 1. A reachable Redis and a reachable Postgres (production requires Postgres
    for the users directory; see [environment.md](../environment.md#deployment-profile)).
-2. A Google OAuth client — [google-oauth.md](../google-oauth.md).
+2. A Google OAuth client — [google-oauth.md](../google-oauth.md). Sign-in is
+   configured in the `login-providers.yaml` key inside `configmap.yaml` (same
+   shape as [`examples/production/login-providers.yaml`](../../examples/production/login-providers.yaml));
+   put the client secret in the Secret under the variable named in
+   `client_secret_env` (`KEYSTONE_MCP_LOGIN_GOOGLE_SECRET` in this example).
 3. The Secret `deployment.yaml` reads through `envFrom`:
 
    ```bash
    kubectl create secret generic keystone-secrets -n keystone \
-     --from-literal=KEYSTONE_MCP_GOOGLE_CLIENT_SECRET=... \
+     --from-literal=KEYSTONE_MCP_LOGIN_GOOGLE_SECRET=... \
      --from-literal=KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT="$(openssl rand -hex 32)" \
      --from-literal=KEYSTONE_MCP_REDIS_URL='redis://:<password>@<your-redis-host>:6379/0' \
      --from-literal=KEYSTONE_MCP_USERS_DB_URL='postgresql+psycopg://keystone:<password>@<your-postgres-host>:5432/keystone'
@@ -40,8 +45,9 @@ workload.
 
    `secret.example.yaml` shows the same four keys with placeholder values, for
    reference only — never apply it as written.
-4. Edit `deployment.yaml`'s plain (non-secret) `env` block: `KEYSTONE_MCP_BASE_URL`,
-   `KEYSTONE_MCP_GOOGLE_CLIENT_ID`, `KEYSTONE_MCP_SUPERADMIN_EMAIL`, and
+4. Edit `configmap.yaml`'s `login-providers.yaml` (`client_id`, optional
+   `allowed_domain`) and `deployment.yaml`'s plain (non-secret) `env` block:
+   `KEYSTONE_MCP_BASE_URL`, `KEYSTONE_MCP_SUPERADMIN_EMAIL`, and
    `FORWARDED_ALLOW_IPS` (see below).
 
 ## Apply
@@ -57,6 +63,11 @@ the account in `KEYSTONE_MCP_SUPERADMIN_EMAIL`.
 
 ## Probes
 
+`startupProbe` polls `/healthz` for up to 180 seconds (`periodSeconds: 5`,
+`failureThreshold: 36`) while upstream discovery and the users directory
+migrate. Until it succeeds, liveness and readiness probes do not run, so a
+slow start does not trigger a restart loop.
+
 `livenessProbe` polls `/healthz`: process up, nothing checked. A hang
 restarts the pod, nothing more.
 
@@ -65,6 +76,14 @@ the built-in users directory answers. A pod that fails `/readyz` is pulled
 out of the Service's endpoints, not restarted — it rejoins once the
 dependency recovers. (An external HTTP users directory, if your fork uses
 one, is not part of this check — see [observability-logging.md](../observability-logging.md#readiness).)
+
+## Shutdown
+
+`lifecycle.preStop` sleeps 5 seconds so the Service endpoints update before
+SIGTERM. `terminationGracePeriodSeconds: 40` covers that sleep, the
+25-second `KEYSTONE_MCP_SHUTDOWN_GRACE_SECONDS` in-flight request drain, and
+a small margin. `pdb.yaml` keeps at least one pod available during voluntary
+disruptions (node drain, cluster upgrade).
 
 ## Two or more replicas
 
@@ -83,9 +102,10 @@ one, is not part of this check — see [observability-logging.md](../observabili
   starting at once do not race each other.
 - The RBAC policy file is re-read on its own refresh interval per pod — a
   policy change reaches every pod within that interval, not instantly.
-- Policy tools are read-only with a ConfigMap mount; set
-  `KEYSTONE_MCP_POLICY_TOOLS=read-only` (or `off`) or mount the policy from
-  a writable PVC if agents should mutate it. See [policy-admin.md](../policy-admin.md).
+- The example sets `KEYSTONE_MCP_POLICY_TOOLS=read-only` because the policy
+  ConfigMap is mounted read-only. Mutating `policy_*` tools need a writable
+  mount (for example a PVC with the same file) and `KEYSTONE_MCP_POLICY_TOOLS=full`.
+  See [policy-admin.md](../policy-admin.md).
 - Behind an ingress controller, set `FORWARDED_ALLOW_IPS` (a plain
   uvicorn/environment variable, no `KEYSTONE_MCP_` prefix) to your ingress
   controller's pod network, or the login rate limiter sees the ingress pod's
