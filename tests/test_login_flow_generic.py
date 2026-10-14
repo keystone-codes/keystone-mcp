@@ -466,3 +466,31 @@ async def test_custom_provider_alone_gets_an_auto_built_resolver(tmp_path):
             response = await client.post("/login", data={"txn": txn, "email": "nobody@example.com"})
 
     assert response.status_code == 403
+
+
+async def test_provider_returning_service_subject_is_refused():
+    class ServiceSubjectForm(FakeFormProvider):
+        async def verify(self, form):  # type: ignore[override]
+            from keystone_mcp.login.protocol import LoginIdentity
+
+            return LoginIdentity(
+                email="svc:ci-bot",
+                provider=self.name,
+                interactive=False,
+            )
+
+    provider = ServiceSubjectForm("acme_form")
+    app, settings, _oauth = _build_app([provider])
+
+    async with LifespanManager(app):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url=BASE_URL
+        ) as client:
+            client_id = await register_client(client)
+            _verifier, challenge = make_pkce()
+            txn = await authorize_to_login(client, client_id, challenge, settings.resource_url)
+
+            response = await client.post("/login", data={"txn": txn, "email": "svc:ci-bot"})
+
+    assert response.status_code == 401
+    assert "code" not in response.text

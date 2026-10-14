@@ -207,8 +207,9 @@ async def test_legacy_plain_marker_is_read():
     provider, _store, _settings = _provider()
     await provider._pending_store.put("refresh_auth", "km_rt_legacy", "google", 3600)
 
-    auth_method, resource, interactive = await provider._read_refresh_meta("km_rt_legacy")
+    meta = await provider._read_refresh_meta("km_rt_legacy")
 
-    assert auth_method == "google"
-    assert resource is None
-    assert interactive is True
+    assert meta is not None
+    assert meta.auth_method == "google"
+    assert meta.resource is None
+    assert meta.interactive is True

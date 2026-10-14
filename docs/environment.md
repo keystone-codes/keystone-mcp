@@ -275,6 +275,11 @@ than one replica.
 | `KEYSTONE_MCP_LOGIN_PENDING_KEY_PREFIX` | `km:login:` | Key namespace for pending login transactions and one-time codes. |
 | `KEYSTONE_MCP_LOGIN_PENDING_TXN_TTL` | `600` | Pending login transaction TTL, seconds. |
 
+Under `KEYSTONE_MCP_LOGIN_PENDING_KEY_PREFIX`, namespaced keys include
+`refresh_auth:<refresh token>` (JSON session marker for a refresh token; fields
+are only ever added, an older Keystone ignores unknown fields), `code:<…>`,
+`txn:<…>`, and `login_attempt:<…>`.
+
 There is no in-memory fallback. OAuth sessions are always in Redis.
 
 **Record lifetimes.** Every OAuth record in Redis carries a TTL, so Redis

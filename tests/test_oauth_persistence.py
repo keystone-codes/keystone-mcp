@@ -28,7 +28,11 @@ from conftest import (
     refresh_access_token,
     register_client,
 )
-from keystone_mcp.auth.keystone_oauth_provider import KeystoneOAuthProvider
+from keystone_mcp.auth.keystone_oauth_provider import (
+    KeystoneOAuthProvider,
+    RefreshMeta,
+    encode_refresh_meta,
+)
 from keystone_mcp.auth.login_pending_store import InMemoryLoginPendingStore
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import Settings
@@ -78,8 +82,8 @@ async def test_tokens_survive_provider_restart(persistence_client):
     client_id = res["client_id"]
 
     _login = dev_token_login({VALID_TOKEN})
-    pending = InMemoryLoginPendingStore()
-    oauth2 = KeystoneOAuthProvider(settings, store, pending, login_providers=[_login])
+    pending_store = _oauth1._pending_store
+    oauth2 = KeystoneOAuthProvider(settings, store, pending_store, login_providers=[_login])
     registered = await oauth2.get_client(client_id)
     assert registered is not None
 
@@ -196,15 +200,22 @@ async def test_auth_method_marker_ttl_equals_the_refresh_token_lifetime():
         await original_put(namespace, key, payload, ttl_seconds)
 
     pending.put = spying_put  # type: ignore[method-assign]
-    await provider._put_refresh_meta(
-        "km_rt_marker", auth_method="google", resource=None, interactive=True
+    marker = RefreshMeta(
+        auth_method="google",
+        resource=None,
+        interactive=True,
+        auth_time=None,
+        key_id=None,
+        key_id_known=False,
+        key_expires_at=None,
     )
+    await provider._put_refresh_meta("km_rt_marker", marker)
 
     assert recorded == [
         (
             "refresh_auth",
             "km_rt_marker",
-            json.dumps({"auth_method": "google", "resource": None, "interactive": True}),
+            encode_refresh_meta(marker),
             1234,
         )
     ]
@@ -314,6 +325,18 @@ async def test_rotation_persists_the_new_token_before_deleting_the_old():
         subject="user@example.com",
     )
     await store.put_refresh_token(old)
+    await provider._put_refresh_meta(
+        "km_rt_old",
+        RefreshMeta(
+            auth_method="api_key",
+            resource=None,
+            interactive=False,
+            auth_time=None,
+            key_id=None,
+            key_id_known=False,
+            key_expires_at=None,
+        ),
+    )
 
     calls: list[str] = []
     original_put = store.put_refresh_token
@@ -369,6 +392,18 @@ async def test_crash_after_minting_leaves_a_usable_refresh_token():
         subject="user@example.com",
     )
     await store.put_refresh_token(old)
+    await provider._put_refresh_meta(
+        "km_rt_old",
+        RefreshMeta(
+            auth_method="api_key",
+            resource=None,
+            interactive=False,
+            auth_time=None,
+            key_id=None,
+            key_id_known=False,
+            key_expires_at=None,
+        ),
+    )
 
     class _Crash(RuntimeError):
         pass
@@ -413,7 +448,16 @@ async def test_concurrent_refresh_keeps_google_auth_method(persistence_client):
     # this fixture.
     oauth._providers["google"] = oauth._providers["api_key"]
     await oauth._put_refresh_meta(
-        refresh_token_str, auth_method="google", resource=None, interactive=True
+        refresh_token_str,
+        RefreshMeta(
+            auth_method="google",
+            resource=None,
+            interactive=True,
+            auth_time=None,
+            key_id=None,
+            key_id_known=False,
+            key_expires_at=None,
+        ),
     )
 
     registered = await oauth.get_client(client_id)
@@ -506,9 +550,15 @@ async def test_second_refresh_keeps_auth_method_after_first_fully_completes(pers
     oauth._providers["google"] = oauth._providers["api_key"]
     await oauth._put_refresh_meta(
         refresh_token_str,
-        auth_method="google",
-        resource=settings.resource_url,
-        interactive=True,
+        RefreshMeta(
+            auth_method="google",
+            resource=settings.resource_url,
+            interactive=True,
+            auth_time=None,
+            key_id=None,
+            key_id_known=False,
+            key_expires_at=None,
+        ),
     )
 
     registered = await oauth.get_client(client_id)
@@ -689,12 +739,14 @@ async def test_refresh_marker_from_0_4_is_read():
         json.dumps({"auth_method": "google", "resource": None}),
         3600,
     )
-    auth_method, resource, interactive = await provider._read_refresh_meta("km_rt_04_google")
-    assert (auth_method, resource, interactive) == ("google", None, True)
+    meta = await provider._read_refresh_meta("km_rt_04_google")
+    assert meta is not None
+    assert (meta.auth_method, meta.resource, meta.interactive) == ("google", None, True)
 
     await pending.put("refresh_auth", "km_rt_oldest_api_key", "api_key", 3600)
-    auth_method, resource, interactive = await provider._read_refresh_meta("km_rt_oldest_api_key")
-    assert (auth_method, resource, interactive) == ("api_key", None, False)
+    meta = await provider._read_refresh_meta("km_rt_oldest_api_key")
+    assert meta is not None
+    assert (meta.auth_method, meta.resource, meta.interactive) == ("api_key", None, False)
 
 
 async def test_refresh_for_removed_provider_is_refused():
@@ -734,7 +786,16 @@ async def test_refresh_for_removed_provider_is_refused():
     )
     await store.put_refresh_token(old)
     await provider._put_refresh_meta(
-        "km_rt_okta_removed", auth_method="okta", resource=None, interactive=True
+        "km_rt_okta_removed",
+        RefreshMeta(
+            auth_method="okta",
+            resource=None,
+            interactive=True,
+            auth_time=None,
+            key_id=None,
+            key_id_known=False,
+            key_expires_at=None,
+        ),
     )
 
     with pytest.raises(TokenError) as excinfo:
