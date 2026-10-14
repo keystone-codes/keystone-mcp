@@ -36,7 +36,7 @@ def _load_module(path: Path) -> ModuleType:
     return module
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def reference() -> ModuleType:
     return _load_module(REFERENCE_PATH)
 
@@ -109,7 +109,10 @@ def test_python_reference_rejects_alg_none(reference):
 
     with pytest.raises(reference.IdentityError):
         reference.verify_keystone_identity(
-            token, secrets=["irrelevant-secret-but-at-least-32-bytes"], audience="hello"
+            token,
+            secrets=["irrelevant-secret-but-at-least-32-bytes"],
+            audience="hello",
+            issuer="https://keystone.example",
         )
 
 
@@ -133,3 +136,116 @@ def test_hello_upstream_copy_matches_reference():
     the reference it was copied from -- otherwise the two quietly drift
     apart and the demo stops proving what the docs claim it proves."""
     assert HELLO_COPY_PATH.read_bytes() == REFERENCE_PATH.read_bytes()
+
+
+def test_python_reference_requires_issuer(reference, vector):
+    with pytest.raises(TypeError):
+        reference.verify_keystone_identity(
+            vector["token"],
+            secrets=[vector["secret"]],
+            audience=vector["audience"],
+        )
+    with pytest.raises(reference.IdentityError, match="issuer is required"):
+        reference.verify_keystone_identity(
+            vector["token"],
+            secrets=[vector["secret"]],
+            audience=vector["audience"],
+            issuer="",
+        )
+
+
+def test_python_reference_reuses_one_jwks_client(monkeypatch):
+    import jwt as pyjwt
+
+    module = _load_module(REFERENCE_PATH)
+    created: list = []
+
+    class _CountingClient:
+        def __init__(self, *args, **kwargs):
+            created.append(self)
+
+        def get_signing_key_from_jwt(self, token):
+            raise pyjwt.PyJWTError("stub")
+
+    monkeypatch.setattr(module.jwt, "PyJWKClient", _CountingClient)
+    jwks_url = "https://keystone.example/.well-known/keystone-identity-jwks.json"
+    token = jwt.encode(
+        {
+            "iss": "https://keystone.example",
+            "aud": "hello",
+            "sub": "ann@example.com",
+            "iat": 1700000000,
+            "exp": 2000000000,
+        },
+        "test-secret-for-jwks-client-reuse-32b",
+        algorithm="HS256",
+        headers={"typ": module.IDENTITY_TYP},
+    )
+
+    for _ in range(10):
+        with pytest.raises(module.IdentityError):
+            module.verify_keystone_identity(
+                token,
+                jwks_url=jwks_url,
+                audience="hello",
+                issuer="https://keystone.example",
+            )
+    assert len(created) == 1
+
+
+def test_python_reference_rejects_observe_denial_by_default(reference):
+    import time
+
+    now = int(time.time())
+    token = jwt.encode(
+        {
+            "iss": "https://keystone.example",
+            "aud": "hello",
+            "sub": "ann@example.com",
+            "iat": now,
+            "exp": now + 300,
+            "rbac_decision": "deny",
+            "roles": [],
+            "rbac": "observe",
+        },
+        "test-secret-for-observe-deny-check-32",
+        algorithm="HS256",
+        headers={"typ": reference.IDENTITY_TYP},
+    )
+    with pytest.raises(reference.IdentityError, match="Keystone RBAC would deny"):
+        reference.verify_keystone_identity(
+            token,
+            secrets=["test-secret-for-observe-deny-check-32"],
+            audience="hello",
+            issuer="https://keystone.example",
+        )
+
+
+def test_python_reference_accepts_observe_denial_with_flag(reference):
+    import time
+
+    now = int(time.time())
+    secret = "test-secret-for-observe-deny-check-32"
+    token = jwt.encode(
+        {
+            "iss": "https://keystone.example",
+            "aud": "hello",
+            "sub": "ann@example.com",
+            "iat": now,
+            "exp": now + 300,
+            "rbac_decision": "deny",
+            "roles": [],
+            "rbac": "observe",
+        },
+        secret,
+        algorithm="HS256",
+        headers={"typ": reference.IDENTITY_TYP},
+    )
+    identity = reference.verify_keystone_identity(
+        token,
+        secrets=[secret],
+        audience="hello",
+        issuer="https://keystone.example",
+        accept_observe_denials=True,
+    )
+    assert identity.rbac_decision == "deny"

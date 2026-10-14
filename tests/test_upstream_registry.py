@@ -990,3 +990,111 @@ def test_existing_http_entries_unchanged(permissive_policy):
     assert cfg.args == ()
     assert cfg.env_from == ()
     assert cfg.cwd is None
+
+
+_SHARED_HS256 = "shared-hs256-secret-for-w30-test---" + "s" * 8
+
+
+def test_same_hs256_value_under_two_variables_warns(permissive_policy):
+    from keystone_mcp.config import UpstreamConfig
+    from keystone_mcp.upstream_registry.load import identity_secret_value_warnings
+
+    upstreams = (
+        UpstreamConfig(
+            name="docs-mcp",
+            url="http://docs:8081/mcp",
+            namespace="docs",
+            identity_secret_env="KEYSTONE_MCP_UPSTREAM_DOCS_IDENTITY_SECRET",
+        ),
+        UpstreamConfig(
+            name="notes-mcp",
+            url="http://notes:8081/mcp",
+            namespace="notes",
+            identity_secret_env="KEYSTONE_MCP_UPSTREAM_NOTES_IDENTITY_SECRET",
+        ),
+    )
+    environ = {
+        "KEYSTONE_MCP_UPSTREAM_DOCS_IDENTITY_SECRET": _SHARED_HS256,
+        "KEYSTONE_MCP_UPSTREAM_NOTES_IDENTITY_SECRET": _SHARED_HS256,
+    }
+    warnings = identity_secret_value_warnings(upstreams, environ)
+    assert len(warnings) == 1
+    line = warnings[0]
+    assert "docs-mcp" in line and "notes-mcp" in line
+    assert "KEYSTONE_MCP_UPSTREAM_DOCS_IDENTITY_SECRET" in line
+    assert "KEYSTONE_MCP_UPSTREAM_NOTES_IDENTITY_SECRET" in line
+    assert _SHARED_HS256 not in line
+
+
+def test_distinct_values_no_warning(permissive_policy):
+    from keystone_mcp.config import UpstreamConfig
+    from keystone_mcp.upstream_registry.load import identity_secret_value_warnings
+
+    upstreams = (
+        UpstreamConfig(
+            name="docs-mcp",
+            url="http://docs:8081/mcp",
+            namespace="docs",
+            identity_secret_env="KEYSTONE_MCP_UPSTREAM_DOCS_IDENTITY_SECRET",
+        ),
+        UpstreamConfig(
+            name="notes-mcp",
+            url="http://notes:8081/mcp",
+            namespace="notes",
+            identity_secret_env="KEYSTONE_MCP_UPSTREAM_NOTES_IDENTITY_SECRET",
+        ),
+    )
+    environ = {
+        "KEYSTONE_MCP_UPSTREAM_DOCS_IDENTITY_SECRET": _SHARED_HS256,
+        "KEYSTONE_MCP_UPSTREAM_NOTES_IDENTITY_SECRET": "another-distinct-secret-value-" + "x" * 8,
+    }
+    assert identity_secret_value_warnings(upstreams, environ) == []
+
+
+def test_disabled_entry_ignored(permissive_policy):
+    from keystone_mcp.config import UpstreamConfig
+    from keystone_mcp.upstream_registry.load import identity_secret_value_warnings
+
+    upstreams = (
+        UpstreamConfig(
+            name="docs-mcp",
+            url="http://docs:8081/mcp",
+            namespace="docs",
+            enabled=False,
+            identity_secret_env="KEYSTONE_MCP_UPSTREAM_DOCS_IDENTITY_SECRET",
+        ),
+        UpstreamConfig(
+            name="notes-mcp",
+            url="http://notes:8081/mcp",
+            namespace="notes",
+            identity_secret_env="KEYSTONE_MCP_UPSTREAM_NOTES_IDENTITY_SECRET",
+        ),
+    )
+    environ = {
+        "KEYSTONE_MCP_UPSTREAM_DOCS_IDENTITY_SECRET": _SHARED_HS256,
+        "KEYSTONE_MCP_UPSTREAM_NOTES_IDENTITY_SECRET": _SHARED_HS256,
+    }
+    assert identity_secret_value_warnings(upstreams, environ) == []
+
+
+def test_same_variable_name_still_refused(tmp_path: Path, monkeypatch, permissive_policy):
+    monkeypatch.setenv("KEYSTONE_MCP_UPSTREAM_SHARED_IDENTITY_SECRET", _SHARED_HS256)
+    document = {
+        "schema_version": 1,
+        "entries": [
+            {
+                "name": "docs-mcp",
+                "url": "https://docs-mcp.example/mcp",
+                "namespace": "docs",
+                "auth": {"identity_secret_env": "KEYSTONE_MCP_UPSTREAM_SHARED_IDENTITY_SECRET"},
+            },
+            {
+                "name": "notes-mcp",
+                "url": "https://notes-mcp.example/mcp",
+                "namespace": "notes",
+                "auth": {"identity_secret_env": "KEYSTONE_MCP_UPSTREAM_SHARED_IDENTITY_SECRET"},
+            },
+        ],
+    }
+    with pytest.raises(ValueError, match="reuses the signing secret"):
+        parse_upstream_entries(document["entries"], policy=permissive_policy)

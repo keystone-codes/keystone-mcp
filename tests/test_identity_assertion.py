@@ -12,6 +12,7 @@ from keystone_mcp.identity_assertion import (
     IDENTITY_TYP,
     IdentityAssertionSigner,
     build_identity_claims,
+    build_identity_jwks,
 )
 from keystone_mcp.rbac.call_decision import current_call_decision
 from keystone_mcp.router.rbac_middleware import RbacDecision
@@ -210,3 +211,63 @@ def test_signer_repr_hides_secret():
     signer = IdentityAssertionSigner(audience=AUDIENCE, secret=secret, issuer=ISSUER)
     assert secret.decode() not in repr(signer)
     assert "secret" not in repr(signer)
+
+
+def test_claims_include_rbac_decision_only_when_given():
+    with_decision = _claims(rbac_decision="deny")
+    assert with_decision["rbac_decision"] == "deny"
+    without = _claims()
+    assert "rbac_decision" not in without
+
+
+def test_jwks_with_previous_key_lists_two_keys():
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    current = ec.generate_private_key(ec.SECP256R1())
+    previous = ec.generate_private_key(ec.SECP256R1())
+    jwks = build_identity_jwks(current, previous_key=previous)
+    assert len(jwks["keys"]) == 2
+    kids = [k["kid"] for k in jwks["keys"]]
+    assert kids[0] != kids[1]
+    assert jwks["keys"][0]["alg"] == "ES256"
+    assert jwks["keys"][1]["alg"] == "ES256"
+
+
+def test_jwks_ignores_previous_equal_to_current():
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    current = ec.generate_private_key(ec.SECP256R1())
+    jwks = build_identity_jwks(current, previous_key=current)
+    assert len(jwks["keys"]) == 1
+
+
+def test_signing_uses_current_key_only():
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    from keystone_mcp.identity_assertion import (
+        build_identity_jwks,
+        ec_public_key_jwk_thumbprint,
+    )
+
+    current = ec.generate_private_key(ec.SECP256R1())
+    previous = ec.generate_private_key(ec.SECP256R1())
+    kid = ec_public_key_jwk_thumbprint(current.public_key())
+    signer = IdentityAssertionSigner(
+        audience=AUDIENCE,
+        issuer=ISSUER,
+        private_key=current,
+        kid=kid,
+    )
+    token = signer.sign(
+        identity=HUMAN,
+        task_id="t_es256",
+        mcp_method="tools/call",
+        mcp_target="whoami",
+        timeout_seconds=30,
+        rbac_mode="enforce",
+    )
+    header = jwt.get_unverified_header(token)
+    assert header["kid"] == kid
+    jwks = build_identity_jwks(current, previous_key=previous)
+    current_jwk = jwt.PyJWK.from_dict(jwks["keys"][0])
+    jwt.decode(token, current_jwk.key, algorithms=["ES256"], audience=AUDIENCE, issuer=ISSUER)

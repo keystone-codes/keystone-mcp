@@ -43,9 +43,14 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 - Startup warnings W8–W19 (`docs/environment.md#startup-warnings`).
 - Plugin API: base classes `UserDirectoryBase`, `UserDirectoryAdminBase`, `ServiceAccountDirectoryBase`, `ApiKeyDirectoryBase`, `LoginProviderBase`, `RedirectLoginProviderBase`, `FormLoginProviderBase`; `keystone_mcp.user_directory.normalize_email`; `FakeTamper.unavailable`; marker `keystone_contract_lenient(reason=…)`; `docs/compatibility.md#plugin-api` lists the frozen plugin surface, including `OidcLoginProvider` and `OidcProviderConfig` as the base for OIDC plugins.
 - `KEYSTONE_MCP_LOGIN_IDENTITY_BINDING=bind` binds a person to the identity provider account (`iss`, `sub`) they first sign in with; optional users-directory capability `identity_binding` (`IdentityBindingDirectory`); `keystone-mcp users unbind-identity`; `LoginIdentity.issuer`, `LoginIdentity.subject_id`.
+- `KEYSTONE_MCP_IDENTITY_SIGNING_KEY_PREVIOUS`: publish the previous ES256 public key in the JWKS during a key rotation.
+- Claim `rbac_decision` in `X-Keystone-Identity`.
 
 ### Changed
 
+- Identity verification examples (Python, TypeScript) require `issuer`, keep one JWKS client per process and refuse an assertion with `rbac_decision: "deny"` by default.
+- In `observe` mode, a call RBAC would deny now reaches the upstream with an empty `roles` list and the new claim `rbac_decision: "deny"` in `X-Keystone-Identity`.
+- Startup warns when two upstreams use the same HS256 signing secret value under different variables.
 - Renewing a token re-checks the person in the users directory and the API key the session was opened with; while the directory is unreachable, `/token` answers `503` and the refresh token stays valid.
 - Keystone checks a plugin against the method list of the 0.5 protocols instead of `isinstance`; the startup error names missing methods. The plugin template depends on `keystone-mcp-gateway>=0.5,<2`.
 - Contract tests: a directory that declares `admin`, `service_accounts` or `api_keys` must run the matching contract class, and the availability tests are no longer skipped silently. In 0.5 a test class that mixed in only `UserDirectoryContract` passed without checking the administrator rules its directory claimed — a gap in the contract tests, fixed here. Opt out only with `@pytest.mark.keystone_contract_lenient(reason=...)`.
@@ -128,6 +133,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ### Migration
 
+- Services that ran in `observe` and read `roles` from the assertion: a denied call now has `roles: []`; check `rbac_decision`. Code copied from the identity examples: pass `issuer` (your `KEYSTONE_MCP_BASE_URL` without a trailing slash).
 - Before upgrading, run `keystone-mcp config check` with the new version against your environment.
 - An administrator who blocks or logs out a person, or imports a directory that blocks them, also ends their live sessions, and a Redis failure aborts the command instead of leaving the sessions up. Scripts that run `keystone-mcp users import` should treat exit code `3` as "written, but some sessions were not revoked — run again".
 - If you copied the 0.5 Kubernetes example: rename the secret key `KEYSTONE_MCP_GOOGLE_CLIENT_SECRET` to the variable named in your providers file, add the providers file, and set `KEYSTONE_MCP_POLICY_TOOLS=read-only` for a read-only policy mount. Old variables keep working with a deprecation warning.

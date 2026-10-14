@@ -855,7 +855,9 @@ class UpstreamRegistry:
     rbac_mode: str = "off"
     # Deployment-wide ES256 signing key (Y11); never logged or repr'd.
     _identity_signing_key_pem: str = field(default="", repr=False)
+    _identity_signing_key_previous_pem: str = field(default="", repr=False)
     _identity_es256_private_key: Any = field(default=None, repr=False)
+    _identity_es256_previous_private_key: Any = field(default=None, repr=False)
     _identity_es256_kid: str | None = field(default=None, repr=False)
     _upstreams: list[UpstreamConfig] = field(default_factory=list)
     _sub_servers: dict[str, FastMCP] = field(default_factory=dict)
@@ -885,6 +887,9 @@ class UpstreamRegistry:
             private_key = load_ec_p256_private_key(pem)
             self._identity_es256_private_key = private_key
             self._identity_es256_kid = ec_public_key_jwk_thumbprint(private_key.public_key())
+        previous_pem = self._identity_signing_key_previous_pem.strip()
+        if previous_pem:
+            self._identity_es256_previous_private_key = load_ec_p256_private_key(previous_pem)
         if self.http_client_factory is None:
             max_bytes = self.upstream_max_response_bytes
 
