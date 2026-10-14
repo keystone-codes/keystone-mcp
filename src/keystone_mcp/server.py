@@ -63,7 +63,7 @@ from keystone_mcp.rbac.catalog import (
     collect_live_tool_names,
     format_live_published_names,
 )
-from keystone_mcp.rbac.loader import PolicyLoadError, RbacPolicyManager
+from keystone_mcp.rbac.loader import PolicyLoadError, RbacPolicyManager, preflight_rbac_policy_file
 from keystone_mcp.rbac.policy import PolicyContractError
 from keystone_mcp.rbac.policy_store import PolicyStore
 from keystone_mcp.router.engine import RouterEngine
@@ -1024,7 +1024,7 @@ async def run_deferred_bootstrap(
     except asyncio.CancelledError:
         raise
     except Exception as exc:
-        logger.critical("startup failed: %s", exc)
+        logger.error("startup refused: %s", exc)
         state.mark_failed(str(exc))
         _startup_failure_holder["error"] = exc
         _request_shutdown()
@@ -1104,6 +1104,11 @@ def main() -> None:
         _ = settings.upstreams
     except ValueError as exc:
         logger.error("startup refused: %s", f"upstream registry: {exc}")
+        raise SystemExit(1) from exc
+    try:
+        preflight_rbac_policy_file(settings)
+    except PolicyLoadError as exc:
+        logger.error("startup refused: %s", exc)
         raise SystemExit(1) from exc
     logger.info("deployment profile: %s", settings.deployment_profile)
     for warning in startup_warnings(settings):
