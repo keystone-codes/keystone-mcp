@@ -37,7 +37,6 @@ from fastmcp import Client
 from fastmcp.exceptions import ToolError
 from fastmcp.server.dependencies import get_context
 from fastmcp.tools.base import InputRequiredToolResult, ToolResult
-from mcp.shared._httpx_utils import McpHttpClientFactory
 
 from keystone_mcp.identity import upstream_identity_headers
 from keystone_mcp.identity_assertion import (
@@ -47,6 +46,8 @@ from keystone_mcp.identity_assertion import (
 )
 
 if TYPE_CHECKING:
+    from mcp.shared._httpx_utils import McpHttpClientFactory
+
     from keystone_mcp.router.context import RouteContext
     from keystone_mcp.router.route import Route
     from keystone_mcp.router.upstream_connection import UpstreamConnection
@@ -137,7 +138,7 @@ def _http_client_factory(
     *,
     max_response_bytes: int = DEFAULT_UPSTREAM_MAX_RESPONSE_BYTES,
     shared_transport: httpx2.AsyncHTTPTransport | None = None,
-) -> McpHttpClientFactory:
+) -> "McpHttpClientFactory":
     """Build the transport's HTTP client with the per-tool timeout applied.
 
     Without this the per-tool budget bounded only the MCP request and not the
@@ -181,7 +182,7 @@ ClientFactory = Callable[..., Client]
 
 #: ``StreamableHttpTransport`` http client factory for a resolved per-tool
 #: timeout.
-HttpClientFactoryBuilder = Callable[[float], McpHttpClientFactory]
+HttpClientFactoryBuilder = Callable[[float], "McpHttpClientFactory"]
 
 
 class McpProxyAdapter:
@@ -222,7 +223,7 @@ class McpProxyAdapter:
             if self._connection._http_client_factory is None:
                 limit = max_response_bytes
 
-                def _default_builder(timeout: float) -> McpHttpClientFactory:
+                def _default_builder(timeout: float) -> "McpHttpClientFactory":
                     return _http_client_factory(timeout, max_response_bytes=limit)
 
                 self._connection._http_client_factory = _default_builder

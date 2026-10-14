@@ -47,6 +47,16 @@ from pulling an untested major. Raising an upper bound — allowing the next
 major — is a separate PR after the daily canary job has gone green on that
 major.
 
+### Private fastmcp/mcp APIs
+
+Keystone calls several undocumented fastmcp and MCP SDK surfaces. Every such
+symbol is listed in `tests/test_private_api_sentinels.py` (`PRIVATE_APIS`);
+add a row there whenever you introduce a new private import or attribute
+access. The daily `canary.yml` workflow runs the full suite against the newest
+resolved versions and against the lowest allowed direct versions (`lowest-direct`
+job); a green canary does not replace updating the sentinel table when you add
+a dependency on a new private API.
+
 ## Running the tests
 
 ```bash
