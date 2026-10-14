@@ -61,6 +61,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ### Fixed
 
+- Sign-in with Google works again: the provider's token and key endpoints on `googleapis.com` are accepted (0.5.0 refused every Google sign-in with "discovery endpoint origin mismatch").
 - A half-open upstream probe that never reaches the service does not hold the only probe slot.
 - Docs no longer describe the `policy_*` tools and service-account subjects as future work; deprecation notes say "removed in 2.0" everywhere.
 - The release workflow no longer creates a GitHub Release when publishing to PyPI failed.
@@ -117,7 +118,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 - Errors from an upstream reach the client as short, neutral messages (unavailable, timed out, returned an error); details stay in keystone-mcp's log.
 ### Added
 
-
+- Login providers file: optional `endpoint_hosts` for an OpenID Connect provider whose endpoints are not on the issuer's host.
 - Issue templates for upgrade reports; feature requests ask whether the change would alter a frozen contract.
 - `keystone-mcp oauth register-client`: register a public OAuth client when self-registration is off, with the same redirect-host and metadata checks as `POST /register`.
 - `keystone-mcp users db current` and `keystone-mcp users db downgrade --to <revision>`: roll the users database back before returning to an older version. `docs/upgrading.md` gains general upgrade, rolling-upgrade and rollback sections. Developers: CI upgrades a live 0.4.0 stack through 0.5.0 to the current build and rolls back, checking sessions, people, clients and the tool list.
