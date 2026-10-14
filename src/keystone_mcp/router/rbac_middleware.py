@@ -17,8 +17,9 @@ from typing import TYPE_CHECKING
 from fastmcp.exceptions import PromptError, ResourceError, ToolError
 from fastmcp.server.middleware import Middleware, MiddlewareContext
 
+from keystone_mcp.catalog.names import MUTATING_ADMIN_TOOL_NAMES
 from keystone_mcp.config import Settings
-from keystone_mcp.identity import resolve_verified_identity
+from keystone_mcp.identity import VerifiedIdentity, resolve_verified_identity
 from keystone_mcp.observability.logging.context import get_request_id
 from keystone_mcp.observability.subject import hash_subject
 from keystone_mcp.rbac.call_decision import current_call_decision
@@ -130,6 +131,25 @@ class RbacMiddleware(Middleware):
         else:
             self._enforce = True
 
+    @staticmethod
+    def _visible(
+        policy: RbacPolicy,
+        roles: frozenset[str],
+        identity: VerifiedIdentity | None,
+        name: str,
+    ) -> bool:
+        if not policy.allows(roles, name):
+            return False
+        if (
+            identity is not None
+            and identity.subject_type == "service"
+            and name in MUTATING_ADMIN_TOOL_NAMES
+        ):
+            return False
+        if requires_human_identity(name, policy) and not has_interactive_human_identity(identity):
+            return False
+        return True
+
     async def on_list_tools(
         self,
         context: MiddlewareContext[ListToolsRequest],
@@ -149,7 +169,10 @@ class RbacMiddleware(Middleware):
         policy = self._load_policy(operation="list_tools")
         if policy is None:
             return []
-        return [tool for tool in tools if policy.allows(decision.roles, tool.name)]
+        identity = resolve_verified_identity()
+        return [
+            tool for tool in tools if self._visible(policy, decision.roles, identity, tool.name)
+        ]
 
     async def on_call_tool(
         self,
@@ -196,7 +219,12 @@ class RbacMiddleware(Middleware):
         policy = self._load_policy(operation="list_prompts")
         if policy is None:
             return []
-        return [prompt for prompt in prompts if policy.allows(decision.roles, prompt.name)]
+        identity = resolve_verified_identity()
+        return [
+            prompt
+            for prompt in prompts
+            if self._visible(policy, decision.roles, identity, prompt.name)
+        ]
 
     async def on_get_prompt(
         self,

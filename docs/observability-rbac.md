@@ -56,6 +56,12 @@ Emitted for every `users_*` admin tool attempt, including ambiguous outcomes
 `target`, `operation`, `outcome`, `code`, `task_id`, `role` (grant/revoke),
 `roles_before` / `roles_after` when available from the users directory.
 
+### `rbac_policy_mutation`
+
+Emitted for every `policy_*` admin tool attempt. Includes `actor_subject_type`
+when the verified identity carries a subject type (for example `service` on a
+refusal).
+
 ## Prometheus metrics
 
 | Metric | Labels | Meaning |
@@ -73,6 +79,7 @@ Emitted for every `users_*` admin tool attempt, including ambiguous outcomes
 | `keystone_mcp_upstream_process_restarts_total` | `namespace` | Cumulative restarts of a stdio upstream child after crash, hang, or failed start |
 | `keystone_mcp_list_changed_sessions_total` | `kind` | Sessions notified that a list of tools/prompts/resources changed. A "session" is a handshake-era connection or an open `subscriptions/listen` stream |
 | `keystone_mcp_users_mutation_total` | `operation`, `outcome` | Admin mutation attempts |
+| `keystone_mcp_admin_refusals_total` | `operation`, `reason` | Built-in administration refusals (`reason` includes `service_account`) |
 | `keystone_mcp_oauth_client_registrations_total` | `outcome` | `POST /register` outcomes (`created`, `rejected_limit`, `rejected_redirect_host`) |
 | `keystone_mcp_oauth_clients` | (gauge) | Live registered OAuth clients, refreshed on every registration attempt on this replica |
 

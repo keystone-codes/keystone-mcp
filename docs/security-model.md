@@ -32,7 +32,8 @@ already exists in the users directory and is not blocked. Signing in never
 creates a person** — someone with access has to add them first with
 `users_add`, or they come from `KEYSTONE_MCP_SUPERADMIN_EMAIL` at the first
 start. Service accounts are created with `service_accounts_*` or the CLI; see
-[users.md](users.md). Details, including recovering a lost administrator
+[users.md](users.md). Mutating administration tools refuse service accounts in
+code regardless of role. Details, including recovering a lost administrator
 account, are in [users.md](users.md).
 
 ### How they prove it: the sign-in secret
