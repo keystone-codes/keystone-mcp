@@ -1008,3 +1008,377 @@ class DeletionDirectoryContract:
             assert bumps == [True]
 
         _run(keystone_directory_factory, body)
+
+
+_CHECKS06_DOC = (
+    "Checks added in 0.6.0; opt in by mixing this class in. "
+    "They become part of the main contract classes in 2.0."
+)
+
+_KNOWN_UNAVAILABLE_CODES = frozenset({"catalog_unavailable", "catalog_timeout"})
+
+
+def _api_key_secret_suffix(key_material: str) -> str:
+    if not key_material.startswith("ksk_"):
+        return key_material
+    rest = key_material[4:]
+    sep = rest.find("_")
+    if sep < 0:
+        return rest
+    return rest[sep + 1 :]
+
+
+class UserDirectoryChecks06:
+    __doc__ = _CHECKS06_DOC
+
+    pytestmark = pytest.mark.keystone_contract
+
+    def test_unavailable_error_code_is_known(self, request: pytest.FixtureRequest):
+        factory = _require_unavailable_factory(request)
+
+        async def body(directory: UserDirectory) -> None:
+            try:
+                await directory.resolve_user("alice@example.com")
+            except UserDirectoryUnavailableError as exc:
+                assert exc.code in _KNOWN_UNAVAILABLE_CODES, (
+                    f"UserDirectoryUnavailableError.code must be one of "
+                    f"{sorted(_KNOWN_UNAVAILABLE_CODES)}, got {exc.code!r}"
+                )
+                return
+            except Exception as exc:
+                raise AssertionError(
+                    "resolve_user must raise UserDirectoryUnavailableError when unavailable, "
+                    f"got {type(exc).__name__}: {exc}"
+                ) from exc
+            raise AssertionError(
+                "resolve_user must raise UserDirectoryUnavailableError when unavailable"
+            )
+
+        _run(factory, body)
+
+    def test_list_users_excludes_service_accounts(
+        self, keystone_directory_factory: Callable[[], Awaitable[UserDirectory]]
+    ):
+        async def body(directory: UserDirectory) -> None:
+            if "service_accounts" not in directory.capabilities:
+                pytest.skip("directory does not declare service_accounts")
+            assert isinstance(directory, ServiceAccountDirectory)
+            await directory.create_service_account(
+                name="ci-bot",
+                description=None,
+                roles=("member",),
+                actor="alice@example.com",
+            )
+            users = await directory.list_users(is_blocked=None)
+            for record in users:
+                assert not record.email.startswith("svc:"), (
+                    "list_users() must not include service account subjects"
+                )
+
+        _run(keystone_directory_factory, body)
+
+
+class AdminDirectoryChecks06:
+    __doc__ = _CHECKS06_DOC
+
+    pytestmark = pytest.mark.keystone_contract
+
+    def test_blocked_second_admin_does_not_count(
+        self, keystone_directory_factory: Callable[[], Awaitable[UserDirectory]]
+    ):
+        async def body(directory: UserDirectory) -> None:
+            assert isinstance(directory, UserDirectoryAdmin)
+            actor = "alice@example.com"
+            await directory.create_user(
+                email="dave@example.com",
+                full_name="Dave Admin",
+                roles=("administrator",),
+                note=None,
+                actor=actor,
+            )
+            await directory.set_blocked(email="dave@example.com", blocked=True, actor=actor)
+            bob = "bob@example.com"
+            try:
+                await directory.revoke_role(
+                    email="alice@example.com", role="administrator", actor=bob
+                )
+            except UsersError as exc:
+                assert exc.code == "last_administrator"
+            else:
+                raise AssertionError(
+                    "revoking last active administrator must raise last_administrator "
+                    "when a blocked administrator remains"
+                )
+
+        _run(keystone_directory_factory, body)
+
+    def test_self_admin_via_replace_roles_forbidden(
+        self, keystone_directory_factory: Callable[[], Awaitable[UserDirectory]]
+    ):
+        async def body(directory: UserDirectory) -> None:
+            assert isinstance(directory, UserDirectoryAdmin)
+            for actor in ("alice@example.com", " Alice@Example.COM "):
+                try:
+                    await directory.replace_roles(
+                        email="alice@example.com", roles=("member",), actor=actor
+                    )
+                except UsersError as exc:
+                    assert exc.code == "self_admin_mutation_forbidden"
+                else:
+                    raise AssertionError(
+                        "administrator demoting self via replace_roles must raise "
+                        "self_admin_mutation_forbidden"
+                    )
+
+        _run(keystone_directory_factory, body)
+
+    def test_mutations_normalize_email(
+        self, keystone_directory_factory: Callable[[], Awaitable[UserDirectory]]
+    ):
+        async def body(directory: UserDirectory) -> None:
+            assert isinstance(directory, UserDirectoryAdmin)
+            actor = "alice@example.com"
+            await directory.update_user(
+                email=" Bob@Example.COM ",
+                full_name="Bob Updated",
+                note=None,
+                actor=actor,
+            )
+            await directory.set_blocked(email=" Bob@Example.COM ", blocked=False, actor=actor)
+            await directory.grant_role(email=" Bob@Example.COM ", role="member", actor=actor)
+            users = await directory.list_users(email_contains="bob@")
+            assert any(u.email == "bob@example.com" for u in users)
+            try:
+                await directory.create_user(
+                    email="ALICE@Example.com",
+                    full_name="Dup",
+                    roles=("member",),
+                    note=None,
+                    actor=actor,
+                )
+            except UsersError as exc:
+                assert exc.code == "conflict"
+            else:
+                raise AssertionError("duplicate email with different casing must raise conflict")
+
+        _run(keystone_directory_factory, body)
+
+    def test_invalid_input_raises_users_error(
+        self, keystone_directory_factory: Callable[[], Awaitable[UserDirectory]]
+    ):
+        async def body(directory: UserDirectory) -> None:
+            assert isinstance(directory, UserDirectoryAdmin)
+            actor = "alice@example.com"
+            cases: tuple[tuple[str, Callable[[], Awaitable[Any]]], ...] = (
+                (
+                    "validation_error",
+                    lambda: directory.create_user(
+                        email="not-an-email",
+                        full_name="Bad",
+                        roles=("member",),
+                        note=None,
+                        actor=actor,
+                    ),
+                ),
+                (
+                    "validation_error",
+                    lambda: directory.grant_role(email="bob@example.com", role="", actor=actor),
+                ),
+                (
+                    "user_not_found",
+                    lambda: directory.grant_role(
+                        email="ghost@example.com", role="member", actor=actor
+                    ),
+                ),
+            )
+            for expected_code, call in cases:
+                try:
+                    await call()
+                except UsersError as exc:
+                    assert exc.code == expected_code
+                except (ValueError, KeyError, TypeError) as exc:
+                    raise AssertionError(
+                        f"invalid input must raise UsersError, not {type(exc).__name__}"
+                    ) from exc
+                else:
+                    raise AssertionError("invalid input must raise UsersError")
+
+        _run(keystone_directory_factory, body)
+
+    def test_mutation_bumps_revision(
+        self,
+        keystone_directory_factory: Callable[[], Awaitable[UserDirectory]],
+        request: pytest.FixtureRequest,
+    ):
+        try:
+            revision_probe = request.getfixturevalue("keystone_revision_probe")
+        except pytest.FixtureLookupError:
+            pytest.skip("keystone_revision_probe fixture not provided")
+
+        async def body(directory: UserDirectory) -> None:
+            assert isinstance(directory, UserDirectoryAdmin)
+            before = await revision_probe()
+            users = await directory.list_users(email_contains="bob@")
+            bob = next(u for u in users if u.email == "bob@example.com")
+            await directory.update_user(
+                email="bob@example.com",
+                full_name=bob.full_name,
+                note="contract-revision-probe",
+                actor="alice@example.com",
+            )
+            after = await revision_probe()
+            assert after > before, "mutations must bump the directory revision"
+
+        _run(keystone_directory_factory, body)
+
+
+class ServiceAccountDirectoryChecks06:
+    __doc__ = _CHECKS06_DOC
+
+    pytestmark = pytest.mark.keystone_contract
+
+    def test_update_unknown_service_account(
+        self, keystone_directory_factory: Callable[[], Awaitable[UserDirectory]]
+    ):
+        async def body(directory: UserDirectory) -> None:
+            assert isinstance(directory, ServiceAccountDirectory)
+            try:
+                await directory.update_service_account(
+                    name="missing-bot",
+                    description="x",
+                    actor="alice@example.com",
+                )
+            except UsersError as exc:
+                assert exc.code == "user_not_found"
+            else:
+                raise AssertionError("unknown service account must raise user_not_found")
+
+        _run(keystone_directory_factory, body)
+
+    def test_service_account_unknown_role_rejected(
+        self, keystone_directory_factory: Callable[[], Awaitable[UserDirectory]]
+    ):
+        async def body(directory: UserDirectory) -> None:
+            assert isinstance(directory, ServiceAccountDirectory)
+            actor = "alice@example.com"
+            await directory.create_service_account(
+                name="ci-bot",
+                description=None,
+                roles=("member",),
+                actor=actor,
+            )
+            try:
+                await directory.update_service_account(
+                    name="ci-bot",
+                    roles=("",),
+                    actor=actor,
+                )
+            except UsersError as exc:
+                assert exc.code == "validation_error"
+            else:
+                raise AssertionError("invalid service account role must raise validation_error")
+
+        _run(keystone_directory_factory, body)
+
+    def test_resolve_blocked_service_account(
+        self, keystone_directory_factory: Callable[[], Awaitable[UserDirectory]]
+    ):
+        async def body(directory: UserDirectory) -> None:
+            assert isinstance(directory, ServiceAccountDirectory)
+            actor = "alice@example.com"
+            await directory.create_service_account(
+                name="ci-bot",
+                description=None,
+                roles=("member",),
+                actor=actor,
+            )
+            await directory.update_service_account(
+                name="ci-bot",
+                is_blocked=True,
+                actor=actor,
+            )
+            result = await directory.resolve_user(service_subject("ci-bot"))
+            assert result.exists is True
+            assert result.is_blocked is True
+
+        _run(keystone_directory_factory, body)
+
+
+class ApiKeyDirectoryChecks06:
+    __doc__ = _CHECKS06_DOC
+
+    pytestmark = pytest.mark.keystone_contract
+
+    def test_expired_key_is_not_verified(
+        self,
+        keystone_directory_factory: Callable[[], Awaitable[UserDirectory]],
+        request: pytest.FixtureRequest,
+    ):
+        try:
+            advance_clock = request.getfixturevalue("keystone_advance_clock")
+        except pytest.FixtureLookupError:
+            pytest.skip("keystone_advance_clock fixture not provided")
+
+        async def body(directory: UserDirectory) -> None:
+            assert isinstance(directory, ApiKeyDirectory)
+            issued = await directory.issue_api_key(
+                subject="bob@example.com",
+                label="expiring",
+                expires_in_days=1,
+                actor="alice@example.com",
+            )
+            advance_clock(86400 * 2)
+            assert await directory.verify_api_key(issued.key) is None
+
+        _run(keystone_directory_factory, body)
+
+    def test_service_account_key_verifies_as_service(
+        self, keystone_directory_factory: Callable[[], Awaitable[UserDirectory]]
+    ):
+        async def body(directory: UserDirectory) -> None:
+            if "service_accounts" not in directory.capabilities:
+                pytest.skip("directory does not declare service_accounts")
+            assert isinstance(directory, ApiKeyDirectory)
+            assert isinstance(directory, ServiceAccountDirectory)
+            actor = "alice@example.com"
+            await directory.create_service_account(
+                name="ci-bot",
+                description=None,
+                roles=("member",),
+                actor=actor,
+            )
+            issued = await directory.issue_api_key(
+                subject=service_subject("ci-bot"),
+                label="bot-key",
+                expires_in_days=None,
+                actor=actor,
+            )
+            verification = await directory.verify_api_key(issued.key)
+            assert verification is not None
+            assert verification.subject_type == "service"
+
+        _run(keystone_directory_factory, body)
+
+    def test_list_never_leaks_secret_part(
+        self, keystone_directory_factory: Callable[[], Awaitable[UserDirectory]]
+    ):
+        async def body(directory: UserDirectory) -> None:
+            assert isinstance(directory, ApiKeyDirectory)
+            issued = await directory.issue_api_key(
+                subject="bob@example.com",
+                label=None,
+                expires_in_days=None,
+                actor="alice@example.com",
+            )
+            secret_suffix = _api_key_secret_suffix(issued.key)
+            assert secret_suffix
+            keys = await directory.list_api_keys()
+            for record in keys:
+                payload = record.to_dict()
+                for value in payload.values():
+                    if isinstance(value, str) and secret_suffix in value:
+                        raise AssertionError(
+                            "list_api_keys() must not expose the secret part of the key material"
+                        )
+
+        _run(keystone_directory_factory, body)

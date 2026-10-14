@@ -26,6 +26,7 @@ class FormProviderCase:
     valid_form: Mapping[str, str]
     expected_email: str
     invalid_forms: Sequence[Mapping[str, str]]
+    email_field: str | None = "email"
 
 
 def _run_async(coro: Any) -> None:
@@ -271,5 +272,220 @@ class FormLoginProviderContract:
                 form["email"] = f"  {form['email'].upper()}  "
             identity = await provider.verify(form)
             assert identity.email == keystone_form_provider_case.expected_email.lower()
+
+        _run_async(exercise())
+
+
+_CHECKS06_DOC = (
+    "Checks added in 0.6.0; opt in by mixing this class in. "
+    "They become part of the main contract classes in 2.0."
+)
+
+
+class OidcLoginProviderChecks06:
+    __doc__ = _CHECKS06_DOC
+
+    pytestmark = pytest.mark.keystone_contract
+
+    def test_hs256_token_rejected(
+        self, keystone_oidc_provider: RedirectLoginProvider, fake_oidc_issuer: FakeOidcIssuer
+    ):
+        async def exercise() -> None:
+            provider = keystone_oidc_provider
+            redirect = await provider.begin(state="s", callback_url="http://app.test/cb")
+            fake_oidc_issuer.tamper.alg_hs256 = True
+            params = await fake_oidc_issuer.authorize(redirect.url)
+            with pytest.raises(LoginRejected) as exc:
+                await provider.complete(
+                    params=params, callback_url="http://app.test/cb", attempt=redirect.attempt
+                )
+            assert exc.value.reason == "identity_invalid"
+
+        _run_async(exercise())
+
+    def test_rotated_key_is_fetched(
+        self, keystone_oidc_provider: RedirectLoginProvider, fake_oidc_issuer: FakeOidcIssuer
+    ):
+        async def exercise() -> None:
+            provider = keystone_oidc_provider
+            redirect = await provider.begin(state="s", callback_url="http://app.test/cb")
+            fake_oidc_issuer.tamper.rotate_key = True
+            params = await fake_oidc_issuer.authorize(redirect.url)
+            identity = await provider.complete(
+                params=params, callback_url="http://app.test/cb", attempt=redirect.attempt
+            )
+            assert identity.email == fake_oidc_issuer.user.email.lower()
+
+        _run_async(exercise())
+
+    def test_token_endpoint_5xx_rejected(
+        self, keystone_oidc_provider: RedirectLoginProvider, fake_oidc_issuer: FakeOidcIssuer
+    ):
+        async def exercise() -> None:
+            provider = keystone_oidc_provider
+            redirect = await provider.begin(state="s", callback_url="http://app.test/cb")
+            fake_oidc_issuer.tamper.token_endpoint_status = 500
+            params = await fake_oidc_issuer.authorize(redirect.url)
+            with pytest.raises(LoginRejected) as exc:
+                await provider.complete(
+                    params=params, callback_url="http://app.test/cb", attempt=redirect.attempt
+                )
+            assert exc.value.reason == "provider_unavailable"
+
+        _run_async(exercise())
+
+    def test_token_endpoint_4xx_rejected(
+        self, keystone_oidc_provider: RedirectLoginProvider, fake_oidc_issuer: FakeOidcIssuer
+    ):
+        async def exercise() -> None:
+            provider = keystone_oidc_provider
+            redirect = await provider.begin(state="s", callback_url="http://app.test/cb")
+            fake_oidc_issuer.tamper.token_endpoint_status = 400
+            params = await fake_oidc_issuer.authorize(redirect.url)
+            with pytest.raises(LoginRejected) as exc:
+                await provider.complete(
+                    params=params, callback_url="http://app.test/cb", attempt=redirect.attempt
+                )
+            assert exc.value.reason == "identity_invalid"
+
+        _run_async(exercise())
+
+    def test_discovery_issuer_mismatch_rejected(
+        self, keystone_oidc_provider: RedirectLoginProvider, fake_oidc_issuer: FakeOidcIssuer
+    ):
+        async def exercise() -> None:
+            fake_oidc_issuer.tamper.discovery_issuer = "https://other.test"
+            with pytest.raises(LoginRejected) as exc:
+                await keystone_oidc_provider.begin(state="s", callback_url="http://app.test/cb")
+            assert exc.value.reason == "provider_unavailable"
+
+        _run_async(exercise())
+
+    def test_discovery_foreign_endpoint_rejected(
+        self, keystone_oidc_provider: RedirectLoginProvider, fake_oidc_issuer: FakeOidcIssuer
+    ):
+        async def exercise() -> None:
+            fake_oidc_issuer.tamper.discovery_token_endpoint = "https://evil.test/token"
+            with pytest.raises(LoginRejected) as exc:
+                await keystone_oidc_provider.begin(state="s", callback_url="http://app.test/cb")
+            assert exc.value.reason == "provider_unavailable"
+
+        _run_async(exercise())
+
+    def test_callback_without_code_rejected(
+        self, keystone_oidc_provider: RedirectLoginProvider, fake_oidc_issuer: FakeOidcIssuer
+    ):
+        async def exercise() -> None:
+            redirect = await keystone_oidc_provider.begin(state="s", callback_url="http://app.test/cb")
+            with pytest.raises(LoginRejected) as exc:
+                await keystone_oidc_provider.complete(
+                    params={"state": "s"},
+                    callback_url="http://app.test/cb",
+                    attempt=redirect.attempt,
+                )
+            assert exc.value.reason == "request_invalid"
+
+        _run_async(exercise())
+
+    def test_attempt_from_other_begin_rejected(
+        self, keystone_oidc_provider: RedirectLoginProvider, fake_oidc_issuer: FakeOidcIssuer
+    ):
+        async def exercise() -> None:
+            provider = keystone_oidc_provider
+            first = await provider.begin(state="s1", callback_url="http://app.test/cb")
+            second = await provider.begin(state="s2", callback_url="http://app.test/cb")
+            params = await fake_oidc_issuer.authorize(second.url)
+            with pytest.raises(LoginRejected) as exc:
+                await provider.complete(
+                    params=params, callback_url="http://app.test/cb", attempt=first.attempt
+                )
+            assert exc.value.reason == "identity_invalid"
+
+        _run_async(exercise())
+
+    def test_uppercase_email_is_normalized(
+        self, keystone_oidc_provider: RedirectLoginProvider, fake_oidc_issuer: FakeOidcIssuer
+    ):
+        async def exercise() -> None:
+            provider = keystone_oidc_provider
+            fake_oidc_issuer.user.email = "  ALICE@Example.COM  "
+            redirect = await provider.begin(state="s", callback_url="http://app.test/cb")
+            params = await fake_oidc_issuer.authorize(redirect.url)
+            identity = await provider.complete(
+                params=params, callback_url="http://app.test/cb", attempt=redirect.attempt
+            )
+            assert identity.email == "alice@example.com"
+
+        _run_async(exercise())
+
+    def test_complete_only_raises_login_rejected_wrong_issuer(
+        self, keystone_oidc_provider: RedirectLoginProvider, fake_oidc_issuer: FakeOidcIssuer
+    ):
+        async def exercise() -> None:
+            provider = keystone_oidc_provider
+            fake_oidc_issuer.tamper.wrong_issuer = "https://evil.test"
+            redirect = await provider.begin(state="s", callback_url="http://app.test/cb")
+            params = await fake_oidc_issuer.authorize(redirect.url)
+            with pytest.raises(LoginRejected):
+                await provider.complete(
+                    params=params, callback_url="http://app.test/cb", attempt=redirect.attempt
+                )
+
+        _run_async(exercise())
+
+
+class FormLoginProviderChecks06:
+    __doc__ = _CHECKS06_DOC
+
+    pytestmark = pytest.mark.keystone_contract
+
+    def test_form_provider_metadata(self, keystone_form_provider_case: FormProviderCase):
+        from keystone_mcp.login.factory import (
+            _FORM_FIELD_NAME_RE,
+            _VALID_FORM_FIELD_INPUT_TYPES,
+        )
+
+        async def exercise() -> None:
+            provider = await keystone_form_provider_case.factory()
+            assert provider.kind == "form"
+            assert _NAME_RE.fullmatch(provider.name)
+            assert isinstance(provider.title, str) and provider.title.strip()
+            assert isinstance(provider.interactive, bool)
+            for field in provider.form_fields():
+                assert _FORM_FIELD_NAME_RE.fullmatch(field.name), (
+                    f"field name {field.name!r} must match {_FORM_FIELD_NAME_RE.pattern}"
+                )
+                assert field.input_type in _VALID_FORM_FIELD_INPUT_TYPES
+
+        _run_async(exercise())
+
+    def test_email_normalization_needs_email_field(
+        self, keystone_form_provider_case: FormProviderCase
+    ):
+        field_name = keystone_form_provider_case.email_field
+        if field_name is None:
+            pytest.fail(
+                "FormProviderCase.email_field must name the email input "
+                "(set email_field=... when the form uses a different field name)"
+            )
+        if field_name not in keystone_form_provider_case.valid_form:
+            pytest.fail(
+                f"FormProviderCase.valid_form must include {field_name!r} for email normalization"
+            )
+
+        async def exercise() -> None:
+            provider = await keystone_form_provider_case.factory()
+            form = dict(keystone_form_provider_case.valid_form)
+            form[field_name] = f"  {form[field_name].upper()}  "
+            identity = await provider.verify(form)
+            assert identity.email == keystone_form_provider_case.expected_email.lower()
+
+        _run_async(exercise())
+
+    def test_empty_form_is_rejected(self, keystone_form_provider_case: FormProviderCase):
+        async def exercise() -> None:
+            provider = await keystone_form_provider_case.factory()
+            with pytest.raises(LoginRejected):
+                await provider.verify({})
 
         _run_async(exercise())

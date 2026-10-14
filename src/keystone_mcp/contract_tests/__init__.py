@@ -8,36 +8,48 @@ import pytest
 
 from keystone_mcp.contract_tests.directory import (
     CONTRACT_DATASET,
+    AdminDirectoryChecks06,
     AdminDirectoryContract,
+    ApiKeyDirectoryChecks06,
     ApiKeyDirectoryContract,
     ContractPerson,
     DeletionDirectoryContract,
     IdentityBindingDirectoryContract,
+    ServiceAccountDirectoryChecks06,
     ServiceAccountDirectoryContract,
+    UserDirectoryChecks06,
     UserDirectoryContract,
     seed_contract_dataset,
 )
 from keystone_mcp.contract_tests.fake_oidc import FakeOidcIssuer, FakeTamper
 from keystone_mcp.contract_tests.login import (
+    FormLoginProviderChecks06,
     FormLoginProviderContract,
     FormProviderCase,
+    OidcLoginProviderChecks06,
     OidcLoginProviderContract,
 )
 from keystone_mcp.login.protocol import RedirectLoginProvider
 
 __all__ = [
     "CONTRACT_DATASET",
+    "AdminDirectoryChecks06",
     "AdminDirectoryContract",
+    "ApiKeyDirectoryChecks06",
     "ApiKeyDirectoryContract",
     "ContractPerson",
     "FakeOidcIssuer",
     "FakeTamper",
+    "FormLoginProviderChecks06",
     "FormLoginProviderContract",
     "FormProviderCase",
     "DeletionDirectoryContract",
     "IdentityBindingDirectoryContract",
+    "OidcLoginProviderChecks06",
     "OidcLoginProviderContract",
+    "ServiceAccountDirectoryChecks06",
     "ServiceAccountDirectoryContract",
+    "UserDirectoryChecks06",
     "UserDirectoryContract",
     "seed_contract_dataset",
 ]
