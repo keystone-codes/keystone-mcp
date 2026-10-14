@@ -16,6 +16,7 @@ from mcp.shared.auth import OAuthClientInformationFull
 from redis.asyncio import Redis
 from redis.exceptions import WatchError
 
+from keystone_mcp.redis_client import redis_from_url
 from keystone_mcp.user_directory.util import normalize_email
 
 _SUBJECT_INDEX_MAX_MEMBERS = 256
@@ -402,7 +403,7 @@ class RedisOAuthStore:
             self._redis = redis
             self._owns_redis = owns_redis
         else:
-            self._redis = Redis.from_url(redis_url, decode_responses=True)
+            self._redis = redis_from_url(redis_url)
             self._owns_redis = True
 
     @property
@@ -886,7 +887,7 @@ def build_shared_auth_stores(settings: object) -> tuple[OAuthStore, object]:
             "Set it to the shared keystone Redis (e.g. redis://redis:6379/0)."
         )
 
-    redis = Redis.from_url(redis_url, decode_responses=True)
+    redis = redis_from_url(redis_url)
     oauth_prefix = getattr(settings, "redis_key_prefix", "km:oauth:")
     login_prefix = getattr(settings, "login_pending_key_prefix", "km:login:")
     oauth_store = RedisOAuthStore(

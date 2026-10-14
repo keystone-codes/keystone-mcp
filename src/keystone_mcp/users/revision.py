@@ -40,9 +40,9 @@ class RedisRevisionWriter:
         self._key = key
 
     async def bump(self) -> int:
-        from redis.asyncio import Redis
+        from keystone_mcp.redis_client import redis_from_url
 
-        client = Redis.from_url(self._redis_url, decode_responses=True)
+        client = redis_from_url(self._redis_url)
         try:
             return await client.incr(self._key)
         finally:

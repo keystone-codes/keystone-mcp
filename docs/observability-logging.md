@@ -89,7 +89,8 @@ The response is `{"status": "ok"}` (`200`) when every check is `ok` or
 `skipped`, otherwise `{"status": "degraded"}` (`503`). The `checks` object is
 added to the body only for callers judged internal the same way `/metrics` is
 (source address in `KEYSTONE_MCP_INTERNAL_ALLOWED_CIDRS`, no
-`X-Forwarded-For`) — but, unlike `/metrics`, an outside caller is never
+`X-Forwarded-For`, and an allowed `Host` — a name on the effective allowlist
+or an IP literal) — but, unlike `/metrics`, an outside caller is never
 refused and nothing is logged for it: a load balancer or container
 healthcheck polls this route every few seconds from every replica.
 

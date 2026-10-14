@@ -774,6 +774,9 @@ class Settings:
     http_path_raw: str = field(default_factory=lambda: _env("KEYSTONE_MCP_HTTP_PATH", "/"))
     host: str = field(default_factory=lambda: _env("KEYSTONE_MCP_HOST", "127.0.0.1"))
     port: int = field(default_factory=lambda: _env_int("KEYSTONE_MCP_PORT", 8080))
+    shutdown_grace_seconds: int = field(
+        default_factory=lambda: _env_int("KEYSTONE_MCP_SHUTDOWN_GRACE_SECONDS", 25)
+    )
     # Extra names `HostGuardMiddleware` (finding #1) accepts on the `Host`
     # header beyond `KEYSTONE_MCP_BASE_URL` and its loopback aliases — a load
     # balancer's hostname, an internal DNS name, a bare IP a health check
@@ -1416,6 +1419,12 @@ def validate_settings(settings: Settings) -> None:
             raise ConfigError(
                 "KEYSTONE_MCP_IDENTITY_SIGNING_KEY must be a PEM EC P-256 private key"
             )
+
+    if settings.shutdown_grace_seconds < 0 or settings.shutdown_grace_seconds > 3600:
+        raise ConfigError(
+            "KEYSTONE_MCP_SHUTDOWN_GRACE_SECONDS must be between 0 and 3600 "
+            f"(got {settings.shutdown_grace_seconds})"
+        )
 
     if settings.rbac_mode == "off":
         return

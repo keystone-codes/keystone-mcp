@@ -13,9 +13,27 @@ import sys
 import urllib.error
 import urllib.request
 
+from keystone_mcp.config import ConfigError
+from keystone_mcp.env_file import load_env_file
+
 DEFAULT_PATH = "/healthz"
 DEFAULT_PORT = "8080"
 TIMEOUT_SECONDS = 4
+
+
+def _healthcheck_host(host: str) -> str:
+    value = host.strip()
+    if not value or value == "0.0.0.0":
+        return "127.0.0.1"
+    if value == "::":
+        return "::1"
+    return value
+
+
+def _format_url_host(host: str) -> str:
+    if ":" in host and not host.startswith("["):
+        return f"[{host}]"
+    return host
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -28,8 +46,16 @@ def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
     path = args[0] if args else DEFAULT_PATH
 
-    port = os.environ.get("KEYSTONE_MCP_PORT", DEFAULT_PORT)
-    url = f"http://127.0.0.1:{port}{path}"
+    environ = dict(os.environ)
+    try:
+        load_env_file(environ)
+    except ConfigError as exc:
+        print(f"healthcheck failed: {exc}", file=sys.stderr)
+        return 1
+
+    port = environ.get("KEYSTONE_MCP_PORT", DEFAULT_PORT)
+    host = _healthcheck_host(environ.get("KEYSTONE_MCP_HOST", "127.0.0.1"))
+    url = f"http://{_format_url_host(host)}:{port}{path}"
 
     try:
         with urllib.request.urlopen(url, timeout=TIMEOUT_SECONDS) as response:

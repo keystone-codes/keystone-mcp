@@ -53,6 +53,32 @@ def test_returns_one_on_503(running_server: int, monkeypatch: pytest.MonkeyPatch
     assert main(["/readyz"]) == 1
 
 
+def test_reads_port_from_env_file(
+    running_server: int, tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text(f"KEYSTONE_MCP_PORT={running_server}\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("KEYSTONE_MCP_PORT", raising=False)
+    monkeypatch.delenv("KEYSTONE_MCP_ENV_FILE", raising=False)
+    assert main(["/healthz"]) == 0
+
+
+def test_uses_configured_host(running_server: int, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("KEYSTONE_MCP_PORT", str(running_server))
+    monkeypatch.setenv("KEYSTONE_MCP_HOST", "127.0.0.1")
+    assert main(["/healthz"]) == 0
+
+    monkeypatch.setenv("KEYSTONE_MCP_HOST", "0.0.0.0")
+    assert main(["/healthz"]) == 0
+
+
+def test_bad_env_file_exits_one(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    missing = tmp_path / "missing.env"
+    monkeypatch.setenv("KEYSTONE_MCP_ENV_FILE", str(missing))
+    assert main(["/healthz"]) == 1
+
+
 def test_returns_one_when_nothing_listens(monkeypatch: pytest.MonkeyPatch) -> None:
     # Bind a socket to claim a free port, then close it so nothing listens there.
     probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

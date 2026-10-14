@@ -125,6 +125,7 @@ ExecStart=/opt/keystone-mcp/.venv/bin/python -m keystone_mcp.server
 | `KEYSTONE_MCP_HTTP_PATH` | `/` | Streamable HTTP route path. |
 | `KEYSTONE_MCP_HOST` | `127.0.0.1` | Bind address. |
 | `KEYSTONE_MCP_PORT` | `8080` | Bind port. |
+| `KEYSTONE_MCP_SHUTDOWN_GRACE_SECONDS` | `25` | After SIGTERM, how long (0–3600) the HTTP server waits for in-flight requests to finish before closing (`timeout_graceful_shutdown`). Give the container at least 35 s to stop (`terminationGracePeriodSeconds`, `stop_grace_period`, `docker stop -t`). |
 | `KEYSTONE_MCP_ALLOWED_HOSTS` | `` (empty) | Comma-separated extra names `HostGuardMiddleware` accepts on the `Host`/`Origin` headers, beyond `KEYSTONE_MCP_BASE_URL`'s own host (any port) and, when that host is loopback, `localhost`/`127.0.0.1`/`[::1]` on `KEYSTONE_MCP_BASE_URL`'s port. Each entry is a bare host (matches any port — e.g. a load balancer's hostname, whose port Keystone cannot predict) or `host:port` (that exact pair only). A request whose `Host` is not on the effective list is refused with `421`; an `Origin`, when present and not `null`, is checked the same way and refused with `400`. `/healthz` and `/readyz` are exempt entirely (a container healthcheck or a Kubernetes probe reaches them by an IP — `127.0.0.1`, or a pod IP assigned at pod start — that cannot be enumerated ahead of time). `/metrics` and `/internal/*` are **not** exempt: a scraper or `catalog --live-url` that addresses this process as `127.0.0.1:8080`, a Service name or a pod IP needs that exact name here (a pod IP cannot be listed in advance). See [`docs/security-model.md`](security-model.md) for the DNS-rebinding scenario this closes. |
 | `KEYSTONE_MCP_LOG_LEVEL` | `INFO` | Root log level (`DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`). |
 | `KEYSTONE_MCP_LOG_FORMAT` | `json` | `json` (NDJSON to stderr) or `text` for human-readable lines. |
@@ -533,6 +534,8 @@ How a service is mounted, filtered and discovered is [facade.md](facade.md).
 | `KEYSTONE_MCP_INTERNAL_ALLOWED_CIDRS` | `127.0.0.1/32,::1/128` | Comma-separated networks allowed to reach `/metrics` and `/internal/*`. These routes carry no credential. |
 | `KEYSTONE_MCP_INTERNAL_ENDPOINTS_ENABLED` | `false` | Enables the live-published-tool-names introspection route. |
 
+On `/metrics` and `/internal/*`, `HostGuardMiddleware` also accepts a `Host` header whose host part is an IPv4 or IPv6 literal (any port). A hostname still must appear on the effective allowlist. Source-address checks above are unchanged.
+
 ## Removed variables
 
 Keystone-MCP refuses to start, or logs a warning, when one of these is still set.
@@ -561,14 +564,19 @@ sets `KEYSTONE_MCP_USERS_DB_URL=sqlite:////data/keystone-users.db` (see the
 "Users directory" table above) so the built-in user directory's default
 SQLite file lands in that writable volume — see [users.md](users.md) for
 the directory itself. The image defines a `HEALTHCHECK` that runs
-`python -m keystone_mcp.healthcheck` against `GET /readyz` (port `8080`) —
-readiness, not just liveness; see
+`python -m keystone_mcp.healthcheck` against `GET /readyz` — readiness, not
+just liveness; the probe loads `.env` (or `KEYSTONE_MCP_ENV_FILE`) and uses
+`KEYSTONE_MCP_HOST`/`KEYSTONE_MCP_PORT` for the URL — see
 [observability-logging.md](observability-logging.md#readiness) for what it
-checks. There is no `curl` in the runtime image.
+checks. There is no `curl` in the runtime image. Use `docker run --init` (or
+Compose `init: true`) when stdio upstreams run in the same container so
+orphaned child processes are reaped; after SIGTERM allow at least 35 s to
+stop (`docker stop -t 35`, `stop_grace_period: 35s`) because
+`KEYSTONE_MCP_SHUTDOWN_GRACE_SECONDS` defaults to 25.
 
 ```bash
 docker build -t keystone-mcp .
-docker run -d -p 8080:8080 --env-file .env keystone-mcp
+docker run -d --init -p 8080:8080 --env-file .env keystone-mcp
 ```
 
 When mounting a host directory at `/data` instead of a named volume, grant

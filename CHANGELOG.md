@@ -8,6 +8,24 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ## [Unreleased]
 
+### Added
+
+- `KEYSTONE_MCP_SHUTDOWN_GRACE_SECONDS` (default 25): in-flight requests get this long to finish after SIGTERM (was 2 s).
+- The metrics path and `/internal/*` accept a `Host` that is an IP literal, so Prometheus can scrape each pod by its IP.
+
+### Changed
+
+- Redis clients use 5 s connect and read timeouts and a 30 s health check; a hung Redis now fails requests instead of holding them.
+- The container healthcheck reads `.env` and `KEYSTONE_MCP_HOST`.
+
+### Security
+
+- `/readyz` shows per-check details only when the caller's address is internal and its `Host` header is allowed.
+
+### Migration
+
+- Shutdown now waits up to 25 s: give the container at least 35 s to stop (`terminationGracePeriodSeconds`, `stop_grace_period`, `docker stop -t`).
+
 ## [0.5.0] - 2026-10-13
 
 ### Added
