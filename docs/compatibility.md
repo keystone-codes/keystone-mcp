@@ -526,3 +526,4 @@ from the `v0.5.0` tag.
 Until 1.0.0, only the latest released minor version receives security fixes.
 After 1.0.0, only the latest minor release of the current major version does.
 When 2.0 is released, this section states how long 1.x receives security fixes.
+1.0.0 will be a release of an existing 0.x line that ran two weeks in production without breaking changes; it adds no features.
