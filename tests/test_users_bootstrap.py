@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from keystone_mcp.config import Settings
+from keystone_mcp.observability.logging.formatters import SecretRedactingFilter
 from keystone_mcp.router.engine import RouterEngine
 from keystone_mcp.router.registry import RouterRegistry
 from keystone_mcp.router.upstream import UpstreamRegistry
@@ -37,6 +38,45 @@ async def test_start_on_empty_database_creates_first_administrator(tmp_path: Pat
     assert resolved.exists is True
     assert resolved.roles == ("administrator",)
     assert await revision.current() == 1
+    store.dispose()
+
+
+def _redacted_messages(records: list[logging.LogRecord]) -> str:
+    redactor = SecretRedactingFilter()
+    lines: list[str] = []
+    for record in records:
+        redactor.filter(record)
+        lines.append(record.getMessage())
+    return "\n".join(lines)
+
+
+@pytest.mark.asyncio
+async def test_initial_administrator_log_says_created_or_present(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("KEYSTONE_MCP_LOG_REDACT", "true")
+    store, _ = await make_users_store(tmp_path)
+    settings = _settings(tmp_path=tmp_path, superadmin_email="admin@example.com")
+
+    with caplog.at_level(logging.INFO, logger="keystone_mcp.users.bootstrap"):
+        await bootstrap_users_store(store, settings)
+
+    first_text = _redacted_messages(
+        [r for r in caplog.records if "initial administrator" in r.getMessage()]
+    )
+    assert "created" in first_text
+    assert "admin@example.com" not in first_text
+    assert "@example.com" not in first_text
+
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger="keystone_mcp.users.bootstrap"):
+        await bootstrap_users_store(store, settings)
+
+    second_text = _redacted_messages(
+        [r for r in caplog.records if "initial administrator" in r.getMessage()]
+    )
+    assert "already present" in second_text
+    assert "admin@example.com" not in second_text
     store.dispose()
 
 

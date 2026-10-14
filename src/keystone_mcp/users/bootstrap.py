@@ -39,7 +39,10 @@ async def bootstrap_users_store(store: UsersStore, settings: Settings) -> None:
         # "created" clashes with LogRecord's own timestamp attribute of that
         # name; the JSON formatter would reject it as a duplicate key.
         logger.info(
-            "initial administrator ensured", extra={"administrator_created": result.created}
+            "initial administrator %s: %s",
+            "created" if result.created else "already present",
+            result.user.email,
+            extra={"administrator_created": result.created},
         )
         if result.user.is_blocked:
             logger.warning(

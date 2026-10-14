@@ -13,7 +13,7 @@ import yaml
 
 from keystone_mcp.config import USERS_CLI_VARIABLES, ConfigError, settings_for_command
 from keystone_mcp.config_check_cli import add_config_commands
-from keystone_mcp.env_file import load_env_file
+from keystone_mcp.env_file import EnvFileResult, load_env_file
 from keystone_mcp.observability.logging import configure_logging
 from keystone_mcp.plugins_cli import add_plugins_commands
 from keystone_mcp.rbac.catalog import (
@@ -189,14 +189,15 @@ def _cmd_catalog_export(args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_serve(_args: argparse.Namespace) -> int:
+def _cmd_serve(args: argparse.Namespace) -> int:
     # Imported lazily (and module-qualified, not "from ... import main") so
     # that `keystone-mcp serve` and `python -m keystone_mcp.server` always
     # call the same function, and tests can monkeypatch
     # `keystone_mcp.server.main` directly.
     import keystone_mcp.server as server_module
 
-    server_module.main()
+    env_file_result: EnvFileResult | None = getattr(args, "env_file_result", None)
+    server_module.main(env_file_result=env_file_result)
     return 0
 
 
@@ -312,10 +313,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "config":
         return args.handler(args)
     try:
-        load_env_file()
+        env_file_result = load_env_file()
     except ConfigError as exc:
         print(f"keystone-mcp: {exc}", file=sys.stderr)
         return _EXIT_ENV
+    args.env_file_result = env_file_result
     try:
         configure_logging(settings_for_command(_settings_required_for_cli(args.command)))
     except ConfigError as exc:

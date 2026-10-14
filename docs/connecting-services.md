@@ -359,7 +359,9 @@ entries:
 ```
 
 - **`command` / `args` / `cwd`** — how Keystone-MCP starts the server. Use an
-  absolute path to the interpreter if `PATH` in the container is uncertain.
+  absolute path to the interpreter if `PATH` in the container is uncertain. A
+  relative `command` (with a `/`) is resolved against the entry's `cwd`, both
+  when the registry is loaded and when the process starts.
 - **`env`** — maps **child variable name → parent environment variable name**.
   The child gets only the variables listed in `env` plus the MCP SDK's minimal
   set (`HOME`, `LOGNAME`, `PATH`, `SHELL`, `TERM`, `USER`); Keystone-MCP never
