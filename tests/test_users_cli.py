@@ -1207,9 +1207,7 @@ def test_grant_admin_reads_users_db_url_from_env_file(tmp_path: Path, monkeypatc
     assert [u.email for u in users] == ["admin@example.com"]
 
 
-def test_grant_admin_uses_full_admin_role_from_policy(
-    tmp_path: Path, monkeypatch, capsys
-) -> None:
+def test_grant_admin_uses_full_admin_role_from_policy(tmp_path: Path, monkeypatch, capsys) -> None:
     db_path = tmp_path / "users.db"
     policy = tmp_path / "policy.yaml"
     policy.write_text(
@@ -1231,9 +1229,7 @@ roles:
     assert users[0].roles == ("owner",)
 
 
-def test_grant_admin_keeps_administrator_when_present(
-    tmp_path: Path, monkeypatch, capsys
-) -> None:
+def test_grant_admin_keeps_administrator_when_present(tmp_path: Path, monkeypatch, capsys) -> None:
     db_path = tmp_path / "users.db"
     policy = tmp_path / "policy.yaml"
     policy.write_text(
@@ -1255,9 +1251,7 @@ roles:
     assert _list_users(f"sqlite:///{db_path}")[0].roles == ("administrator",)
 
 
-def test_grant_admin_role_flag_must_be_full_admin(
-    tmp_path: Path, monkeypatch, capsys
-) -> None:
+def test_grant_admin_role_flag_must_be_full_admin(tmp_path: Path, monkeypatch, capsys) -> None:
     db_path = tmp_path / "users.db"
     policy = _write_policy(tmp_path)
     monkeypatch.setenv("KEYSTONE_MCP_USERS_DB_URL", f"sqlite:///{db_path}")
@@ -1344,9 +1338,7 @@ roles:
     assert "admin@example.com" in payload["full_administrators"]
 
 
-def test_users_admins_exit_1_without_active_full_admin(
-    tmp_path: Path, monkeypatch, capsys
-) -> None:
+def test_users_admins_exit_1_without_active_full_admin(tmp_path: Path, monkeypatch, capsys) -> None:
     db_path = tmp_path / "users.db"
     policy = tmp_path / "policy.yaml"
     policy.write_text(
