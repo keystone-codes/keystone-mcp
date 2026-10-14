@@ -95,10 +95,17 @@ where there is no `.env`; use `EnvironmentFile=` in the unit, or point
   `COMPOSE_PROJECT_NAME`) is silently ignored.
 - A value wrapped in a matching pair of quotes (`'…'` or `"…"`) has the quotes
   stripped and the content taken verbatim — no escape sequences, no `${VAR}`
-  substitution.
+  substitution. Text after the closing quote must be empty or a trailing
+  comment (` #…`); otherwise startup fails with the file and line number only
+  (the value is never echoed).
 - In an unquoted value, ` #` (a space then `#`) starts a trailing comment; a
   `#` with no preceding space is part of the value, so a password containing
   `#` does not need quoting.
+- PEM private keys (for example `KEYSTONE_MCP_IDENTITY_SIGNING_KEY`) belong on
+  one line with `\n` escapes; multi-line values are not supported.
+- `FORWARDED_ALLOW_IPS` is read by uvicorn from the process environment, not
+  from `.env`. If Keystone finds a `FORWARDED_ALLOW_IPS` line in the loaded
+  file, it logs a warning that the line is ignored.
 
 Example `systemd` unit using `EnvironmentFile=` (equivalent to `.env` in the
 working directory, but explicit and independent of it):
@@ -477,7 +484,7 @@ never be pointed at an unrelated secret such as
 `KEYSTONE_MCP_GOOGLE_CLIENT_SECRET`.
 
 `KEYSTONE_MCP_IDENTITY_SIGNING_KEY` holds an optional EC P-256 private key in
-PEM form (multi-line value or `\n` escapes in one line). When set, upstream
+PEM form on one line with `\n` escapes. When set, upstream
 entries may use `auth.identity_alg: ES256` instead of
 `auth.identity_secret_env`: Keystone-MCP signs `X-Keystone-Identity` with
 ES256 and publishes the matching public key at
