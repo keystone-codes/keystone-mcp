@@ -1,0 +1,4 @@
+version: 1
+providers:
+  - name: api_key
+    type: api_key
