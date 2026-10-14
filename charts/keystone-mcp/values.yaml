@@ -1,0 +1,238 @@
+# Default values for keystone-mcp.
+# Every key is documented; set baseUrl and existingSecret (or secret.create) before install.
+
+image:
+  # Container image repository.
+  repository: ghcr.io/keystone-codes/keystone-mcp
+  # Image tag; empty uses Chart appVersion.
+  tag: ""
+  # Image pull policy.
+  pullPolicy: IfNotPresent
+
+# Number of Keystone pods (ignored when autoscaling.enabled).
+replicaCount: 2
+
+# KEYSTONE_MCP_DEPLOYMENT_PROFILE (production | local).
+profile: production
+
+# KEYSTONE_MCP_BASE_URL — required; must be https on a public host in production.
+baseUrl: ""
+
+rbac:
+  # KEYSTONE_MCP_RBAC_MODE.
+  mode: enforce
+  # RBAC policy file content (ConfigMap unless existingPolicyClaim is set).
+  policy: |
+    # Default server-side RBAC policy for keystone-mcp.
+    #
+    # Minimal, generic starting point for a fresh install. Replace the roles and
+    # allow patterns with your own; role names are free-form.
+    #
+    # Effective permissions = authenticated identity
+    #                       ∩ active user state (exists, not blocked)
+    #                       ∩ ⋃ allow_patterns(role) for all assigned roles
+    #                       ∩ OAuth/client protocol constraints
+    #
+    # Multi-role effect: UNION of allow patterns. Unmatched tools are denied.
+    # OAuth scopes are protocol attributes — NOT a source of tool permissions.
+    #
+    # Format reference: docs/rbac-policy-format.md
+    
+    version: "2.0.0"
+    default_deny: true
+    
+    roles:
+      administrator:
+        description: "Full access, including user administration."
+        allow:
+          - "*"
+    
+    # Example of a second role. Uncomment and replace the patterns with tool
+    # names from your own services (namespace prefix included).
+    #  member:
+    #    description: "Read-only access to the docs service."
+    #    allow:
+    #      - docs_search
+    #      - docs_read
+    
+    # Tools that may only run under an interactive human login. Empty by default.
+    requires_human_identity: []
+    
+    # Tools whose role resolution must bypass the allow cache. The platform
+    # always treats users_* as critical.
+    # This list adds to that set.
+    critical_tools: []
+    
+    # Documentation-only labels used by scripts/generate_role_matrix.py; the first
+    # matching label wins and unmatched tools are labelled "W".
+    tool_dispositions:
+      R:
+        - users_list
+        - policy_read
+        - policy_catalog
+        - policy_validate
+      D:
+        - users_block
+        - policy_role_delete
+      W:
+        - users_add
+        - users_update
+        - users_unblock
+        - users_set_roles
+        - users_grant_role
+        - users_revoke_role
+        - policy_role_set
+        - policy_allow_add
+        - policy_allow_remove
+        - policy_list_set
+        - policy_rollback
+  # KEYSTONE_MCP_POLICY_TOOLS when policy is read-only from ConfigMap.
+  policyTools: read-only
+  # PVC name for a writable policy file (enables policyTools: full).
+  existingPolicyClaim: ""
+
+upstreams:
+  # Upstream registry (ConfigMap key upstreams.yaml).
+  registry:
+    schema_version: 1
+    entries: []
+
+# Sign-in providers file content; empty means no providers in ConfigMap.
+loginProviders: ""
+
+# Name of an existing Secret with KEYSTONE_MCP_* credentials.
+existingSecret: ""
+
+secret:
+  # Create a Secret from secret.values (demo/kind only — not for production).
+  create: false
+  # Key/value pairs for the generated Secret.
+  values: {}
+
+# Mount secrets as files under /run/secrets/keystone (F05).
+secretsAsFiles: false
+# Extra Secret keys (beyond Redis, users DB, audit salt) exposed as *_FILE paths.
+secretsAsFilesExtraKeys: []
+
+# Extra KEYSTONE_MCP_* env vars as a map.
+env: {}
+# Additional env entries (Kubernetes env list syntax).
+extraEnv: []
+# Additional envFrom sources.
+extraEnvFrom: []
+
+redis:
+  # Deploy a demo Redis StatefulSet (not for production).
+  enabled: false
+
+postgresql:
+  # Deploy a demo Postgres StatefulSet (not for production).
+  enabled: false
+
+service:
+  # Kubernetes Service type.
+  type: ClusterIP
+  # Service port (targets container port 8080).
+  port: 80
+
+ingress:
+  enabled: false
+  className: ""
+  host: ""
+  tls:
+    secretName: ""
+  annotations: {}
+
+# FORWARDED_ALLOW_IPS for uvicorn (ingress pod CIDR).
+forwardedAllowIps: "10.0.0.0/8"
+
+metrics:
+  enabled: false
+  serviceMonitor:
+    enabled: false
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 70
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+networkPolicy:
+  enabled: false
+  # Upstream pods to protect (see networkpolicy.example.yaml).
+  upstream:
+    podSelector: {}
+    port: 8081
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+
+securityContext:
+  readOnlyRootFilesystem: true
+  allowPrivilegeEscalation: false
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  capabilities:
+    drop:
+      - ALL
+
+probes:
+  startupProbe:
+    httpGet:
+      path: /healthz
+      port: http
+    periodSeconds: 5
+    failureThreshold: 36
+    timeoutSeconds: 5
+  readinessProbe:
+    httpGet:
+      path: /readyz
+      port: http
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  livenessProbe:
+    httpGet:
+      path: /healthz
+      port: http
+    periodSeconds: 15
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+# Pod terminationGracePeriodSeconds (must cover preStop + shutdown grace).
+terminationGracePeriodSeconds: 40
+
+# KEYSTONE_MCP_SHUTDOWN_GRACE_SECONDS.
+shutdownGraceSeconds: 25
+
+# KEYSTONE_MCP_SUPERADMIN_EMAIL.
+superadminEmail: admin@example.com
+
+serviceAccount:
+  create: true
+  name: ""
+
+nameOverride: ""
+fullnameOverride: ""

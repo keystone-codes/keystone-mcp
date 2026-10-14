@@ -338,6 +338,22 @@ def test_plugin_template_job_installs_with_dependencies():
     assert "--no-deps" not in run_text
 
 
+def test_ci_helm_job_pins_setup_helm_and_runs_chart_checks():
+    doc = _load("ci.yml")
+    job = doc["jobs"]["helm"]
+    assert job.get("permissions") is None
+    assert _job_needs(doc, "helm") == ["test"]
+    uses = list(_iter_uses(doc))
+    helm_setup = [u for u in uses if u.startswith("azure/setup-helm@")]
+    assert len(helm_setup) == 1
+    assert _COMMIT_SHA_RE.match(helm_setup[0].split("@", 1)[1])
+    run_text = _job_step_run_text(doc, "helm")
+    assert "helm lint" in run_text
+    assert "helm template" in run_text
+    assert "kubeconform" in run_text
+    assert "test_helm_chart.py" in run_text
+
+
 def test_coverage_threshold_is_enforced():
     pyproject = (Path(__file__).resolve().parent.parent / "pyproject.toml").read_text(
         encoding="utf-8"

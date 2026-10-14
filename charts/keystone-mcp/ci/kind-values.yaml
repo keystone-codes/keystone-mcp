@@ -1,0 +1,24 @@
+profile: local
+baseUrl: http://localhost:8080
+replicaCount: 1
+secret:
+  create: true
+  values:
+    KEYSTONE_MCP_DEV_TOKENS: demo-token
+    KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT: "0123456789abcdef0123456789abcdef"
+    KEYSTONE_MCP_REDIS_PASSWORD: demo-redis-password
+    KEYSTONE_MCP_REDIS_URL: redis://:demo-redis-password@keystone-redis:6379/0
+    KEYSTONE_MCP_POSTGRES_PASSWORD: demo-postgres-password
+    KEYSTONE_MCP_USERS_DB_URL: postgresql+psycopg://keystone:demo-postgres-password@keystone-postgresql:5432/keystone
+redis:
+  enabled: true
+postgresql:
+  enabled: true
+upstreams:
+  registry:
+    schema_version: 1
+    entries:
+      - name: hello-upstream
+        url: http://hello-upstream:8081/mcp
+        namespace: hello
+        enabled: true

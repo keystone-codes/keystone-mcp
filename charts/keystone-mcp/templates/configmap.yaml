@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "keystone-mcp.fullname" . }}-config
+  labels:
+    {{- include "keystone-mcp.labels" . | nindent 4 }}
+data:
+  {{- if not .Values.rbac.existingPolicyClaim }}
+  rbac-policy.yaml: |
+    {{- .Values.rbac.policy | nindent 4 }}
+  {{- end }}
+  upstreams.yaml: |
+    {{- .Values.upstreams.registry | toYaml | nindent 4 }}
+  {{- if .Values.loginProviders }}
+  login-providers.yaml: |
+    {{- .Values.loginProviders | nindent 4 }}
+  {{- end }}

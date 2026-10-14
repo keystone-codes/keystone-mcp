@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": [],
+  "properties": {
+    "profile": {
+      "type": "string",
+      "enum": ["production", "local"]
+    },
+    "baseUrl": {
+      "type": "string"
+    },
+    "rbac": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["enforce", "observe", "off"]
+        },
+        "policyTools": {
+          "type": "string",
+          "enum": ["read-only", "full"]
+        }
+      }
+    },
+    "secretsAsFiles": {
+      "type": "boolean"
+    },
+    "redis": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" }
+      }
+    },
+    "postgresql": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" }
+      }
+    }
+  }
+}
