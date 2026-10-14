@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from keystone_mcp.config import ConfigError, Settings, load_settings, validate_settings
+from support.test_env import require_redis_url
 
 
 def test_login_brand_default():
@@ -43,3 +44,11 @@ def test_oauth_refresh_grace_seconds_accepts_bounds(monkeypatch, value: int):
     settings = load_settings()
     validate_settings(settings)
     assert settings.oauth_refresh_grace_seconds == value
+
+
+def test_session_max_age_seconds_rejects_negative(monkeypatch, tmp_path):
+    monkeypatch.setenv("KEYSTONE_MCP_SESSION_MAX_AGE_SECONDS", "-1")
+    monkeypatch.setenv("KEYSTONE_MCP_REDIS_URL", require_redis_url())
+    monkeypatch.setenv("KEYSTONE_MCP_USERS_DB_URL", f"sqlite:///{tmp_path}/u.db")
+    with pytest.raises(ConfigError, match="KEYSTONE_MCP_SESSION_MAX_AGE_SECONDS"):
+        validate_settings(load_settings())

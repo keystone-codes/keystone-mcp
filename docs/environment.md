@@ -196,7 +196,8 @@ ExecStart=/opt/keystone-mcp/.venv/bin/python -m keystone_mcp.server
 | `KEYSTONE_MCP_LOG_REQUEST_ID_RESPONSE` | `true` | Echo the request id on the response when not already set. |
 | `KEYSTONE_MCP_TOKEN_TTL` | `86400` | Access-token lifetime, seconds. |
 | `KEYSTONE_MCP_AUTH_CODE_TTL` | `600` | Authorization-code lifetime, seconds. |
-| `KEYSTONE_MCP_REFRESH_TOKEN_TTL` | `2592000` (30d) | Idle lifetime of a refresh token before re-login is required. |
+| `KEYSTONE_MCP_REFRESH_TOKEN_TTL` | `2592000` (30d) | Idle lifetime of a refresh token; renewed on every rotation. Total session lifetime is also capped by `KEYSTONE_MCP_SESSION_MAX_AGE_SECONDS` and by the expiry of the API key the session was opened with. |
+| `KEYSTONE_MCP_SESSION_MAX_AGE_SECONDS` | `2592000` (30d) | How long after sign-in a session can still be renewed; then the person signs in again. `0` means no limit. Sessions opened before the limit was set count from their first renewal after it. |
 | `KEYSTONE_MCP_OAUTH_REFRESH_GRACE_SECONDS` | `10` | How long a second exchange of the same refresh token gets the same response instead of `invalid_grant`. A later reuse is treated as theft: every token of that person at that OAuth client is revoked. `0` disables the window. 0–60. |
 | `KEYSTONE_MCP_THROTTLE_MAX` | `120` | Max requests per identity within the throttle window (`tools/call`, `prompts/get`, `resources/read`, and `tools/list`, `prompts/list`, `resources/list`, `resources/templates/list`); `0` disables. |
 | `KEYSTONE_MCP_THROTTLE_WINDOW` | `60` | Throttle sliding-window length, seconds. |

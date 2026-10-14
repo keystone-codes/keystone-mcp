@@ -956,6 +956,9 @@ class Settings:
     refresh_token_ttl_seconds: int = field(
         default_factory=lambda: _env_int("KEYSTONE_MCP_REFRESH_TOKEN_TTL", 30 * 24 * 3600)
     )
+    session_max_age_seconds: int = field(
+        default_factory=lambda: _env_int("KEYSTONE_MCP_SESSION_MAX_AGE_SECONDS", 30 * 24 * 3600)
+    )
     oauth_refresh_grace_seconds: int = field(
         default_factory=lambda: _env_int("KEYSTONE_MCP_OAUTH_REFRESH_GRACE_SECONDS", 10)
     )
@@ -1796,6 +1799,7 @@ def validate_settings(settings: Settings) -> None:
         ("KEYSTONE_MCP_LOGIN_THROTTLE_WINDOW", settings.login_throttle_window_seconds),
         ("KEYSTONE_MCP_OAUTH_THROTTLE_IP_MAX", settings.oauth_throttle_ip_max),
         ("KEYSTONE_MCP_OAUTH_MAX_CLIENTS", settings.oauth_max_clients),
+        ("KEYSTONE_MCP_SESSION_MAX_AGE_SECONDS", settings.session_max_age_seconds),
     ):
         if value < 0:
             raise ConfigError(f"{name} must be zero or positive (got {value})")

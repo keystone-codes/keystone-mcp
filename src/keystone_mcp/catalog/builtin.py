@@ -76,6 +76,7 @@ def register_catalog(
         directory=directory,
         observability=observability,
         management_source=resolved_management,
+        session_revoker=session_revoker,
     )
 
     P = Param  # noqa: N806 — local alias for brevity
@@ -256,7 +257,7 @@ def register_catalog(
                 ),
                 (
                     "api_keys_revoke",
-                    "Revoke an API key; sessions and calls using it stop at once.",
+                    "Revoke an API key; Bearer calls with it and sign-in sessions opened with it stop at once.",
                     [P("key_id", str)],
                 ),
             ]

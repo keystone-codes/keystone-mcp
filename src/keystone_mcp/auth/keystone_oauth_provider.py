@@ -77,7 +77,7 @@ from keystone_mcp.login.protocol import (
 )
 from keystone_mcp.observability.service import RbacObservability
 from keystone_mcp.user_directory.errors import UserDirectoryUnavailableError
-from keystone_mcp.user_directory.protocol import UserDirectoryResolver
+from keystone_mcp.user_directory.protocol import ApiKeyStateReader, UserDirectoryResolver
 from keystone_mcp.user_directory.types import subject_type_of
 from keystone_mcp.user_directory.util import email_folds_to_ascii, normalize_email
 
@@ -90,6 +90,47 @@ _NS_LOGIN_ATTEMPT = "login_attempt"
 _NS_REFRESH_AUTH = "refresh_auth"
 
 _GRACE_HMAC_KEY = b"keystone-mcp refresh grace v1"
+
+_REFRESH_NO_RESOLVER_WARNED = False
+
+
+class RefreshTemporarilyUnavailableError(Exception):
+    """Users directory unreachable during refresh; the client should retry."""
+
+
+class _TokenTemporarilyUnavailableGuard:
+    """Map RefreshTemporarilyUnavailableError to a 503 JSON response on /token."""
+
+    def __init__(self, app: object) -> None:
+        self.app = app
+
+    async def __call__(self, scope, receive, send):  # noqa: ANN001
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+
+        response_started = False
+
+        async def intercept_send(message):  # noqa: ANN001
+            nonlocal response_started
+            if message["type"] == "http.response.start":
+                response_started = True
+            await send(message)
+
+        try:
+            await self.app(scope, receive, intercept_send)
+        except RefreshTemporarilyUnavailableError:
+            if response_started:
+                raise
+            response = JSONResponse(
+                status_code=503,
+                content={
+                    "error": "temporarily_unavailable",
+                    "error_description": "users directory is unavailable; retry later",
+                },
+                headers={"Retry-After": "5", "Cache-Control": "no-store"},
+            )
+            await response(scope, receive, send)
 
 
 def _grace_encryption_key(old_refresh_token: str) -> bytes:
@@ -224,12 +265,18 @@ def _meta_from_envelope(envelope: _AuthCodeEnvelope, resource: str | None) -> Re
     )
 
 
-def _meta_carry_forward(old: RefreshMeta, *, resource: str | None) -> RefreshMeta:
+def _meta_carry_forward(
+    old: RefreshMeta,
+    *,
+    resource: str | None,
+    auth_time: int | None = None,
+) -> RefreshMeta:
+    resolved_auth_time = old.auth_time if auth_time is None else auth_time
     return RefreshMeta(
         auth_method=old.auth_method,
         resource=resource,
         interactive=old.interactive,
-        auth_time=old.auth_time,
+        auth_time=resolved_auth_time,
         key_id=old.key_id if old.key_id_known else None,
         key_id_known=old.key_id_known,
         key_expires_at=old.key_expires_at if old.key_id_known else None,
@@ -1042,14 +1089,12 @@ class KeystoneOAuthProvider(OAuthProvider):
                 app = wrap_asgi_with_ip_login_throttle(
                     app, self._oauth_endpoint_throttle, frozenset({"GET", "POST"})
                 )
-            elif (
-                route.path == "/token"
-                and "POST" in route_methods
-                and self._oauth_endpoint_throttle.enabled()
-            ):
-                app = wrap_asgi_with_ip_login_throttle(
-                    app, self._oauth_endpoint_throttle, frozenset({"POST"})
-                )
+            elif route.path == "/token" and "POST" in route_methods:
+                app = _TokenTemporarilyUnavailableGuard(app)
+                if self._oauth_endpoint_throttle.enabled():
+                    app = wrap_asgi_with_ip_login_throttle(
+                        app, self._oauth_endpoint_throttle, frozenset({"POST"})
+                    )
             elif (
                 route.path == "/revoke"
                 and "POST" in route_methods
@@ -1593,6 +1638,151 @@ class KeystoneOAuthProvider(OAuthProvider):
         )
 
     # ── Refresh tokens ────────────────────────────────────────────────────
+    async def _refuse_refresh(
+        self,
+        reason: str,
+        *,
+        refresh_token: RefreshToken,
+        email: str,
+        client: OAuthClientInformationFull,
+        revoke_all_sessions: bool = False,
+    ) -> None:
+        descriptions = {
+            "session_expired": "session reached its maximum age; sign in again",
+            "key_revoked": "the API key this session was opened with is no longer valid",
+            "key_expired": "the API key this session was opened with is no longer valid",
+            "user_denied": "user is not allowed to sign in",
+        }
+        await self._store.delete_refresh_token(refresh_token.token)
+        await self._pending_store.consume(_NS_REFRESH_AUTH, refresh_token.token)
+        if revoke_all_sessions and email:
+            from keystone_mcp.auth.sessions import SessionRevoker
+
+            revoker = SessionRevoker(self._store, self._pending_store)
+            await revoker.revoke_subject(email)
+        if self._observability is not None:
+            self._observability.record_token_exchange(grant_type="refresh_token", outcome=reason)
+            self._observability.record_session_event(
+                action="refresh_refused",
+                subject=email,
+                client_id=client.client_id,
+                reason=reason,
+            )
+        raise TokenError(
+            error="invalid_grant",
+            error_description=descriptions.get(reason, reason),
+        )
+
+    async def _refresh_recheck_session(
+        self,
+        *,
+        client: OAuthClientInformationFull,
+        refresh_token: RefreshToken,
+        old_meta: RefreshMeta,
+        email: str,
+    ) -> tuple[int, int, RefreshMeta]:
+        global _REFRESH_NO_RESOLVER_WARNED  # noqa: PLW0603
+
+        now = int(time.time())
+        auth_time = old_meta.auth_time
+        if auth_time is None:
+            auth_time = now
+        working_meta = _meta_carry_forward(
+            old_meta, resource=old_meta.resource, auth_time=auth_time
+        )
+
+        max_age = self._settings.session_max_age_seconds
+        if max_age > 0 and now - auth_time >= max_age:
+            await self._refuse_refresh(
+                "session_expired",
+                refresh_token=refresh_token,
+                email=email,
+                client=client,
+            )
+
+        key_expires_at = old_meta.key_expires_at if old_meta.key_id_known else None
+        if old_meta.key_id_known and isinstance(old_meta.key_id, str):
+            if key_expires_at is not None and key_expires_at <= now:
+                await self._refuse_refresh(
+                    "key_expired",
+                    refresh_token=refresh_token,
+                    email=email,
+                    client=client,
+                )
+            resolver = self._user_resolver
+            if resolver is None:
+                await self._refuse_refresh(
+                    "key_revoked",
+                    refresh_token=refresh_token,
+                    email=email,
+                    client=client,
+                )
+            state = "unknown"
+            if isinstance(resolver, ApiKeyStateReader):
+                try:
+                    state = await resolver.api_key_state(old_meta.key_id, subject=email)
+                except UserDirectoryUnavailableError as exc:
+                    if self._observability is not None:
+                        self._observability.record_token_exchange(
+                            grant_type="refresh_token", outcome="directory_unavailable"
+                        )
+                    raise RefreshTemporarilyUnavailableError from exc
+            if state == "active":
+                pass
+            elif state == "revoked":
+                await self._refuse_refresh(
+                    "key_revoked",
+                    refresh_token=refresh_token,
+                    email=email,
+                    client=client,
+                )
+            elif state == "expired":
+                await self._refuse_refresh(
+                    "key_expired",
+                    refresh_token=refresh_token,
+                    email=email,
+                    client=client,
+                )
+            else:
+                await self._refuse_refresh(
+                    "key_revoked",
+                    refresh_token=refresh_token,
+                    email=email,
+                    client=client,
+                )
+
+        resolver = self._user_resolver
+        if resolver is not None:
+            try:
+                resolved = await resolver.resolve(email, critical=True)
+            except UserDirectoryUnavailableError as exc:
+                if self._observability is not None:
+                    self._observability.record_token_exchange(
+                        grant_type="refresh_token", outcome="directory_unavailable"
+                    )
+                raise RefreshTemporarilyUnavailableError from exc
+            if not resolved.exists or resolved.is_blocked or resolved.subject_type == "service":
+                await self._refuse_refresh(
+                    "user_denied",
+                    refresh_token=refresh_token,
+                    email=email,
+                    client=client,
+                    revoke_all_sessions=True,
+                )
+        elif not _REFRESH_NO_RESOLVER_WARNED:
+            logger.warning(
+                "refresh does not re-check the users directory: no directory resolver is configured"
+            )
+            _REFRESH_NO_RESOLVER_WARNED = True
+
+        refresh_expires_at = now + self._settings.refresh_token_ttl_seconds
+        if max_age > 0:
+            refresh_expires_at = min(refresh_expires_at, auth_time + max_age)
+        if key_expires_at is not None:
+            refresh_expires_at = min(refresh_expires_at, key_expires_at)
+        access_expires_at = min(now + self._settings.token_cache_ttl_seconds, refresh_expires_at)
+        return now, access_expires_at, working_meta
+
     async def load_refresh_token(
         self, client: OAuthClientInformationFull, refresh_token: str
     ) -> RefreshToken | None:
@@ -1659,9 +1849,23 @@ class KeystoneOAuthProvider(OAuthProvider):
             )
         email = refresh_token.subject or ""
         granted = scopes or refresh_token.scopes
+        now, access_expires_at, new_meta = await self._refresh_recheck_session(
+            client=client,
+            refresh_token=refresh_token,
+            old_meta=old_meta,
+            email=email,
+        )
+        refresh_expires_at = now + self._settings.refresh_token_ttl_seconds
+        max_age = self._settings.session_max_age_seconds
+        auth_time = new_meta.auth_time or now
+        if max_age > 0:
+            refresh_expires_at = min(refresh_expires_at, auth_time + max_age)
+        key_expires_at = old_meta.key_expires_at if old_meta.key_id_known else None
+        if key_expires_at is not None:
+            refresh_expires_at = min(refresh_expires_at, key_expires_at)
+        expires_in = max(1, access_expires_at - now)
         access_token = f"km_at_{secrets.token_urlsafe(32)}"
         new_refresh = f"km_rt_{secrets.token_urlsafe(32)}"
-        now = int(time.time())
         token_claims = _human_access_claims(
             email,
             auth_method,
@@ -1669,12 +1873,12 @@ class KeystoneOAuthProvider(OAuthProvider):
             now,
             old_meta.key_id if old_meta.key_id_known else None,
         )
-        new_meta = _meta_carry_forward(old_meta, resource=resource)
+        new_meta = _meta_carry_forward(new_meta, resource=resource, auth_time=auth_time)
         encoded_meta = encode_refresh_meta(new_meta)
         response = OAuthToken(
             access_token=access_token,
             token_type="Bearer",
-            expires_in=self._settings.token_cache_ttl_seconds,
+            expires_in=expires_in,
             scope=" ".join(granted) if granted else None,
             refresh_token=new_refresh,
         )
@@ -1714,7 +1918,7 @@ class KeystoneOAuthProvider(OAuthProvider):
             token=access_token,
             client_id=client.client_id,
             scopes=granted,
-            expires_at=now + self._settings.token_cache_ttl_seconds,
+            expires_at=access_expires_at,
             resource=resource,
             subject=email,
             claims=token_claims,
@@ -1723,7 +1927,7 @@ class KeystoneOAuthProvider(OAuthProvider):
             token=new_refresh,
             client_id=client.client_id,
             scopes=granted,
-            expires_at=now + self._settings.refresh_token_ttl_seconds,
+            expires_at=refresh_expires_at,
             subject=email,
             iat=now,
         )
