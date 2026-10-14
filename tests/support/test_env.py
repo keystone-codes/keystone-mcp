@@ -4,11 +4,8 @@ from __future__ import annotations
 
 import os
 import uuid
-from urllib.parse import urlparse, urlunparse
 
 import pytest
-
-_TEST_REDIS_DATABASE = 11
 
 _worker = os.environ.get("PYTEST_XDIST_WORKER", "")
 _worker_suffix = f"-{_worker}" if _worker else ""
@@ -52,16 +49,9 @@ def policy_revision_key(kind: str = "policy") -> str:
     return f"{RUN_KEY_ROOT}{kind}:revision"
 
 
-def _redis_url_on_test_database(url: str) -> str:
-    parsed = urlparse(url)
-    return urlunparse(parsed._replace(path=f"/{_TEST_REDIS_DATABASE}"))
-
-
 def real_redis_url() -> str | None:
     url = _SESSION_REDIS_URL.strip()
-    if not url:
-        return None
-    return _redis_url_on_test_database(url)
+    return url or None
 
 
 def require_redis_url() -> str:
