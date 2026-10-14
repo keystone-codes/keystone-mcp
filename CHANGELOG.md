@@ -8,6 +8,27 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ## [Unreleased]
 
+### Security
+
+- Boolean settings accept `1/true/yes/on` and `0/false/no/off` in any case; any other non-empty value refuses startup instead of being read as false.
+- In `production`, an API-key sign-in provider is refused next to any interactive sign-in provider, including one from a plugin.
+
+### Changed
+
+- Startup errors (settings, upstream registry, policy file, users directory) are reported in one line.
+- CLI commands ignore invalid settings they do not use and say so.
+
+### Added
+
+- Startup warnings W8–W19 (`docs/environment.md#startup-warnings`).
+
+### Migration
+
+- `KEYSTONE_MCP_*` booleans: replace values other than 1/true/yes/on/0/false/no/off; an empty value still means false but is now reported.
+- Startup refuses a non-positive `KEYSTONE_MCP_TOKEN_TTL`, `_AUTH_CODE_TTL`, `_REFRESH_TOKEN_TTL`, `_LOGIN_PENDING_TXN_TTL`; a `KEYSTONE_MCP_PORT` outside 1–65535; a `KEYSTONE_MCP_BASE_URL` without an http(s) scheme or host; an empty or invalid `KEYSTONE_MCP_LOG_REQUEST_ID_HEADER`; with metrics on, a `KEYSTONE_MCP_METRICS_PATH` without a leading "/" or equal to `KEYSTONE_MCP_HTTP_PATH`. None of these worked before.
+- `KEYSTONE_MCP_REDIS_URL` is checked at settings time in every RBAC mode (it was already required to start).
+- A plugin sign-in provider with `interactive=True` next to `api_key` in `production`: move people to the interactive provider; machines keep Bearer keys.
+
 ## [0.5.0] - 2026-10-13
 
 ### Added

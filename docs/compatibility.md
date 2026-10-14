@@ -11,6 +11,11 @@ in [environment.md](environment.md). This page names what is frozen.
 
 ## Environment variables
 
+Since 0.6.0, a non-empty boolean value outside the accepted words is refused at
+startup (security fix); values that never worked (non-positive TTL, port out of
+range, `BASE_URL` without http(s) scheme, empty request-id header, metrics path
+without `/` or equal to the MCP path) are refused at startup.
+
 | Variable | Frozen since | Status |
 |---|---|---|
 | `KEYSTONE_MCP_ALLOWED_HOSTS` | 0.5.0 | stable |

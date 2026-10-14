@@ -28,7 +28,7 @@ import httpx
 
 from keystone_mcp.auth.oauth_store import build_shared_auth_stores
 from keystone_mcp.auth.sessions import SessionRevoker
-from keystone_mcp.config import Settings
+from keystone_mcp.config import ConfigError, Settings, USERS_CLI_VARIABLES, settings_for_command
 from keystone_mcp.rbac.policy import PolicyContractError, load_policy_file
 from keystone_mcp.users.db import (
     UsersConfigError,
@@ -55,6 +55,14 @@ class _CliExit(Exception):
     def __init__(self, code: int) -> None:
         super().__init__(code)
         self.code = code
+
+
+def _settings_for_users_cli() -> Settings:
+    try:
+        return settings_for_command(USERS_CLI_VARIABLES)
+    except ConfigError as exc:
+        print(f"keystone-mcp: {exc}", file=sys.stderr)
+        raise _CliExit(EXIT_USAGE) from exc
 
 
 def _source_transport() -> httpx.BaseTransport | None:
@@ -165,7 +173,7 @@ def _describe_grant_admin(before: MutationResult) -> str:
 
 
 def _cmd_grant_admin(args: argparse.Namespace) -> int:
-    settings = Settings()
+    settings = _settings_for_users_cli()
     try:
         store = _open_store(settings, allow_create=args.create)
     except _CliExit as exc:
@@ -195,7 +203,7 @@ def _cmd_grant_admin(args: argparse.Namespace) -> int:
 
 
 def _cmd_block(args: argparse.Namespace) -> int:
-    settings = Settings()
+    settings = _settings_for_users_cli()
     try:
         store = _open_store(settings)
     except _CliExit as exc:
@@ -237,7 +245,7 @@ def _cmd_block(args: argparse.Namespace) -> int:
 
 
 def _cmd_unblock(args: argparse.Namespace) -> int:
-    settings = Settings()
+    settings = _settings_for_users_cli()
     try:
         store = _open_store(settings)
     except _CliExit as exc:
@@ -265,7 +273,7 @@ def _cmd_unblock(args: argparse.Namespace) -> int:
 
 
 def _cmd_logout(args: argparse.Namespace) -> int:
-    settings = Settings()
+    settings = _settings_for_users_cli()
     if not settings.redis_url.strip():
         print("KEYSTONE_MCP_REDIS_URL is not set", file=sys.stderr)
         return EXIT_USAGE
@@ -289,7 +297,7 @@ def _cmd_logout(args: argparse.Namespace) -> int:
 
 
 def _cmd_import(args: argparse.Namespace) -> int:
-    settings = Settings()
+    settings = _settings_for_users_cli()
 
     policy_path = args.policy or settings.rbac_policy_path
     if not policy_path:

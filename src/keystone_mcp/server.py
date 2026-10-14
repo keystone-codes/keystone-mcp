@@ -48,6 +48,7 @@ from keystone_mcp.http.readiness import ReadinessProbe
 from keystone_mcp.login.factory import (
     api_key_login_configured,
     build_login_providers,
+    check_login_providers_for_profile,
     login_providers_want_directory_resolver,
     validate_login_providers,
 )
@@ -194,6 +195,7 @@ def build_server(
     if provisional_login_providers is None:
         provisional_login_providers = build_login_providers(settings, resolver=None)
     validate_login_providers(provisional_login_providers)
+    check_login_providers_for_profile(settings, provisional_login_providers)
     login_providers = provisional_login_providers
 
     if oauth_store is None:
@@ -303,6 +305,7 @@ def build_server(
     if auto_login_providers:
         login_providers = build_login_providers(settings, resolver=directory_resolver)
         validate_login_providers(login_providers)
+        check_login_providers_for_profile(settings, login_providers)
 
     if (
         api_key_login_configured(settings)
@@ -908,9 +911,15 @@ def main() -> None:
         # runs right after), so an uncaught ConfigError would otherwise print a
         # full Python traceback; a misconfigured .env or environment variable
         # is an operator mistake, not a bug, and deserves a one-line message.
-        print(f"keystone-mcp: {exc}", file=sys.stderr)
+        for problem in exc.problems:
+            print(f"keystone-mcp: {problem}", file=sys.stderr)
         raise SystemExit(1) from exc
     configure_logging(settings)
+    try:
+        _ = settings.upstreams
+    except ValueError as exc:
+        logger.error("startup refused: %s", f"upstream registry: {exc}")
+        raise SystemExit(1) from exc
     logger.info("deployment profile: %s", settings.deployment_profile)
     for warning in startup_warnings(settings):
         logger.warning(warning)
@@ -925,8 +934,8 @@ def main() -> None:
         mcp, registry, _oauth, upstreams, policy_manager, observability, reconciler = build_server(
             settings=settings,
         )
-    except UsersConfigError as exc:
-        logger.error(str(exc))
+    except (ConfigError, UsersConfigError) as exc:
+        logger.error("startup refused: %s", exc)
         raise SystemExit(1) from exc
 
     users_store = _users_store_holder["store"]
@@ -943,8 +952,8 @@ def main() -> None:
                 login_providers=login_providers,
             )
         )
-    except UsersBootstrapError as exc:
-        logger.error(str(exc))
+    except (UsersBootstrapError, PolicyLoadError) as exc:
+        logger.error("startup refused: %s", exc)
         raise SystemExit(1) from exc
     install_policy_reload_signal(
         registry,
