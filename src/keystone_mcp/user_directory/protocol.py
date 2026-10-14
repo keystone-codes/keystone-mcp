@@ -53,6 +53,8 @@ from typing import Literal, Protocol, runtime_checkable
 from keystone_mcp.user_directory.types import (
     ApiKeyRecord,
     ApiKeyVerification,
+    DeleteMode,
+    DeletionResult,
     IdentityBinding,
     IssuedApiKey,
     MutationResult,
@@ -63,7 +65,7 @@ from keystone_mcp.user_directory.types import (
 )
 
 #: What a directory can do beyond reading.
-Capability = Literal["admin", "service_accounts", "api_keys", "identity_binding"]
+Capability = Literal["admin", "service_accounts", "api_keys", "identity_binding", "delete"]
 
 
 @runtime_checkable
@@ -205,6 +207,23 @@ class IdentityBindingDirectory(UserDirectory, Protocol):
     async def bind_identity(self, *, email: str, issuer: str, subject: str) -> IdentityBinding: ...
 
     async def clear_identity_binding(self, *, email: str, actor: str) -> bool: ...
+
+
+@runtime_checkable
+class UserDeletionDirectory(UserDirectory, Protocol):
+    """Directories that declare the ``delete`` capability.
+
+    Unknown email raises :class:`~keystone_mcp.user_directory.errors.UserNotFoundError`;
+    the last active ``administrator`` raises
+    :class:`~keystone_mcp.user_directory.errors.LastAdministratorError`;
+    ``actor == email`` raises
+    :class:`~keystone_mcp.user_directory.errors.SelfAdminMutationError`.
+    After success the directory bumps its revision.
+    """
+
+    async def delete_user(
+        self, *, email: str, actor: str, mode: DeleteMode, pseudonym: str
+    ) -> DeletionResult: ...
 
 
 @runtime_checkable

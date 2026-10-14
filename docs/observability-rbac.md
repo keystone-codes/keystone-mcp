@@ -59,6 +59,20 @@ Emitted for every `users_*` admin tool attempt, including ambiguous outcomes
 (`service_timeout`, `service_unavailable`, validation errors). Fields: `actor`,
 `target`, `operation`, `outcome`, `code`, `task_id`, `role` (grant/revoke),
 `roles_before` / `roles_after` when available from the users directory.
+Operations include `delete` (successful removal) and `delete_requested`
+(first `users_delete` call with a confirmation code). The `target` field is
+always the audit pseudonym `sub_<16 hex>`, including after deletion.
+
+### Audit pseudonyms
+
+RBAC audit never stores raw email addresses in `actor` or `target`. Values are
+`hash_subject(email, salt=KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT)`. While you
+still know someone's email, you can compute the same pseudonym offline and
+correlate audit rows with directory actions. After `users_delete`, the person's
+email may be gone (hard delete) or replaced by `deleted:<pseudonym>`; audit
+events keep the pseudonym unchanged. A long, random salt prevents guessing
+pseudonyms from a list of likely addresses; when the salt is empty, deletion
+still proceeds but the tool may warn that pseudonyms are reversible.
 
 ### `rbac_policy_mutation`
 

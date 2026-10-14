@@ -10,6 +10,7 @@ import pytest
 from keystone_mcp.contract_tests import (
     AdminDirectoryContract,
     ApiKeyDirectoryContract,
+    DeletionDirectoryContract,
     IdentityBindingDirectoryContract,
     ServiceAccountDirectoryContract,
     seed_contract_dataset,
@@ -60,5 +61,6 @@ class TestLocalSqlite(
     ServiceAccountDirectoryContract,
     ApiKeyDirectoryContract,
     IdentityBindingDirectoryContract,
+    DeletionDirectoryContract,
 ):
     pass

@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 
+from keystone_mcp.observability.subject import hash_subject
 from keystone_mcp.user_directory.errors import (
     UserDirectoryUnavailableError,
     UsersError,
@@ -18,13 +19,16 @@ from keystone_mcp.user_directory.protocol import (
     ApiKeyDirectory,
     IdentityBindingDirectory,
     ServiceAccountDirectory,
+    UserDeletionDirectory,
     UserDirectory,
     UserDirectoryAdmin,
 )
 from keystone_mcp.user_directory.types import service_subject
 
 _NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
-_ALLOWED_CAPABILITIES = frozenset({"admin", "service_accounts", "api_keys", "identity_binding"})
+_ALLOWED_CAPABILITIES = frozenset(
+    {"admin", "service_accounts", "api_keys", "identity_binding", "delete"}
+)
 _UNAVAILABLE_FIXTURE_HINT = (
     "add keystone_unavailable_directory_factory fixture to run availability contract tests"
 )
@@ -157,6 +161,10 @@ class UserDirectoryContract:
             if "identity_binding" in directory.capabilities:
                 _require_capability_contract_class(
                     test_cls, "identity_binding", IdentityBindingDirectoryContract
+                )
+            if "delete" in directory.capabilities:
+                _require_capability_contract_class(
+                    test_cls, "delete", DeletionDirectoryContract
                 )
 
         _run(keystone_directory_factory, body)
@@ -859,5 +867,144 @@ class IdentityBindingDirectoryContract:
             assert not await directory.clear_identity_binding(
                 email="bob@example.com", actor="alice@example.com"
             )
+
+        _run(keystone_directory_factory, body)
+
+
+class DeletionDirectoryContract:
+    pytestmark = pytest.mark.keystone_contract
+
+    def test_delete_anonymize_and_hard_delete(
+        self, keystone_directory_factory: Callable[[], Awaitable[UserDirectory]]
+    ):
+        async def body(directory: UserDirectory) -> None:
+            assert isinstance(directory, UserDeletionDirectory)
+            actor = "alice@example.com"
+            target = "carol@example.com"
+            pseudonym = hash_subject(target, salt="contract-salt") or ""
+            result = await directory.delete_user(
+                email=target,
+                actor=actor,
+                mode="anonymize",
+                pseudonym=pseudonym,
+            )
+            assert result.mode == "anonymize"
+            assert result.pseudonym == pseudonym
+            resolved = await directory.resolve_user(target)
+            assert resolved.exists is False
+            rows = await directory.list_users()
+            assert all(row.email != f"deleted:{pseudonym}" for row in rows)
+            await directory.delete_user(
+                email="bob@example.com",
+                actor=actor,
+                mode="delete",
+                pseudonym=hash_subject("bob@example.com", salt="contract-salt") or "",
+            )
+            assert (await directory.resolve_user("bob@example.com")).exists is False
+
+        _run(keystone_directory_factory, body)
+
+    def test_repeat_delete_is_not_found(
+        self, keystone_directory_factory: Callable[[], Awaitable[UserDirectory]]
+    ):
+        async def body(directory: UserDirectory) -> None:
+            assert isinstance(directory, UserDeletionDirectory)
+            target = "carol@example.com"
+            pseudonym = hash_subject(target, salt="contract-salt") or ""
+            await directory.delete_user(
+                email=target,
+                actor="alice@example.com",
+                mode="delete",
+                pseudonym=pseudonym,
+            )
+            try:
+                await directory.delete_user(
+                    email=target,
+                    actor="alice@example.com",
+                    mode="delete",
+                    pseudonym=pseudonym,
+                )
+            except UsersError as exc:
+                assert exc.code == "user_not_found"
+            else:
+                raise AssertionError("repeat delete must raise user_not_found")
+
+        _run(keystone_directory_factory, body)
+
+    def test_last_administrator_guard(
+        self, keystone_directory_factory: Callable[[], Awaitable[UserDirectory]]
+    ):
+        async def body(directory: UserDirectory) -> None:
+            assert isinstance(directory, UserDeletionDirectory)
+            try:
+                await directory.delete_user(
+                    email="alice@example.com",
+                    actor="bob@example.com",
+                    mode="delete",
+                    pseudonym="sub_deadbeef",
+                )
+            except UsersError as exc:
+                assert exc.code == "last_administrator"
+            else:
+                raise AssertionError("deleting last administrator must raise last_administrator")
+
+        _run(keystone_directory_factory, body)
+
+    def test_self_delete_forbidden(
+        self, keystone_directory_factory: Callable[[], Awaitable[UserDirectory]]
+    ):
+        async def body(directory: UserDirectory) -> None:
+            assert isinstance(directory, UserDeletionDirectory)
+            try:
+                await directory.delete_user(
+                    email="bob@example.com",
+                    actor="bob@example.com",
+                    mode="delete",
+                    pseudonym="sub_deadbeef",
+                )
+            except UsersError as exc:
+                assert exc.code == "self_admin_mutation_forbidden"
+            else:
+                raise AssertionError("self delete must raise self_admin_mutation_forbidden")
+
+        _run(keystone_directory_factory, body)
+
+    def test_anonymized_record_hidden(
+        self, keystone_directory_factory: Callable[[], Awaitable[UserDirectory]]
+    ):
+        async def body(directory: UserDirectory) -> None:
+            assert isinstance(directory, UserDeletionDirectory)
+            target = "bob@example.com"
+            pseudonym = hash_subject(target, salt="contract-salt") or ""
+            await directory.delete_user(
+                email=target,
+                actor="alice@example.com",
+                mode="anonymize",
+                pseudonym=pseudonym,
+            )
+            assert (await directory.resolve_user(target)).exists is False
+            listed = await directory.list_users(is_blocked=None)
+            assert all(not row.email.startswith("deleted:") for row in listed)
+
+        _run(keystone_directory_factory, body)
+
+    def test_delete_bumps_revision(
+        self, keystone_directory_factory: Callable[[], Awaitable[UserDirectory]]
+    ):
+        async def body(directory: UserDirectory) -> None:
+            from keystone_mcp.user_directory.local import LocalUserDirectory
+
+            if not isinstance(directory, LocalUserDirectory):
+                return
+            bumps: list[bool] = []
+            directory._store.add_change_listener(bumps.append)
+            pseudonym = hash_subject("carol@example.com", salt="contract-salt") or ""
+            await directory.delete_user(
+                email="carol@example.com",
+                actor="alice@example.com",
+                mode="delete",
+                pseudonym=pseudonym,
+            )
+            assert bumps == [True]
 
         _run(keystone_directory_factory, body)

@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 from redis.exceptions import RedisError
 
+from keystone_mcp.adapters import users_delete_support as delete_support
 from keystone_mcp.adapters.guards import (
     AdminCall,
     CatalogNamesSource,
@@ -27,12 +28,19 @@ from keystone_mcp.adapters.guards import (
 )
 from keystone_mcp.plugins import missing_members
 from keystone_mcp.user_directory.errors import UsersError
-from keystone_mcp.user_directory.protocol import UserDirectory, UserDirectoryAdmin
+from keystone_mcp.user_directory.protocol import (
+    UserDeletionDirectory,
+    UserDirectory,
+    UserDirectoryAdmin,
+)
 from keystone_mcp.user_directory.util import normalize_email
 from keystone_mcp.users.roles import check_role_name, normalize_roles
 
 if TYPE_CHECKING:
+    from keystone_mcp.auth.login_pending_store import LoginPendingStore
+    from keystone_mcp.auth.oauth_store import OAuthStore
     from keystone_mcp.auth.sessions import SessionRevoker
+    from keystone_mcp.config import UsersDeleteMode
     from keystone_mcp.observability.service import RbacObservability
     from keystone_mcp.rbac.management import ManagementSource
     from keystone_mcp.router.context import RouteContext
@@ -80,6 +88,10 @@ class UsersAdminAdapter:
         catalog_names_source: CatalogNamesSource | None = None,
         observability: RbacObservability | None = None,
         session_revoker: SessionRevoker | None = None,
+        login_pending_store: LoginPendingStore | None = None,
+        oauth_store: OAuthStore | None = None,
+        users_delete_mode: UsersDeleteMode = "anonymize",
+        rbac_audit_subject_salt: str = "",
     ) -> None:
         self._directory = directory
         self._role_source = role_source
@@ -87,6 +99,10 @@ class UsersAdminAdapter:
         self._catalog_names_source = catalog_names_source
         self._observability = observability
         self._session_revoker = session_revoker
+        self._login_pending_store = login_pending_store
+        self._oauth_store = oauth_store
+        self._users_delete_mode = users_delete_mode
+        self._rbac_audit_subject_salt = rbac_audit_subject_salt
 
     @staticmethod
     def _error(
@@ -149,6 +165,9 @@ class UsersAdminAdapter:
             )
             self._record_mutation_audit(route, ctx, spec, result)
             return result
+
+        if name == "users_delete":
+            return await self._execute_delete(route, ctx, spec)
 
         if name != "users_list" and not (
             "admin" in directory.capabilities and not missing_members(directory, UserDirectoryAdmin)
@@ -369,6 +388,230 @@ class UsersAdminAdapter:
         self._record_mutation_audit(route, ctx, spec, result, operation_override="logout")
         return result
 
+    async def _execute_delete(
+        self,
+        route: Route,
+        ctx: RouteContext,
+        spec: dict[str, Any],
+    ) -> dict[str, Any]:
+        directory = self._directory
+        assert directory is not None
+        if not delete_support.directory_supports_delete(directory):
+            result = self._error(
+                route,
+                ctx,
+                code="service_unconfigured",
+                message=f"users directory {directory.name!r} does not support deletion",
+            )
+            self._record_mutation_audit(
+                route, ctx, spec, result, operation_override="delete_requested"
+            )
+            return result
+        if self._login_pending_store is None:
+            result = self._error(
+                route,
+                ctx,
+                code="service_unconfigured",
+                message="users delete confirmation store is not configured",
+            )
+            self._record_mutation_audit(
+                route, ctx, spec, result, operation_override="delete_requested"
+            )
+            return result
+
+        email_raw = spec.get("email")
+        if not email_raw:
+            result = self._error(
+                route,
+                ctx,
+                code="validation_error",
+                message="email is required",
+            )
+            self._record_mutation_audit(
+                route, ctx, spec, result, operation_override="delete_requested"
+            )
+            return result
+        target_email = normalize_email(str(email_raw))
+        actor_email = normalize_email(ctx.verified_identity.subject)
+
+        refusal_code, _target_roles = await delete_support.check_delete_preconditions(
+            route,
+            ctx,
+            directory=directory,
+            management_source=self._management_source,
+            target_email=target_email,
+        )
+        if refusal_code == "forbidden":
+            result = self._error(
+                route,
+                ctx,
+                code="forbidden",
+                message=(
+                    "only a full administrator may delete a person from the users directory"
+                ),
+            )
+            self._record_mutation_audit(
+                route, ctx, spec, result, operation_override="delete_requested"
+            )
+            return result
+        if refusal_code == "self_admin_mutation_forbidden":
+            result = self._error(
+                route,
+                ctx,
+                code="self_admin_mutation_forbidden",
+                message="you cannot delete your own account",
+            )
+            self._record_mutation_audit(
+                route, ctx, spec, result, operation_override="delete_requested"
+            )
+            return result
+        if refusal_code == "last_administrator":
+            result = self._error(
+                route,
+                ctx,
+                code="last_administrator",
+                message="Cannot remove or block the last active administrator",
+            )
+            self._record_mutation_audit(
+                route, ctx, spec, result, operation_override="delete_requested"
+            )
+            return result
+        if refusal_code is not None:
+            result = self._error(
+                route,
+                ctx,
+                code=refusal_code,
+                message="users directory is unavailable",
+            )
+            self._record_mutation_audit(
+                route, ctx, spec, result, operation_override="delete_requested"
+            )
+            return result
+
+        mode = self._users_delete_mode
+        confirmation = spec.get("confirmation")
+        if not confirmation:
+            try:
+                summary = await delete_support.person_summary(
+                    directory,
+                    self._oauth_store,
+                    email=target_email,
+                )
+            except UsersError as exc:
+                result = self._error(
+                    route, ctx, code=exc.code, message=self._error_message(exc)
+                )
+                self._record_mutation_audit(
+                    route, ctx, spec, result, operation_override="delete_requested"
+                )
+                return result
+            code = delete_support._issue_confirmation_code()
+            await delete_support.store_confirmation(
+                self._login_pending_store,
+                code=code,
+                actor_email=actor_email,
+                target_email=target_email,
+                mode=mode,
+            )
+            result = {
+                "state": "confirmation_required",
+                "tool": route.name,
+                "task_id": ctx.task_id,
+                "email": target_email,
+                "mode": mode,
+                "summary": {**summary, "mode": mode},
+                "confirmation": code,
+                "expires_in": delete_support._CONFIRM_TTL_SECONDS,
+            }
+            self._record_mutation_audit(
+                route, ctx, spec, result, operation_override="delete_requested"
+            )
+            return result
+
+        if not await delete_support.consume_confirmation(
+            self._login_pending_store,
+            code=str(confirmation),
+            actor_email=actor_email,
+            target_email=target_email,
+            mode=mode,
+        ):
+            result = self._error(
+                route,
+                ctx,
+                code="validation_error",
+                message=delete_support._INVALID_CONFIRMATION,
+            )
+            self._record_mutation_audit(
+                route, ctx, spec, result, operation_override="delete_requested"
+            )
+            return result
+
+        pseudonym = delete_support.build_pseudonym(
+            target_email, salt=self._rbac_audit_subject_salt
+        )
+        deleter = directory  # typed as UserDeletionDirectory after capability check
+        assert isinstance(deleter, UserDeletionDirectory)
+        try:
+            deletion = await deleter.delete_user(
+                email=target_email,
+                actor=actor_email,
+                mode=mode,
+                pseudonym=pseudonym,
+            )
+        except UsersError as exc:
+            result = self._error(route, ctx, code=exc.code, message=self._error_message(exc))
+            self._record_mutation_audit(route, ctx, spec, result, operation_override="delete")
+            return result
+
+        revoked_tokens = 0
+        if self._session_revoker is None:
+            revoked_tokens = 0
+        else:
+            try:
+                revoked_tokens = await self._session_revoker.revoke_subject(target_email)
+            except RedisError:
+                result = self._error(
+                    route,
+                    ctx,
+                    code="service_unavailable",
+                    message=(
+                        "user deleted, but sessions were not revoked; "
+                        "call users_logout for this email"
+                    ),
+                )
+                self._record_mutation_audit(
+                    route,
+                    ctx,
+                    spec,
+                    result,
+                    operation_override="delete",
+                    before_roles=deletion.roles_before,
+                )
+                return result
+
+        payload: dict[str, Any] = {
+            "email": target_email,
+            "mode": deletion.mode,
+            "pseudonym": deletion.pseudonym,
+            "revoked_tokens": revoked_tokens,
+            "api_keys_revoked": deletion.api_keys_revoked,
+        }
+        if not self._rbac_audit_subject_salt.strip():
+            payload["warning"] = (
+                "KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT is empty: the pseudonym can be "
+                "matched against known e-mail addresses"
+            )
+        result = self._done(route, ctx, **payload)
+        self._record_mutation_audit(
+            route,
+            ctx,
+            spec,
+            result,
+            operation_override="delete",
+            before_roles=deletion.roles_before,
+        )
+        return result
+
     @staticmethod
     def _management_targets(name: str, spec: dict[str, Any]) -> tuple[str | None, list[str]]:
         if name == "users_add":
@@ -410,7 +653,7 @@ class UsersAdminAdapter:
             if not has_full_name and not has_note:
                 return err("at least one of full_name or note is required")
             return None
-        if name in ("users_block", "users_unblock", "users_logout"):
+        if name in ("users_block", "users_unblock", "users_logout", "users_delete"):
             if not spec.get("email"):
                 return err("email is required")
             return None

@@ -8,6 +8,7 @@ users import
 users block
 users unblock
 users logout
+users delete
 users unbind-identity
 users admins
 keys issue

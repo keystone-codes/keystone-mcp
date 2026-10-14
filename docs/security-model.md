@@ -402,6 +402,9 @@ the same Host/Origin guard and OAuth IP throttle as `/token`.
   every OAuth access and refresh token for that person immediately. The next
   request with an old token is rejected; unblocking does not bring old
   sessions back.
+- Deleting a person (`users_delete` or `keystone-mcp users delete`) is
+  irreversible, limited to full administrators, and also revokes tokens and API
+  keys; service accounts cannot call it.
 - Interactive sign-in is any provider in the login providers file (Google
   and other OpenID Connect issuers). In production, API-key sign-in for
   people is refused while an interactive provider is configured. The old
