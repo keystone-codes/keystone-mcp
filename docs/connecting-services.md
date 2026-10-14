@@ -136,8 +136,9 @@ entries:
 | `sub` | the calling subject: a person's verified email, lower-cased |
 | `sub_type` | `"human"` or `"service"` |
 | `email` | present only when `sub_type` is `"human"` |
-| `roles` | the roles RBAC evaluated this call against, sorted; `[]` when RBAC is off |
+| `roles` | the roles RBAC evaluated this call against, sorted; `[]` when RBAC is off or when the call was denied |
 | `rbac` | the RBAC mode Keystone-MCP ran this call under: `"enforce"`, `"observe"` or `"off"` |
+| `rbac_decision` | present when RBAC is `observe` or `enforce`: `"allow"` or `"deny"` for this specific call |
 | `auth_method` | how the caller signed in (e.g. `"google"`, `"api_key"`), or `"unknown"` |
 | `interactive` | whether an interactive human login is bound to the call |
 | `client_id` | the caller's OAuth client id, when the token carries one |
@@ -182,6 +183,18 @@ What not to trust:
 - `roles`, whenever `rbac` is `"off"` — it is always `[]` in that case, and
   more generally reflects Keystone-MCP's policy at the moment of the call,
   not a durable grant your service should cache past this one request.
+- In `observe`, when `rbac_decision` is `"deny"`, `roles` is always `[]` even
+  though Keystone-MCP still forwarded the call for logging. Your service must
+  refuse the call itself — the reference verifiers below reject `deny` by default.
+
+### Services behind a Keystone in `observe`
+
+In `observe` mode Keystone-MCP does **not** block calls the policy would
+deny; it logs them and forwards them anyway. Do not treat `roles` as
+permission in that mode: check `rbac_decision` (`"allow"` vs `"deny"`) and
+refuse locally when it is `"deny"`. The Python and TypeScript reference
+verifiers reject `rbac_decision: "deny"` unless you opt in with
+`accept_observe_denials` / `acceptObserveDenials`.
 
 Reference implementations, with tests pinning them to the exact claim shape
 above:
@@ -197,6 +210,7 @@ above:
           request.headers.get("x-keystone-identity"),
           secrets=[os.environ["MYSVC_IDENTITY_SECRET"]],
           audience="mysvc-mcp",  # this entry's own `name`
+          issuer=os.environ["KEYSTONE_MCP_BASE_URL"].rstrip("/"),
       )
   except IdentityError as exc:
       raise ValueError(f"identity rejected: {exc}") from exc
@@ -247,9 +261,13 @@ allowlist as every other route — use a host from `KEYSTONE_MCP_BASE_URL` or
 `KEYSTONE_MCP_ALLOWED_HOSTS`, not an arbitrary IP, or Host/Origin guard
 returns 421). Claim shape and header `typ` are unchanged; only the algorithm
 and verification path differ. HS256 with a per-upstream secret remains the
-simple choice for one or two services. Rotation: replace
-`KEYSTONE_MCP_IDENTITY_SIGNING_KEY` and restart; assertions expire within
-minutes. Reference verifiers accept `jwks_url` / `jwksUrl` with
+simple choice for one or two services. **ES256 key rotation:** put the old
+private key in `KEYSTONE_MCP_IDENTITY_SIGNING_KEY_PREVIOUS`, the new one in
+`KEYSTONE_MCP_IDENTITY_SIGNING_KEY`, and restart every Keystone-MCP replica;
+wait at least five minutes (JWKS cache) plus your longest tool-call timeout
+plus 60 seconds; then remove `KEYSTONE_MCP_IDENTITY_SIGNING_KEY_PREVIOUS`.
+Only the public halves are published in JWKS (current key first, then the
+previous one when set). Reference verifiers accept `jwks_url` / `jwksUrl` with
 `algorithms: ["ES256"]`; see
 [`test-vector-es256.json`](../examples/keystone-identity/test-vector-es256.json).
 

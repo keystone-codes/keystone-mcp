@@ -1,0 +1,26 @@
+{
+  "_comment": "Observe-mode denial: rbac_decision deny with empty roles. Expired by design; disable exp verification in tests.",
+  "secret": "kt-demo-test-vector-deny-secret-4040x",
+  "audience": "hello",
+  "issuer": "http://localhost:8080",
+  "now": 1767225600,
+  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6ImtleXN0b25lLWlkZW50aXR5K2p3dCJ9.eyJpc3MiOiJodHRwOi8vbG9jYWxob3N0OjgwODAiLCJhdWQiOiJoZWxsbyIsInN1YiI6ImFubkBleGFtcGxlLmNvbSIsInN1Yl90eXBlIjoiaHVtYW4iLCJyb2xlcyI6W10sInJiYWMiOiJvYnNlcnZlIiwicmJhY19kZWNpc2lvbiI6ImRlbnkiLCJhdXRoX21ldGhvZCI6Imdvb2dsZSIsImludGVyYWN0aXZlIjp0cnVlLCJ0YXNrX2lkIjoidF9kZW55IiwibWNwX21ldGhvZCI6InRvb2xzL2NhbGwiLCJtY3BfdGFyZ2V0Ijoid2hvYW1pIiwiaWF0IjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjU4NDAsImp0aSI6InZlY3Rvci1kZW55LWZpeGVkLWp0aS0wMDAxIiwiZW1haWwiOiJhbm5AZXhhbXBsZS5jb20ifQ.R-ghYZ1lv9nPx_IAng3sfeqM-pfqtH3QQDdVxVWC_v0",
+  "claims": {
+    "iss": "http://localhost:8080",
+    "aud": "hello",
+    "sub": "ann@example.com",
+    "sub_type": "human",
+    "roles": [],
+    "rbac": "observe",
+    "rbac_decision": "deny",
+    "auth_method": "google",
+    "interactive": true,
+    "task_id": "t_deny",
+    "mcp_method": "tools/call",
+    "mcp_target": "whoami",
+    "iat": 1767225600,
+    "exp": 1767225840,
+    "jti": "vector-deny-fixed-jti-0001",
+    "email": "ann@example.com"
+  }
+}
