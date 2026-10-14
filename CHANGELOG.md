@@ -8,6 +8,13 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ## [Unreleased]
 
+### Added
+
+- `docs/clients.md` lists the client versions tested with this release and known
+  client behaviour; `docs/clients-checklist.md` is the release check. The bug
+  report template asks for the client and its version. The demo upstream has a
+  progress tool and an elicitation tool.
+
 ## [0.5.0] - 2026-10-13
 
 ### Added

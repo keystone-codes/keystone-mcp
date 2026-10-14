@@ -206,4 +206,69 @@ async def test_list_tools_needs_no_identity(monkeypatch):
         async with Client(transport) as direct:
             tools = await direct.list_tools()
 
-    assert {t.name for t in tools} == {"greet", "search", "whoami"}
+    assert {t.name for t in tools} == {
+        "greet",
+        "search",
+        "whoami",
+        "slow_count",
+        "ask_name",
+    }
+
+
+async def test_slow_count_through_keystone(monkeypatch):
+    hello = _load_hello_module(monkeypatch, secret=SECRET)
+    monkeypatch.setenv(KEYSTONE_SECRET_ENV, SECRET)
+
+    async with LifespanManager(hello.app):
+        settings = Settings(base_url="http://localhost:8080")
+        main = FastMCP("keystone-test")
+        registry = RouterRegistry(RouterEngine(settings), main)
+        upstreams = UpstreamRegistry(
+            main_mcp=main,
+            registry=registry,
+            http_client_factory=asgi_http_client_factory(hello.app),
+            identity_issuer=settings.base_url.rstrip("/"),
+        )
+        upstreams.add_upstream(
+            AUDIENCE,
+            UPSTREAM_MCP_URL,
+            namespace="hello",
+            identity_secret_env=KEYSTONE_SECRET_ENV,
+        )
+        await upstreams.discover_all()
+
+        async with Client(main) as client:
+            result = await client.call_tool_mcp("hello_slow_count", {"n": 1})
+
+    assert result.is_error is False
+    assert result.content[0].text == "counted to 1"
+
+
+async def test_ask_name_through_keystone_without_elicitation(monkeypatch):
+    """Without a client elicitation handler, ask_name answers no-elicitation."""
+    hello = _load_hello_module(monkeypatch, secret=SECRET)
+    monkeypatch.setenv(KEYSTONE_SECRET_ENV, SECRET)
+
+    async with LifespanManager(hello.app):
+        settings = Settings(base_url="http://localhost:8080")
+        main = FastMCP("keystone-test")
+        registry = RouterRegistry(RouterEngine(settings), main)
+        upstreams = UpstreamRegistry(
+            main_mcp=main,
+            registry=registry,
+            http_client_factory=asgi_http_client_factory(hello.app),
+            identity_issuer=settings.base_url.rstrip("/"),
+        )
+        upstreams.add_upstream(
+            AUDIENCE,
+            UPSTREAM_MCP_URL,
+            namespace="hello",
+            identity_secret_env=KEYSTONE_SECRET_ENV,
+        )
+        await upstreams.discover_all()
+
+        async with Client(main) as client:
+            result = await client.call_tool_mcp("hello_ask_name", {})
+
+    assert result.is_error is False
+    assert result.content[0].text in {"no-elicitation", "elicitation not available in this SDK"}
