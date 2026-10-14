@@ -360,7 +360,8 @@ the same Host/Origin guard and OAuth IP throttle as `/token`.
   (`KEYSTONE_MCP_LOG_REDACT=true`, the default).
 - RBAC audit requires `KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT` to be set the
   moment audit is on; without it, subject identifiers in audit records would
-  be guessable from an email and not actually pseudonymous.
+  be guessable from an email and not actually pseudonymous. The same salt
+  applies to every subject pseudonym written to logs, not only audit events.
 - Sign-in attempts are rate-limited per IP and, for failures, per email
   (`KEYSTONE_MCP_LOGIN_THROTTLE_IP_MAX` / `_EMAIL_MAX`); `/authorize`,
   `/token`, and `/revoke` share a separate IP budget

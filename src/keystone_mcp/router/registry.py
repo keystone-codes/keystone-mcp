@@ -50,6 +50,12 @@ class RouterRegistry:
     def get(self, name: str) -> Route | None:
         return self._routes.get(name)
 
+    def route_for_published_name(self, published_name: str) -> Route | None:
+        route_key = self._published_names.get(published_name)
+        if route_key is None:
+            return None
+        return self._routes.get(route_key)
+
     def owner_of_published_name(self, published_name: str) -> str | None:
         """Return the ``route_key`` of whichever route already publishes this name.
 

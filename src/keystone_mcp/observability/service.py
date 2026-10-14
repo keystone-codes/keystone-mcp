@@ -14,6 +14,7 @@ from keystone_mcp.observability.audit import (
     policy_fields,
 )
 from keystone_mcp.observability.metrics import RbacMetrics
+from keystone_mcp.observability.subject import configure_subject_salt
 from keystone_mcp.observability.tool_family import tool_family
 from keystone_mcp.user_directory.critical import is_critical_tool
 
@@ -33,6 +34,7 @@ class RbacObservability:
         policy_manager: RbacPolicyManager | None = None,
     ) -> None:
         self._policy_manager = policy_manager
+        configure_subject_salt(settings.rbac_audit_subject_salt)
         self.authz_audit = AuthzAuditRecorder(
             enabled=settings.rbac_audit_enabled,
             list_tools_allow_sample_rate=settings.rbac_audit_list_tools_sample_rate,
@@ -106,6 +108,7 @@ class RbacObservability:
         request_id: str | None,
         login_provider: str | None = None,
         subject_type: str | None = None,
+        task_id: str | None = None,
     ) -> None:
         policy = self.active_policy_fields()
         family = self._authz_tool_family_label(tool_name, operation)
@@ -126,6 +129,7 @@ class RbacObservability:
                 critical=critical,
                 login_provider=login_provider,
                 subject_type=subject_type,
+                task_id=task_id,
             )
             self.metrics.record_decision(
                 allowed=allowed,

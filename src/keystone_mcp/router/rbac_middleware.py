@@ -11,18 +11,19 @@ from __future__ import annotations
 import dataclasses
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from fastmcp.exceptions import PromptError, ResourceError, ToolError
 from fastmcp.server.middleware import Middleware, MiddlewareContext
 
 from keystone_mcp.catalog.names import MUTATING_ADMIN_TOOL_NAMES
 from keystone_mcp.config import Settings
-from keystone_mcp.identity import VerifiedIdentity, resolve_verified_identity
+from keystone_mcp.identity import VerifiedIdentity, make_task_id, resolve_verified_identity
 from keystone_mcp.observability.logging.context import get_request_id
-from keystone_mcp.observability.subject import hash_subject
+from keystone_mcp.observability.subject import subject_pseudonym
 from keystone_mcp.rbac.call_decision import current_call_decision
 from keystone_mcp.rbac.human_identity import (
     has_interactive_human_identity,
@@ -49,6 +50,7 @@ if TYPE_CHECKING:
 
     from keystone_mcp.observability.service import RbacObservability
     from keystone_mcp.rbac.policy_revision import PolicyRevisionWatcher
+    from keystone_mcp.router.route import Route
     from keystone_mcp.router.upstream_content import UpstreamContentCatalog
 
 logger = logging.getLogger(__name__)
@@ -91,6 +93,7 @@ class RbacDecision:
     # token store. ``None`` when there is no verified identity at all.
     login_provider: str | None = None
     subject_type: str | None = None
+    task_id: str | None = None
 
 
 def _decision_for_signing(decision: RbacDecision) -> RbacDecision:
@@ -127,12 +130,14 @@ class RbacMiddleware(Middleware):
         enforce: bool | None = None,
         content_catalog: UpstreamContentCatalog | None = None,
         policy_revision_watcher: PolicyRevisionWatcher | None = None,
+        route_lookup: Callable[[str], Route | None] | None = None,
     ) -> None:
         self._policy_manager = policy_manager
         self._user_resolver = user_resolver
         self._content_catalog = content_catalog
         self._observability = observability
         self._policy_revision_watcher = policy_revision_watcher
+        self._route_lookup = route_lookup
         if enforce is not None:
             self._enforce = enforce
         elif settings is not None:
@@ -331,7 +336,7 @@ class RbacMiddleware(Middleware):
             identity = resolve_verified_identity()
             decision = RbacDecision(
                 tool_name=published_uri,
-                email=identity.email if identity else None,
+                email=identity.subject if identity else None,
                 allowed=False,
                 reason=RbacDenialReason.NOT_PERMITTED,
                 subject_type=identity.subject_type if identity else None,
@@ -436,6 +441,13 @@ class RbacMiddleware(Middleware):
             self._record_decision(decision, operation=operation)
             return decision
 
+        task_id = self._task_id_for_tool_call(
+            context,
+            operation=operation,
+            published_name=name,
+            identity=identity,
+        )
+
         login_provider = (identity.claims or {}).get("auth_method")
 
         critical = False
@@ -457,13 +469,14 @@ class RbacMiddleware(Middleware):
                 allowed=False,
                 reason=RbacDenialReason.ROLES_UNAVAILABLE,
                 subject_type=identity.subject_type,
+                task_id=task_id,
             )
             self._record_decision(decision, operation=operation)
             return decision
         except Exception as exc:
             logger.warning(
                 "rbac user directory resolve failed for %s: %s",
-                hash_subject(identity.subject),
+                subject_pseudonym(identity.subject),
                 exc,
                 exc_info=True,
             )
@@ -474,6 +487,7 @@ class RbacMiddleware(Middleware):
                 allowed=False,
                 reason=RbacDenialReason.ROLES_UNAVAILABLE,
                 subject_type=identity.subject_type,
+                task_id=task_id,
             )
             self._record_decision(decision, operation=operation)
             return decision
@@ -488,6 +502,7 @@ class RbacMiddleware(Middleware):
                 roles=frozenset(user.roles),
                 cache_hit=getattr(user, "from_cache", False),
                 subject_type=identity.subject_type,
+                task_id=task_id,
             )
             self._record_decision(decision, operation=operation)
             return decision
@@ -503,6 +518,7 @@ class RbacMiddleware(Middleware):
                 reason=RbacDenialReason.USER_BLOCKED,
                 roles=roles,
                 cache_hit=getattr(user, "from_cache", False),
+                task_id=task_id,
             )
             self._record_decision(decision, operation=operation)
             return decision
@@ -517,6 +533,7 @@ class RbacMiddleware(Middleware):
                 reason=RbacDenialReason.NO_ROLES,
                 roles=roles,
                 cache_hit=getattr(user, "from_cache", False),
+                task_id=task_id,
             )
             self._record_decision(decision, operation=operation)
             return decision
@@ -530,6 +547,7 @@ class RbacMiddleware(Middleware):
                 allowed=True,
                 roles=roles,
                 cache_hit=getattr(user, "from_cache", False),
+                task_id=task_id,
             )
             self._record_decision(decision, operation=operation)
             return decision
@@ -544,6 +562,7 @@ class RbacMiddleware(Middleware):
                 allowed=False,
                 reason=RbacDenialReason.POLICY_UNAVAILABLE,
                 cache_hit=getattr(user, "from_cache", False),
+                task_id=task_id,
             )
             self._record_decision(decision, operation=operation)
             return decision
@@ -561,6 +580,7 @@ class RbacMiddleware(Middleware):
                     reason=RbacDenialReason.HUMAN_IDENTITY_REQUIRED,
                     roles=roles,
                     cache_hit=getattr(user, "from_cache", False),
+                    task_id=task_id,
                 )
                 self._record_decision(decision, operation=operation)
                 return decision
@@ -572,21 +592,41 @@ class RbacMiddleware(Middleware):
                 allowed=True,
                 roles=roles,
                 cache_hit=getattr(user, "from_cache", False),
+                task_id=task_id,
             )
             self._record_decision(decision, operation=operation)
             return decision
 
         decision = RbacDecision(
             tool_name=name,
-            email=identity.email,
+            email=identity.subject,
             login_provider=login_provider,
             allowed=False,
             reason=RbacDenialReason.NOT_PERMITTED,
             roles=roles,
             cache_hit=getattr(user, "from_cache", False),
+            subject_type=identity.subject_type,
+            task_id=task_id,
         )
         self._record_decision(decision, operation=operation)
         return decision
+
+    def _task_id_for_tool_call(
+        self,
+        context: MiddlewareContext,
+        *,
+        operation: str,
+        published_name: str | None,
+        identity: VerifiedIdentity,
+    ) -> str | None:
+        if operation != "call_tool" or not published_name or self._route_lookup is None:
+            return None
+        route = self._route_lookup(published_name)
+        if route is None:
+            return None
+        message = context.message
+        args: dict[str, Any] = getattr(message, "arguments", None) or {}
+        return make_task_id(identity, route.name, args, namespace=route.namespace)
 
     def _record_decision(self, decision: RbacDecision, *, operation: str) -> None:
         if self._observability is not None:
@@ -601,12 +641,13 @@ class RbacMiddleware(Middleware):
                 request_id=_request_correlation_id(),
                 login_provider=decision.login_provider,
                 subject_type=decision.subject_type,
+                task_id=decision.task_id,
             )
             return
         logger.info(
             "rbac decision tool=%s subject=%s allowed=%s reason=%s roles=%s",
             decision.tool_name or "*",
-            hash_subject(decision.email),
+            subject_pseudonym(decision.email),
             decision.allowed,
             decision.reason.value if decision.reason else None,
             sorted(decision.roles),

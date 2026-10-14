@@ -977,7 +977,9 @@ class Settings:
     )
 
     # OAuth session store (required at runtime outside tests).
-    redis_url: str = field(default_factory=lambda: _env("KEYSTONE_MCP_REDIS_URL", ""))
+    redis_url: str = field(
+        default_factory=lambda: _env("KEYSTONE_MCP_REDIS_URL", ""), repr=False
+    )
     redis_key_prefix: str = field(
         default_factory=lambda: _env("KEYSTONE_MCP_REDIS_KEY_PREFIX", "km:oauth:")
     )
@@ -989,7 +991,9 @@ class Settings:
     )
 
     # Comma-separated api_tokens accepted on the sign-in page (local profile only).
-    dev_tokens: str = field(default_factory=lambda: _env("KEYSTONE_MCP_DEV_TOKENS", ""))
+    dev_tokens: str = field(
+        default_factory=lambda: _env("KEYSTONE_MCP_DEV_TOKENS", ""), repr=False
+    )
 
     # ── Login methods and RBAC ────────────────────────────────────────────
     # Independent switches: how users sign in vs whether per-tool RBAC runs.
@@ -1017,7 +1021,8 @@ class Settings:
     # Google OIDC (required when google login is enabled).
     google_client_id: str = field(default_factory=lambda: _env("KEYSTONE_MCP_GOOGLE_CLIENT_ID", ""))
     google_client_secret: str = field(
-        default_factory=lambda: _env("KEYSTONE_MCP_GOOGLE_CLIENT_SECRET", "")
+        default_factory=lambda: _env("KEYSTONE_MCP_GOOGLE_CLIENT_SECRET", ""),
+        repr=False,
     )
     google_allowed_domain: str = field(
         default_factory=lambda: _env("KEYSTONE_MCP_GOOGLE_ALLOWED_DOMAIN", "")
@@ -1044,10 +1049,12 @@ class Settings:
         default_factory=lambda: os.environ.get("KEYSTONE_MCP_USERS_BACKEND") is not None
     )
     users_backend_config: str = field(
-        default_factory=lambda: _env("KEYSTONE_MCP_USERS_BACKEND_CONFIG", "")
+        default_factory=lambda: _env("KEYSTONE_MCP_USERS_BACKEND_CONFIG", ""),
+        repr=False,
     )
     users_db_url: str = field(
-        default_factory=lambda: _env("KEYSTONE_MCP_USERS_DB_URL", "sqlite:///./keystone-users.db")
+        default_factory=lambda: _env("KEYSTONE_MCP_USERS_DB_URL", "sqlite:///./keystone-users.db"),
+        repr=False,
     )
     superadmin_email: str = field(default_factory=lambda: _env("KEYSTONE_MCP_SUPERADMIN_EMAIL", ""))
 
@@ -1056,7 +1063,8 @@ class Settings:
         default_factory=lambda: _env("KEYSTONE_MCP_USERS_SERVICE_URL", "")
     )
     users_service_token: str = field(
-        default_factory=lambda: _env("KEYSTONE_MCP_USERS_SERVICE_TOKEN", "")
+        default_factory=lambda: _env("KEYSTONE_MCP_USERS_SERVICE_TOKEN", ""),
+        repr=False,
     )
     users_service_timeout_seconds: float = field(
         default_factory=lambda: _env_float("KEYSTONE_MCP_USERS_SERVICE_TIMEOUT_SECONDS", 3.0)
@@ -1103,7 +1111,8 @@ class Settings:
         default_factory=lambda: _env_float("KEYSTONE_MCP_RBAC_AUDIT_LIST_TOOLS_SAMPLE_RATE", 0.1)
     )
     rbac_audit_subject_salt: str = field(
-        default_factory=lambda: _env("KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT", "")
+        default_factory=lambda: _env("KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT", ""),
+        repr=False,
     )
     # Whether the policy_* tools (V02) may change the policy file through this
     # process: "full" reads and writes, "read-only" reads and validates only
@@ -1234,12 +1243,15 @@ class Settings:
     upstream_egress_allow_private: bool = field(
         default_factory=lambda: _env_bool("KEYSTONE_MCP_UPSTREAM_EGRESS_ALLOW_PRIVATE", False)
     )
-    upstreams_json: str = field(default_factory=lambda: _env("KEYSTONE_MCP_UPSTREAMS", ""))
+    upstreams_json: str = field(
+        default_factory=lambda: _env("KEYSTONE_MCP_UPSTREAMS", ""), repr=False
+    )
     # Optional EC P-256 PEM private key for ES256 identity assertions (Y11).
     # Empty means ES256 is unavailable; upstream entries with
     # ``auth.identity_alg: ES256`` refuse to start without it.
     identity_signing_key: str = field(
-        default_factory=lambda: _env("KEYSTONE_MCP_IDENTITY_SIGNING_KEY", "")
+        default_factory=lambda: _env("KEYSTONE_MCP_IDENTITY_SIGNING_KEY", ""),
+        repr=False,
     )
     identity_signing_key_previous: str = field(
         default_factory=lambda: _env("KEYSTONE_MCP_IDENTITY_SIGNING_KEY_PREVIOUS", ""),

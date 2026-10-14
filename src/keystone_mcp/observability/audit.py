@@ -81,6 +81,7 @@ class AuthzAuditRecorder:
         critical: bool = False,
         login_provider: str | None = None,
         subject_type: str | None = None,
+        task_id: str | None = None,
     ) -> None:
         if not self.should_emit(allowed=allowed, tool_name=tool_name, operation=operation):
             return
@@ -104,9 +105,9 @@ class AuthzAuditRecorder:
             # human_identity_required denial happened without looking up the
             # token separately, e.g. "signed in with api_key".
             "login_provider": login_provider,
+            "subject_type": subject_type,
+            "task_id": task_id,
         }
-        if subject_type is not None:
-            event["subject_type"] = subject_type
         self._emit(event)
 
     def _emit(self, event: dict[str, Any]) -> None:

@@ -70,6 +70,7 @@ def settings(policy_path: Path) -> Settings:
         redis_url=UNUSED_REDIS_URL,
         rbac_audit_enabled=True,
         rbac_audit_list_tools_sample_rate=1.0,
+        rbac_audit_subject_salt="audit-test-salt",
         metrics_enabled=True,
     )
 
@@ -121,7 +122,7 @@ def _parse_audit_records(caplog: pytest.LogCaptureFixture) -> list[dict]:
 
 def test_hash_subject_never_contains_raw_email():
     email = "viewer@example.com"
-    subject = hash_subject(email)
+    subject = hash_subject(email, salt="")
     assert subject is not None
     assert email not in subject
     assert subject.startswith("sub_")
@@ -571,3 +572,127 @@ async def test_audit_marks_policy_declared_critical_tools(
 
 def test_critical_tool_patterns_are_empty_without_a_policy_manager(settings: Settings):
     assert RbacObservability(settings).critical_tool_patterns() == ()
+
+
+@pytest.mark.asyncio
+async def test_service_account_denial_names_subject(
+    caplog: pytest.LogCaptureFixture,
+    tmp_path: Path,
+) -> None:
+    import json
+
+    from fastmcp import Client
+    from fastmcp.exceptions import ToolError
+
+    from support.service_bearer import service_bearer_harness
+
+    caplog.set_level(logging.INFO)
+    async with service_bearer_harness(tmp_path) as harness:
+        async with Client(harness.bearer_transport(harness.service_key)) as client:
+            with pytest.raises(ToolError):
+                await client.call_tool("human_only", {})
+    events = [e for e in _parse_audit_records(caplog) if e["event"] == "rbac_authz_decision"]
+    denied = [e for e in events if e.get("reason") == "not_permitted"]
+    assert len(denied) >= 1
+    event = denied[-1]
+    assert event["subject"]
+    assert event["subject_type"] == "service"
+    assert "svc:ci" not in json.dumps(event)
+
+
+@pytest.mark.asyncio
+async def test_unknown_resource_denial_names_subject(
+    caplog: pytest.LogCaptureFixture,
+    settings: Settings,
+    observability: RbacObservability,
+    monkeypatch,
+) -> None:
+    from fastmcp.exceptions import ResourceError
+    from mcp.types import ReadResourceRequestParams
+
+    caplog.set_level(logging.INFO)
+    monkeypatch.setattr(
+        "keystone_mcp.router.rbac_middleware.resolve_verified_identity",
+        lambda: VerifiedIdentity(subject="svc:ci", subject_type="service"),
+    )
+    middleware = _middleware(
+        settings,
+        observability,
+        email="svc:ci",
+        roles=("viewer",),
+    )
+    ctx = MiddlewareContext(
+        message=ReadResourceRequestParams(uri="unknown://resource/no-rbac"),
+    )
+
+    async def call_next(_context):
+        return b""
+
+    with pytest.raises(ResourceError):
+        await middleware.on_read_resource(ctx, call_next)
+    events = [e for e in _parse_audit_records(caplog) if e["event"] == "rbac_authz_decision"]
+    assert len(events) == 1
+    assert events[0]["subject"]
+    assert events[0]["subject_type"] == "service"
+
+
+@pytest.mark.asyncio
+async def test_decision_task_id_matches_assertion_task_id(
+    caplog: pytest.LogCaptureFixture,
+    tmp_path: Path,
+) -> None:
+    import base64
+    import json
+
+    from fastmcp import Client
+
+    from support.service_bearer import service_bearer_harness
+
+    caplog.set_level(logging.INFO)
+    async with service_bearer_harness(tmp_path) as harness:
+        async with Client(harness.bearer_transport(harness.service_key)) as client:
+            await client.call_tool("hello_greet", {"name": "CI"})
+    events = [e for e in _parse_audit_records(caplog) if e["event"] == "rbac_authz_decision"]
+    allowed = [e for e in events if e.get("decision") == "allow" and e.get("tool") == "hello_greet"]
+    assert allowed
+    audit_task_id = allowed[-1]["task_id"]
+    assert audit_task_id
+    token = harness.observed["headers"].get("x-keystone-identity")
+    assert token
+    payload = json.loads(base64.urlsafe_b64decode(token.split(".")[1] + "=="))
+    assert payload["task_id"] == audit_task_id
+
+
+@pytest.mark.asyncio
+async def test_throttle_denial_has_subject_type(
+    caplog: pytest.LogCaptureFixture,
+    settings: Settings,
+    observability: RbacObservability,
+    monkeypatch,
+) -> None:
+    from fastmcp.exceptions import ToolError
+
+    from keystone_mcp.auth.throttle import PerIdentityThrottle
+    from keystone_mcp.router.throttle_middleware import ThrottleMiddleware
+
+    caplog.set_level(logging.INFO)
+    monkeypatch.setattr(
+        "keystone_mcp.router.throttle_middleware.resolve_verified_identity",
+        lambda: VerifiedIdentity(email="viewer@example.com"),
+    )
+    middleware = ThrottleMiddleware(
+        PerIdentityThrottle(max_requests=1, window_seconds=60),
+        observability=observability,
+    )
+    ctx = MiddlewareContext(message=type("Msg", (), {"name": "ping"})())
+
+    async def call_next(_context):
+        return "ok"
+
+    await middleware.on_call_tool(ctx, call_next)
+    with pytest.raises(ToolError):
+        await middleware.on_call_tool(ctx, call_next)
+    events = [e for e in _parse_audit_records(caplog) if e["event"] == "rbac_authz_decision"]
+    throttled = [e for e in events if e.get("reason") == "throttled"]
+    assert len(throttled) == 1
+    assert throttled[0]["subject_type"] == "human"

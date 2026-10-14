@@ -6,7 +6,12 @@ import re
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
-_API_KEY_RE = re.compile(r"\bksk_[0-9a-f]{12}_[A-Za-z0-9_-]{43}\b")
+_API_KEY_RE = re.compile(
+    r"\bksk_[0-9a-f]{12}_[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])"
+)
+_KEYSTONE_TOKEN_RE = re.compile(
+    r"\bkm_(?:at|rt)_[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])"
+)
 
 
 def _mask_api_key(match: re.Match[str]) -> str:
@@ -15,8 +20,15 @@ def _mask_api_key(match: re.Match[str]) -> str:
     return f"ksk_{key_id}_***"
 
 
+def _mask_keystone_token(match: re.Match[str]) -> str:
+    value = match.group(0)
+    if value.startswith("km_at_"):
+        return "km_at_***"
+    return "km_rt_***"
+
+
 _BEARER_RE = re.compile(
-    r"\bBearer\s+(?!ksk_[0-9a-f]{12}_)[A-Za-z0-9._~+/=-]+\b",
+    r"\bBearer\s+(?!ksk_[0-9a-f]{12}_)[A-Za-z0-9._~+/=-]+(?![A-Za-z0-9_-])",
     re.IGNORECASE,
 )
 #: A bare compact JWT (e.g. the X-Keystone-Identity assertion, Y01) — three
@@ -53,6 +65,7 @@ def redact_string(value: str) -> str:
     if not value:
         return value
     out = _API_KEY_RE.sub(_mask_api_key, value)
+    out = _KEYSTONE_TOKEN_RE.sub(_mask_keystone_token, out)
     out = _BEARER_RE.sub("Bearer ***REDACTED***", out)
     out = _REDIS_URL_RE.sub(_redact_redis_url, out)
     out = _EMAIL_RE.sub("***@***", out)

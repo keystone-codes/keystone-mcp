@@ -65,6 +65,35 @@ def test_previous_signing_key_must_be_p256(monkeypatch):
         validate_settings(settings)
 
 
+def test_settings_repr_has_no_secrets() -> None:
+    settings = Settings(
+        dev_tokens="DEVTOKEN_MARKER",
+        google_client_secret="GOOGLE_SECRET_MARKER",
+        users_service_token="USERS_TOKEN_MARKER",
+        rbac_audit_subject_salt="SALT_MARKER",
+        identity_signing_key="PEM_MARKER",
+        identity_signing_key_previous="PREV_PEM_MARKER",
+        redis_url="redis://user:REDIS_PASS@host:6379/0",
+        users_db_url="postgresql+psycopg://u:DB_PASS@127.0.0.1/db",
+        users_backend_config='{"client_secret":"PLUGIN_SECRET"}',
+        upstreams_json='[{"auth":{"token":"UPSTREAM_TOKEN"}}]',
+    )
+    rendered = repr(settings)
+    for marker in (
+        "DEVTOKEN_MARKER",
+        "GOOGLE_SECRET_MARKER",
+        "USERS_TOKEN_MARKER",
+        "SALT_MARKER",
+        "PEM_MARKER",
+        "PREV_PEM_MARKER",
+        "REDIS_PASS",
+        "DB_PASS",
+        "PLUGIN_SECRET",
+        "UPSTREAM_TOKEN",
+    ):
+        assert marker not in rendered
+
+
 def test_previous_without_current_warns():
     from cryptography.hazmat.primitives.asymmetric import ec
     from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat
