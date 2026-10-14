@@ -9,19 +9,25 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import os
 import secrets
+import warnings
 from dataclasses import dataclass
 from urllib.parse import parse_qs, urlparse
 
 import httpx2
 import pytest
 import pytest_asyncio
+import redis
 from fastmcp.utilities.tests import ASGIServer, asgi_server
 
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import Settings
 from keystone_mcp.server import build_server
 from support.login import dev_token_login
+from support.test_env import RUN_KEY_ROOT, real_redis_url, redis_key_prefix, users_revision_key
+
+pytest_plugins = ["support.test_env"]
 
 VALID_TOKEN = "valid-test-token"
 BASE_URL = "http://localhost:8080"
@@ -29,46 +35,39 @@ REDIRECT_URI = "http://localhost:9999/callback"
 
 
 @pytest.fixture(autouse=True)
-def _allow_insecure_upstream_http_for_tests(monkeypatch):
-    """Most tests use cleartext docker-style upstream URLs in JSON env."""
+def _isolated_keystone_env(monkeypatch, tmp_path):
+    """Scrub stray ``KEYSTONE_MCP_*`` from the shell and set known-good defaults."""
+    for key in list(os.environ):
+        if key.startswith("KEYSTONE_MCP_") and key != "KEYSTONE_MCP_REDIS_URL":
+            monkeypatch.delenv(key, raising=False)
+
     monkeypatch.setenv("KEYSTONE_MCP_UPSTREAM_ALLOW_INSECURE_HTTP", "true")
     monkeypatch.setenv("KEYSTONE_MCP_UPSTREAM_EGRESS_ALLOW_PRIVATE", "true")
-
-
-@pytest.fixture(autouse=True)
-def _default_deployment_profile_to_local(monkeypatch):
-    """Most tests rely on RBAC_MODE=off and DEV tokens, which `production` refuses.
-
-    ``KEYSTONE_MCP_DEPLOYMENT_PROFILE`` defaults to ``production`` (A04); without
-    this, almost every test in the suite would need to set it explicitly. A test
-    of the `production` profile itself sets the variable directly, which
-    overrides this fixture's `monkeypatch.setenv` for that one test.
-    """
     monkeypatch.setenv("KEYSTONE_MCP_DEPLOYMENT_PROFILE", "local")
-
-
-@pytest.fixture(autouse=True)
-def _isolated_users_db(monkeypatch, tmp_path):
-    """Point the built-in users directory at a per-test SQLite file.
-
-    Without this, any test that builds a server (``users_backend`` now
-    defaults to ``local``) would migrate and write to ``./keystone-users.db``
-    in the repository root instead of an isolated temporary database.
-    """
     monkeypatch.setenv("KEYSTONE_MCP_USERS_DB_URL", f"sqlite:///{tmp_path}/keystone-users.db")
-
-
-@pytest.fixture(autouse=True)
-def _disable_dotenv_loading_for_tests(monkeypatch):
-    """Isolate the suite from a developer's own .env in the repo root.
-
-    ``cli.main`` (called with an explicit ``argv`` by several tests) now loads
-    an env file as its first step (see keystone_mcp.env_file.load_env_file).
-    Without this, a real ``.env`` sitting in the working directory the suite
-    runs from would leak into every test. Tests of the loader itself remove
-    this with ``monkeypatch.delenv`` to exercise the real default-file lookup.
-    """
     monkeypatch.setenv("KEYSTONE_MCP_ENV_FILE", "")
+    monkeypatch.setenv("KEYSTONE_MCP_REDIS_KEY_PREFIX", redis_key_prefix("oauth"))
+    monkeypatch.setenv("KEYSTONE_MCP_LOGIN_PENDING_KEY_PREFIX", redis_key_prefix("login"))
+    monkeypatch.setenv("KEYSTONE_MCP_USERS_REDIS_REVISION_KEY", users_revision_key())
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _cleanup_run_keys():
+    yield
+    url = real_redis_url()
+    if not url:
+        return
+    try:
+        client = redis.Redis.from_url(url, decode_responses=False)
+        cursor = 0
+        while True:
+            cursor, keys = client.scan(cursor, match=f"{RUN_KEY_ROOT}*", count=500)
+            if keys:
+                client.delete(*keys)
+            if cursor == 0:
+                break
+    except OSError as exc:
+        warnings.warn(f"Redis run-key cleanup failed: {exc}", stacklevel=1)
 
 
 def make_pkce() -> tuple[str, str]:
