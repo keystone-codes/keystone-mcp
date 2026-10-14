@@ -88,6 +88,8 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ### Fixed
 
+- Startup refuses a users directory that declares an unknown capability name.
+- The HTTP users directory treats a resolve response whose `email` field does not match the requested subject as nonexistent.
 - POST `/login/{provider}` rejects a cross-site `Origin`.
 - `keystone-mcp keys …` and `keystone-mcp service-accounts …` report a configuration problem or an unknown role in one line instead of a traceback, and close the database.
 - `docs/compatibility.md` lists the error codes the built-in tools actually return.
