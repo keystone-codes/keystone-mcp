@@ -77,6 +77,11 @@ _LIST_CHANGED_SESSIONS = Counter(
     "Sessions notified that a list of tools/prompts/resources changed",
     ["kind"],
 )
+_DIRECTORY_RESPONSE_ISSUES = Counter(
+    "keystone_mcp_users_directory_response_issues_total",
+    "Lenient parsing of HTTP users directory resolve responses",
+    ["field", "issue"],
+)
 _RESOLVE_LATENCY = Histogram(
     "keystone_mcp_rbac_directory_resolve_seconds",
     "User-directory resolve latency",
@@ -257,3 +262,8 @@ class RbacMetrics:
 def record_upstream_elicitation(*, namespace: str, action: str) -> None:
     """Increment elicitation counter without an observability handle (proxy path)."""
     _UPSTREAM_ELICITATIONS.labels(namespace=namespace, action=action).inc()
+
+
+def count_directory_response_issue(field: str, issue: str) -> None:
+    """Count a lenient parse of an HTTP directory ``resolve`` response field."""
+    _DIRECTORY_RESPONSE_ISSUES.labels(field=field, issue=issue).inc()

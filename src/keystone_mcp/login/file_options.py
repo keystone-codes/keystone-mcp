@@ -113,12 +113,25 @@ def parse_oidc_options(
     if "email_claim" in options:
         email_claim = _require_str(options, "email_claim", provider_name=name)
 
+    email_verified_claim_explicit = "email_verified_claim" in options
+    email_verified_claim = "email_verified"
+    if email_verified_claim_explicit:
+        email_verified_claim = _require_str(options, "email_verified_claim", provider_name=name)
+
     require_email_verified = True
     if "require_email_verified" in options:
         val = options["require_email_verified"]
         if not isinstance(val, bool):
             raise ValueError(f"{name}: require_email_verified must be a boolean")
         require_email_verified = val
+
+    if email_claim != "email" and require_email_verified and not email_verified_claim_explicit:
+        raise ConfigError(
+            f"{name}: email_claim is {email_claim!r} but require_email_verified checks "
+            "'email_verified', which providers set for the 'email' claim only. Set "
+            f"email_verified_claim to the claim that confirms {email_claim!r}, or set "
+            "require_email_verified: false together with allowed_domains or hosted_domain."
+        )
 
     if not require_email_verified and not allowed_domains and hosted_domain is None:
         raise ConfigError(
@@ -165,6 +178,7 @@ def parse_oidc_options(
         scopes=scopes,
         hosted_domain=hosted_domain,
         email_claim=email_claim,
+        email_verified_claim=email_verified_claim,
         require_email_verified=require_email_verified,
         groups_claim=groups_claim,
         extra_authorize_params=extra_authorize_params or {},

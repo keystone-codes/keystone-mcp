@@ -12,7 +12,7 @@ check at startup.
 | Question | Where it lives | Who changes it |
 |---|---|---|
 | Who exists, and with which roles? | The users directory (built in) | An administrator, through `users_*` or the CLI |
-| How do they prove it? | The sign-in method (Google or a DEV token) | The operator, via `KEYSTONE_MCP_ENABLED_LOGIN_METHODS` |
+| How do they prove it? | The sign-in method (Google, OIDC, or a DEV token) | The operator, via the login providers file (`KEYSTONE_MCP_LOGIN_PROVIDERS_PATH`) or the Google variables |
 | What may they call? | The RBAC policy file | Whoever edits `KEYSTONE_MCP_RBAC_POLICY_PATH` |
 
 They are independent: switching sign-in from DEV tokens to Google does not
@@ -37,8 +37,9 @@ account, are in [users.md](users.md).
 
 ### How they prove it: the sign-in secret
 
-- **Google** (`KEYSTONE_MCP_ENABLED_LOGIN_METHODS=google`) — the production
-  method. The email Google verifies is looked up in the users directory,
+- **Google / OIDC** — configure Google through
+  `KEYSTONE_MCP_LOGIN_PROVIDERS_PATH` or the legacy `KEYSTONE_MCP_GOOGLE_*`
+  variables. The email the provider verifies is looked up in the users directory,
   lower-cased first; an email can never carry different directory entries
   through different casing. Google and any other interactive sign-in
   provider mark the session `interactive`, which is what
@@ -217,18 +218,17 @@ row per rule here:
 | L1 | `local` | `KEYSTONE_MCP_BASE_URL` must be loopback — a local server is never reachable from outside this machine. |
 | P1 | `production` | `KEYSTONE_MCP_DEV_TOKENS` must be empty; startup refuses otherwise. |
 | P2 | `production` | `KEYSTONE_MCP_RBAC_MODE` must be `enforce`. |
-| P3 | `production` | `api_key` sign-in needs `KEYSTONE_MCP_AUTH_SERVICE_URL` and `_TOKEN` both set. |
+| P3 | `production` | `api_key` sign-in for people is refused when `KEYSTONE_MCP_USERS_BACKEND=http` or when an interactive provider (Google/OIDC) is also configured. |
 | P4 | `production` | `KEYSTONE_MCP_BASE_URL` may not be a public `http` address — terminate TLS first. |
 | W1 | `production` | `KEYSTONE_MCP_BASE_URL` using `http` on a *non-public* host (for example, a private address behind a reverse proxy that terminates TLS) only warns at startup — P4 already refuses a public `http` address, so this covers the one case P4 lets through. |
 | W2/W3 | `production` | `KEYSTONE_MCP_UPSTREAM_ALLOW_INSECURE_HTTP` / `_EGRESS_ALLOW_PRIVATE` only warn at startup; they do not refuse, because a deployment whose upstreams are genuinely all-private needs them. |
 | W4 | `local` | `KEYSTONE_MCP_RBAC_MODE=enforce` with a non-empty `KEYSTONE_MCP_DEV_TOKENS` only warns — this is the intended way to test roles locally without Google. |
 | P5 | `production` | With the built-in users backend, `KEYSTONE_MCP_USERS_DB_URL` must be PostgreSQL; an empty or SQLite URL is refused. |
 | W5 | `local` | `KEYSTONE_MCP_HOST` bound to every interface (`0.0.0.0`/`::`) while `KEYSTONE_MCP_DEV_TOKENS` is set only warns — anyone who can reach the port signs in as any directory member. |
+| W20 | `production` | `KEYSTONE_MCP_USERS_SERVICE_URL` uses `http` on a non-loopback host while `KEYSTONE_MCP_USERS_BACKEND=http` — the directory token and role answers travel in cleartext unless `KEYSTONE_MCP_USERS_SERVICE_ALLOW_INSECURE_HTTP=true`. |
 
-Outside the profile check, `KEYSTONE_MCP_AUTH_SERVICE_URL` set without
-`_TOKEN` is always a startup error, in either profile. The built-in users
-directory accepts a SQLite file under `local` only; under `production` it
-needs PostgreSQL and startup refuses a SQLite URL (rule P5 in
+The built-in users directory accepts a SQLite file under `local` only; under
+`production` it needs PostgreSQL and startup refuses a SQLite URL (rule P5 in
 [environment.md](environment.md#deployment-profile)). An external users
 service (`KEYSTONE_MCP_USERS_BACKEND=http`) is not affected by this rule.
 

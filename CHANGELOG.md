@@ -8,6 +8,20 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ## [Unreleased]
 
+### Added
+
+- `KEYSTONE_MCP_USERS_SERVICE_ALLOW_INSECURE_HTTP`; production warning for an `http://` users directory; metric `keystone_mcp_users_directory_response_issues_total`; OIDC option `email_verified_claim`.
+
+### Security
+
+- The HTTP users directory's `resolve` answer is checked strictly: a non-boolean `exists`, `is_blocked` or a non-string role is treated as the directory being unavailable instead of granting access. `0`/`1` are still accepted with a warning; a missing `is_blocked` is read as `false` with a warning.
+- A sign-in e-mail whose characters become ASCII letters only after lower-casing or Unicode normalisation is refused.
+- An OIDC provider with `email_claim` other than `email` must name the claim that confirms it (`email_verified_claim`) while `require_email_verified` is on.
+
+### Migration
+
+- An HTTP users directory that answers `exists`/`is_blocked` with strings stops working — return JSON booleans. A providers file with `email_claim` other than `email` and `require_email_verified` on fails to load until `email_verified_claim` is set (or `require_email_verified: false` with `allowed_domains`). Run `keystone-mcp config check` before upgrading.
+
 ## [0.5.0] - 2026-10-13
 
 ### Added

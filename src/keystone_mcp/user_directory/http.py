@@ -17,23 +17,55 @@ the full wire contract (paths, bodies, headers, revision).
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import quote
 
 import httpx
 
+from keystone_mcp.observability.metrics import count_directory_response_issue
 from keystone_mcp.user_directory.errors import (
     DirectoryTimeoutError,
     UserDirectoryUnavailableError,
     UsersError,
     UsersStoreUnavailableError,
 )
-from keystone_mcp.user_directory.types import MutationResult, UserRecord, UserResolveResult
+from keystone_mcp.user_directory.types import (
+    MutationResult,
+    UserRecord,
+    UserResolveResult,
+    subject_type_of,
+)
 from keystone_mcp.user_directory.util import normalize_email
 from keystone_mcp.users.errors import InvalidRoleError
 from keystone_mcp.users.roles import check_role_name
+
+logger = logging.getLogger(__name__)
+
+_warned_directory_response_issues: set[tuple[str, str]] = set()
+
+
+def reset_directory_response_issue_warnings() -> None:
+    """Clear one-shot warning state (for tests)."""
+    _warned_directory_response_issues.clear()
+
+
+def _warn_directory_response_issue(field: str, issue: str, *, meaning: str) -> None:
+    count_directory_response_issue(field, issue)
+    key = (field, issue)
+    if key in _warned_directory_response_issues:
+        return
+    _warned_directory_response_issues.add(key)
+    logger.warning(
+        "users directory response: %s is %s; treated as %s. Fix the directory service; "
+        "see docs/user-directory.md",
+        field,
+        issue,
+        meaning,
+    )
+
 
 #: Header carrying the acting administrator's email on every mutating call.
 ACTOR_EMAIL_HEADER = "X-Actor-Email"
@@ -59,26 +91,82 @@ def _normalize_code(code: str) -> str:
     return _CODE_NORMALIZATION.get(code, code)
 
 
-def _parse_resolve_payload(payload: Any) -> UserResolveResult:
+def _reject_resolve_field(field: str, *, kind: str) -> None:
+    logger.warning(
+        "users directory resolve response field %s has invalid %s",
+        field,
+        kind,
+    )
+    raise UserDirectoryUnavailableError(
+        "users directory returned an invalid resolve response",
+        code="catalog_unavailable",
+    )
+
+
+def _parse_resolve_exists(payload: dict[str, Any]) -> bool:
+    if "exists" not in payload:
+        _reject_resolve_field("exists", kind="type missing")
+    value = payload["exists"]
+    if type(value) is bool:
+        return value
+    if type(value) is int and value in (0, 1):
+        _warn_directory_response_issue("exists", "integer", meaning=str(bool(value)))
+        return bool(value)
+    _reject_resolve_field("exists", kind=f"type {type(value).__name__}")
+
+
+def _parse_resolve_is_blocked(payload: dict[str, Any]) -> bool:
+    if "is_blocked" not in payload:
+        _warn_directory_response_issue("is_blocked", "missing", meaning="false")
+        return False
+    value = payload["is_blocked"]
+    if type(value) is bool:
+        return value
+    if type(value) is int and value in (0, 1):
+        _warn_directory_response_issue("is_blocked", "integer", meaning=str(bool(value)))
+        return bool(value)
+    _reject_resolve_field("is_blocked", kind=f"type {type(value).__name__}")
+
+
+def _parse_resolve_roles(payload: dict[str, Any]) -> tuple[str, ...]:
+    roles_raw = payload.get("roles")
+    if roles_raw is None:
+        return ()
+    if not isinstance(roles_raw, list):
+        _reject_resolve_field("roles", kind=f"type {type(roles_raw).__name__}")
+    roles: list[str] = []
+    for role in roles_raw:
+        if not isinstance(role, str):
+            _reject_resolve_field("roles", kind=f"type {type(role).__name__}")
+        roles.append(role)
+    return tuple(roles)
+
+
+def _parse_resolve_subject_type(
+    payload: dict[str, Any], *, subject: str
+) -> Literal["human", "service"]:
+    expected = subject_type_of(subject)
+    if "subject_type" not in payload:
+        return expected
+    value = payload["subject_type"]
+    if value not in ("human", "service"):
+        _reject_resolve_field("subject_type", kind=f"type {type(value).__name__}")
+    if value != expected:
+        _reject_resolve_field("subject_type", kind="value mismatch")
+    return value  # type: ignore[return-value]
+
+
+def _parse_resolve_payload(payload: Any, *, subject: str) -> UserResolveResult:
     if not isinstance(payload, dict):
         raise UserDirectoryUnavailableError(
             "users directory returned an invalid resolve response",
             code="catalog_unavailable",
         )
-    roles_raw = payload.get("roles")
-    if roles_raw is None:
-        roles: tuple[str, ...] = ()
-    elif isinstance(roles_raw, list):
-        roles = tuple(str(role) for role in roles_raw)
-    else:
-        raise UserDirectoryUnavailableError(
-            "users directory returned an invalid resolve response",
-            code="catalog_unavailable",
-        )
     return UserResolveResult(
-        exists=bool(payload.get("exists")),
-        roles=roles,
-        is_blocked=bool(payload.get("is_blocked")),
+        exists=_parse_resolve_exists(payload),
+        roles=_parse_resolve_roles(payload),
+        is_blocked=_parse_resolve_is_blocked(payload),
+        subject_type=_parse_resolve_subject_type(payload, subject=subject),
     )
 
 
@@ -182,7 +270,7 @@ class HttpUserDirectory:
                 "users directory returned an invalid resolve response",
                 code="catalog_unavailable",
             ) from exc
-        return _parse_resolve_payload(payload)
+        return _parse_resolve_payload(payload, subject=subject)
 
     async def ping(self) -> None:
         """Not called by ``/readyz`` (S16): an external service's own outage
