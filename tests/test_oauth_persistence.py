@@ -484,6 +484,8 @@ async def test_concurrent_refresh_keeps_google_auth_method(persistence_client):
         oauth.exchange_refresh_token(registered, loaded, []),
         oauth.exchange_refresh_token(registered, loaded, []),
     )
+    assert first.access_token == second.access_token
+    assert first.refresh_token == second.refresh_token
 
     for issued in (first, second):
         access = await store.get_access_token(issued.access_token)
@@ -522,7 +524,7 @@ async def test_old_auth_marker_gets_short_grace_ttl_after_rotation(persistence_c
     # But its TTL is the short grace window, not the full refresh-token
     # lifetime: it will not linger in Redis/memory forever.
     entry = oauth._pending_store._entries[("refresh_auth", old_refresh)]
-    assert entry.expires_at <= before + 61
+    assert entry.expires_at <= before + settings.oauth_refresh_grace_seconds + 1
 
 
 async def test_second_refresh_keeps_auth_method_after_first_fully_completes(persistence_client):

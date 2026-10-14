@@ -10,6 +10,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ### Added
 
+- `KEYSTONE_MCP_OAUTH_REFRESH_GRACE_SECONDS`; metric `keystone_mcp_oauth_token_exchange_total`; audit event `oauth_session`.
 - Metric `keystone_mcp_admin_refusals_total`; audit field `actor_subject_type` on `rbac_policy_mutation`.
 - `LoginIdentity.key_id` and `LoginIdentity.key_expires_at` (optional) for form providers that sign people in with a Keystone API key.
 - `docs/clients.md` lists the client versions tested with this release and known
@@ -30,10 +31,12 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ### Security
 
+- Refresh-token rotation is atomic: a refresh token is exchanged at most once. A second exchange within `KEYSTONE_MCP_OAUTH_REFRESH_GRACE_SECONDS` (default 10 s) gets the same response; a reuse after that revokes every token of that person at that OAuth client and is audited (`oauth_session`). Reusing an authorization code returns `invalid_grant` and revokes the tokens issued from it.
 - Release images are scanned by Trivy per platform (amd64 and arm64) on the exact digest that is then tagged; base images are pinned by digest and updated by Dependabot.
 
 ### Migration
 
+- A client that reuses an old refresh token more than `KEYSTONE_MCP_OAUTH_REFRESH_GRACE_SECONDS` after rotating it now loses its session (the person signs in again). While 0.5.x and 0.6.0 replicas run side by side, a token rotated by a 0.5.x replica is not recognised as reused; detection holds once every replica runs 0.6.0. Rolling back to 0.5.x restores the old 60-second behaviour; nothing is lost.
 - Automation that changed users, service accounts or API keys through MCP with a service-account key now gets `forbidden`; do it from a person's session or with the `keystone-mcp` CLI on the host.
 - Sessions opened on 0.4.x/0.5.x keep working after the upgrade. Rolling back to 0.5.x keeps sessions opened on 0.6.0: 0.5.x ignores the new marker fields. While replicas of both versions run side by side, a session renewed by a 0.5.x replica loses the new fields again; session max-age and key checks apply once every replica runs 0.6.0.
 

@@ -7,13 +7,15 @@ Production uses the deployment's Redis; tests inject
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import time
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from typing import Protocol, Sequence, runtime_checkable
 
 from mcp.server.auth.provider import AccessToken, RefreshToken
 from mcp.shared.auth import OAuthClientInformationFull
-from pydantic import ConfigDict
+from pydantic import ConfigDict, Field
 from redis.asyncio import Redis
 from redis.exceptions import WatchError
 
@@ -33,12 +35,41 @@ class CredentialRevokedError(Exception):
     """Consumed credential was issued at or before the subject's not-before time."""
 
 
+class RefreshTokenAlreadyRotatedError(Exception):
+    """Refresh token was already rotated by another concurrent exchange."""
+
+
+def token_digest(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+@dataclass(frozen=True, slots=True)
+class RotationRecord:
+    used_json: str
+    used_ttl: int
+    grace_blob: str | None
+    grace_ttl: int
+    old_meta: str | None
+    old_meta_ttl: int
+
+
+@dataclass(frozen=True, slots=True)
+class RotatedRefresh:
+    subject: str
+    client_id: str
+    scopes: list[str]
+    expires_at: int | None
+    resource: str | None
+    rotated_at: int
+
+
 class KeystoneRefreshToken(RefreshToken):
     """Refresh token record with an optional issued-at time (0.6.0+)."""
 
     model_config = ConfigDict(extra="ignore")
 
     iat: int | None = None
+    rotated: bool = Field(default=False, exclude=True)
 
 
 def _subject_key(subject: str) -> str:
@@ -106,7 +137,20 @@ class OAuthStore(Protocol):
         refresh: RefreshToken,
         replace_refresh_token: str | None = None,
         refresh_meta: str | None = None,
+        rotation: RotationRecord | None = None,
     ) -> None: ...
+
+    async def get_rotated_refresh(self, token: str) -> RotatedRefresh | None: ...
+
+    async def get_refresh_grace(self, token: str) -> str | None: ...
+
+    async def subject_tokens(
+        self, subject: str
+    ) -> tuple[list[AccessToken], list[KeystoneRefreshToken]]: ...
+
+    async def revoke_tokens(
+        self, subject: str, *, access: Sequence[str], refresh: Sequence[str]
+    ) -> RevokedTokens: ...
 
     async def aclose(self) -> None: ...
 
@@ -138,6 +182,8 @@ class InMemoryOAuthStore:
         self._subject_index_expires_at: dict[str, float] = {}
         self._subject_nbf: dict[str, int] = {}
         self._refresh_revoked: set[str] = set()
+        self._rt_used: dict[str, tuple[str, float]] = {}
+        self._rt_grace: dict[str, tuple[str, float]] = {}
         self._commit_lock = asyncio.Lock()
 
     async def get_client(self, client_id: str) -> OAuthClientInformationFull | None:
@@ -373,6 +419,23 @@ class InMemoryOAuthStore:
             return True
         return consumed_iat <= nbf
 
+    def _expiring_get(self, store: dict[str, tuple[str, float]], key: str) -> str | None:
+        entry = store.get(key)
+        if entry is None:
+            return None
+        payload, expires_at = entry
+        if expires_at < time.time():
+            store.pop(key, None)
+            return None
+        return payload
+
+    def _expiring_put(
+        self, store: dict[str, tuple[str, float]], key: str, payload: str, ttl: int
+    ) -> None:
+        if ttl <= 0:
+            return
+        store[key] = (payload, time.time() + ttl)
+
     async def commit_token_pair(
         self,
         *,
@@ -382,6 +445,7 @@ class InMemoryOAuthStore:
         refresh: RefreshToken,
         replace_refresh_token: str | None = None,
         refresh_meta: str | None = None,
+        rotation: RotationRecord | None = None,
     ) -> None:
         sub = _subject_key(subject)
         async with self._commit_lock:
@@ -391,10 +455,85 @@ class InMemoryOAuthStore:
                 raise CredentialRevokedError()
             if replace_refresh_token is not None and replace_refresh_token in self._refresh_revoked:
                 raise CredentialRevokedError()
+            if (
+                replace_refresh_token is not None
+                and replace_refresh_token not in self._refresh_tokens
+            ):
+                raise RefreshTokenAlreadyRotatedError()
             await self.put_access_token(access)
             await self.put_refresh_token(refresh)
             if replace_refresh_token is not None:
+                digest = token_digest(replace_refresh_token)
+                if rotation is not None:
+                    self._expiring_put(self._rt_used, digest, rotation.used_json, rotation.used_ttl)
+                    if rotation.grace_blob is not None and rotation.grace_ttl > 0:
+                        self._expiring_put(
+                            self._rt_grace, digest, rotation.grace_blob, rotation.grace_ttl
+                        )
                 await self.delete_refresh_token(replace_refresh_token)
+
+    async def get_rotated_refresh(self, token: str) -> RotatedRefresh | None:
+        raw = self._expiring_get(self._rt_used, token_digest(token))
+        if raw is None:
+            return None
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            return None
+        return RotatedRefresh(
+            subject=data["subject"],
+            client_id=data["client_id"],
+            scopes=list(data.get("scopes") or []),
+            expires_at=data.get("expires_at"),
+            resource=data.get("resource"),
+            rotated_at=int(data["rotated_at"]),
+        )
+
+    async def get_refresh_grace(self, token: str) -> str | None:
+        return self._expiring_get(self._rt_grace, token_digest(token))
+
+    async def subject_tokens(
+        self, subject: str
+    ) -> tuple[list[AccessToken], list[KeystoneRefreshToken]]:
+        sub = _subject_key(subject)
+        if not self._subject_index_alive(sub):
+            return [], []
+        access_out: list[AccessToken] = []
+        refresh_out: list[KeystoneRefreshToken] = []
+        for member in list(self._subject_index.get(sub, ())):
+            if member.startswith("at:"):
+                tok = member[3:]
+                access = self._access_tokens.get(tok)
+                if access is not None:
+                    access_out.append(access)
+            elif member.startswith("rt:"):
+                tok = member[3:]
+                refresh = self._refresh_tokens.get(tok)
+                if refresh is not None:
+                    refresh_out.append(KeystoneRefreshToken.model_validate(refresh.model_dump()))
+        return access_out, refresh_out
+
+    async def revoke_tokens(
+        self, subject: str, *, access: Sequence[str], refresh: Sequence[str]
+    ) -> RevokedTokens:
+        access_count = 0
+        refresh_tokens: list[str] = []
+        for tok in access:
+            if tok in self._access_tokens:
+                await self.delete_access_token(tok)
+                access_count += 1
+        for tok in refresh:
+            if tok in self._refresh_tokens:
+                refresh = self._refresh_tokens[tok]
+                if refresh.expires_at is None:
+                    revoked_ttl = self._refresh_ttl_seconds
+                else:
+                    revoked_ttl = max(int(refresh.expires_at - time.time()), 1)
+                self._refresh_revoked.add(tok)
+                await self.delete_refresh_token(tok)
+                refresh_tokens.append(tok)
+                _ = revoked_ttl
+        return RevokedTokens(access=access_count, refresh_tokens=tuple(refresh_tokens))
 
     async def aclose(self) -> None:
         return None
@@ -449,6 +588,12 @@ class RedisOAuthStore:
 
     def _refresh_revoked_key(self, token: str) -> str:
         return f"{self._prefix}rt_revoked:{token}"
+
+    def _rt_used_key(self, digest: str) -> str:
+        return f"{self._prefix}rt_used:{digest}"
+
+    def _rt_grace_key(self, digest: str) -> str:
+        return f"{self._prefix}rt_grace:{digest}"
 
     def _subject_index_key(self, sub: str) -> str:
         return f"{self._prefix}subject:{sub}"
@@ -852,12 +997,14 @@ class RedisOAuthStore:
         refresh: RefreshToken,
         replace_refresh_token: str | None = None,
         refresh_meta: str | None = None,
+        rotation: RotationRecord | None = None,
     ) -> None:
         sub = _subject_key(subject)
         nbf_key = self._subject_nbf_key(sub)
         revoked_key = (
             self._refresh_revoked_key(replace_refresh_token) if replace_refresh_token else None
         )
+        rt_key = self._refresh_key(replace_refresh_token) if replace_refresh_token else None
         old_refresh_subject = subject if replace_refresh_token else None
         meta_ttl: int | None = None
         if refresh_meta is not None and self.writes_refresh_meta:
@@ -872,7 +1019,12 @@ class RedisOAuthStore:
                 watch_keys = [nbf_key]
                 if revoked_key is not None:
                     watch_keys.append(revoked_key)
+                if rt_key is not None:
+                    watch_keys.append(rt_key)
                 await pipe.watch(*watch_keys)
+                if rt_key is not None and not await self._redis.exists(rt_key):
+                    await pipe.unwatch()
+                    raise RefreshTokenAlreadyRotatedError()
                 nbf_raw = await self._redis.get(nbf_key)
                 nbf = int(nbf_raw) if nbf_raw is not None else None
                 if nbf is not None and (consumed_iat is None or consumed_iat <= nbf):
@@ -889,6 +1041,27 @@ class RedisOAuthStore:
                 if refresh_meta is not None and meta_ttl is not None:
                     self._pipe_put_refresh_meta(pipe, refresh.token, refresh_meta, meta_ttl)
                 if replace_refresh_token is not None:
+                    digest = token_digest(replace_refresh_token)
+                    if rotation is not None:
+                        used_ttl = max(rotation.used_ttl, 1)
+                        pipe.set(self._rt_used_key(digest), rotation.used_json, ex=used_ttl)
+                        if rotation.grace_blob is not None and rotation.grace_ttl > 0:
+                            pipe.set(
+                                self._rt_grace_key(digest),
+                                rotation.grace_blob,
+                                ex=rotation.grace_ttl,
+                            )
+                        if (
+                            rotation.old_meta is not None
+                            and self.writes_refresh_meta
+                            and rotation.old_meta_ttl > 0
+                        ):
+                            self._pipe_put_refresh_meta(
+                                pipe,
+                                replace_refresh_token,
+                                rotation.old_meta,
+                                rotation.old_meta_ttl,
+                            )
                     self._pipe_delete_refresh(pipe, replace_refresh_token, old_refresh_subject)
                 try:
                     await pipe.execute()
@@ -896,8 +1069,88 @@ class RedisOAuthStore:
                 except WatchError:
                     continue
         if replace_refresh_token is not None:
+            if rt_key is not None and not await self._redis.exists(rt_key):
+                raise RefreshTokenAlreadyRotatedError()
             await self.delete_refresh_token(replace_refresh_token)
         raise CredentialRevokedError()
+
+    async def get_rotated_refresh(self, token: str) -> RotatedRefresh | None:
+        raw = await self._redis.get(self._rt_used_key(token_digest(token)))
+        if raw is None:
+            return None
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            return None
+        return RotatedRefresh(
+            subject=data["subject"],
+            client_id=data["client_id"],
+            scopes=list(data.get("scopes") or []),
+            expires_at=data.get("expires_at"),
+            resource=data.get("resource"),
+            rotated_at=int(data["rotated_at"]),
+        )
+
+    async def get_refresh_grace(self, token: str) -> str | None:
+        return await self._redis.get(self._rt_grace_key(token_digest(token)))
+
+    async def subject_tokens(
+        self, subject: str
+    ) -> tuple[list[AccessToken], list[KeystoneRefreshToken]]:
+        sub = _subject_key(subject)
+        idx_key = self._subject_index_key(sub)
+        members = await self._redis.smembers(idx_key)
+        access_out: list[AccessToken] = []
+        refresh_out: list[KeystoneRefreshToken] = []
+        for member in members:
+            if member.startswith("at:"):
+                tok = member[3:]
+                raw = await self._redis.get(self._access_key(tok))
+                if raw is not None:
+                    access_out.append(AccessToken.model_validate_json(raw))
+            elif member.startswith("rt:"):
+                tok = member[3:]
+                raw = await self._redis.get(self._refresh_key(tok))
+                if raw is not None:
+                    refresh_out.append(KeystoneRefreshToken.model_validate_json(raw))
+        return access_out, refresh_out
+
+    async def revoke_tokens(
+        self, subject: str, *, access: Sequence[str], refresh: Sequence[str]
+    ) -> RevokedTokens:
+        sub = _subject_key(subject)
+        idx_key = self._subject_index_key(sub)
+        access_to_drop: list[str] = []
+        for tok in access:
+            if await self._redis.exists(self._access_key(tok)):
+                access_to_drop.append(tok)
+        refresh_to_drop: list[tuple[str, int]] = []
+        for tok in refresh:
+            rt_key = self._refresh_key(tok)
+            raw = await self._redis.get(rt_key)
+            if raw is None:
+                continue
+            stored = RefreshToken.model_validate_json(raw)
+            if stored.expires_at is None:
+                revoked_ttl = self._refresh_ttl_seconds
+            else:
+                revoked_ttl = max(int(stored.expires_at - time.time()), 1)
+            refresh_to_drop.append((tok, revoked_ttl))
+        if not access_to_drop and not refresh_to_drop:
+            return RevokedTokens(access=0, refresh_tokens=())
+        async with self._redis.pipeline(transaction=True) as pipe:
+            for tok in access_to_drop:
+                pipe.delete(self._access_key(tok))
+                pipe.srem(idx_key, f"at:{tok}")
+            for tok, revoked_ttl in refresh_to_drop:
+                pipe.set(self._refresh_revoked_key(tok), "1", ex=revoked_ttl)
+                pipe.delete(self._refresh_key(tok))
+                pipe.srem(idx_key, f"rt:{tok}")
+            await pipe.execute()
+        return RevokedTokens(
+            access=len(access_to_drop),
+            refresh_tokens=tuple(tok for tok, _ in refresh_to_drop),
+        )
 
     async def subject_not_before(self, subject: str) -> int | None:
         return await self._subject_nbf(_subject_key(subject))

@@ -135,6 +135,7 @@ ExecStart=/opt/keystone-mcp/.venv/bin/python -m keystone_mcp.server
 | `KEYSTONE_MCP_TOKEN_TTL` | `86400` | Access-token lifetime, seconds. |
 | `KEYSTONE_MCP_AUTH_CODE_TTL` | `600` | Authorization-code lifetime, seconds. |
 | `KEYSTONE_MCP_REFRESH_TOKEN_TTL` | `2592000` (30d) | Idle lifetime of a refresh token before re-login is required. |
+| `KEYSTONE_MCP_OAUTH_REFRESH_GRACE_SECONDS` | `10` | How long a second exchange of the same refresh token gets the same response instead of `invalid_grant`. A later reuse is treated as theft: every token of that person at that OAuth client is revoked. `0` disables the window. 0–60. |
 | `KEYSTONE_MCP_THROTTLE_MAX` | `120` | Max requests per identity within the throttle window; `0` disables. |
 | `KEYSTONE_MCP_THROTTLE_WINDOW` | `60` | Throttle sliding-window length, seconds. |
 | `KEYSTONE_MCP_LOGIN_THROTTLE_IP_MAX` | `30` | Max `POST /login`, `POST /login/google` and `POST /register` attempts per client IP in the login throttle window; `0` disables the IP limit. |
@@ -278,7 +279,8 @@ than one replica.
 Under `KEYSTONE_MCP_LOGIN_PENDING_KEY_PREFIX`, namespaced keys include
 `refresh_auth:<refresh token>` (JSON session marker for a refresh token; fields
 are only ever added, an older Keystone ignores unknown fields), `code:<…>`,
-`txn:<…>`, and `login_attempt:<…>`.
+`code_used:<SHA-256 hex of code>` (JSON `subject`/`client_id` after a code
+exchange), `txn:<…>`, and `login_attempt:<…>`.
 
 There is no in-memory fallback. OAuth sessions are always in Redis.
 
@@ -303,6 +305,8 @@ time the record is read (see the Migration note in `CHANGELOG.md`).
 |---|---|---|---|
 | `subject:<sub>` | SET | Members `at:<token>` and `rt:<token>` for that subject (`sub` is the normalized email) | `max(REFRESH_TOKEN_TTL, TOKEN_TTL)` plus one day, renewed when a token is added |
 | `subject_nbf:<sub>` | STRING | Unix seconds: tokens issued before this moment are invalid | Same as the subject set |
+| `rt_used:<SHA-256 hex of old refresh token>` | STRING | JSON metadata for a rotated-away refresh token | Remaining lifetime of the old refresh token |
+| `rt_grace:<SHA-256 hex of old refresh token>` | STRING | Encrypted first rotation response for grace replay | `KEYSTONE_MCP_OAUTH_REFRESH_GRACE_SECONDS` |
 
 Tokens issued before an upgrade are added to the subject set on first use
 (lazy migration). A block or `users_logout` still invalidates them via
