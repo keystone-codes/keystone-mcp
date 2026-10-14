@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 from collections.abc import AsyncIterator, Callable, Sequence
+from typing import Any
 
 import httpx2
 from mcp import types
@@ -26,6 +27,7 @@ def build_resource_upstream_app(
     templates: Sequence[types.ResourceTemplate] | None = None,
     prompts: Sequence[types.Prompt] | None = None,
     read_text: Callable[[str], str] | None = None,
+    observed: dict[str, Any] | None = None,
 ) -> Starlette:
     """Minimal MCP server exposing only resource catalog handlers."""
 
@@ -86,8 +88,12 @@ def build_resource_upstream_app(
         return types.ListResourceTemplatesResult(resource_templates=list(template_list))
 
     async def _on_read_resource(
-        _ctx: object, params: types.ReadResourceRequestParams
+        ctx: object, params: types.ReadResourceRequestParams
     ) -> types.ReadResourceResult:
+        if observed is not None:
+            request = getattr(ctx, "request", None)
+            headers = {k.lower(): v for k, v in request.headers.items()} if request else {}
+            observed["resource_headers"] = headers
         uri = str(params.uri)
         text = reader(uri)
         return types.ReadResourceResult(
