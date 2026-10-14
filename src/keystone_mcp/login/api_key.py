@@ -78,7 +78,13 @@ class ApiKeyLoginProvider:
             raise LoginRejected("invalid_credentials")
         if verification.expires_at is not None and verification.expires_at <= utcnow():
             raise LoginRejected("invalid_credentials")
-        return LoginIdentity(email=email, provider="api_key", interactive=False)
+        return LoginIdentity(
+            email=email,
+            provider="api_key",
+            interactive=False,
+            key_id=verification.key_id,
+            key_expires_at=verification.expires_at,
+        )
 
 
 def create_api_key_provider(config, context) -> ApiKeyLoginProvider:

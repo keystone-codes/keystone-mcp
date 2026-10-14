@@ -13,10 +13,12 @@ from asgi_lifespan import LifespanManager
 from conftest import BASE_URL, authorize_to_login, make_pkce, register_client
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import Settings
+from keystone_mcp.login.api_key import ApiKeyLoginProvider
 from keystone_mcp.server import build_server
 from keystone_mcp.user_directory.errors import UserDirectoryUnavailableError
 from keystone_mcp.user_directory.factory import build_user_directory_resolver
 from keystone_mcp.user_directory.local import LocalUserDirectory
+from keystone_mcp.user_directory.types import ApiKeyVerification
 from keystone_mcp.users import service
 from keystone_mcp.users.db import make_session_factory, session_scope
 from keystone_mcp.users.models import utcnow
@@ -123,6 +125,31 @@ async def _login_with_key(client, email: str, api_token: str) -> httpx.Response:
         "/login",
         data={"txn": txn, "api_token": api_token, "email": email},
     )
+
+
+async def test_key_login_identity_carries_key_id_and_expiry() -> None:
+    expires = utcnow() + timedelta(days=30)
+
+    class _Resolver:
+        async def verify_api_key(self, _token: str) -> ApiKeyVerification:
+            return ApiKeyVerification(
+                key_id="kid123",
+                subject="alice@example.com",
+                subject_type="human",
+                expires_at=expires,
+            )
+
+    provider = ApiKeyLoginProvider(resolver=_Resolver(), resolve_directory_keys=True)
+    identity = await provider.verify(
+        {"email": "alice@example.com", "api_token": "ksk_kid123_secret"}
+    )
+    assert identity.key_id == "kid123"
+    assert identity.key_expires_at == expires
+
+    dev_provider = ApiKeyLoginProvider(dev_tokens=frozenset({VALID_DEV}))
+    dev_identity = await dev_provider.verify({"email": "alice@example.com", "api_token": VALID_DEV})
+    assert dev_identity.key_id is None
+    assert dev_identity.key_expires_at is None
 
 
 async def test_human_signs_in_with_directory_api_key(tmp_path) -> None:

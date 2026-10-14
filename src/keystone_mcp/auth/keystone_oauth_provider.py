@@ -28,7 +28,7 @@ import logging
 import secrets
 import time
 from collections.abc import Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from urllib.parse import quote, urlencode, urlparse
 
 from fastmcp.server.auth import OAuthProvider
@@ -49,7 +49,7 @@ from starlette.responses import HTMLResponse, RedirectResponse, Response
 from starlette.routing import Route
 
 from keystone_mcp.auth.login_pending_store import LoginPendingStore
-from keystone_mcp.auth.oauth_store import CredentialRevokedError, OAuthStore
+from keystone_mcp.auth.oauth_store import CredentialRevokedError, KeystoneRefreshToken, OAuthStore
 from keystone_mcp.auth.throttle import (
     LoginAttemptThrottle,
     login_throttle_response,
@@ -68,6 +68,7 @@ from keystone_mcp.login.protocol import (
 from keystone_mcp.observability.service import RbacObservability
 from keystone_mcp.user_directory.errors import UserDirectoryUnavailableError
 from keystone_mcp.user_directory.protocol import UserDirectoryResolver
+from keystone_mcp.user_directory.types import subject_type_of
 from keystone_mcp.user_directory.util import normalize_email
 
 logger = logging.getLogger(__name__)
@@ -84,6 +85,147 @@ _NS_REFRESH_AUTH = "refresh_auth"
 # still reach exchange_refresh_token after that rotation completed; this
 # grace window is what it reads instead of nothing.
 _OLD_REFRESH_MARKER_GRACE_SECONDS = 60
+
+
+@dataclass(frozen=True, slots=True)
+class RefreshMeta:
+    auth_method: str
+    resource: str | None
+    interactive: bool
+    auth_time: int | None
+    key_id: str | None
+    key_id_known: bool
+    key_expires_at: int | None
+
+
+def encode_refresh_meta(meta: RefreshMeta) -> str:
+    payload: dict[str, object] = {
+        "auth_method": meta.auth_method,
+        "resource": meta.resource,
+        "interactive": meta.interactive,
+    }
+    if meta.auth_time is not None:
+        payload["auth_time"] = meta.auth_time
+    if meta.key_id_known:
+        payload["key_id"] = meta.key_id
+        if meta.key_expires_at is not None:
+            payload["key_expires_at"] = meta.key_expires_at
+    return json.dumps(payload, separators=(",", ":"), sort_keys=True)
+
+
+def parse_refresh_meta(raw: str | None) -> RefreshMeta | None:
+    if raw is None:
+        return None
+    stripped = raw.strip()
+    if not stripped:
+        return None
+    try:
+        data = json.loads(stripped)
+    except ValueError:
+        data = None
+    if isinstance(data, dict):
+        auth_method = data.get("auth_method")
+        if not isinstance(auth_method, str) or not auth_method:
+            return None
+        resource = data.get("resource")
+        if resource is not None and not isinstance(resource, str):
+            resource = None
+        if "interactive" in data:
+            interactive = data["interactive"] is True
+        else:
+            interactive = auth_method == "google"
+        auth_time_raw = data.get("auth_time")
+        auth_time = (
+            auth_time_raw
+            if isinstance(auth_time_raw, int) and not isinstance(auth_time_raw, bool)
+            else None
+        )
+        key_id_known = "key_id" in data
+        key_id = data.get("key_id") if key_id_known else None
+        if key_id is not None and not isinstance(key_id, str):
+            key_id = None
+        key_expires_raw = data.get("key_expires_at")
+        key_expires_at = (
+            key_expires_raw
+            if isinstance(key_expires_raw, int) and not isinstance(key_expires_raw, bool)
+            else None
+        )
+        return RefreshMeta(
+            auth_method=auth_method,
+            resource=resource,
+            interactive=interactive,
+            auth_time=auth_time,
+            key_id=key_id if key_id_known else None,
+            key_id_known=key_id_known,
+            key_expires_at=key_expires_at if key_id_known else None,
+        )
+    auth_method = stripped
+    if not auth_method:
+        return None
+    return RefreshMeta(
+        auth_method=auth_method,
+        resource=None,
+        interactive=auth_method == "google",
+        auth_time=None,
+        key_id=None,
+        key_id_known=False,
+        key_expires_at=None,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class _AuthCodeEnvelope:
+    code: AuthorizationCode
+    auth_method: str
+    interactive: bool
+    auth_time: int | None
+    key_id: str | None
+    key_id_known: bool
+    key_expires_at: int | None
+
+
+def _meta_from_envelope(envelope: _AuthCodeEnvelope, resource: str | None) -> RefreshMeta:
+    return RefreshMeta(
+        auth_method=envelope.auth_method,
+        resource=resource,
+        interactive=envelope.interactive,
+        auth_time=envelope.auth_time,
+        key_id=envelope.key_id if envelope.key_id_known else None,
+        key_id_known=envelope.key_id_known,
+        key_expires_at=envelope.key_expires_at if envelope.key_id_known else None,
+    )
+
+
+def _meta_carry_forward(old: RefreshMeta, *, resource: str | None) -> RefreshMeta:
+    return RefreshMeta(
+        auth_method=old.auth_method,
+        resource=resource,
+        interactive=old.interactive,
+        auth_time=old.auth_time,
+        key_id=old.key_id if old.key_id_known else None,
+        key_id_known=old.key_id_known,
+        key_expires_at=old.key_expires_at if old.key_id_known else None,
+    )
+
+
+def _human_access_claims(
+    email: str,
+    auth_method: str,
+    interactive: bool,
+    now: int,
+    key_id: str | None,
+) -> dict[str, object]:
+    claims: dict[str, object] = {
+        "email": email,
+        "auth_method": auth_method,
+        "interactive": interactive,
+        "iat": now,
+        "subject_type": "human",
+    }
+    if isinstance(key_id, str):
+        claims["key_id"] = key_id
+    return claims
+
 
 # Double-submit CSRF cookie for the consent screen's redirect-provider
 # button forms (A13; generalized from Google-only in X03). Scoped to the
@@ -723,7 +865,14 @@ class KeystoneOAuthProvider(OAuthProvider):
                 identity.provider,
             )
             return None
-        return replace(identity, email=normalize_email(identity.email))
+        normalized = replace(identity, email=normalize_email(identity.email))
+        if subject_type_of(normalized.email) == "service":
+            logger.warning(
+                "login provider %s returned a service-account subject; refusing the sign-in",
+                route_name,
+            )
+            return None
+        return normalized
 
     def _csrf_cookie_name(self) -> str:
         """The ``km_login_csrf`` cookie's name for this deployment (finding #4).
@@ -988,13 +1137,29 @@ class KeystoneOAuthProvider(OAuthProvider):
         return _parse_pending_txn_raw(raw)
 
     async def _put_auth_code(
-        self, code: AuthorizationCode, *, auth_method: str, interactive: bool
+        self,
+        code: AuthorizationCode,
+        *,
+        auth_method: str,
+        interactive: bool,
+        auth_time: int | None = None,
+        key_id: str | None = None,
+        key_id_known: bool = False,
+        key_expires_at: int | None = None,
     ) -> None:
         ttl = max(int(code.expires_at - time.time()), 1)
         await self._pending_store.put(
             _NS_AUTH_CODE,
             code.code,
-            _encode_auth_code_envelope(code, auth_method, interactive),
+            _encode_auth_code_envelope(
+                code,
+                auth_method,
+                interactive,
+                auth_time=auth_time,
+                key_id=key_id,
+                key_id_known=key_id_known,
+                key_expires_at=key_expires_at,
+            ),
             ttl,
         )
 
@@ -1002,16 +1167,16 @@ class KeystoneOAuthProvider(OAuthProvider):
         raw = await self._pending_store.get(_NS_AUTH_CODE, code_str)
         if raw is None:
             return None
-        parsed = _parse_auth_code_envelope(raw)
-        if parsed is None:
+        envelope = _parse_auth_code_envelope(raw)
+        if envelope is None:
             return None
-        code, _auth_method, _interactive = parsed
+        code = envelope.code
         if code.expires_at < time.time():
             await self._pending_store.consume(_NS_AUTH_CODE, code_str)
             return None
         return code
 
-    async def _consume_auth_code(self, code_str: str) -> tuple[AuthorizationCode, str, bool] | None:
+    async def _consume_auth_code(self, code_str: str) -> _AuthCodeEnvelope | None:
         raw = await self._pending_store.consume(_NS_AUTH_CODE, code_str)
         if raw is None:
             return None
@@ -1031,25 +1196,30 @@ class KeystoneOAuthProvider(OAuthProvider):
         self._refuse_if_client_redirect_uris_not_allowed(client)
 
         # Single-use code (atomic consume).
-        consumed = await self._consume_auth_code(authorization_code.code)
-        if consumed is None:
+        envelope = await self._consume_auth_code(authorization_code.code)
+        if envelope is None:
             raise ValueError("authorization code invalid or already consumed")
-        consumed_code, auth_method, interactive = consumed
+        consumed_code = envelope.code
         if consumed_code.code != authorization_code.code:
             raise ValueError("authorization code invalid or already consumed")
 
+        auth_method = envelope.auth_method
+        interactive = envelope.interactive
         email = authorization_code.subject or ""
         access_token = f"km_at_{secrets.token_urlsafe(32)}"
         refresh_token = f"km_rt_{secrets.token_urlsafe(32)}"
         now = int(time.time())
         expires_at = now + self._settings.token_cache_ttl_seconds
         code_iat = int(consumed_code.expires_at) - self._settings.auth_code_ttl_seconds
-        token_claims = {
-            "email": email,
-            "auth_method": auth_method,
-            "interactive": interactive,
-            "iat": now,
-        }
+        token_claims = _human_access_claims(
+            email,
+            auth_method,
+            interactive,
+            now,
+            envelope.key_id if envelope.key_id_known else None,
+        )
+        session_meta = _meta_from_envelope(envelope, authorization_code.resource)
+        encoded_meta = encode_refresh_meta(session_meta)
 
         # Renew the client's lifetime before writing the refresh token it will
         # own, so the client record never expires ahead of a token issued
@@ -1064,31 +1234,30 @@ class KeystoneOAuthProvider(OAuthProvider):
             subject=email,
             claims=token_claims,
         )
-        refresh_record = RefreshToken(
+        refresh_record = KeystoneRefreshToken(
             token=refresh_token,
             client_id=client.client_id,
             scopes=authorization_code.scopes,
             expires_at=now + self._settings.refresh_token_ttl_seconds,
             subject=email,
+            iat=now,
         )
+        refresh_meta_arg = encoded_meta if self._store.writes_refresh_meta else None
         try:
             await self._store.commit_token_pair(
                 subject=email,
                 consumed_iat=code_iat,
                 access=access_record,
                 refresh=refresh_record,
+                refresh_meta=refresh_meta_arg,
             )
         except CredentialRevokedError:
             raise TokenError(
                 error="invalid_grant",
                 error_description="session was revoked",
             ) from None
-        await self._put_refresh_meta(
-            refresh_token,
-            auth_method=auth_method,
-            resource=authorization_code.resource,
-            interactive=interactive,
-        )
+        if not self._store.writes_refresh_meta:
+            await self._put_refresh_meta(refresh_token, session_meta)
         return OAuthToken(
             access_token=access_token,
             token_type="Bearer",
@@ -1132,7 +1301,17 @@ class KeystoneOAuthProvider(OAuthProvider):
         # also carries the resource (RFC 8707) the original access token was
         # bound to, so a refreshed token keeps that binding instead of coming
         # back unbound.
-        auth_method, resource, interactive = await self._read_refresh_meta(refresh_token.token)
+        old_meta = await self._read_refresh_meta(refresh_token.token)
+        if old_meta is None:
+            logger.warning("refresh refused: session marker is missing")
+            await self._store.delete_refresh_token(refresh_token.token)
+            raise TokenError(
+                error="invalid_grant",
+                error_description="session marker is missing; sign in again",
+            )
+        auth_method = old_meta.auth_method
+        resource = old_meta.resource
+        interactive = old_meta.interactive
         if auth_method not in self._providers:
             # The sign-in provider this session was opened through was
             # removed from the configuration (or was never configured at
@@ -1157,12 +1336,15 @@ class KeystoneOAuthProvider(OAuthProvider):
         access_token = f"km_at_{secrets.token_urlsafe(32)}"
         new_refresh = f"km_rt_{secrets.token_urlsafe(32)}"
         now = int(time.time())
-        token_claims = {
-            "email": email,
-            "auth_method": auth_method,
-            "interactive": interactive,
-            "iat": now,
-        }
+        token_claims = _human_access_claims(
+            email,
+            auth_method,
+            interactive,
+            now,
+            old_meta.key_id if old_meta.key_id_known else None,
+        )
+        new_meta = _meta_carry_forward(old_meta, resource=resource)
+        encoded_meta = encode_refresh_meta(new_meta)
 
         # Renew the client's lifetime before writing the new refresh token.
         await self._store.touch_client(client.client_id)
@@ -1175,14 +1357,16 @@ class KeystoneOAuthProvider(OAuthProvider):
             subject=email,
             claims=token_claims,
         )
-        refresh_record = RefreshToken(
+        refresh_record = KeystoneRefreshToken(
             token=new_refresh,
             client_id=client.client_id,
             scopes=granted,
             expires_at=now + self._settings.refresh_token_ttl_seconds,
             subject=email,
+            iat=now,
         )
         consumed_iat = self._store.refresh_credential_iat(refresh_token)
+        refresh_meta_arg = encoded_meta if self._store.writes_refresh_meta else None
         try:
             await self._store.commit_token_pair(
                 subject=email,
@@ -1190,6 +1374,7 @@ class KeystoneOAuthProvider(OAuthProvider):
                 access=access_record,
                 refresh=refresh_record,
                 replace_refresh_token=refresh_token.token,
+                refresh_meta=refresh_meta_arg,
             )
         except CredentialRevokedError:
             await self._pending_store.consume(_NS_REFRESH_AUTH, refresh_token.token)
@@ -1197,9 +1382,8 @@ class KeystoneOAuthProvider(OAuthProvider):
                 error="invalid_grant",
                 error_description="session was revoked",
             ) from None
-        await self._put_refresh_meta(
-            new_refresh, auth_method=auth_method, resource=resource, interactive=interactive
-        )
+        if not self._store.writes_refresh_meta:
+            await self._put_refresh_meta(new_refresh, new_meta)
 
         # Rewrite the old marker with a short grace TTL instead of deleting it
         # outright (finding #2). The two calls a concurrent rotation of the
@@ -1216,9 +1400,7 @@ class KeystoneOAuthProvider(OAuthProvider):
         # presented again (it no longer exists in the OAuth store at all).
         await self._put_refresh_meta(
             refresh_token.token,
-            auth_method=auth_method,
-            resource=resource,
-            interactive=interactive,
+            old_meta,
             ttl_seconds=_OLD_REFRESH_MARKER_GRACE_SECONDS,
         )
         return OAuthToken(
@@ -1777,7 +1959,20 @@ class KeystoneOAuthProvider(OAuthProvider):
             resource=params.resource,
             subject=identity.email,
         )
-        await self._put_auth_code(auth_code, auth_method=auth_method, interactive=interactive)
+        auth_time = int(time.time())
+        key_id_known = auth_method == "api_key"
+        key_expires_at: int | None = None
+        if key_id_known and identity.key_expires_at is not None:
+            key_expires_at = int(identity.key_expires_at.timestamp())
+        await self._put_auth_code(
+            auth_code,
+            auth_method=auth_method,
+            interactive=interactive,
+            auth_time=auth_time,
+            key_id=identity.key_id if key_id_known else None,
+            key_id_known=key_id_known,
+            key_expires_at=key_expires_at,
+        )
         redirect_to = construct_redirect_uri(
             str(params.redirect_uri), code=code_str, state=params.state
         )
@@ -1786,76 +1981,25 @@ class KeystoneOAuthProvider(OAuthProvider):
     async def _put_refresh_meta(
         self,
         refresh_token: str,
+        meta: RefreshMeta,
         *,
-        auth_method: str,
-        resource: str | None,
-        interactive: bool,
         ttl_seconds: int | None = None,
     ) -> None:
-        """Hold the login method, resource and interactive flag for the refresh token's lifetime.
-
-        The marker is keyed by refresh token, so by default it lives exactly
-        as long as the token (``ttl_seconds=None``): a longer TTL leaves
-        records for tokens that can never be presented again, and a shorter
-        one silently downgrades a Google session to ``api_key`` (closing the
-        human-identity gate) while the token still works. The resource
-        travels the same way so a refreshed access token can keep the RFC 8707
-        binding the original one was issued with, and so does ``interactive``
-        (X05): without it, a refreshed token would have to re-derive the flag
-        from ``auth_method == "google"``, exactly the name-based shortcut this
-        change removes.
+        """Hold session metadata for the refresh token's lifetime.
 
         ``ttl_seconds`` is overridden to a short grace period when rotation
         rewrites the *old* token's marker instead of deleting it outright
         (finding #2, see ``exchange_refresh_token``).
         """
         ttl = ttl_seconds if ttl_seconds is not None else self._settings.refresh_token_ttl_seconds
-        payload = json.dumps(
-            {"auth_method": auth_method, "resource": resource, "interactive": interactive}
+        await self._pending_store.put(
+            _NS_REFRESH_AUTH, refresh_token, encode_refresh_meta(meta), ttl
         )
-        await self._pending_store.put(_NS_REFRESH_AUTH, refresh_token, payload, ttl)
 
-    async def _read_refresh_meta(self, refresh_token: str) -> tuple[str, str | None, bool]:
-        """Return ``(auth_method, resource, interactive)`` for a refresh token's marker.
-
-        Pure parsing: this does not check whether ``auth_method`` names a
-        sign-in provider configured right now -- ``exchange_refresh_token``
-        does that itself and decides whether to refuse the refresh (X05).
-
-        Markers written before the ``interactive`` field existed (0.4.0,
-        ``{"auth_method", "resource"}``) or in the oldest, bare-string form
-        (``"google"`` or ``"api_key"``) have no claim to read, so it is
-        rebuilt from the sign-in method's own name: ``interactive =
-        (auth_method == "google")``, the same rule
-        ``has_interactive_human_identity`` uses for an access token minted
-        before this claim existed. Missing or unparsable markers fall back to
-        ``("api_key", None, False)``, the same default used before this
-        change.
-        """
+    async def _read_refresh_meta(self, refresh_token: str) -> RefreshMeta | None:
+        """Return parsed session metadata for a refresh token's marker."""
         raw = await self._pending_store.get(_NS_REFRESH_AUTH, refresh_token)
-        if raw is None:
-            return "api_key", None, False
-        try:
-            data = json.loads(raw)
-        except ValueError:
-            data = None
-        if isinstance(data, dict):
-            auth_method = data.get("auth_method")
-            if not isinstance(auth_method, str) or not auth_method:
-                return "api_key", None, False
-            resource = data.get("resource")
-            if resource is not None and not isinstance(resource, str):
-                resource = None
-            if "interactive" in data:
-                interactive = data["interactive"] is True
-            else:
-                interactive = auth_method == "google"
-            return auth_method, resource, interactive
-        # Oldest format: a bare auth_method string ("google" or "api_key").
-        auth_method = raw.strip()
-        if not auth_method:
-            return "api_key", None, False
-        return auth_method, None, auth_method == "google"
+        return parse_refresh_meta(raw)
 
 
 def _parse_pending_txn_raw(raw: str) -> _PendingAuthorization | None:
@@ -1869,17 +2013,31 @@ def _parse_pending_txn_raw(raw: str) -> _PendingAuthorization | None:
     return _PendingAuthorization(client_id, params)
 
 
-def _encode_auth_code_envelope(code: AuthorizationCode, auth_method: str, interactive: bool) -> str:
-    return json.dumps(
-        {
-            "code": code.model_dump(mode="json"),
-            "auth_method": auth_method,
-            "interactive": interactive,
-        }
-    )
+def _encode_auth_code_envelope(
+    code: AuthorizationCode,
+    auth_method: str,
+    interactive: bool,
+    *,
+    auth_time: int | None = None,
+    key_id: str | None = None,
+    key_id_known: bool = False,
+    key_expires_at: int | None = None,
+) -> str:
+    payload: dict[str, object] = {
+        "code": code.model_dump(mode="json"),
+        "auth_method": auth_method,
+        "interactive": interactive,
+    }
+    if auth_time is not None:
+        payload["auth_time"] = auth_time
+    if key_id_known:
+        payload["key_id"] = key_id
+        if key_expires_at is not None:
+            payload["key_expires_at"] = key_expires_at
+    return json.dumps(payload)
 
 
-def _parse_auth_code_envelope(raw: str) -> tuple[AuthorizationCode, str, bool] | None:
+def _parse_auth_code_envelope(raw: str) -> _AuthCodeEnvelope | None:
     """Parse an authorization-code envelope, bridging pre-0.5.0 shapes.
 
     - Current shape: ``{"code", "auth_method", "interactive"}``.
@@ -1905,11 +2063,44 @@ def _parse_auth_code_envelope(raw: str) -> tuple[AuthorizationCode, str, bool] |
             interactive = payload["interactive"] is True
         else:
             interactive = auth_method == "google"
-        return code, auth_method, interactive
+        auth_time_raw = payload.get("auth_time")
+        auth_time = (
+            auth_time_raw
+            if isinstance(auth_time_raw, int) and not isinstance(auth_time_raw, bool)
+            else None
+        )
+        key_id_known = "key_id" in payload
+        key_id = payload.get("key_id") if key_id_known else None
+        if key_id is not None and not isinstance(key_id, str):
+            key_id = None
+        key_expires_raw = payload.get("key_expires_at")
+        key_expires_at = (
+            key_expires_raw
+            if isinstance(key_expires_raw, int) and not isinstance(key_expires_raw, bool)
+            else None
+        )
+        return _AuthCodeEnvelope(
+            code=code,
+            auth_method=auth_method,
+            interactive=interactive,
+            auth_time=auth_time,
+            key_id=key_id if key_id_known else None,
+            key_id_known=key_id_known,
+            key_expires_at=key_expires_at if key_id_known else None,
+        )
     try:
-        return AuthorizationCode.model_validate_json(raw), "api_key", False
+        code = AuthorizationCode.model_validate_json(raw)
     except ValidationError:
         return None
+    return _AuthCodeEnvelope(
+        code=code,
+        auth_method="api_key",
+        interactive=False,
+        auth_time=None,
+        key_id=None,
+        key_id_known=False,
+        key_expires_at=None,
+    )
 
 
 def _parse_login_attempt_raw(raw: str) -> _LoginAttempt | None:

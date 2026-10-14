@@ -8,6 +8,19 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ## [Unreleased]
 
+### Added
+
+- `LoginIdentity.key_id` and `LoginIdentity.key_expires_at` (optional) for form providers that sign people in with a Keystone API key.
+
+### Changed
+
+- A refresh token whose session marker is missing is refused with `invalid_grant` instead of being renewed as an `api_key` session. The marker is now written in the same Redis transaction as the token pair.
+- Access tokens of people carry `"subject_type": "human"`; a sign-in that resolves to a service-account subject is refused.
+
+### Migration
+
+- Sessions opened on 0.4.x/0.5.x keep working after the upgrade. Rolling back to 0.5.x keeps sessions opened on 0.6.0: 0.5.x ignores the new marker fields. While replicas of both versions run side by side, a session renewed by a 0.5.x replica loses the new fields again; session max-age and key checks apply once every replica runs 0.6.0.
+
 ## [0.5.0] - 2026-10-13
 
 ### Added

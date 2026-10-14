@@ -30,6 +30,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Literal, Protocol, runtime_checkable
 
 __all__ = [
@@ -70,12 +71,19 @@ class LoginRejected(Exception):
 
 @dataclass(frozen=True, slots=True)
 class LoginIdentity:
-    """The outcome of a successful sign-in, handed back to Keystone."""
+    """The outcome of a successful sign-in, handed back to Keystone.
+
+    Set only by a form provider that signs people in with a Keystone API key;
+    Keystone ends the session when that key is revoked or expires. Other
+    providers leave both ``key_id`` and ``key_expires_at`` unset.
+    """
 
     email: str  # lower-case; the key looked up in the users directory
     provider: str  # provider instance name; becomes the token's auth_method
     interactive: bool  # a person completed an interactive sign-in
     groups: tuple[str, ...] = field(default_factory=tuple)  # informational; RBAC ignores it in 0.5
+    key_id: str | None = None  # Keystone API key used to sign in (ksk_<key_id>_...); None otherwise
+    key_expires_at: datetime | None = None  # that key's expiry; None when it never expires
 
 
 @dataclass(frozen=True, slots=True)

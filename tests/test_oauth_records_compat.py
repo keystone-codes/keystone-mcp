@@ -117,14 +117,13 @@ def test_auth_code_envelope_from_3x_is_readable():
     parsed = _parse_auth_code_envelope(_AUTH_CODE_ENVELOPE_3X)
 
     assert parsed is not None
-    code, auth_method, interactive = parsed
-    assert code.code == "km_code_spike0000000000000000000000"
-    assert code.subject == "user@example.com"
-    assert auth_method == "google"
+    assert parsed.code.code == "km_code_spike0000000000000000000000"
+    assert parsed.code.subject == "user@example.com"
+    assert parsed.auth_method == "google"
     # The 3x envelope predates the "interactive" field (X05): rebuilt from
     # the sign-in method's own name, same as has_interactive_human_identity's
     # fallback for a pre-0.5.0 token.
-    assert interactive is True
+    assert parsed.interactive is True
 
 
 async def test_refresh_meta_marker_from_3x_is_readable():
@@ -145,9 +144,10 @@ async def test_refresh_meta_marker_from_3x_is_readable():
         ],
     )
 
-    auth_method, resource, interactive = await provider._read_refresh_meta("km_rt_marker")
+    meta = await provider._read_refresh_meta("km_rt_marker")
 
-    assert auth_method == "google"
-    assert resource == "https://keystone.example/mcp"
+    assert meta is not None
+    assert meta.auth_method == "google"
+    assert meta.resource == "https://keystone.example/mcp"
     # The 3x marker predates "interactive" too; same rebuild rule as above.
-    assert interactive is True
+    assert meta.interactive is True
