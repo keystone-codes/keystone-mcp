@@ -1,5 +1,7 @@
 # Plugins
 
+Why: [ADR 0014](adr/0014-plugin-protocols-grow-by-new-protocols.md).
+
 Keystone-MCP can load **sign-in provider types** and **users directories** from
 other Python packages. A plugin is declared with
 [entry points](https://packaging.python.org/en/latest/specifications/entry-points/)
