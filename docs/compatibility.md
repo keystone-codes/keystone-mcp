@@ -307,7 +307,7 @@ Frozen since 0.5.0.
 | Mechanism | Contract |
 |---|---|
 | `LoginProvider` protocols (`RedirectLoginProvider`, `FormLoginProvider`) | Module `keystone_mcp.login.protocol`; adding a method with a default implementation is not breaking; a new required method or signature change requires a major release |
-| `UserDirectory` and related protocols | Module `keystone_mcp.user_directory.protocol` |
+| `UserDirectory` and related protocols | Module `keystone_mcp.user_directory.protocol`; optional `ApiKeyIdIndex` (since 0.6.0) |
 | Entry point group `keystone_mcp.login_providers` | Built-in: `oidc`, `google`, `api_key` |
 | Entry point group `keystone_mcp.user_directories` | Built-in: `local`, `http` |
 | Pytest plugin `keystone_mcp.contract_tests` | Contract tests for providers and directories (`pytest -p keystone_mcp.contract_tests`, optional extra `contract-tests`) |
