@@ -913,8 +913,12 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
 }
 
 
+def _is_https(url: str) -> bool:
+    return urlparse(url.strip()).scheme.lower() == "https"
+
+
 def _lang_cookie_names(base_url: str) -> tuple[str, ...]:
-    if base_url.startswith("https://"):
+    if _is_https(base_url):
         return (_LANG_COOKIE_NAME_HOST_PREFIXED, _LANG_COOKIE_NAME)
     return (_LANG_COOKIE_NAME, _LANG_COOKIE_NAME_HOST_PREFIXED)
 
@@ -1191,18 +1195,18 @@ class KeystoneOAuthProvider(OAuthProvider):
         claiming it on a plain-``http`` deployment (local/demo) would be
         dishonest about a guarantee the browser is not actually enforcing.
         """
-        if self._settings.base_url.startswith("https://"):
+        if _is_https(self._settings.base_url):
             return _CSRF_COOKIE_NAME_HOST_PREFIXED
         return _CSRF_COOKIE_NAME
 
     def _csrf_cookie_path(self) -> str:
         """``Path=/`` is one of the ``__Host-`` prefix's own requirements."""
-        if self._settings.base_url.startswith("https://"):
+        if _is_https(self._settings.base_url):
             return "/"
         return "/login"
 
     def _lang_cookie_name(self) -> str:
-        if self._settings.base_url.startswith("https://"):
+        if _is_https(self._settings.base_url):
             return _LANG_COOKIE_NAME_HOST_PREFIXED
         return _LANG_COOKIE_NAME
 
@@ -1217,7 +1221,7 @@ class KeystoneOAuthProvider(OAuthProvider):
             path="/login",
             httponly=True,
             samesite="lax",
-            secure=self._settings.base_url.startswith("https://"),
+            secure=_is_https(self._settings.base_url),
         )
 
     def _txn_query(self, txn_id: str) -> str:
@@ -2421,9 +2425,7 @@ class KeystoneOAuthProvider(OAuthProvider):
         if provider is None or provider.kind != "redirect":
             return self._html_error(request, lang, "error_provider_disabled", 404)
 
-        origin_refusal = cross_site_origin_refusal(
-            request, effective_allowed_hosts(self._settings)
-        )
+        origin_refusal = cross_site_origin_refusal(request, effective_allowed_hosts(self._settings))
         if origin_refusal is not None:
             return origin_refusal
 
@@ -2537,7 +2539,7 @@ class KeystoneOAuthProvider(OAuthProvider):
                 path=self._csrf_cookie_path(),
                 httponly=True,
                 samesite="lax",
-                secure=self._settings.base_url.startswith("https://"),
+                secure=_is_https(self._settings.base_url),
             )
         return response
 

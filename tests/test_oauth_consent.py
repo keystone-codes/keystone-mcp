@@ -193,6 +193,25 @@ async def test_get_login_google_redirects_to_consent():
             assert response.headers["location"] == "/login?txn=X"
 
 
+async def test_uppercase_https_base_url_sets_secure_host_cookies():
+    settings = _google_settings(base_url="HTTPS://mcp.example.com")
+    app = _google_harness(settings)
+    async with LifespanManager(app):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url=BASE_URL
+        ) as client:
+            client_id = await register_client(client)
+            _, challenge = make_pkce()
+            txn = await authorize_to_login(client, client_id, challenge, settings.resource_url)
+            page = await client.get("/login", params={"txn": txn, "lang": "en"})
+            cookies = page.headers.get_list("set-cookie")
+            csrf = next(c for c in cookies if c.startswith("__Host-km_login_csrf="))
+            lang = next(c for c in cookies if c.startswith("__Host-km_lang="))
+            for header in (csrf, lang):
+                assert "Secure" in header
+                assert "path=/" in header.lower() or header.lower().endswith("path=/")
+
+
 async def test_cookie_secure_flag_follows_base_url():
     https_settings = _google_settings(base_url="https://mcp.example.com")
     https_app = _google_harness(https_settings)

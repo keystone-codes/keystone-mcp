@@ -118,6 +118,9 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 - `keystone-mcp keys …` and `keystone-mcp service-accounts …` report a configuration problem or an unknown role in one line instead of a traceback, and close the database.
 - `docs/compatibility.md` lists the error codes the built-in tools actually return.
 - Contract test `test_provider_unavailable_on_complete` no longer touches a private field of the provider.
+- The OAuth client limit counts client records left by 0.3.x; they also get an expiry instead of living forever.
+- A `KEYSTONE_MCP_BASE_URL` written as `HTTPS://…` gets `Secure`, `__Host-` sign-in cookies like `https://…`.
+- The error code a sign-in provider returns is logged only when it is a short plain token.
 - A hung stdio upstream with a call in flight is now detected within one ping interval of the third missed ping: calls in flight fail at once and the process is restarted; a single slow ping no longer restarts it.
 - A stdio upstream is reported available only once its catalog has been read; a process that comes up after a failed discovery is discovered immediately instead of on the next refresh tick.
 - Startup no longer spawns throwaway stdio processes for discovery; stdio processes start in parallel.

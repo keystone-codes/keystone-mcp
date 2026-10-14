@@ -11,6 +11,7 @@ built-in directory is :func:`keystone_mcp.users.service.upsert_imported_user`.
 from __future__ import annotations
 
 from datetime import datetime
+from urllib.parse import urlparse
 
 import httpx
 
@@ -118,7 +119,8 @@ def fetch_source_users(
     blocked page is fetched second, so a user who is blocked is reported as
     blocked even if a stale unblocked row also came back.
     """
-    if not base_url.startswith("http://") and not base_url.startswith("https://"):
+    scheme = urlparse(base_url.strip()).scheme.lower()
+    if scheme not in {"http", "https"}:
         raise ImportSourceError(f"source URL must start with http:// or https://: {base_url!r}")
 
     users_by_email: dict[str, ImportedUser] = {}
