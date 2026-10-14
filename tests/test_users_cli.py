@@ -1205,3 +1205,164 @@ def test_grant_admin_reads_users_db_url_from_env_file(tmp_path: Path, monkeypatc
 
     users = _list_users(f"sqlite:///{db_path}")
     assert [u.email for u in users] == ["admin@example.com"]
+
+
+def test_grant_admin_uses_full_admin_role_from_policy(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    db_path = tmp_path / "users.db"
+    policy = tmp_path / "policy.yaml"
+    policy.write_text(
+        """\
+version: "1"
+default_deny: true
+roles:
+  owner: {allow: ["*"]}
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("KEYSTONE_MCP_USERS_DB_URL", f"sqlite:///{db_path}")
+    monkeypatch.setenv("KEYSTONE_MCP_RBAC_POLICY_PATH", str(policy))
+
+    exit_code = main(["users", "grant-admin", "--email", "x@example.com", "--create"])
+    assert exit_code == 0
+    assert capsys.readouterr().out.strip() == "Created administrator: x@example.com (role 'owner')"
+    users = _list_users(f"sqlite:///{db_path}")
+    assert users[0].roles == ("owner",)
+
+
+def test_grant_admin_keeps_administrator_when_present(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    db_path = tmp_path / "users.db"
+    policy = tmp_path / "policy.yaml"
+    policy.write_text(
+        """\
+version: "1"
+default_deny: true
+roles:
+  administrator: {allow: ["users_list"]}
+  owner: {allow: ["*"]}
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("KEYSTONE_MCP_USERS_DB_URL", f"sqlite:///{db_path}")
+    monkeypatch.setenv("KEYSTONE_MCP_RBAC_POLICY_PATH", str(policy))
+
+    exit_code = main(["users", "grant-admin", "--email", "x@example.com", "--create"])
+    assert exit_code == 0
+    assert capsys.readouterr().out.strip() == "Created administrator: x@example.com"
+    assert _list_users(f"sqlite:///{db_path}")[0].roles == ("administrator",)
+
+
+def test_grant_admin_role_flag_must_be_full_admin(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    db_path = tmp_path / "users.db"
+    policy = _write_policy(tmp_path)
+    monkeypatch.setenv("KEYSTONE_MCP_USERS_DB_URL", f"sqlite:///{db_path}")
+    monkeypatch.setenv("KEYSTONE_MCP_RBAC_POLICY_PATH", str(policy))
+
+    exit_code = main(["users", "grant-admin", "--email", "x@example.com", "--role", "member"])
+    assert exit_code == 1
+    err = capsys.readouterr().err.strip()
+    assert err.count("\n") == 0
+    assert "member" in err
+
+
+def test_grant_admin_ambiguous_policy_warns_and_keeps_old_result(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    db_path = tmp_path / "users.db"
+    policy = tmp_path / "policy.yaml"
+    policy.write_text(
+        """\
+version: "1"
+default_deny: true
+roles:
+  owner: {allow: ["*"]}
+  super: {allow: ["*"]}
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("KEYSTONE_MCP_USERS_DB_URL", f"sqlite:///{db_path}")
+    monkeypatch.setenv("KEYSTONE_MCP_RBAC_POLICY_PATH", str(policy))
+
+    exit_code = main(["users", "grant-admin", "--email", "x@example.com", "--create"])
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    assert "administrator" in captured.err
+    assert "owner" in captured.err and "super" in captured.err
+    assert _list_users(f"sqlite:///{db_path}")[0].roles == ("administrator",)
+
+
+def test_grant_admin_unreadable_policy_falls_back_to_administrator(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    db_path = tmp_path / "users.db"
+    monkeypatch.setenv("KEYSTONE_MCP_USERS_DB_URL", f"sqlite:///{db_path}")
+    monkeypatch.setenv("KEYSTONE_MCP_RBAC_POLICY_PATH", str(tmp_path / "missing.yaml"))
+
+    exit_code = main(["users", "grant-admin", "--email", "x@example.com", "--create"])
+    assert exit_code == 0
+    assert "cannot read the RBAC policy" in capsys.readouterr().err
+    assert _list_users(f"sqlite:///{db_path}")[0].roles == ("administrator",)
+
+
+def test_users_admins_lists_full_admins_roles_and_holders(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    db_path = tmp_path / "users.db"
+    policy = tmp_path / "policy.yaml"
+    policy.write_text(
+        """\
+version: "1"
+default_deny: true
+roles:
+  administrator: {allow: ["*"]}
+  owner: {allow: ["*"]}
+  hr: {allow: ["users_*"]}
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("KEYSTONE_MCP_USERS_DB_URL", f"sqlite:///{db_path}")
+    monkeypatch.setenv("KEYSTONE_MCP_RBAC_POLICY_PATH", str(policy))
+    _seed_user(db_path, email="admin@example.com", roles=["administrator"])
+    _seed_user(db_path, email="hr@example.com", roles=["hr"])
+
+    exit_code = main(["users", "admins"])
+    assert exit_code == 0
+    out = capsys.readouterr().out
+    assert "admin@example.com" in out
+    assert "hr" in out
+
+    exit_code = main(["users", "admins", "--json"])
+    assert exit_code == 0
+    import json
+
+    payload = json.loads(capsys.readouterr().out)
+    assert "admin@example.com" in payload["full_administrators"]
+
+
+def test_users_admins_exit_1_without_active_full_admin(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    db_path = tmp_path / "users.db"
+    policy = tmp_path / "policy.yaml"
+    policy.write_text(
+        """\
+version: "1"
+default_deny: true
+roles:
+  owner: {allow: ["*"]}
+  member: {allow: ["docs_read"]}
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("KEYSTONE_MCP_USERS_DB_URL", f"sqlite:///{db_path}")
+    monkeypatch.setenv("KEYSTONE_MCP_RBAC_POLICY_PATH", str(policy))
+    _seed_user(db_path, email="admin@example.com", roles=["owner"], is_blocked=True)
+
+    exit_code = main(["users", "admins"])
+    assert exit_code == 1
+    assert "no active full administrator" in capsys.readouterr().err
