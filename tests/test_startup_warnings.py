@@ -148,3 +148,40 @@ def test_users_service_http_loopback_no_warning():
         users_service_token="token",
     )
     assert not any("KEYSTONE_MCP_USERS_SERVICE_URL uses http" in w for w in startup_warnings(local))
+
+
+def test_dcr_without_allowlist_warns_in_production():
+    settings = Settings(
+        base_url=BASE_URL,
+        deployment_profile="production",
+        oauth_dcr_enabled=True,
+        oauth_allowed_redirect_hosts=(),
+        oauth_allowed_redirect_scheme_hosts=(),
+    )
+    warnings = startup_warnings(settings)
+    assert any("KEYSTONE_MCP_OAUTH_ALLOWED_REDIRECT_HOSTS is empty" in w for w in warnings)
+
+    with_hosts = Settings(
+        base_url=BASE_URL,
+        deployment_profile="production",
+        oauth_dcr_enabled=True,
+        oauth_allowed_redirect_hosts=("claude.ai",),
+    )
+    assert not any(
+        "KEYSTONE_MCP_OAUTH_ALLOWED_REDIRECT_HOSTS is empty" in w
+        for w in startup_warnings(with_hosts)
+    )
+
+    dcr_off = Settings(
+        base_url=BASE_URL,
+        deployment_profile="production",
+        oauth_dcr_enabled=False,
+    )
+    assert not any(
+        "KEYSTONE_MCP_OAUTH_ALLOWED_REDIRECT_HOSTS is empty" in w for w in startup_warnings(dcr_off)
+    )
+
+    local = Settings(base_url=BASE_URL, deployment_profile="local", oauth_dcr_enabled=True)
+    assert not any(
+        "KEYSTONE_MCP_OAUTH_ALLOWED_REDIRECT_HOSTS is empty" in w for w in startup_warnings(local)
+    )

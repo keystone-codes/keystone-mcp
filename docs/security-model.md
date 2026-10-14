@@ -76,8 +76,12 @@ person still has to exist in the users directory. An operator who registers
 every client by hand can turn DCR off entirely with
 `KEYSTONE_MCP_OAUTH_DCR_ENABLED=false`; see [Registering a client
 manually](environment.md#registering-a-client-manually). Client records are
-not kept forever — `KEYSTONE_MCP_OAUTH_MAX_CLIENTS` caps how many can be
-live at once, and each one ages out with the token lifetimes below.
+not kept forever — registration metadata is bounded (request ≤ 16 KB,
+`client_name` ≤ 100 characters, ≤ 10 `redirect_uris`), unlisted RFC 7591
+fields are dropped, a client that never completes sign-in expires after 24
+hours, and `KEYSTONE_MCP_OAUTH_MAX_CLIENTS` evicts the oldest unused client
+when the cap is full. After the first sign-in, each client ages out with the
+token lifetimes below.
 
 Because any client can register with any return address, Keystone-MCP shows
 a **consent screen** (`GET /login?txn=…`) before anything else happens on
@@ -113,7 +117,11 @@ token) all refuse a client whose `redirect_uri` is not allowed — including a
 client that registered before the list existed, so it cannot keep refreshing
 forever on an allowance that no longer holds. See
 [`KEYSTONE_MCP_OAUTH_ALLOWED_REDIRECT_HOSTS`](environment.md) for the exact
-matching rules.
+matching rules. On `/authorize` validation errors, the browser is redirected
+with `error=…` only when the registered `redirect_uri` is loopback or on that
+allowlist; otherwise Keystone shows an error page on its own host. In
+`production`, list the redirect hosts of the clients you use
+(`KEYSTONE_MCP_OAUTH_ALLOWED_REDIRECT_HOSTS`).
 
 Why: [ADR 0005](adr/0005-dynamic-client-registration-on-by-default.md).
 

@@ -80,7 +80,8 @@ refusal).
 | `keystone_mcp_list_changed_sessions_total` | `kind` | Sessions notified that a list of tools/prompts/resources changed. A "session" is a handshake-era connection or an open `subscriptions/listen` stream |
 | `keystone_mcp_users_mutation_total` | `operation`, `outcome` | Admin mutation attempts |
 | `keystone_mcp_admin_refusals_total` | `operation`, `reason` | Built-in administration refusals (`reason` includes `service_account`) |
-| `keystone_mcp_oauth_client_registrations_total` | `outcome` | `POST /register` outcomes (`created`, `rejected_limit`, `rejected_redirect_host`) |
+| `keystone_mcp_oauth_client_registrations_total` | `outcome` | `POST /register` outcomes (`created`, `rejected_limit`, `rejected_redirect_host`, `rejected_metadata`) |
+| `keystone_mcp_oauth_client_evictions_total` | (counter) | Unused OAuth clients evicted to admit a new registration at `KEYSTONE_MCP_OAUTH_MAX_CLIENTS` |
 | `keystone_mcp_oauth_clients` | (gauge) | Live registered OAuth clients, refreshed on every registration attempt on this replica |
 
 `keystone_mcp_oauth_clients` is a per-replica gauge: it is set to the result of
