@@ -45,7 +45,13 @@ account, are in [users.md](users.md).
   through different casing. Google and any other interactive sign-in
   provider mark the session `interactive`, which is what
   `requires_human_identity` ([rbac-policy-format.md](rbac-policy-format.md))
-  actually checks — not the provider's name.
+  actually checks — not the provider's name. By default, any configured
+  interactive provider may complete sign-in for any email the directory lists;
+  a weaker or misconfigured provider can therefore authenticate as a person
+  who normally uses a stronger one. With `KEYSTONE_MCP_LOGIN_IDENTITY_BINDING=bind`
+  and the built-in directory's `identity_binding` capability, the first
+  successful OIDC `(iss, sub)` for that email is remembered and later mismatches
+  are refused.
 - **DEV token** (`KEYSTONE_MCP_DEV_TOKENS`) — a shared secret for testing
   roles without wiring up Google. A holder signs in as *any* email that
   exists in the directory, so it is accepted only under the `local` profile

@@ -400,6 +400,7 @@ Why: [ADR 0004](adr/0004-redis-is-required.md).
 | `KEYSTONE_MCP_PRIMARY_LOGIN_METHOD` | `api_key` | Deprecated since 0.5.0 (kept until the next major version); see [login-providers.md](login-providers.md). Login method shown first; must be in `ENABLED_LOGIN_METHODS`. |
 | `KEYSTONE_MCP_ENABLED_LOGIN_METHODS` | `api_key` | Deprecated since 0.5.0 (kept until the next major version); see [login-providers.md](login-providers.md). Comma-separated set of login methods offered when no providers file is configured. |
 | `KEYSTONE_MCP_LOGIN_DEFAULT_LANG` | `en` | Login-page fallback language when no explicit choice, `km_lang` cookie, or `Accept-Language` match applies: `ar`, `en`, `he`, or `ru`. Language order on the page: `?lang=` override, then the `km_lang` cookie (set only after an explicit switch), then the browser's `Accept-Language`, then this setting. |
+| `KEYSTONE_MCP_LOGIN_IDENTITY_BINDING` | `off` | `bind`: remember the identity provider account (`iss`, `sub`) a person first signs in with, and refuse a later sign-in from any other account with the same e-mail. Needs a users directory with the `identity_binding` capability (the built-in one has it). Reset with `keystone-mcp users unbind-identity --email`. |
 | `KEYSTONE_MCP_LOGIN_BRAND` | `Keystone-MCP` | Name shown in the sign-in page header, title, and footer (1–64 characters, no logo image). |
 
 Sign-in, consent, and error pages are rendered by a built-in template with no

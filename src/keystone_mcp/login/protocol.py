@@ -84,6 +84,8 @@ class LoginIdentity:
     groups: tuple[str, ...] = field(default_factory=tuple)  # informational; RBAC ignores it in 0.5
     key_id: str | None = None  # Keystone API key used to sign in (ksk_<key_id>_...); None otherwise
     key_expires_at: datetime | None = None  # that key's expiry; None when it never expires
+    issuer: str | None = None  # iss of the verified ID token; set by OIDC-style providers
+    subject_id: str | None = None  # sub of the verified ID token; None otherwise
 
 
 @dataclass(frozen=True, slots=True)

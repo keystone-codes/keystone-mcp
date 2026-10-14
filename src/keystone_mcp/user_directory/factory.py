@@ -41,6 +41,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_IDENTITY_BINDING_METHODS = ("get_identity_binding", "bind_identity", "clear_identity_binding")
+
 
 def _require_protocol(
     directory: UserDirectory,
@@ -64,6 +66,18 @@ def validate_directory_capabilities(directory: UserDirectory) -> UserDirectory:
         _require_protocol(directory, "service_accounts", ServiceAccountDirectory)
     if "api_keys" in directory.capabilities:
         _require_protocol(directory, "api_keys", ApiKeyDirectory)
+    if "identity_binding" in directory.capabilities:
+        missing = [
+            name
+            for name in _IDENTITY_BINDING_METHODS
+            if not callable(getattr(directory, name, None))
+        ]
+        if missing:
+            joined = ", ".join(missing)
+            raise ConfigError(
+                f"users directory {directory.name!r} declares 'identity_binding' but is missing: "
+                f"{joined} (see docs/plugins.md)"
+            )
     return directory
 
 

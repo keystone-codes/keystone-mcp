@@ -53,6 +53,7 @@ from typing import Literal, Protocol, runtime_checkable
 from keystone_mcp.user_directory.types import (
     ApiKeyRecord,
     ApiKeyVerification,
+    IdentityBinding,
     IssuedApiKey,
     MutationResult,
     ServiceAccountMutation,
@@ -62,7 +63,7 @@ from keystone_mcp.user_directory.types import (
 )
 
 #: What a directory can do beyond reading.
-Capability = Literal["admin", "service_accounts", "api_keys"]
+Capability = Literal["admin", "service_accounts", "api_keys", "identity_binding"]
 
 
 @runtime_checkable
@@ -183,6 +184,27 @@ class ApiKeyDirectory(UserDirectory, Protocol):
     async def revoke_api_key(self, *, key_id: str, actor: str) -> tuple[ApiKeyRecord, bool]: ...
 
     async def verify_api_key(self, key: str) -> ApiKeyVerification | None: ...
+
+
+@runtime_checkable
+class IdentityBindingDirectory(UserDirectory, Protocol):
+    """Directories that declare the ``identity_binding`` capability.
+
+    ``bind_identity`` is atomic and idempotent: when the person has no binding
+    yet it stores the pair and returns it; when the same pair is already stored
+    it returns the existing record unchanged; when the same pair belongs to
+    another person it raises :class:`~keystone_mcp.user_directory.errors.IdentityBindingConflictError`;
+    an unknown email raises :class:`~keystone_mcp.user_directory.errors.UserNotFoundError`;
+    backend failures raise
+    :class:`~keystone_mcp.user_directory.errors.UserDirectoryUnavailableError`.
+    ``clear_identity_binding`` returns whether a binding was removed.
+    """
+
+    async def get_identity_binding(self, email: str) -> IdentityBinding | None: ...
+
+    async def bind_identity(self, *, email: str, issuer: str, subject: str) -> IdentityBinding: ...
+
+    async def clear_identity_binding(self, *, email: str, actor: str) -> bool: ...
 
 
 @runtime_checkable

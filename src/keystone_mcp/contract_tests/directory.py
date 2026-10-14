@@ -16,6 +16,7 @@ from keystone_mcp.user_directory.errors import (
 )
 from keystone_mcp.user_directory.protocol import (
     ApiKeyDirectory,
+    IdentityBindingDirectory,
     ServiceAccountDirectory,
     UserDirectory,
     UserDirectoryAdmin,
@@ -23,7 +24,7 @@ from keystone_mcp.user_directory.protocol import (
 from keystone_mcp.user_directory.types import service_subject
 
 _NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
-_ALLOWED_CAPABILITIES = frozenset({"admin", "service_accounts", "api_keys"})
+_ALLOWED_CAPABILITIES = frozenset({"admin", "service_accounts", "api_keys", "identity_binding"})
 _UNAVAILABLE_FIXTURE_HINT = (
     "add keystone_unavailable_directory_factory fixture to run availability contract tests"
 )
@@ -153,6 +154,10 @@ class UserDirectoryContract:
                 )
             if "api_keys" in directory.capabilities:
                 _require_capability_contract_class(test_cls, "api_keys", ApiKeyDirectoryContract)
+            if "identity_binding" in directory.capabilities:
+                _require_capability_contract_class(
+                    test_cls, "identity_binding", IdentityBindingDirectoryContract
+                )
 
         _run(keystone_directory_factory, body)
 
@@ -770,5 +775,89 @@ class ApiKeyDirectoryContract:
                 assert exc.code == "validation_error"
             else:
                 raise AssertionError("expires_in_days=0 must raise validation_error")
+
+        _run(keystone_directory_factory, body)
+
+
+class IdentityBindingDirectoryContract:
+    pytestmark = pytest.mark.keystone_contract
+
+    def test_bind_and_rebind_idempotent(
+        self, keystone_directory_factory: Callable[[], Awaitable[UserDirectory]]
+    ):
+        async def body(directory: UserDirectory) -> None:
+            assert isinstance(directory, IdentityBindingDirectory)
+            first = await directory.bind_identity(
+                email="bob@example.com",
+                issuer="https://idp.test",
+                subject="sub-1",
+            )
+            second = await directory.bind_identity(
+                email="bob@example.com",
+                issuer="https://idp.test",
+                subject="sub-2",
+            )
+            assert second == first
+
+        _run(keystone_directory_factory, body)
+
+    def test_same_pair_for_another_person_is_conflict(
+        self, keystone_directory_factory: Callable[[], Awaitable[UserDirectory]]
+    ):
+        async def body(directory: UserDirectory) -> None:
+            assert isinstance(directory, IdentityBindingDirectory)
+            await directory.bind_identity(
+                email="alice@example.com",
+                issuer="https://idp.test",
+                subject="shared",
+            )
+            try:
+                await directory.bind_identity(
+                    email="bob@example.com",
+                    issuer="https://idp.test",
+                    subject="shared",
+                )
+            except UsersError as exc:
+                assert exc.code == "identity_binding_conflict"
+            else:
+                raise AssertionError("duplicate pair must raise identity_binding_conflict")
+
+        _run(keystone_directory_factory, body)
+
+    def test_unknown_email_is_not_found(
+        self, keystone_directory_factory: Callable[[], Awaitable[UserDirectory]]
+    ):
+        async def body(directory: UserDirectory) -> None:
+            assert isinstance(directory, IdentityBindingDirectory)
+            try:
+                await directory.bind_identity(
+                    email="missing@example.com",
+                    issuer="https://idp.test",
+                    subject="sub",
+                )
+            except UsersError as exc:
+                assert exc.code == "user_not_found"
+            else:
+                raise AssertionError("unknown email must raise user_not_found")
+
+        _run(keystone_directory_factory, body)
+
+    def test_clear_binding(
+        self, keystone_directory_factory: Callable[[], Awaitable[UserDirectory]]
+    ):
+        async def body(directory: UserDirectory) -> None:
+            assert isinstance(directory, IdentityBindingDirectory)
+            await directory.bind_identity(
+                email="bob@example.com",
+                issuer="https://idp.test",
+                subject="sub-clear",
+            )
+            assert await directory.clear_identity_binding(
+                email="bob@example.com", actor="alice@example.com"
+            )
+            assert await directory.get_identity_binding("bob@example.com") is None
+            assert not await directory.clear_identity_binding(
+                email="bob@example.com", actor="alice@example.com"
+            )
 
         _run(keystone_directory_factory, body)

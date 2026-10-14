@@ -246,7 +246,12 @@ the server host can manage access directly:
 keystone-mcp users block   --email person@example.com
 keystone-mcp users unblock --email person@example.com
 keystone-mcp users logout  --email person@example.com
+keystone-mcp users unbind-identity --email person@example.com
 ```
+
+`unbind-identity` clears the stored OIDC `(iss, sub)` binding for that person
+(when `KEYSTONE_MCP_LOGIN_IDENTITY_BINDING=bind` is in use). It does not revoke
+OAuth sessions.
 
 `block` sets `is_blocked` and revokes every OAuth session for that email
 when `KEYSTONE_MCP_REDIS_URL` is set; without Redis the block still applies,
