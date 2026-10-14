@@ -1,6 +1,6 @@
 """Tests for the `keystone-mcp serve` subcommand.
 
-The subcommand is a thin CLI entry point for the PyPI package (X10): it must
+The subcommand is a thin CLI entry point for the PyPI package : it must
 call `keystone_mcp.server.main()` and nothing else, so `python -m
 keystone_mcp.server` and `keystone-mcp serve` behave identically.
 """

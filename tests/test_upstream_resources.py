@@ -1,4 +1,4 @@
-"""Upstream resource discovery, proxying and RBAC (Y12)."""
+"""Upstream resource discovery, proxying and RBAC."""
 
 from __future__ import annotations
 

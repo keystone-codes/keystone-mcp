@@ -1,4 +1,4 @@
-"""Upstream resource RBAC scoped to namespace and all matching names (C02)."""
+"""Upstream resource RBAC scoped to namespace and all matching names."""
 
 from __future__ import annotations
 

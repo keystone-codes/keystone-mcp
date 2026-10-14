@@ -1,4 +1,4 @@
-"""`KEYSTONE_MCP_OAUTH_ALLOWED_REDIRECT_HOSTS` (A17).
+"""`KEYSTONE_MCP_OAUTH_ALLOWED_REDIRECT_HOSTS`.
 
 An organisation that knows its own clients (say, only Claude and Cursor) can
 restrict which hosts a registered client's ``redirect_uri`` may point to.
@@ -6,7 +6,7 @@ Empty (the default) means no restriction — the 0.3.1 behaviour. When set,
 both ``POST /register`` (``KeystoneOAuthProvider.register_client``) and
 ``GET /authorize`` (``KeystoneOAuthProvider.authorize``) refuse a
 ``redirect_uri`` whose host is not on the list; the host check in
-``register_client`` runs before the client-count cap from A12.
+``register_client`` runs before the client-count cap.
 """
 
 from __future__ import annotations
@@ -130,7 +130,7 @@ async def test_one_bad_uri_rejects_the_whole_registration() -> None:
 
 async def test_custom_scheme_host_is_matched() -> None:
     # A custom (non-http(s)) scheme is matched only against an explicit
-    # `scheme://host` allowlist entry (finding #4): a bare host entry no
+ # `scheme://host` allowlist entry (second review): a bare host entry no
     # longer implies "any scheme on this host", since that was exactly the
     # gap that let `evil-app://claude.ai/cb` or `http://claude.ai/...` through
     # under an allowlist meant for `https://claude.ai`.
@@ -152,7 +152,7 @@ async def test_custom_scheme_host_is_matched() -> None:
 
 
 async def test_custom_scheme_is_refused_without_an_explicit_scheme_host_entry() -> None:
-    """The gap finding #4 closes: a bare host entry no longer allows every scheme."""
+    """The gap the scheme/host pairing closes: a bare host entry no longer allows every scheme."""
     app, _store = _build_app(oauth_allowed_redirect_hosts=("anysphere.cursor-retrieval",))
     async with LifespanManager(app):
         async with httpx.AsyncClient(
@@ -170,7 +170,7 @@ async def test_custom_scheme_is_refused_without_an_explicit_scheme_host_entry() 
 
 
 async def test_http_is_refused_for_a_non_loopback_host_even_when_listed() -> None:
-    """finding #4: an allowed host does not make plain http trustworthy for it."""
+    """that review item: an allowed host does not make plain http trustworthy for it."""
     app, _store = _build_app(oauth_allowed_redirect_hosts=("claude.ai",))
     async with LifespanManager(app):
         async with httpx.AsyncClient(
@@ -204,7 +204,7 @@ async def test_https_is_allowed_for_a_listed_non_loopback_host() -> None:
 
 
 async def test_redirect_uris_null_is_refused_instead_of_crashing() -> None:
-    """finding #5: `redirect_uris: null` must not reach `for ... in None`."""
+    """that review item: `redirect_uris: null` must not reach `for... in None`."""
     app, _store = _build_app(oauth_allowed_redirect_hosts=("claude.ai",))
     async with LifespanManager(app):
         async with httpx.AsyncClient(
@@ -279,7 +279,7 @@ def test_allowlist_parsing(monkeypatch) -> None:
     with pytest.raises(ConfigError, match="OAUTH_ALLOWED_REDIRECT_HOSTS"):
         Settings(base_url=BASE_URL)
 
-    # A custom scheme paired with a host (finding #4) parses into its own
+ # A custom scheme paired with a host parses into its own
     # field, separate from the bare hosts.
     monkeypatch.setenv(
         "KEYSTONE_MCP_OAUTH_ALLOWED_REDIRECT_HOSTS",
@@ -330,7 +330,7 @@ async def test_rejected_redirect_host_metric() -> None:
     assert _registrations("rejected_redirect_host") == before + 1
 
 
-# ── finding #3: the allowlist also gates /token, not just /authorize ───────
+# ── 3: the allowlist also gates /token, not just /authorize ───────
 #
 # register_client and authorize both check the allowlist, but neither
 # retroactively evicts a client that registered before the allowlist existed
@@ -422,7 +422,7 @@ async def test_authorization_code_exchange_refused_for_preexisting_client_on_unl
     assert exc_info.value.error == "unauthorized_client"
 
 
-# ── finding #3: the SDK must never redirect a disallowed host on its own ───
+# ── 3: the SDK must never redirect a disallowed host on its own ───
 #
 # `client.validate_scope` raises `InvalidScopeError` *inside* the SDK's own
 # `AuthorizationHandler.handle` (mcp/server/auth/handlers/authorize.py),
@@ -565,7 +565,7 @@ async def test_authorize_post_refused_for_preexisting_client_on_unlisted_host() 
             assert "evil.example" not in location
 
 
-# ── finding #9: `[::1]` (and bare `::1`) in the redirect-host allowlist ─────
+# ── 9: `[::1]` (and bare `::1`) in the redirect-host allowlist ─────
 #
 # `_parse_redirect_host_entries` refused any entry containing `:`, which
 # accidentally caught an IPv6 literal (`::1`) along with the port/scheme

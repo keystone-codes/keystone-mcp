@@ -1,4 +1,4 @@
-"""The ``LoginProvider`` protocol itself, and the two built-in implementations (X03)."""
+"""The ``LoginProvider`` protocol itself, and the two built-in implementations."""
 
 from __future__ import annotations
 

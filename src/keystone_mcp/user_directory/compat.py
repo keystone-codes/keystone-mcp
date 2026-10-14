@@ -1,7 +1,7 @@
 """Wraps the deprecated 0.4.0 ``UserDirectoryBackend`` as a read-only ``UserDirectory``.
 
 A fork that implemented ``UserDirectoryBackend`` (one method, ``resolve_user``)
-against ``docs/adding-routes.md`` (0.4.0, C10) keeps working in 0.5.0 without
+against ``docs/adding-routes.md`` (0.4.0 route-compat) keeps working in 0.5.0 without
 changes to its own code: :func:`keystone_mcp.user_directory.factory.build_user_directory_resolver`
 wraps whatever it is given in :class:`ReadOnlyBackendDirectory` and warns once.
 Deprecated since 0.5.0, removed in 2.0 -- new directories should implement

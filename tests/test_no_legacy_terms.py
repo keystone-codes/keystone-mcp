@@ -34,13 +34,23 @@ _SKIP_PATHS = frozenset(
     }
 )
 
+_INTERNAL_CARD_ID = re.compile(
+    r"\b([ABCDEFGUVXYZ][0-9]{2}|PO[0-9]{1,2}|A[1-6]-[0-9]{1,2}|C2-[0-9])\b"
+    r"|finding #|task card|coordinator finding|\bdecision S[0-9]+"
+)
+
+_SKIP_SCAN_SUFFIXES = frozenset({".pyc", ".png", ".jpg", ".jpeg", ".gif", ".webp"})
+
 _TEXT_SUFFIXES = frozenset(
     {
         ".py",
         ".md",
         ".yaml",
         ".yml",
+        ".json",
         ".example",
+        ".toml",
+        ".sh",
         "",
     }
 )
@@ -48,15 +58,21 @@ _TEXT_SUFFIXES = frozenset(
 _ROOT_FILES = (
     "README.md",
     "SECURITY.md",
-    ".env.example",
+    "CHANGELOG.md",
+    "setup.sh",
     "Dockerfile",
+    "pyproject.toml",
 )
 
 
 def _is_text_candidate(path: Path) -> bool:
     if path in _SKIP_PATHS:
         return False
+    if path.suffix in _SKIP_SCAN_SUFFIXES:
+        return False
     if "internal" in path.parts:
+        return False
+    if "frozen-baseline" in path.name:
         return False
     name = path.name
     if name.startswith("docker-compose") and name.endswith((".yml", ".yaml")):
@@ -85,10 +101,10 @@ def _iter_scan_paths() -> list[Path]:
                 paths.append(path)
     for name in _ROOT_FILES:
         candidate = REPO_ROOT / name
-        if candidate.is_file():
+        if candidate.is_file() and _is_text_candidate(candidate):
             paths.append(candidate)
     for candidate in REPO_ROOT.glob("docker-compose*.yml"):
-        if candidate.is_file():
+        if candidate.is_file() and _is_text_candidate(candidate):
             paths.append(candidate)
     return sorted(set(paths))
 
@@ -141,3 +157,19 @@ def test_forbidden_patterns_compile_and_catch():
     for pattern, sample in _PATTERN_SAMPLES:
         regex = re.compile(pattern)
         assert regex.search(sample), f"pattern {pattern!r} did not match {sample!r}"
+
+
+def test_no_internal_card_ids_in_public_files():
+    hits: list[str] = []
+    for path in _iter_scan_paths():
+        try:
+            text = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            continue
+        rel = path.relative_to(REPO_ROOT)
+        for lineno, line in enumerate(text.splitlines(), start=1):
+            match = _INTERNAL_CARD_ID.search(line)
+            if match is not None:
+                hits.append(f"{rel}:{lineno}: {match.group(0)!r}")
+    if hits:
+        pytest.fail("\n".join(sorted(hits)))

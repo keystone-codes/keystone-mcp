@@ -1,4 +1,4 @@
-"""Client cancellation and Keystone timeouts reach the upstream (Y04)."""
+"""Client cancellation and Keystone timeouts reach the upstream."""
 
 from __future__ import annotations
 

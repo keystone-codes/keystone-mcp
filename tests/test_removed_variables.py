@@ -5,8 +5,8 @@ ships. The variable itself is never read by regular code anymore (checked
 against ``tests/support/env_vars.py::code_variables()``); the table exists
 purely so an operator's stale ``.env`` is reported instead of ignored.
 
-``KEYSTONE_MCP_RBAC_ENABLED`` is the only fatal entry introduced by this
-card (Z01); it is marked fatal because silently ignoring it would leave RBAC
+``KEYSTONE_MCP_RBAC_ENABLED`` is the only fatal entry introduced here;
+it is marked fatal because silently ignoring it would leave RBAC
 disabled while the operator believes it is enforced.
 """
 
@@ -94,7 +94,7 @@ def test_several_fatal_variables_are_reported_together(monkeypatch):
 
 
 def test_file_api_url_is_refused_with_hint(monkeypatch):
-    """The built-in file tools were removed (Z03): a stale .env is refused."""
+    """The built-in file tools were removed: a stale .env is refused."""
     monkeypatch.setenv("KEYSTONE_MCP_FILE_API_URL", "http://x")
     with pytest.raises(ConfigError) as exc_info:
         load_settings()
@@ -104,7 +104,7 @@ def test_file_api_url_is_refused_with_hint(monkeypatch):
 
 
 def test_webhook_variables_give_startup_warnings(monkeypatch):
-    """The five webhook/long-poll variables moved to contrib (Z04): none of
+    """The five webhook/long-poll variables moved to contrib: none of
     them refuses startup, each gives its own warning."""
     from keystone_mcp.config import startup_warnings
 

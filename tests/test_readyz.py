@@ -70,7 +70,7 @@ def _app(settings: Settings, **build_kwargs):
     return mcp.http_app(path=settings.http_path)
 
 
-# ── /healthz is untouched by this card ──────────────────────────────────────
+# ── /healthz is untouched by /readyz ────────────────────────────────────────
 async def test_healthz_unchanged():
     settings = Settings(base_url=BASE_URL)
     app = _app(settings, oauth_store=InMemoryOAuthStore())

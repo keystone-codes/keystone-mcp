@@ -1,5 +1,5 @@
 {
-  "_comment": "Fixed X-Keystone-Identity assertion for exercising the Python and TypeScript reference verifiers without a live Keystone-MCP. Generated once with keystone_mcp.identity_assertion.build_identity_claims (Y01), now=1767225600, jti fixed; already expired by design, so a check against it must disable exp verification (see docs/connecting-services.md and tests/test_identity_examples.py).",
+ "_comment": "Fixed X-Keystone-Identity assertion for exercising the Python and TypeScript reference verifiers without a live Keystone-MCP. Generated once with keystone_mcp.identity_assertion.build_identity_claims, now=1767225600, jti fixed; already expired by design, so a check against it must disable exp verification (see docs/connecting-services.md and tests/test_identity_examples.py).",
   "secret": "kt-demo-test-vector-signing-secret-4040x",
   "audience": "hello",
   "issuer": "http://localhost:8080",

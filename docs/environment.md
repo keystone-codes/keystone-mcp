@@ -720,7 +720,7 @@ four fields in place of `url`:
 `url` and `auth.bearer_env` are not allowed on a `stdio` entry: there is no
 HTTP request to send a bearer token on. `auth.identity_secret_env` is still
 allowed on a `stdio` entry — the signed identity assertion for stdio calls
-travels in the request `_meta` instead of a header (Y09). Startup also
+travels in the request `_meta` instead of a header. Startup also
 refuses to run if `command` cannot be found or is not executable.
 `keystone-mcp upstream validate` checks only the registry's structure — it
 does not require the command, the directory, or the named environment

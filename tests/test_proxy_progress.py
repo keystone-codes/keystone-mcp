@@ -1,6 +1,6 @@
 """``notifications/progress`` from an upstream tool call reaches the client.
 
-Y03: the proxy registers a ``progress_handler`` with the upstream call only
+The proxy registers a ``progress_handler`` with the upstream call only
 when the client asked for progress (sent a ``progressToken``), and relays
 every notification to that same client request via its own session. Covered
 on both axes that can vary independently: the protocol era the *client*
@@ -150,10 +150,10 @@ async def test_no_progress_token_means_no_forwarding():
     client.py``: ``if progress_handler is None: progress_handler =
     default_progress_handler``), so *every* call a fastmcp ``Client`` makes
     already carries a token -- Keystone's own call to the upstream included,
-    with or without Y03, downstream request or not. That default handler
+    with or without progress forwarding, downstream request or not. That default handler
     only logs locally and is never reachable from outside this process, so it
-    forwards nothing to the real client; it is not something this card's
-    contract is about preventing. What Y03 actually guarantees -- and what is
+    forwards nothing to the real client; it is not something this contract
+    is about preventing. What progress forwarding actually guarantees -- and what is
     checked here directly -- is that ``call_upstream_tool`` only ever passes
     *its own* forwarding handler (the one that calls back into the
     downstream's ``ServerSession.report_progress``) when the request it is

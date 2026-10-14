@@ -1,4 +1,4 @@
-"""Tests for ``setup.sh``'s non-interactive mode (A07).
+"""Tests for ``setup.sh``'s non-interactive mode.
 
 Every test copies ``setup.sh``, ``.env.example`` and ``config/rbac-policy.yaml``
 into an isolated ``tmp_path`` and runs
@@ -166,7 +166,7 @@ def test_local_profile_writes_expected_env(sandbox, redis_url):
     # Every variable setup.sh writes appears exactly once among the active
     # lines: it replaces the existing (section-1) line in place and never
     # also uncomments/duplicates the matching commented-out section-2 default
-    # (decision S11).
+ #.
     keys = active_keys(env_path)
     assert len(keys) == len(set(keys)), keys
 
@@ -378,7 +378,7 @@ def test_written_env_passes_validate_settings(sandbox, redis_url, monkeypatch, p
 
 
 # ── Second review: control-character injection, credential redaction, .env
-# permissions (A07 follow-up) ────────────────────────────────────────────────
+# permissions (follow-up) ────────────────────────────────────────────────
 
 
 def test_local_profile_rejects_newline_in_admin_token(sandbox, redis_url):

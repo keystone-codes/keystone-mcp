@@ -1,4 +1,4 @@
-"""Upstream elicitation forwarding through Keystone (Y07)."""
+"""Upstream elicitation forwarding through Keystone."""
 
 from __future__ import annotations
 

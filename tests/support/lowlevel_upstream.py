@@ -85,7 +85,7 @@ ODD_NAMES_SCHEMA: dict[str, Any] = {
     "required": ["from"],
 }
 
-#: Y03: a tool that reports progress while it runs, to exercise
+#: A tool that reports progress while it runs, to exercise progress while it runs, to exercise
 #: ``notifications/progress`` forwarding. ``steps`` is keyword-only from the
 #: caller's point of view (JSON Schema has no positional arguments).
 COUNT_SCHEMA: dict[str, Any] = {
@@ -161,7 +161,7 @@ _TOOL_DEFINITIONS: dict[str, types.Tool] = {
     ),
     "ask": types.Tool(
         name="ask",
-        description="Ask the client a form question (Y07 elicitation tests).",
+ description="Ask the client a form question (elicitation tests).",
         inputSchema=_EMPTY_ASK_SCHEMA,
     ),
     "ask_url": types.Tool(
@@ -179,7 +179,7 @@ _TOOL_DEFINITIONS: dict[str, types.Tool] = {
 #: ``list_tools`` publishes tools in this order when all of them are selected.
 #: ``count`` is deliberately excluded from the *default* selection (``tools=None``
 #: below) so the long-standing tool count every existing test asserts does not
-#: shift just because Y03 added a tool; pass it explicitly via ``tools`` or
+#: shift just because progress tooling was added; pass it explicitly via ``tools`` or
 #: ``extra_tools`` to include it.
 _TOOL_ORDER: tuple[str, ...] = ("greet", "search", "report", "fail", "whoami", "odd_names")
 
@@ -216,7 +216,7 @@ def build_lowlevel_upstream_app(
     the ``fail`` tool below does).
 
     ``stateless`` and ``json_response`` are passed straight through to
-    ``StreamableHTTPSessionManager`` (default: unchanged from before Y03). A
+ ``StreamableHTTPSessionManager`` (default: unchanged from before progress forwarding landed). A
     progress notification can only reach the client before the final response
     when ``json_response=False`` -- a ``json_response=True`` session buffers
     the whole answer and sends it as one JSON body, on both protocol eras.
@@ -620,7 +620,7 @@ def asgi_http_client_factory(
 
     def builder(timeout_seconds: float) -> Callable[..., httpx2.AsyncClient]:
         # Keep the socket read budget above the MCP call timeout so courtesy
-        # cancel can be sent before httpx2 gives up (Y04 timeout test).
+ # cancel can be sent before httpx2 gives up (timeout test).
         httpx_timeout = timeout_seconds + (5.0 if streaming else 0.0)
 
         def factory(

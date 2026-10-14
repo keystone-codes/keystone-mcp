@@ -1,4 +1,4 @@
-"""`LoginAttemptThrottle._email_failures` does not grow without bound (finding #2).
+"""`LoginAttemptThrottle._email_failures` does not grow without bound (email throttle).
 
 Before this fix, `check_email_failures` read `self._email_failures[normalized]`
 on a `defaultdict`: merely *checking* an email (no prior failure recorded)
@@ -7,7 +7,7 @@ email address, never repeating one, could grow the dict without bound purely
 by probing — no failed login, nor any throttling, was required to plant an
 entry.
 
-The fix mirrors `_ip_hits` (A11 finding #6): an `OrderedDict` with a periodic
+The fix mirrors `_ip_hits` : an `OrderedDict` with a periodic
 sweep that drops buckets that aged out of the window, and a hard cap on how
 many distinct emails are tracked at once (oldest evicted first) — plus two
 narrower points this finding also calls out: a bare *check* never creates an
@@ -35,7 +35,7 @@ def test_checking_an_email_with_no_failures_creates_no_entry() -> None:
 
 
 def test_probing_many_emails_with_no_failures_never_grows_the_table() -> None:
-    """The exact attack finding #2 describes: one check per distinct email."""
+    """The exact attack the email throttle bounds close: one check per distinct email."""
     throttle = LoginAttemptThrottle(ip_max=0, email_max=5, window_seconds=60)
 
     for i in range(50_000):

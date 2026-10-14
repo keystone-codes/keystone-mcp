@@ -1,8 +1,8 @@
 """Reads user records from an external users directory, for ``users import``.
 
 The external directory is the legacy HTTP-based service this project used to
-run as a separate process (see ``docs/users.md`` after U07, and the contract
-excerpted in the ``U04`` task card: ``GET /v1/users`` with an
+run as a separate process (see ``docs/users.md`` after the users CLI landed, and the contract
+from the HTTP users API spec: ``GET /v1/users`` with an
 ``is_blocked`` filter, bearer auth, ``{"users": [...], "total": N}``). This
 module only reads from that service; writing the imported records into the
 built-in directory is :func:`keystone_mcp.users.service.upsert_imported_user`.

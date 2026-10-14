@@ -46,7 +46,7 @@ roles:
 """
 
 #: The live catalog every test's registry publishes: the platform's own
-#: users_list, two stand-in policy_* tools (V02 has not shipped any yet), and
+#: users_list, two stand-in policy_* tools (none shipped in-tree yet), and
 #: two tools from an unrelated namespace.
 LIVE_ROUTE_NAMES = ("users_list", "policy_read", "policy_role_set", "docs_search", "docs_read")
 

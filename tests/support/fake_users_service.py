@@ -1,4 +1,4 @@
-"""Fake HTTP users directory service, for testing :class:`HttpUserDirectory` (X06).
+"""Fake HTTP users directory service, for testing :class:`HttpUserDirectory`.
 
 Implements the external directory's HTTP contract (see
 ``docs/user-directory.md``, "The HTTP directory contract") as a small
@@ -13,7 +13,7 @@ vocabulary (``invalid_role``, ``user_already_exists``) rather than the
 ``users_*`` skill's (``validation_error``, ``conflict``): this is exactly
 what the real external service still does, and
 ``tests/test_http_user_directory.py`` verifies ``HttpUserDirectory``
-normalizes both onto the skill's codes (decision S3).
+normalizes both onto the skill's codes (HTTP users error-code normalization).
 """
 
 from __future__ import annotations

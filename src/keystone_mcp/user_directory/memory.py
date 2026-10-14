@@ -436,5 +436,5 @@ class InMemoryUserDirectory(UserDirectoryAdminBase):
 
 
 #: Old name, kept as an alias without a deprecation warning: this is a test
-#: helper, not a published contract (see X06's coordinator decision).
+#: helper, not a published contract (see the contract-tests module).
 InMemoryUserDirectoryBackend = InMemoryUserDirectory

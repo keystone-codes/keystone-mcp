@@ -245,7 +245,7 @@ def check_self_demotion(
     """Refuse when a full administrator removes their own full administration.
 
     A separate ``last full administrator`` guard for ``users_*`` is not needed:
-    after A02 only an active full administrator can change holders of management
+ after refresh-token TTL only an active full administrator can change holders of management
     roles, and this rule blocks self-demotion — so any successful mutation leaves
     at least the acting administrator in place. Built-in ``users/service.py``
     checks against the literal ``administrator`` role name remain a second line
