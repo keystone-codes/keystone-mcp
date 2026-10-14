@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from keystone_mcp.config import load_settings
+from keystone_mcp.config import Settings, load_settings
 from keystone_mcp.upstream_registry.load import (
     load_upstream_registry_file,
     parse_upstream_entries,
@@ -1264,3 +1264,52 @@ def test_upstream_validate_cli_reports_limits_error(tmp_path: Path):
         encoding="utf-8",
     )
     assert main(["upstream", "validate", "--path", str(path)]) == 1
+
+
+def _hello_json_entry(**overrides: object) -> dict[str, object]:
+    entry: dict[str, object] = {
+        "name": "hello-mcp",
+        "url": "https://hello.example/mcp",
+        "namespace": "hello",
+    }
+    entry.update(overrides)
+    return entry
+
+
+def test_json_upstreams_reject_zero_tool_timeout(monkeypatch):
+    monkeypatch.setenv(
+        "KEYSTONE_MCP_UPSTREAMS",
+        json.dumps([_hello_json_entry(tool_timeout_seconds=0)]),
+    )
+    with pytest.raises(ValueError, match=r"^KEYSTONE_MCP_UPSTREAMS:"):
+        _ = Settings(base_url="http://127.0.0.1:8080").upstreams
+
+
+def test_json_upstreams_reject_zero_discovery_timeout(monkeypatch):
+    monkeypatch.setenv(
+        "KEYSTONE_MCP_UPSTREAMS",
+        json.dumps([_hello_json_entry(discovery_timeout_seconds=0)]),
+    )
+    with pytest.raises(ValueError, match=r"^KEYSTONE_MCP_UPSTREAMS:"):
+        _ = Settings(base_url="http://127.0.0.1:8080").upstreams
+
+
+def test_json_upstreams_over_64_entries_warn(monkeypatch, caplog):
+    entries = [
+        {
+            "name": f"svc-{index}",
+            "url": f"https://svc-{index}.example/mcp",
+            "namespace": f"ns{index}",
+        }
+        for index in range(65)
+    ]
+    monkeypatch.setenv("KEYSTONE_MCP_UPSTREAMS", json.dumps(entries))
+    import logging
+
+    caplog.set_level(logging.WARNING)
+    settings = Settings(base_url="http://127.0.0.1:8080")
+    assert len(settings.upstreams) == 65
+    assert any(
+        "KEYSTONE_MCP_UPSTREAMS: entries must contain at most" in record.message
+        for record in caplog.records
+    )

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import ast
 import json
+from pathlib import Path
 
 import pytest
 from asgi_lifespan import LifespanManager
@@ -586,3 +588,33 @@ def test_proxy_status_envelope_env_flag(monkeypatch):
     )
 
     assert upstreams._adapters["reports"]._status_envelope is True
+
+
+def test_mcp_http_client_factory_is_type_only_import() -> None:
+    path = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "keystone_mcp"
+        / "adapters"
+        / "mcp_proxy.py"
+    )
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    type_checking_ranges: list[tuple[int, int]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.If) and isinstance(node.test, ast.Name):
+            if node.test.id == "TYPE_CHECKING":
+                start = node.lineno
+                end = max(getattr(n, "lineno", start) for n in ast.walk(node))
+                type_checking_ranges.append((start, end))
+
+    def _in_type_checking(lineno: int) -> bool:
+        return any(start <= lineno <= end for start, end in type_checking_ranges)
+
+    httpx_imports = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom)
+        and node.module == "mcp.shared._httpx_utils"
+        and not _in_type_checking(node.lineno)
+    ]
+    assert httpx_imports == []

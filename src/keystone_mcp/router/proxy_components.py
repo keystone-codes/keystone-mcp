@@ -16,12 +16,7 @@ from fastmcp.prompts.base import InputRequiredPromptResult
 from fastmcp.resources.base import InputRequiredResourceResult, ResourceContent, ResourceResult
 from fastmcp.resources.template import forward_uri
 from fastmcp.server.dependencies import get_context
-from fastmcp.server.providers.proxy import (
-    ProxyPrompt,
-    ProxyResource,
-    ProxyTemplate,
-    _stash_proxy_request_context,
-)
+from fastmcp.server.providers.proxy import ProxyPrompt, ProxyResource, ProxyTemplate
 from mcp_types import BlobResourceContents, TextResourceContents
 from mcp_types.version import MODERN_PROTOCOL_VERSIONS
 from pydantic import PrivateAttr
@@ -200,24 +195,43 @@ class UpstreamProxyPrompt(ProxyPrompt):
             ):
                 client, call_meta = await self._get_client()
                 ctx = get_context()
-                async with client:
-                    _stash_proxy_request_context(client, ctx)
-                    if client.protocol_version in MODERN_PROTOCOL_VERSIONS:
-                        from keystone_mcp.router.upstream_call import call_upstream_prompt_modern
+                try:
+                    async with client:
+                        if client.protocol_version in MODERN_PROTOCOL_VERSIONS:
+                            from keystone_mcp.router.upstream_call import (
+                                call_upstream_prompt_modern,
+                            )
 
-                        raw = await call_upstream_prompt_modern(
-                            client,
-                            backend_name,
-                            arguments,
-                            meta=call_meta,
-                            input_responses=ctx.input_responses if ctx else None,
-                            request_state=ctx.request_state if ctx else None,
-                        )
-                        if isinstance(raw, mcp_types.InputRequiredResult):
-                            return InputRequiredPromptResult(raw)
-                        result = raw
-                    else:
-                        result = await client.get_prompt(backend_name, arguments, meta=call_meta)
+                            raw = await call_upstream_prompt_modern(
+                                client,
+                                backend_name,
+                                arguments,
+                                meta=call_meta,
+                                input_responses=ctx.input_responses if ctx else None,
+                                request_state=ctx.request_state if ctx else None,
+                            )
+                            if isinstance(raw, mcp_types.InputRequiredResult):
+                                return InputRequiredPromptResult(raw)
+                            result = raw
+                        else:
+                            result = await client.get_prompt(
+                                backend_name, arguments, meta=call_meta
+                            )
+                except PromptError:
+                    raise
+                except Exception as exc:
+                    from keystone_mcp.router.upstream_errors import (
+                        log_upstream_failure,
+                        rethrow_upstream_error,
+                    )
+
+                    log_upstream_failure(self._namespace, exc, upstream_tool=backend_name)
+                    rethrow_upstream_error(
+                        self._namespace,
+                        exc,
+                        timeout=self._tool_timeout,
+                        error_type=PromptError,
+                    )
             messages = [Message(content=m.content, role=m.role) for m in result.messages]
             return PromptResult(
                 messages=messages,
@@ -229,10 +243,10 @@ class UpstreamProxyPrompt(ProxyPrompt):
 def _resource_result_from_read(
     result: mcp_types.ReadResourceResult,
     *,
-    backend_uri: str,
+    namespace: str,
 ) -> ResourceResult:
     if not result.contents:
-        raise ResourceError(f"Remote server returned empty content for {backend_uri}")
+        raise ResourceError(f"upstream {namespace} returned no content")
     contents: list[ResourceContent] = []
     for item in result.contents:
         if isinstance(item, TextResourceContents):
@@ -252,7 +266,7 @@ def _resource_result_from_read(
                 )
             )
         else:
-            raise ResourceError(f"Unsupported content type: {type(item)}")
+            raise ResourceError(f"upstream {namespace} returned an unsupported content type")
     return ResourceResult(contents=contents, meta=strip_upstream_connection_meta(result.meta))
 
 
@@ -377,20 +391,35 @@ class UpstreamProxyResource(_UpstreamProxyClientMixin, ProxyResource):
             ):
                 client, call_meta = await self._get_client()
                 ctx = get_context()
-                async with client:
-                    _stash_proxy_request_context(client, ctx)
-                    from keystone_mcp.router.upstream_call import call_upstream_resource_read
+                try:
+                    async with client:
+                        from keystone_mcp.router.upstream_call import call_upstream_resource_read
 
-                    result = await call_upstream_resource_read(
-                        client,
-                        backend_uri,
-                        meta=call_meta,
-                        input_responses=ctx.input_responses if ctx else None,
-                        request_state=ctx.request_state if ctx else None,
+                        result = await call_upstream_resource_read(
+                            client,
+                            backend_uri,
+                            meta=call_meta,
+                            input_responses=ctx.input_responses if ctx else None,
+                            request_state=ctx.request_state if ctx else None,
+                        )
+                except ResourceError:
+                    raise
+                except Exception as exc:
+                    from keystone_mcp.router.upstream_errors import (
+                        log_upstream_failure,
+                        rethrow_upstream_error,
+                    )
+
+                    log_upstream_failure(self._namespace, exc, upstream_tool=backend_uri)
+                    rethrow_upstream_error(
+                        self._namespace,
+                        exc,
+                        timeout=self._tool_timeout,
+                        error_type=ResourceError,
                     )
             if isinstance(result, mcp_types.InputRequiredResult):
                 return InputRequiredResourceResult(result)
-            return _resource_result_from_read(result, backend_uri=backend_uri)
+            return _resource_result_from_read(result, namespace=self._namespace)
 
 
 class UpstreamProxyTemplate(_UpstreamProxyClientMixin, ProxyTemplate):
@@ -458,16 +487,31 @@ class UpstreamProxyTemplate(_UpstreamProxyClientMixin, ProxyTemplate):
             ):
                 client, call_meta = await self._get_client()
                 ctx = context or get_context()
-                async with client:
-                    _stash_proxy_request_context(client, ctx)
-                    from keystone_mcp.router.upstream_call import call_upstream_resource_read
+                try:
+                    async with client:
+                        from keystone_mcp.router.upstream_call import call_upstream_resource_read
 
-                    result = await call_upstream_resource_read(
-                        client,
-                        parameterized_uri,
-                        meta=call_meta,
-                        input_responses=ctx.input_responses if ctx else None,
-                        request_state=ctx.request_state if ctx else None,
+                        result = await call_upstream_resource_read(
+                            client,
+                            parameterized_uri,
+                            meta=call_meta,
+                            input_responses=ctx.input_responses if ctx else None,
+                            request_state=ctx.request_state if ctx else None,
+                        )
+                except ResourceError:
+                    raise
+                except Exception as exc:
+                    from keystone_mcp.router.upstream_errors import (
+                        log_upstream_failure,
+                        rethrow_upstream_error,
+                    )
+
+                    log_upstream_failure(self._namespace, exc, upstream_tool=parameterized_uri)
+                    rethrow_upstream_error(
+                        self._namespace,
+                        exc,
+                        timeout=self._tool_timeout,
+                        error_type=ResourceError,
                     )
         finally:
             _template_read_backend_uri.reset(token)
@@ -486,7 +530,7 @@ class UpstreamProxyTemplate(_UpstreamProxyClientMixin, ProxyTemplate):
                 _cached_content=InputRequiredResourceResult(result),
             )
 
-        cached = _resource_result_from_read(result, backend_uri=parameterized_uri)
+        cached = _resource_result_from_read(result, namespace=self._namespace)
         return ProxyResource(
             client_factory=lambda: client,
             uri=uri,
