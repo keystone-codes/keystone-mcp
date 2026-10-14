@@ -8,6 +8,20 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ## [Unreleased]
 
+### Added
+
+- Metric `keystone_mcp_upstream_items_rejected_total{namespace,kind,reason}`.
+
+### Fixed
+
+- A resource, resource template or prompt that an upstream renames, edits or removes after startup no longer makes the reconciler mark the whole namespace unavailable (which, with `KEYSTONE_MCP_UPSTREAM_REQUIRE_ALL=true`, failed `/readyz` on every replica).
+- A failed `prompts/list` or `resources/list` keeps the previous prompts or resources instead of counting as an empty list.
+- Policy validation of a prompt from an upstream with `strip_prefix` uses the name clients see; removing such a prompt upstream no longer crashes the refresh.
+
+### Migration
+
+- Policy validation now knows a prompt of an upstream with `strip_prefix` by the name clients see (`hello_summarize`), so an exact allow rule for that name works. The stripped form 0.5.0 validated (`hello_marize`) is still accepted by validation but, as before, grants nothing — replace it with the visible name.
+
 ## [0.5.0] - 2026-10-13
 
 ### Added

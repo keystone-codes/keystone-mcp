@@ -155,7 +155,7 @@ async def test_upstream_timeout_keeps_previous_catalog(reconciler_stack):
     before = set(registry.routes.keys())
 
     with patch(
-        "keystone_mcp.surface.reconciler.fetch_upstream_tools",
+        "keystone_mcp.router.upstream.fetch_upstream_tools",
         new_callable=AsyncMock,
         side_effect=UpstreamListToolsError("timeout"),
     ):
@@ -169,7 +169,7 @@ async def test_single_empty_upstream_list_holds_catalog(reconciler_stack):
     before = set(registry.routes.keys())
 
     with patch(
-        "keystone_mcp.surface.reconciler.fetch_upstream_tools",
+        "keystone_mcp.router.upstream.fetch_upstream_tools",
         new_callable=AsyncMock,
         return_value=[],
     ):
@@ -189,7 +189,7 @@ async def test_unreachable_upstream_does_not_crash_tick(reconciler_stack, caplog
     with (
         caplog.at_level(logging.WARNING, logger=reconciler_module.__name__),
         patch(
-            "keystone_mcp.surface.reconciler.fetch_upstream_tools",
+            "keystone_mcp.router.upstream.fetch_upstream_tools",
             new_callable=AsyncMock,
             side_effect=RuntimeError("Client failed to connect"),
         ),
@@ -225,7 +225,7 @@ async def test_one_failing_namespace_does_not_block_others(reconciler_stack):
         return [_FakeTool("do_thing")]
 
     with patch(
-        "keystone_mcp.surface.reconciler.fetch_upstream_tools",
+        "keystone_mcp.router.upstream.fetch_upstream_tools",
         new_callable=AsyncMock,
         side_effect=_fake_fetch,
     ):
@@ -289,7 +289,7 @@ async def test_unpublishable_tool_is_retried_every_tick_not_cached_as_done(
     with (
         caplog.at_level(logging.ERROR),
         patch(
-            "keystone_mcp.surface.reconciler.fetch_upstream_tools",
+            "keystone_mcp.router.upstream.fetch_upstream_tools",
             new_callable=AsyncMock,
             side_effect=_fake_fetch,
         ),
@@ -333,7 +333,7 @@ async def test_failed_update_keeps_old_tool_and_removal_still_works(
 
     # Tick 1: publish good_tool normally.
     with patch(
-        "keystone_mcp.surface.reconciler.fetch_upstream_tools",
+        "keystone_mcp.router.upstream.fetch_upstream_tools",
         new_callable=AsyncMock,
         side_effect=_fetch_returning([_FakeSchemaTool("good_tool", _GOOD_SCHEMA)]),
     ):
@@ -360,7 +360,7 @@ async def test_failed_update_keeps_old_tool_and_removal_still_works(
     with (
         caplog.at_level(logging.ERROR),
         patch(
-            "keystone_mcp.surface.reconciler.fetch_upstream_tools",
+            "keystone_mcp.router.upstream.fetch_upstream_tools",
             new_callable=AsyncMock,
             side_effect=_fetch_returning(
                 [_FakeSchemaTool("good_tool", _GOOD_SCHEMA, description="good tool, v2")]
@@ -383,7 +383,7 @@ async def test_failed_update_keeps_old_tool_and_removal_still_works(
     # removed now -- the failed update in tick 2 must not have orphaned it
     # from the fingerprint bookkeeping that drives removal.
     with patch(
-        "keystone_mcp.surface.reconciler.fetch_upstream_tools",
+        "keystone_mcp.router.upstream.fetch_upstream_tools",
         new_callable=AsyncMock,
         side_effect=_fetch_returning([_FakeSchemaTool("other_tool", _GOOD_SCHEMA)]),
     ):
@@ -427,7 +427,7 @@ async def test_enum_change_triggers_update(reconciler_stack, caplog):
         return _fake_fetch
 
     with patch(
-        "keystone_mcp.surface.reconciler.fetch_upstream_tools",
+        "keystone_mcp.router.upstream.fetch_upstream_tools",
         new_callable=AsyncMock,
         side_effect=_fetch_returning([_FakeSchemaTool("set_mode", _ENUM_SCHEMA_V1)]),
     ):
@@ -442,7 +442,7 @@ async def test_enum_change_triggers_update(reconciler_stack, caplog):
     with (
         caplog.at_level(logging.INFO),
         patch(
-            "keystone_mcp.surface.reconciler.fetch_upstream_tools",
+            "keystone_mcp.router.upstream.fetch_upstream_tools",
             new_callable=AsyncMock,
             side_effect=_fetch_returning([_FakeSchemaTool("set_mode", _ENUM_SCHEMA_V2)]),
         ),
@@ -595,7 +595,7 @@ async def test_upstream_down_at_start_is_added_when_it_comes_up():
     reconciler.seed_snapshots()
 
     with patch(
-        "keystone_mcp.surface.reconciler.fetch_upstream_tools",
+        "keystone_mcp.router.upstream.fetch_upstream_tools",
         new_callable=AsyncMock,
         return_value=[_FakeTool("read"), _FakeTool("write")],
     ):
@@ -617,7 +617,7 @@ async def test_upstream_lost_after_start_keeps_tools_and_is_reported(
     with (
         caplog.at_level(logging.WARNING, logger=reconciler_module.__name__),
         patch(
-            "keystone_mcp.surface.reconciler.fetch_upstream_tools",
+            "keystone_mcp.router.upstream.fetch_upstream_tools",
             new_callable=AsyncMock,
             side_effect=UpstreamListToolsError("reports down"),
         ),
@@ -652,7 +652,7 @@ async def test_upstream_recovery_is_logged(reconciler_stack, caplog: pytest.LogC
         # to one module.
         caplog.at_level(logging.INFO),
         patch(
-            "keystone_mcp.surface.reconciler.fetch_upstream_tools",
+            "keystone_mcp.router.upstream.fetch_upstream_tools",
             new_callable=AsyncMock,
             return_value=[_FakeTool("reports_read"), _FakeTool("reports_write")],
         ),
@@ -734,7 +734,7 @@ async def test_drift_check_runs_when_unavailable_upstream_comes_up(
     with (
         caplog.at_level(logging.ERROR),
         patch(
-            "keystone_mcp.surface.reconciler.fetch_upstream_tools",
+            "keystone_mcp.router.upstream.fetch_upstream_tools",
             new_callable=AsyncMock,
             return_value=[_FakeTool("search")],
         ),
@@ -766,7 +766,7 @@ async def test_drift_check_runs_when_upstream_comes_up_with_empty_list(
     with (
         caplog.at_level(logging.ERROR),
         patch(
-            "keystone_mcp.surface.reconciler.fetch_upstream_tools",
+            "keystone_mcp.router.upstream.fetch_upstream_tools",
             new_callable=AsyncMock,
             return_value=[],
         ),

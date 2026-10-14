@@ -331,7 +331,9 @@ def build_server(
         RbacPolicyManager(
             settings,
             upstream_catalog_state=lambda: upstreams.catalog_state(),
-            extra_catalog_names=lambda: upstreams.content.rbac_names(),
+            extra_catalog_names=lambda: (
+                upstreams.content.rbac_names() | upstreams.content.legacy_rbac_names()
+            ),
         )
         if settings.rbac_enabled
         else None

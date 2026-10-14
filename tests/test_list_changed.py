@@ -24,7 +24,7 @@ from fastmcp import Client
 from fastmcp.utilities.tests import asgi_server
 from mcp.client.subscriptions import listen as listen_subscriptions
 
-import keystone_mcp.surface.reconciler as reconciler_module
+import keystone_mcp.router.upstream as upstream_module
 from conftest import BASE_URL, VALID_TOKEN, obtain_access_token
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import Settings
@@ -76,18 +76,18 @@ async def _fetch_from(app):
     tick and the next, without needing to fabricate ``mcp_types.Tool``
     objects by hand.
     """
-    real_fetch = reconciler_module.fetch_upstream_tools
+    real_fetch = upstream_module.fetch_upstream_tools
     factory_builder = asgi_http_client_factory(app)
 
     async def fake_fetch(url, **kwargs):
         kwargs["httpx_client_factory"] = factory_builder(kwargs.get("timeout_seconds", 5.0))
         return await real_fetch(url, **kwargs)
 
-    reconciler_module.fetch_upstream_tools = fake_fetch
+    upstream_module.fetch_upstream_tools = fake_fetch
     try:
         yield
     finally:
-        reconciler_module.fetch_upstream_tools = real_fetch
+        upstream_module.fetch_upstream_tools = real_fetch
 
 
 def _legacy_client(mcp, received: list) -> Client:
