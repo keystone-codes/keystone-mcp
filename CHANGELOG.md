@@ -94,6 +94,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ### Fixed
 
+- In `observe` mode, a resource read that matches several RBAC names is signed as a denial when any of those names would be denied.
 - Minimum versions: `redis>=5.0.1` (5.0.0 has no `Redis.aclose()`, used after every users-directory change from the CLI) and `pyyaml>=6.0.1` (6.0 does not build on Python 3.12).
 - Startup refuses a users directory that declares an unknown capability name.
 - The HTTP users directory treats a resolve response whose `email` field does not match the requested subject as nonexistent.
