@@ -510,8 +510,8 @@ Why: [ADR 0004](adr/0004-redis-is-required.md).
 | `KEYSTONE_MCP_DEV_TOKENS` | `""` | Local profile only; comma-separated DEV tokens for the sign-in page. In production issue API keys from the users directory instead. |
 | `KEYSTONE_MCP_ENV_FILE` | (unset) | Selects which dotenv-style file to load before settings are read; must be set in the process environment (not inside the file itself). Empty string disables loading; unset uses `.env` in the working directory when present. |
 | `KEYSTONE_MCP_LOGIN_PROVIDERS_PATH` | `""` | Path to a YAML file listing sign-in providers (Google, Okta, any OIDC issuer, API key). When set, it replaces the legacy variables below. See [login-providers.md](login-providers.md). |
-| `KEYSTONE_MCP_PRIMARY_LOGIN_METHOD` | `api_key` | Deprecated since 0.5.0 (kept until the next major version); see [login-providers.md](login-providers.md). Login method shown first; must be in `ENABLED_LOGIN_METHODS`. |
-| `KEYSTONE_MCP_ENABLED_LOGIN_METHODS` | `api_key` | Deprecated since 0.5.0 (kept until the next major version); see [login-providers.md](login-providers.md). Comma-separated set of login methods offered when no providers file is configured. |
+| `KEYSTONE_MCP_PRIMARY_LOGIN_METHOD` | `api_key` | Deprecated since 0.5.0 (removed in 2.0); see [login-providers.md](login-providers.md). Login method shown first; must be in `ENABLED_LOGIN_METHODS`. |
+| `KEYSTONE_MCP_ENABLED_LOGIN_METHODS` | `api_key` | Deprecated since 0.5.0 (removed in 2.0); see [login-providers.md](login-providers.md). Comma-separated set of login methods offered when no providers file is configured. |
 | `KEYSTONE_MCP_LOGIN_DEFAULT_LANG` | `en` | Login-page fallback language when no explicit choice, `km_lang` cookie, or `Accept-Language` match applies: `ar`, `en`, `he`, or `ru`. Language order on the page: `?lang=` override, then the `km_lang` cookie (set only after an explicit switch), then the browser's `Accept-Language`, then this setting. |
 | `KEYSTONE_MCP_LOGIN_IDENTITY_BINDING` | `off` | `bind`: remember the identity provider account (`iss`, `sub`) a person first signs in with, and refuse a later sign-in from any other account with the same e-mail. Needs a users directory with the `identity_binding` capability (the built-in one has it). Reset with `keystone-mcp users unbind-identity --email`. |
 | `KEYSTONE_MCP_LOGIN_BRAND` | `Keystone-MCP` | Name shown in the sign-in page header, title, and footer (1–64 characters, no logo image). |
@@ -523,9 +523,9 @@ external fonts, scripts, or remote images; a custom logo file is not supported.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `KEYSTONE_MCP_GOOGLE_CLIENT_ID` | `""` | Deprecated since 0.5.0 (kept until the next major version); see [login-providers.md](login-providers.md). Required when `google` is an enabled login method and no providers file is set. |
-| `KEYSTONE_MCP_GOOGLE_CLIENT_SECRET` | `""` | Deprecated since 0.5.0 (kept until the next major version); see [login-providers.md](login-providers.md). Required when `google` is an enabled login method and no providers file is set. |
-| `KEYSTONE_MCP_GOOGLE_ALLOWED_DOMAIN` | `""` | Deprecated since 0.5.0 (kept until the next major version); see [login-providers.md](login-providers.md). Optional Google Workspace domain restriction. |
+| `KEYSTONE_MCP_GOOGLE_CLIENT_ID` | `""` | Deprecated since 0.5.0 (removed in 2.0); see [login-providers.md](login-providers.md). Required when `google` is an enabled login method and no providers file is set. |
+| `KEYSTONE_MCP_GOOGLE_CLIENT_SECRET` | `""` | Deprecated since 0.5.0 (removed in 2.0); see [login-providers.md](login-providers.md). Required when `google` is an enabled login method and no providers file is set. |
+| `KEYSTONE_MCP_GOOGLE_ALLOWED_DOMAIN` | `""` | Deprecated since 0.5.0 (removed in 2.0); see [login-providers.md](login-providers.md). Optional Google Workspace domain restriction. |
 
 A client cannot supply its own email. The address comes from the verified
 login. Redirect sign-in also requires the address to already exist in the users
@@ -576,8 +576,8 @@ schedule as a self-registered one (`KEYSTONE_MCP_REFRESH_TOKEN_TTL` /
 lifetime is renewed on every token issuance. If nobody has used the client
 for longer than that, re-run the script with the same `client_id` — writing
 the client again is idempotent and simply restores it. A dedicated CLI
-(`keystone-mcp oauth register-client`) is planned for a later release; until
-then this script is the supported path.
+(`keystone-mcp oauth register-client`) is not shipped yet; this script is the
+supported path.
 
 ## RBAC, audit and metrics
 

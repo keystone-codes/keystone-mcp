@@ -210,6 +210,8 @@ def parse_refresh_meta(raw: str | None) -> RefreshMeta | None:
         if "interactive" in data:
             interactive = data["interactive"] is True
         else:
+            # Kept until 2.0: sessions upgraded from 0.4.x still carry refresh
+            # markers without ``interactive``, and they must survive an upgrade.
             interactive = auth_method == "google"
         auth_time_raw = data.get("auth_time")
         auth_time = (
@@ -2740,7 +2742,11 @@ class KeystoneOAuthProvider(OAuthProvider):
         )
 
     async def _read_refresh_meta(self, refresh_token: str) -> RefreshMeta | None:
-        """Return parsed session metadata for a refresh token's marker."""
+        """Return parsed session metadata for a refresh token's marker.
+
+        Kept until 2.0: sessions upgraded from 0.4.x still carry refresh markers
+        without ``interactive``, and they must survive an upgrade.
+        """
         digest = token_digest(refresh_token)
         raw = await self._pending_store.get(_NS_REFRESH_AUTH, digest)
         if raw is None:

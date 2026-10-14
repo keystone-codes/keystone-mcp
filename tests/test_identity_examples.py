@@ -138,6 +138,27 @@ def test_hello_upstream_copy_matches_reference():
     assert HELLO_COPY_PATH.read_bytes() == REFERENCE_PATH.read_bytes()
 
 
+def test_python_example_refuses_plain_http_jwks_url(reference):
+    with pytest.raises(reference.IdentityError, match="jwks_url must use https"):
+        reference.verify_keystone_identity(
+            "not-a-jwt",
+            jwks_url="http://keystone.example/jwks.json",
+            audience="hello",
+            issuer="https://keystone.example",
+        )
+
+
+def test_python_example_allows_loopback_http_jwks_url(reference):
+    with pytest.raises(reference.IdentityError) as exc:
+        reference.verify_keystone_identity(
+            "not-a-jwt",
+            jwks_url="http://127.0.0.1:9/jwks.json",
+            audience="hello",
+            issuer="https://keystone.example",
+        )
+    assert "jwks_url must use https" not in str(exc.value)
+
+
 def test_python_reference_requires_issuer(reference, vector):
     with pytest.raises(TypeError):
         reference.verify_keystone_identity(

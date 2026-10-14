@@ -3,7 +3,7 @@
 Two `Adapter` implementations in `keystone_mcp.contrib.adapters`, shipped as
 a starting point for a fork — see [contrib/README.md](README.md) for what
 "contrib" means and why they are not covered by the compatibility promise
-(`docs/compatibility.md`).
+([compatibility.md](../compatibility.md)).
 
 Neither adapter is registered by Keystone-MCP itself. To use one, register a
 route with it as the target:

@@ -25,10 +25,9 @@ if TYPE_CHECKING:
     from keystone_mcp.user_directory.protocol import UserDirectory
 
 #: Published-name globs that administer this server: whoever cannot reach
-#: these cannot manage people or policy at all. ``policy_*`` is reserved by
-#: this release even though V01 ships no ``policy_*`` tool yet (V02 does) --
-#: checking it now means a V01-era change cannot accidentally create a
-#: deployment no future ``policy_*`` tool could recover from.
+#: these cannot manage people or policy at all. ``policy_*`` is included so
+#: that no policy change can leave a deployment that nobody can administer
+#: through the tools.
 _ADMINISTERING_PATTERNS: tuple[str, ...] = ("users_*", "policy_*")
 
 

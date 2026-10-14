@@ -27,6 +27,9 @@ server.tool("myTool", schema, async (args, extra) => {
 `list_tools` calls never carry the header -- only verify it inside a tool
 call.
 
+For ES256, `jwksUrl` must use `https` (plain `http` is allowed only on
+loopback hosts).
+
 ## Manual check against the shared test vector
 
 ```bash
