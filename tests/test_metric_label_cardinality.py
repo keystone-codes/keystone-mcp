@@ -235,9 +235,11 @@ async def test_proxied_tool_keeps_its_labels(
     settings = _base_settings(policy_path)
     before = _counter_snapshot("keystone_mcp_tool_call_attempts")
 
-    async with _built_client(
-        settings, policy_path, upstreams_json=upstreams_json
-    ) as (client, _registry, _obs):
+    async with _built_client(settings, policy_path, upstreams_json=upstreams_json) as (
+        client,
+        _registry,
+        _obs,
+    ):
         await client.call_tool("hello_greet", {"name": "world"})
 
     after = _counter_snapshot("keystone_mcp_tool_call_attempts")
@@ -270,9 +272,11 @@ async def test_unknown_prompt_and_resource_uri_are_unknown(
     settings = _base_settings(policy_path)
     before = _counter_snapshot("keystone_mcp_rbac_decisions")
 
-    async with _built_client(
-        settings, policy_path, upstreams_json=upstreams_json
-    ) as (client, _registry, _obs):
+    async with _built_client(settings, policy_path, upstreams_json=upstreams_json) as (
+        client,
+        _registry,
+        _obs,
+    ):
         for _ in range(200):
             with pytest.raises(Exception):
                 await client.get_prompt(f"rand_{secrets.token_hex(6)}", {})
@@ -314,7 +318,6 @@ async def test_tool_added_by_reconciler_gets_its_own_label(
         matching = [
             s
             for s in increased
-            if _label_value(s, "tool") == published
-            and _label_value(s, "tool_family") == "probe"
+            if _label_value(s, "tool") == published and _label_value(s, "tool_family") == "probe"
         ]
         assert len(matching) >= 1
