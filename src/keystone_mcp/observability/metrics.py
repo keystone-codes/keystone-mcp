@@ -215,6 +215,11 @@ _THROTTLE_BACKEND_ERRORS = Counter(
     "Redis throttle backend failures that were treated as allowed",
     ["kind"],
 )
+_HTTP_ORIGIN_NULL = Counter(
+    "keystone_mcp_http_origin_null_total",
+    "Requests that carried Origin: null, by route group",
+    ["route"],
+)
 
 
 class RbacMetrics:
@@ -506,3 +511,7 @@ def record_upstream_input_rounds_exceeded(*, namespace: str) -> None:
 
 def record_throttle_backend_error(*, kind: str) -> None:
     _THROTTLE_BACKEND_ERRORS.labels(kind=kind).inc()
+
+
+def count_origin_null(route: str) -> None:
+    _HTTP_ORIGIN_NULL.labels(route=route).inc()

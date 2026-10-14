@@ -67,6 +67,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 - Claim `rbac_decision` in `X-Keystone-Identity`.
 - `docs/upgrading.md`: what to check before upgrading and how to roll back.
 - Alert rule examples for the behaviour added in 0.6.0 (administration refusals, refresh replays, API-key and DCR limits, upstream limits) in `docs/observability-rbac.md`.
+- Metric `keystone_mcp_http_origin_null_total`.
 
 ### Changed
 
@@ -98,6 +99,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 - The container healthcheck reads `.env` and `KEYSTONE_MCP_HOST`.
 - Startup errors (settings, upstream registry, policy file, users directory) are reported in one line.
 - CLI commands ignore invalid settings they do not use and say so.
+- Failed sign-in attempts are limited per e-mail and source network, in Redis: someone else's failed attempts no longer lock a person out, and the limit is shared by all replicas.
 
 ### Deprecated
 
@@ -186,9 +188,12 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 - In `enforce` mode a resource without an RBAC name is no longer listed.
 - OAuth access and refresh tokens are stored in Redis under their SHA-256 hash; production warns when `KEYSTONE_MCP_REDIS_URL` has no password on a non-loopback host (W22).
 - Client-visible proxy errors no longer include upstream transport details, upstream tool names or upstream resource URIs.
+- The language choice cookie is kept over https (`__Host-km_lang` now uses `Path=/`).
+- A sign-in provider title with `&` is shown correctly on the login button.
 
 ### Migration
 
+- `KEYSTONE_MCP_LOGIN_THROTTLE_EMAIL_MAX` now counts per e-mail and source network; no configuration change is needed.
 - Roles that list administration tools by name (instead of `users_*`) need `users_delete` and `users_export` to remain full administrators.
 - Log searches by the unsalted subject hash in session-revocation, throttle and directory-failure lines must use the salted pseudonym (the same value as in audit events).
 - Services that ran in `observe` and read `roles` from the assertion: a denied call now has `roles: []`; check `rbac_decision`. Code copied from the identity examples: pass `issuer` (your `KEYSTONE_MCP_BASE_URL` without a trailing slash).

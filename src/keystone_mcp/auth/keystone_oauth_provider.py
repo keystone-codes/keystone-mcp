@@ -51,7 +51,7 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from starlette.routing import Route
 
-from keystone_mcp.auth.login_pending_store import LoginPendingStore
+from keystone_mcp.auth.login_pending_store import LoginPendingStore, normalize_login_key_prefix
 from keystone_mcp.auth.oauth_store import (
     CredentialRevokedError,
     KeystoneRefreshToken,
@@ -61,7 +61,10 @@ from keystone_mcp.auth.oauth_store import (
     token_digest,
 )
 from keystone_mcp.auth.throttle import (
+    InMemoryLoginFailureLimiter,
     LoginAttemptThrottle,
+    LoginFailureLimiter,
+    RedisLoginFailureLimiter,
     login_throttle_response,
     peer_host,
     wrap_asgi_with_ip_login_throttle,
@@ -1034,6 +1037,7 @@ class KeystoneOAuthProvider(OAuthProvider):
         user_resolver: UserDirectoryResolver | None = None,
         login_throttle: LoginAttemptThrottle | None = None,
         oauth_endpoint_throttle: LoginAttemptThrottle | None = None,
+        login_failure_limiter: LoginFailureLimiter | None = None,
         observability: RbacObservability | None = None,
         identity_binder: IdentityBindingDirectory | None = None,
     ) -> None:
@@ -1061,6 +1065,20 @@ class KeystoneOAuthProvider(OAuthProvider):
             email_max=0,
             window_seconds=settings.login_throttle_window_seconds,
         )
+        if login_failure_limiter is not None:
+            self._login_failure_limiter = login_failure_limiter
+        else:
+            shared_redis = getattr(login_pending_store, "redis", None)
+            if shared_redis is not None:
+                prefix = normalize_login_key_prefix(settings.login_pending_key_prefix)
+                self._login_failure_limiter = RedisLoginFailureLimiter(
+                    shared_redis,
+                    key_prefix=prefix,
+                    max_failures=settings.login_throttle_email_max,
+                    window_seconds=settings.login_throttle_window_seconds,
+                )
+            else:
+                self._login_failure_limiter = InMemoryLoginFailureLimiter(self._login_throttle)
         self._observability = observability
         self._identity_binder = identity_binder
 
@@ -1218,7 +1236,7 @@ class KeystoneOAuthProvider(OAuthProvider):
             self._lang_cookie_name(),
             lang,
             max_age=_LANG_COOKIE_MAX_AGE_SECONDS,
-            path="/login",
+            path=self._csrf_cookie_path(),
             httponly=True,
             samesite="lax",
             secure=_is_https(self._settings.base_url),
@@ -2251,7 +2269,8 @@ class KeystoneOAuthProvider(OAuthProvider):
         # email is throttled before the provider ever runs.
         email = normalize_email(str(form.get("email", "")))
 
-        allowed_email, retry_email = self._login_throttle.check_email_failures(email)
+        client_ip = peer_host(request)
+        allowed_email, retry_email = await self._login_failure_limiter.check(email, client_ip)
         if not allowed_email:
             return login_throttle_response(retry_email)
 
@@ -2283,7 +2302,7 @@ class KeystoneOAuthProvider(OAuthProvider):
                     status_code=503,
                 )
             logger.info("login rejected by provider %s: %s", form_provider.name, exc.reason)
-            self._login_throttle.record_login_failure(email)
+            await self._login_failure_limiter.record_failure(email, client_ip)
             client = await self._store.get_client(pending.client_id)
             if client is None:
                 return self._html_error(request, lang, "error_request", 400)
@@ -2303,7 +2322,7 @@ class KeystoneOAuthProvider(OAuthProvider):
             # with a traceback, shown to the user the same as a bad
             # credential since there is no more specific page for this form.
             logger.exception("unexpected error from login provider %s", form_provider.name)
-            self._login_throttle.record_login_failure(email)
+            await self._login_failure_limiter.record_failure(email, client_ip)
             client = await self._store.get_client(pending.client_id)
             if client is None:
                 return self._html_error(request, lang, "error_request", 400)
@@ -2319,7 +2338,7 @@ class KeystoneOAuthProvider(OAuthProvider):
 
         verified_identity = self._verify_identity_route(identity, form_provider.name)
         if verified_identity is None:
-            self._login_throttle.record_login_failure(email)
+            await self._login_failure_limiter.record_failure(email, client_ip)
             client = await self._store.get_client(pending.client_id)
             if client is None:
                 return self._html_error(request, lang, "error_request", 400)
@@ -2357,7 +2376,7 @@ class KeystoneOAuthProvider(OAuthProvider):
                     status_code=503,
                 )
             if not resolved.exists or resolved.is_blocked:
-                self._login_throttle.record_login_failure(identity.email)
+                await self._login_failure_limiter.record_failure(identity.email, client_ip)
                 client = await self._store.get_client(pending.client_id)
                 if client is None:
                     return self._html_error(request, lang, "error_request", 400)
