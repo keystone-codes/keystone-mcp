@@ -1,0 +1,112 @@
+name: keystone-upgrade
+
+networks:
+  upgrade:
+
+volumes:
+  upgrade-postgres-data:
+  upgrade-redis-data:
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    networks:
+      - upgrade
+    environment:
+      POSTGRES_USER: keystone
+      POSTGRES_DB: keystone
+      POSTGRES_PASSWORD: upgrade_pg_pass
+    volumes:
+      - upgrade-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keystone -d keystone"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    networks:
+      - upgrade
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - upgrade-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+
+  hello-upstream:
+    build: ../../examples/hello-upstream
+    image: keystone-hello-upstream:upgrade
+    restart: unless-stopped
+    networks:
+      - upgrade
+    environment:
+      HELLO_IDENTITY_SECRET: upgrade-hello-identity-secret-0123456789ab
+      HELLO_IDENTITY_AUDIENCE: hello
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/healthz')",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+
+  keystone:
+    image: ${KEYSTONE_IMAGE:?Set KEYSTONE_IMAGE}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      hello-upstream:
+        condition: service_healthy
+    networks:
+      - upgrade
+    ports:
+      - "127.0.0.1:18080:8080"
+    env_file:
+      - ${KEYSTONE_ENV_FILE:-env/current.env}
+    volumes:
+      - ./config:/etc/keystone-mcp:ro
+    healthcheck:
+      test: ["CMD", "python", "-m", "keystone_mcp.healthcheck", "/readyz"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+
+  keystone-alt:
+    image: ${KEYSTONE_ALT_IMAGE:-ghcr.io/keystone-codes/keystone-mcp:0.5.0}
+    profiles: ["mixed"]
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      hello-upstream:
+        condition: service_healthy
+    networks:
+      - upgrade
+    ports:
+      - "127.0.0.1:18081:8080"
+    env_file:
+      - ${KEYSTONE_ALT_ENV_FILE:-env/0.5.0.env}
+    volumes:
+      - ./config:/etc/keystone-mcp:ro
+    healthcheck:
+      test: ["CMD", "python", "-m", "keystone_mcp.healthcheck", "/readyz"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s

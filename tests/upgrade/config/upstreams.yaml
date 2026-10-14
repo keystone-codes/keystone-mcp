@@ -1,0 +1,8 @@
+schema_version: 1
+entries:
+  - name: hello
+    url: http://hello-upstream:8081/mcp
+    namespace: hello
+    enabled: true
+    auth:
+      identity_secret_env: KEYSTONE_MCP_UPSTREAM_HELLO_IDENTITY_SECRET

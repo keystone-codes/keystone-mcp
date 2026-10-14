@@ -1,0 +1,48 @@
+# Tool names that differ from the previous version's tools/list snapshot.
+# Every listed name must include a reason.
+
+"0.4.0->0.5.0":
+  removed:
+    - name: create_upload_url
+      reason: "File upload tools were removed in 0.5.0."
+    - name: get_download_link
+      reason: "File upload tools were removed in 0.5.0."
+  added:
+    - name: api_keys_issue
+      reason: "API keys for people and service accounts landed in 0.5.0."
+    - name: api_keys_list
+      reason: "API keys for people and service accounts landed in 0.5.0."
+    - name: api_keys_revoke
+      reason: "API keys for people and service accounts landed in 0.5.0."
+    - name: service_accounts_add
+      reason: "Service accounts landed in 0.5.0."
+    - name: service_accounts_list
+      reason: "Service accounts landed in 0.5.0."
+    - name: service_accounts_update
+      reason: "Service accounts landed in 0.5.0."
+    - name: users_logout
+      reason: "Session revocation tool landed in 0.5.0."
+    - name: policy_read
+      reason: "In-band policy administration landed in 0.5.0."
+    - name: policy_catalog
+      reason: "In-band policy administration landed in 0.5.0."
+    - name: policy_validate
+      reason: "In-band policy administration landed in 0.5.0."
+    - name: policy_role_set
+      reason: "In-band policy administration landed in 0.5.0."
+    - name: policy_role_delete
+      reason: "In-band policy administration landed in 0.5.0."
+    - name: policy_allow_add
+      reason: "In-band policy administration landed in 0.5.0."
+    - name: policy_allow_remove
+      reason: "In-band policy administration landed in 0.5.0."
+    - name: policy_list_set
+      reason: "In-band policy administration landed in 0.5.0."
+    - name: policy_rollback
+      reason: "In-band policy administration landed in 0.5.0."
+
+"0.5.0->0.6.0":
+  removed: []
+  added:
+    - name: users_delete
+      reason: "Built-in person deletion landed in 0.6.0."

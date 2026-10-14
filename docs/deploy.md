@@ -130,7 +130,8 @@ DEPLOY_REF=v<new> ./scripts/deploy.sh
 ```
 
 Run `keystone-mcp config check` against the live `.env` before each upgrade.
-The script fetches the requested tag or branch (`DEPLOY_REF`, or the deprecated
+See [upgrading.md](upgrading.md) for backup, migration order, rollback, and
+mixed-version rules. The script fetches the requested tag or branch (`DEPLOY_REF`, or the deprecated
 `DEPLOY_BRANCH` alias), reinstalls with `uv sync --locked --no-dev --no-editable`,
 restarts the configured systemd unit, checks `/healthz`, then polls `/readyz`
 until the service is ready (or times out). Override behaviour with

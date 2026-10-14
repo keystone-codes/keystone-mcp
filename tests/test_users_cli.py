@@ -1611,6 +1611,89 @@ roles:
     assert "no active full administrator" in capsys.readouterr().err
 
 
+def test_db_current_exit_codes(tmp_path: Path, monkeypatch) -> None:
+    import alembic.command
+    import alembic.config
+
+    db_path = tmp_path / "users.db"
+    monkeypatch.setenv("KEYSTONE_MCP_USERS_DB_URL", f"sqlite:///{db_path}")
+    engine = create_users_engine(f"sqlite:///{db_path}")
+    cfg = alembic.config.Config()
+    cfg.set_main_option("script_location", "keystone_mcp.users:migrations")
+    with engine.begin() as conn:
+        cfg.attributes["connection"] = conn
+        alembic.command.upgrade(cfg, "0001_initial")
+    engine.dispose()
+    assert main(["users", "db", "current"]) == users_cli.EXIT_DB_OLDER
+
+    engine = create_users_engine(f"sqlite:///{db_path}")
+    upgrade_to_head(engine)
+    engine.dispose()
+    assert main(["users", "db", "current"]) == users_cli.EXIT_OK
+
+    engine = create_users_engine(f"sqlite:///{db_path}")
+    cfg = alembic.config.Config()
+    cfg.set_main_option("script_location", "keystone_mcp.users:migrations")
+    with engine.begin() as conn:
+        cfg.attributes["connection"] = conn
+        alembic.command.downgrade(cfg, "0003_api_keys")
+    engine.dispose()
+    assert main(["users", "db", "current"]) == users_cli.EXIT_DB_OLDER
+
+    db_path_newer = tmp_path / "newer.db"
+    monkeypatch.setenv("KEYSTONE_MCP_USERS_DB_URL", f"sqlite:///{db_path_newer}")
+    engine = create_users_engine(f"sqlite:///{db_path_newer}")
+    upgrade_to_head(engine)
+    with engine.begin() as conn:
+        conn.execute(
+            __import__("sqlalchemy").text(
+                "UPDATE keystone_users_alembic_version SET version_num = '9999_future'"
+            )
+        )
+    engine.dispose()
+    assert main(["users", "db", "current"]) == users_cli.EXIT_DB_NEWER
+
+
+def test_db_downgrade_requires_yes_without_tty(tmp_path: Path, monkeypatch, capsys) -> None:
+    db_path = tmp_path / "users.db"
+    monkeypatch.setenv("KEYSTONE_MCP_USERS_DB_URL", f"sqlite:///{db_path}")
+    engine = create_users_engine(f"sqlite:///{db_path}")
+    upgrade_to_head(engine)
+    engine.dispose()
+
+    monkeypatch.setattr(users_cli.sys.stdin, "isatty", lambda: False)
+    exit_code = main(["users", "db", "downgrade", "--to", "0003_api_keys"])
+    assert exit_code == users_cli.EXIT_IMPORT_SOURCE
+    assert "refusing to downgrade without --yes" in capsys.readouterr().err
+
+
+def test_db_downgrade_does_not_auto_upgrade(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from keystone_mcp.users import migrate as users_migrate
+    from keystone_mcp.users.migrate import current_revision, downgrade_one_step
+
+    db_path = tmp_path / "users.db"
+    monkeypatch.setenv("KEYSTONE_MCP_USERS_DB_URL", f"sqlite:///{db_path}")
+    engine = create_users_engine(f"sqlite:///{db_path}")
+    upgrade_to_head(engine)
+    downgrade_one_step(engine)
+    assert current_revision(engine) == "0003_api_keys"
+    engine.dispose()
+
+    def _refuse_upgrade(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("upgrade_to_head must not run during db downgrade")
+
+    monkeypatch.setattr(users_migrate, "upgrade_to_head", _refuse_upgrade)
+
+    exit_code = main(["users", "db", "downgrade", "--to", "0002_service_accounts", "--yes"])
+    assert exit_code == users_cli.EXIT_OK
+
+    engine = create_users_engine(f"sqlite:///{db_path}")
+    assert current_revision(engine) == "0002_service_accounts"
+    engine.dispose()
+
+
 def test_export_writes_file_with_0600(tmp_path: Path, monkeypatch) -> None:
     db_path = tmp_path / "keystone-users.db"
     monkeypatch.setenv("KEYSTONE_MCP_USERS_DB_URL", f"sqlite:///{db_path}")

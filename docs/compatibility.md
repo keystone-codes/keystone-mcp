@@ -317,6 +317,8 @@ Frozen since 0.5.0. Exit codes are part of the contract; command output text is 
 | `keystone-mcp catalog export` | `0` success; `1` validation error |
 | `keystone-mcp upstream validate --path <file>` | `0` ok; `1` validation or I/O error |
 | `keystone-mcp users grant-admin`, `users import`, `users admins`, `users block`, `users unblock`, `users logout`, `users export`, `users delete`, `users unbind-identity` | per `users/cli.py` (`0` success, non-zero documented failures; `users admins` and `users delete` on the last administrator exit `1`; `users delete` exits `2` when confirmation is refused, `3` when the person was removed but sessions were not revoked) |
+| `keystone-mcp users db current` | `0` when the database revision matches this binary; `4` when the database is newer; `5` when it is older |
+| `keystone-mcp users db downgrade --to <revision> [--yes]` | `0` on success; `1` usage; `2` when `--yes` is missing and stdin is not a terminal; `3` database or downgrade error |
 | `keystone-mcp keys issue`, `keys list`, `keys revoke` | `0` on success, non-zero on failure |
 | `keystone-mcp service-accounts add`, `service-accounts list`, `service-accounts update` | `0` on success, non-zero on failure |
 | `keystone-mcp upstream validate` | `0` ok; `1` validation or I/O error |
@@ -348,7 +350,8 @@ Frozen since 0.5.0 for the built-in SQL schema (SQLite or Postgres URL in
 | `keystone_users_alembic_version` | Alembic revision tracking |
 
 Upgrading to a new minor release runs migrations automatically at startup.
-Downgrade after a migration is not supported. Tables belonging to other
+Downgrade is supported with `keystone-mcp users db downgrade` run by the newer
+version; see [upgrading.md](upgrading.md). Tables belonging to other
 applications in the same database are not modified.
 
 ## Redis

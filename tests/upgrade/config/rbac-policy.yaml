@@ -1,0 +1,12 @@
+version: "upgrade-1"
+default_deny: true
+roles:
+  administrator:
+    description: "Full access for upgrade stand."
+    allow: ["*"]
+  member:
+    description: "Hello tools only."
+    allow: ["hello_*"]
+  viewer:
+    description: "Read-only hello."
+    allow: ["hello_whoami"]

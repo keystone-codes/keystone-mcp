@@ -19,6 +19,8 @@ follow up with next steps as we investigate.
 
 Only the latest released minor version receives security fixes.
 See [docs/compatibility.md](docs/compatibility.md#supported-versions).
+When you move to a supported release, follow
+[docs/upgrading.md](docs/upgrading.md).
 
 Dependencies are audited on every PR and weekly (`uv audit`); release images
 are scanned by digest for `linux/amd64` and `linux/arm64` before they are
