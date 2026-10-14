@@ -1139,8 +1139,6 @@ class UpstreamRegistry:
 
     async def stop_connections(self) -> None:
         for cfg in self._upstreams:
-            if cfg.transport != "stdio":
-                continue
             await self._connections[cfg.namespace].stop()
 
     def upstream_readiness_snapshot(self) -> dict[str, dict[str, object]]:
@@ -1428,34 +1426,36 @@ class UpstreamRegistry:
                     f"stdio upstream {cfg.namespace!r} process not running"
                 )
         else:
+            conn = self._connections[cfg.namespace]
             list_kw = self._catalog_list_kwargs(cfg, discovery_timeout)
-            fetch_kw = {
-                **list_kw,
-                "httpx_client_factory": self._discovery_http_client_factory(discovery_timeout),
-                "headers": self.upstream_headers(cfg.namespace),
-            }
-            tools = await fetch_upstream_tools(cfg.url, **fetch_kw)
-            try:
-                prompts_raw = await fetch_upstream_prompts(cfg.url, **fetch_kw)
-            except UpstreamListToolsError as exc:
-                logger.warning(
-                    "upstream prompts refresh failed namespace=%s: %s; keeping previous prompts",
-                    cfg.namespace,
-                    exc,
-                )
-                prompts_raw = None
-            try:
-                resources_raw, templates_raw = await self._list_resources_for_config(
-                    cfg, discovery_timeout
-                )
-            except UpstreamListToolsError as exc:
-                logger.warning(
-                    "upstream resources refresh failed namespace=%s: %s; keeping previous resources",
-                    cfg.namespace,
-                    exc,
-                )
-                resources_raw = None
-                templates_raw = None
+            if not isinstance(conn, HttpUpstreamConnection):
+                raise TypeError(f"expected HTTP connection for {cfg.namespace!r}")
+            client = conn.catalog_client(timeout=discovery_timeout)
+            async with client:
+                tools = await list_upstream_tools(client, **list_kw)
+                try:
+                    prompts_raw = await list_upstream_prompts(client, **list_kw)
+                except UpstreamListToolsError as exc:
+                    logger.warning(
+                        "upstream prompts refresh failed namespace=%s: %s; "
+                        "keeping previous prompts",
+                        cfg.namespace,
+                        exc,
+                    )
+                    prompts_raw = None
+                try:
+                    resources_raw = await list_upstream_resources(client, **list_kw)
+                    templates_raw = await list_upstream_resource_templates(client, **list_kw)
+                except UpstreamListToolsError as exc:
+                    logger.warning(
+                        "upstream resources refresh failed namespace=%s: %s; "
+                        "keeping previous resources",
+                        cfg.namespace,
+                        exc,
+                    )
+                    resources_raw = None
+                    templates_raw = None
+                conn.remember_era(client)
 
         return UpstreamCatalogRead(
             tools=tools,

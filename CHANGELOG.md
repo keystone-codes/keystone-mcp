@@ -48,6 +48,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ### Changed
 
+- keystone-mcp remembers each HTTP upstream's protocol era from discovery and reuses connections per upstream: a tool call to an MCP 2026-07-28 upstream is one request, and discovery opens one session instead of four.
 - Management roles: a role that reaches any built-in administration tool is a management role, and a person whose roles reach all of them is a full administrator — both derived from the active policy, whatever the role names. Only a full administrator can give or take away a management role, or change, block, unblock, log out, or manage API keys of an account that holds one.
 - `resources/read` requires every RBAC name of the matching resources and templates in the URI's own namespace to be allowed.
 - Service accounts get `forbidden` from every administration tool that changes state (`users_*`, `service_accounts_*`, `api_keys_*`, `policy_*`); reading stays available. `tools/list` no longer shows a caller the tools it will be refused for lack of an interactive sign-in.
