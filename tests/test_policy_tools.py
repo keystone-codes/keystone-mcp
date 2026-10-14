@@ -76,6 +76,7 @@ def _build_harness(
     policy_tools: str = "full",
     observability: object | None = None,
     upstream_catalog_state: object | None = None,
+    extra_catalog_names: object | None = None,
 ) -> tuple[
     RouterRegistry, PolicyStore | None, RbacPolicyManager | None, InMemoryUserDirectory, Settings
 ]:
@@ -94,7 +95,11 @@ def _build_harness(
         register_catalog(registry, settings, directory=directory, observability=observability)
         return registry, None, None, directory, settings
 
-    manager = RbacPolicyManager(settings, upstream_catalog_state=upstream_catalog_state)
+    manager = RbacPolicyManager(
+        settings,
+        upstream_catalog_state=upstream_catalog_state,
+        extra_catalog_names=extra_catalog_names,
+    )
     manager.load_initial(registry)
     store = PolicyStore(
         settings=settings,
@@ -435,6 +440,93 @@ async def test_policy_mutation_emits_audit_event(
     observability.record_policy_mutation.assert_called()
     kwargs = observability.record_policy_mutation.call_args.kwargs
     assert kwargs["operation"] == "policy_allow_add"
+
+
+@pytest.mark.asyncio
+async def test_role_name_with_spaces_is_trimmed(tmp_path: Path) -> None:
+    registry, _store, _manager, _directory, settings = _build_harness(tmp_path)
+    result = await _call(
+        registry,
+        settings,
+        "policy_allow_add",
+        {"role": " editor ", "patterns": ["users_list"]},
+    )
+    assert result["state"] == "done"
+    assert result["role"]["name"] == "editor"
+
+
+@pytest.mark.asyncio
+async def test_rollback_accepts_expected_hash(tmp_path: Path) -> None:
+    registry, _store, _manager, _directory, settings = _build_harness(tmp_path)
+    read_before = await _call(registry, settings, "policy_read")
+    hash_before = read_before["file_hash"]
+    await _call(
+        registry, settings, "policy_allow_add", {"role": "editor", "patterns": ["users_list"]}
+    )
+    read_after_change = await _call(registry, settings, "policy_read")
+    ok = await _call(
+        registry,
+        settings,
+        "policy_rollback",
+        {"expected_hash": read_after_change["file_hash"]},
+    )
+    assert ok["state"] == "done"
+    assert ok["content_hash"] == hash_before
+    bad = await _call(registry, settings, "policy_rollback", {"expected_hash": "0" * 64})
+    assert bad["code"] == "policy_conflict"
+
+
+@pytest.mark.asyncio
+async def test_adapter_refusals_are_audited(tmp_path: Path) -> None:
+    observability = MagicMock()
+    registry, _store, _manager, _directory, settings = _build_harness(
+        tmp_path, observability=observability
+    )
+    validation = await _call(registry, settings, "policy_role_set", {"role": "", "allow": ["*"]})
+    assert validation["code"] == "validation_error"
+    observability.record_policy_mutation.assert_called()
+    assert observability.record_policy_mutation.call_args.kwargs["outcome"] == "refused"
+
+    observability.reset_mock()
+
+    async def broken_resolve(_email: str):
+        raise RuntimeError("directory down")
+
+    _directory.resolve_user = broken_resolve  # type: ignore[method-assign]
+    unavailable = await _call(
+        registry, settings, "policy_allow_add", {"role": "editor", "patterns": ["users_list"]}
+    )
+    assert unavailable["code"] == "service_unavailable"
+    observability.record_policy_mutation.assert_called()
+
+    observability.reset_mock()
+    read = await _call(registry, settings, "policy_read")
+    assert read["state"] == "done"
+    observability.record_policy_mutation.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_policy_catalog_lists_prompts_and_resources(tmp_path: Path) -> None:
+    registry, _store, _manager, _directory, settings = _build_harness(
+        tmp_path, extra_catalog_names=lambda: frozenset({"docs_readme"})
+    )
+    catalog = await _call(registry, settings, "policy_catalog")
+    names = {entry["name"]: entry["source"] for entry in catalog["tools"]}
+    assert names.get("docs_readme") == "live"
+
+
+@pytest.mark.asyncio
+async def test_allow_add_accepts_a_resource_name(tmp_path: Path) -> None:
+    registry, _store, _manager, _directory, settings = _build_harness(
+        tmp_path, extra_catalog_names=lambda: frozenset({"docs_readme"})
+    )
+    result = await _call(
+        registry,
+        settings,
+        "policy_allow_add",
+        {"role": "editor", "patterns": ["docs_readme"]},
+    )
+    assert result["state"] == "done"
 
 
 def test_namespace_policy_is_reserved() -> None:

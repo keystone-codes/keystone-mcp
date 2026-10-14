@@ -8,8 +8,7 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 from keystone_mcp.adapters.guards import require_human_actor
-from keystone_mcp.rbac.catalog import collect_live_tool_names
-from keystone_mcp.rbac.loader import PolicyLoadError
+from keystone_mcp.rbac.loader import PolicyLoadError, live_catalog_names
 from keystone_mcp.rbac.policy import PolicyContractError
 from keystone_mcp.rbac.policy_document import (
     LIST_FIELD_NAMES,
@@ -110,7 +109,7 @@ class PolicyAdminAdapter:
         args: dict[str, Any],
         request: Any,
     ) -> dict[str, Any]:
-        spec = request if isinstance(request, dict) else dict(args)
+        spec = dict(request) if isinstance(request, dict) else dict(args)
         name = route.name
 
         if name in _MUTATION_TOOLS:
@@ -126,11 +125,19 @@ class PolicyAdminAdapter:
 
         validation_error = self._validate_args(route, ctx, spec)
         if validation_error is not None:
+            if name in _MUTATION_TOOLS:
+                self._record_refusal(route, ctx, code=str(validation_error["code"]))
             return validation_error
+
+        if isinstance(spec.get("role"), str):
+            spec["role"] = spec["role"].strip()
+        if name == "policy_list_set" and isinstance(spec.get("list"), str):
+            spec["list"] = spec["list"].strip()
 
         if name in _MUTATION_TOOLS:
             actor_roles, roles_error = await self._actor_roles(route, ctx)
             if roles_error is not None:
+                self._record_refusal(route, ctx, code=str(roles_error["code"]))
                 return roles_error
         else:
             actor_roles = frozenset()
@@ -304,6 +311,7 @@ class PolicyAdminAdapter:
                 actor=actor,
                 actor_roles=actor_roles,
                 task_id=ctx.task_id,
+                expected_hash=spec.get("expected_hash"),
             )
             return self._done(
                 route,
@@ -522,7 +530,7 @@ def _catalog_payload(
     if policy is None:
         raise PolicyLoadError("no active RBAC policy loaded")
 
-    live_names = collect_live_tool_names(store.registry)
+    live_names = live_catalog_names(store.policy_manager, store.registry)
     snapshot = manager.catalog_snapshot()
     state = manager.upstream_catalog_state()
     namespaces = state.namespaces if state is not None else frozenset()

@@ -23,6 +23,7 @@ from keystone_mcp.rbac.policy import (
     CatalogValidationResult,
     PolicyContractError,
     RbacPolicy,
+    hash_policy_bytes,
     load_policy_file_with_hash,
     log_unreachable_tools,
     validate_policy_against_catalog,
@@ -238,7 +239,7 @@ def policy_files_content_hashes(settings: Settings) -> tuple[str | None, str | N
     return policy_hash, snapshot_hash
 
 
-def _live_catalog_names(
+def live_catalog_names(
     policy_manager: RbacPolicyManager,
     registry: RouterRegistry,
 ) -> frozenset[str]:
@@ -247,6 +248,9 @@ def _live_catalog_names(
     if extra is None:
         return names
     return names | extra()
+
+
+_live_catalog_names = live_catalog_names
 
 
 def log_live_catalog_drift(
@@ -363,16 +367,32 @@ class RbacPolicyManager:
     def reload(self, registry: RouterRegistry) -> PolicyReloadResult:
         """Hot-reload: swap on success, keep last valid snapshot on failure."""
         previous = self.snapshot
-        try:
-            candidate = self._load_and_validate(registry)
-        except (PolicyLoadError, PolicyContractError, OSError) as exc:
-            logger.warning("rbac policy hot-reload rejected: %s", exc)
-            return PolicyReloadResult(success=False, active=previous, error=str(exc))
+        last_error: str | None = None
+        for _attempt in range(3):
+            try:
+                candidate = self._load_and_validate(registry)
+            except (PolicyLoadError, PolicyContractError, OSError) as exc:
+                logger.warning("rbac policy hot-reload rejected: %s", exc)
+                return PolicyReloadResult(success=False, active=previous, error=str(exc))
 
-        with self._lock:
-            self._snapshot = candidate
-        self._emit_identity(candidate.identity)
-        return PolicyReloadResult(success=True, active=candidate)
+            try:
+                path = self.policy_path()
+                on_disk_hash = hash_policy_bytes(path.read_bytes())
+            except OSError as exc:
+                logger.warning("rbac policy hot-reload rejected: %s", exc)
+                return PolicyReloadResult(success=False, active=previous, error=str(exc))
+
+            if on_disk_hash != candidate.identity.content_hash:
+                last_error = "policy file kept changing during reload"
+                continue
+
+            with self._lock:
+                self._snapshot = candidate
+            self._emit_identity(candidate.identity)
+            return PolicyReloadResult(success=True, active=candidate)
+
+        logger.warning("rbac policy hot-reload rejected: %s", last_error)
+        return PolicyReloadResult(success=False, active=previous, error=last_error or "reload failed")
 
     def _load_and_validate(self, registry: RouterRegistry) -> PolicySnapshot:
         path = self.policy_path()

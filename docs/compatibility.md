@@ -203,7 +203,8 @@ to service accounts.
 
 **Policy administration** (`policy_*`): `policy_read`, `policy_catalog`,
 `policy_validate`, `policy_role_set`, `policy_role_delete`, `policy_allow_add`,
-`policy_allow_remove`, `policy_list_set`, `policy_rollback`. Published when
+`policy_allow_remove`, `policy_list_set`, `policy_rollback` (optional
+`expected_hash`). Published when
 `KEYSTONE_MCP_RBAC_MODE=enforce` and `KEYSTONE_MCP_POLICY_TOOLS` is not `off`;
 mutations require `full` and a writable policy file. Namespace `policy` is
 reserved in the upstream registry. Error codes:
