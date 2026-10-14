@@ -26,6 +26,7 @@ Keystone-MCP.
 - [ ] Startup refuses DEV tokens in production (`KEYSTONE_MCP_DEPLOYMENT_PROFILE=production` always rejects a non-empty `KEYSTONE_MCP_DEV_TOKENS`).
 - [ ] API keys are issued from the server (`keystone-mcp keys issue`); the `api_keys_issue` tool is not published in production.
 - [ ] Service accounts that call MCP over HTTP use Bearer API keys (`Authorization: Bearer ksk_…`), not a person's OAuth access token.
+- [ ] Set `KEYSTONE_MCP_SESSION_MAX_AGE_SECONDS=2592000` (30 days) so a person disabled at the identity provider loses access within that time.
 - [ ] A decision was made on dynamic client registration: left on (`KEYSTONE_MCP_OAUTH_DCR_ENABLED=true`, the default) or off with every client registered by hand (see [environment.md](environment.md#registering-a-client-manually)).
 - [ ] If only specific client applications are expected, `KEYSTONE_MCP_OAUTH_ALLOWED_REDIRECT_HOSTS` lists their hosts.
 
