@@ -25,7 +25,13 @@ from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import Settings
 from keystone_mcp.server import build_server
 from support.login import dev_token_login
-from support.test_env import RUN_KEY_ROOT, real_redis_url, redis_key_prefix, users_revision_key
+from support.test_env import (
+    RUN_KEY_ROOT,
+    policy_revision_key,
+    real_redis_url,
+    redis_key_prefix,
+    users_revision_key,
+)
 
 pytest_plugins = ["support.test_env"]
 
@@ -49,6 +55,7 @@ def _isolated_keystone_env(monkeypatch, tmp_path):
     monkeypatch.setenv("KEYSTONE_MCP_REDIS_KEY_PREFIX", redis_key_prefix("oauth"))
     monkeypatch.setenv("KEYSTONE_MCP_LOGIN_PENDING_KEY_PREFIX", redis_key_prefix("login"))
     monkeypatch.setenv("KEYSTONE_MCP_USERS_REDIS_REVISION_KEY", users_revision_key())
+    monkeypatch.setenv("KEYSTONE_MCP_POLICY_REDIS_REVISION_KEY", policy_revision_key())
 
 
 @pytest.fixture(scope="session", autouse=True)

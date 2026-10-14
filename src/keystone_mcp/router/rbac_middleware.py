@@ -47,6 +47,7 @@ if TYPE_CHECKING:
     )
 
     from keystone_mcp.observability.service import RbacObservability
+    from keystone_mcp.rbac.policy_revision import PolicyRevisionWatcher
     from keystone_mcp.router.upstream_content import UpstreamContentCatalog
 
 logger = logging.getLogger(__name__)
@@ -119,11 +120,13 @@ class RbacMiddleware(Middleware):
         observability: RbacObservability | None = None,
         enforce: bool | None = None,
         content_catalog: UpstreamContentCatalog | None = None,
+        policy_revision_watcher: PolicyRevisionWatcher | None = None,
     ) -> None:
         self._policy_manager = policy_manager
         self._user_resolver = user_resolver
         self._content_catalog = content_catalog
         self._observability = observability
+        self._policy_revision_watcher = policy_revision_watcher
         if enforce is not None:
             self._enforce = enforce
         elif settings is not None:
@@ -403,6 +406,14 @@ class RbacMiddleware(Middleware):
         roles_only: bool,
         operation: str,
     ) -> RbacDecision:
+        if self._policy_revision_watcher is not None:
+            try:
+                await self._policy_revision_watcher.ensure_current()
+            except Exception:
+                logger.warning(
+                    "rbac policy revision check failed; continuing with current snapshot",
+                    exc_info=True,
+                )
         identity = resolve_verified_identity()
         if identity is None:
             decision = RbacDecision(

@@ -31,6 +31,7 @@ from keystone_mcp.router.upstream import (
 if TYPE_CHECKING:
     from keystone_mcp.observability.service import RbacObservability
     from keystone_mcp.rbac.loader import RbacPolicyManager
+    from keystone_mcp.rbac.policy_revision import PolicyRevisionWatcher
     from keystone_mcp.router.registry import RouterRegistry
     from keystone_mcp.router.upstream import UpstreamRegistry
     from keystone_mcp.surface.client_sessions import ClientSessionRegistry
@@ -55,6 +56,7 @@ class SurfaceReconciler:
     policy_manager: RbacPolicyManager | None
     observability: RbacObservability | None
     revision_reader: RevisionReader | None = None
+    policy_revision_watcher: PolicyRevisionWatcher | None = None
     client_sessions: ClientSessionRegistry | None = None
 
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
@@ -205,6 +207,12 @@ class SurfaceReconciler:
         force_policy = self._policy_reload_event.is_set()
         if force_policy:
             self._policy_reload_event.clear()
+
+        if self.policy_revision_watcher is not None:
+            try:
+                await self.policy_revision_watcher.ensure_current(force=True)
+            except Exception:
+                logger.exception("surface reconciler step %s failed", "policy_revision")
 
         catalog_changed = False
         prompts_catalog_changed = False
@@ -829,6 +837,9 @@ class SurfaceReconciler:
             self._snapshot_hash = current_snapshot
             if force:
                 logger.info("rbac policy reloaded via SIGHUP")
+                identity = self.policy_manager.identity
+                if identity is not None and self.policy_revision_watcher is not None:
+                    await self.policy_revision_watcher.publish(identity.content_hash)
             else:
                 logger.info("rbac policy reloaded after file change")
         else:

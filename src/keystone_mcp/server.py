@@ -372,6 +372,8 @@ def build_server(
         settings,
         policy_manager=policy_manager,
     )
+    if policy_manager is not None:
+        policy_manager._on_identity = rbac_observability.record_policy_identity
 
     if users_store is not None and directory_resolver is not None:
         from keystone_mcp.user_directory.resolver import CachedUserDirectoryResolver
@@ -495,6 +497,28 @@ def build_server(
     upstreams.observability = rbac_observability
     upstreams.rbac_mode = settings.rbac_mode
 
+    policy_revision_watcher = None
+    if policy_manager is not None and settings.redis_url.strip():
+        from keystone_mcp.rbac.policy_revision import (
+            PolicyRevisionWatcher,
+            RedisPolicyRevisionStore,
+        )
+
+        redis_client = getattr(store, "redis", None)
+        if redis_client is None:
+            from keystone_mcp.redis_client import redis_from_url
+
+            redis_client = redis_from_url(settings.redis_url)
+        policy_revision_watcher = PolicyRevisionWatcher(
+            store=RedisPolicyRevisionStore(
+                redis_client,
+                key=settings.policy_redis_revision_key,
+            ),
+            policy_manager=policy_manager,
+            registry=registry,
+            observability=rbac_observability,
+        )
+
     # Core of changing the RBAC policy through the agent instead of a server
     # login: lets a later release's policy_* tools read and change the policy
     # file with the same validation a hot-reload runs. Built whenever RBAC
@@ -507,6 +531,7 @@ def build_server(
             registry=registry,
             observability=rbac_observability,
             directory=directory,
+            revision_watcher=policy_revision_watcher,
         )
         if policy_manager is not None and settings.rbac_enforcing and settings.policy_tools != "off"
         else None
@@ -580,6 +605,7 @@ def build_server(
                 settings=settings,
                 observability=rbac_observability,
                 content_catalog=upstreams.content,
+                policy_revision_watcher=policy_revision_watcher,
             )
         )
 
@@ -640,6 +666,13 @@ def build_server(
         if _is_trusted_internal_caller(request, settings):
             body["checks"] = dict(report.checks)
             body["upstreams"] = upstreams.upstream_readiness_snapshot()
+            identity = policy_manager.identity if policy_manager is not None else None
+            body["policy_content_hash"] = identity.content_hash if identity is not None else None
+            if policy_revision_watcher is not None:
+                in_sync = policy_revision_watcher.in_sync
+                body["policy_in_sync"] = in_sync
+            else:
+                body["policy_in_sync"] = None
         return JSONResponse(body, status_code=200 if report.ready else 503)
 
     if settings.metrics_enabled:
@@ -669,6 +702,7 @@ def build_server(
             policy_manager=policy_manager,
             observability=rbac_observability,
             revision_reader=revision_reader,
+            policy_revision_watcher=policy_revision_watcher,
             client_sessions=client_sessions,
         )
     _reconciler_holder["reconciler"] = reconciler

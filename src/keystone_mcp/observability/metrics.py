@@ -52,6 +52,20 @@ _POLICY_RELOAD = Counter(
     "RBAC policy load/reload attempts",
     ["success"],
 )
+_POLICY_INFO = Gauge(
+    "keystone_mcp_rbac_policy_info",
+    "Active RBAC policy identity (value is always 1)",
+    ["content_hash"],
+)
+_POLICY_IN_SYNC = Gauge(
+    "keystone_mcp_rbac_policy_in_sync",
+    "Whether this replica's policy file matches the last published revision (1=yes, 0=diverged)",
+)
+_POLICY_REVISION_CHECKS = Counter(
+    "keystone_mcp_rbac_policy_revision_checks_total",
+    "Cross-replica RBAC policy revision checks",
+    ["outcome"],
+)
 _USERS_MUTATION = Counter(
     "keystone_mcp_users_mutation_total",
     "users_* administrative mutations",
@@ -349,6 +363,25 @@ class RbacMetrics:
         if not self._enabled:
             return
         _USERS_REVISION_BUMP_FAILED.inc()
+
+    def record_policy_identity(self, *, content_hash: str) -> None:
+        if not self._enabled:
+            return
+        _POLICY_INFO.clear()
+        _POLICY_INFO.labels(content_hash=content_hash).set(1)
+
+    def set_policy_in_sync(self, value: bool | None) -> None:
+        if not self._enabled:
+            return
+        if value is False:
+            _POLICY_IN_SYNC.set(0)
+        else:
+            _POLICY_IN_SYNC.set(1)
+
+    def record_policy_revision_check(self, *, outcome: str) -> None:
+        if not self._enabled:
+            return
+        _POLICY_REVISION_CHECKS.labels(outcome=outcome).inc()
 
     def scrape(self) -> tuple[bytes, str]:
         return generate_latest(), CONTENT_TYPE_LATEST

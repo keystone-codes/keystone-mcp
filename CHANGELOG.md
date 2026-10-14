@@ -10,6 +10,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ### Added
 
+- A policy change made through `policy_*` reaches every replica on its next call (revision in Redis, `KEYSTONE_MCP_POLICY_REDIS_REVISION_KEY`). Metrics `keystone_mcp_rbac_policy_info{content_hash}`, `keystone_mcp_rbac_policy_in_sync`, `keystone_mcp_rbac_policy_revision_checks_total`; `/readyz` details show `policy_content_hash` and `policy_in_sync`.
 - `policy_rollback` accepts `expected_hash`. `policy_catalog` and policy changes see prompt and resource names, as a reload does.
 - Metric `keystone_mcp_upstream_stderr_suppressed_total{namespace}`; process state `stopping`.
 - `keystone-mcp users admins` lists full administrators, management roles and their holders; exits 1 when there is no active full administrator.
@@ -47,6 +48,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ### Migration
 
+- Nothing to do on a shared policy volume. Without one, a replica whose policy file differs from the last change made through `policy_*` reports `keystone_mcp_rbac_policy_in_sync 0`; copy the file to every replica and send `SIGHUP`.
 - A stdio upstream that blocks for more than ~35 s without answering pings is now restarted only after three missed pings (about a minute).
 
 ### Changed
