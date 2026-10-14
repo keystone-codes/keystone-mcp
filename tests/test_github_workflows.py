@@ -271,6 +271,18 @@ def _job_step_run_text(doc: dict, job_name: str) -> str:
     return "\n".join(chunks)
 
 
+def test_security_fuzz_nightly_job_runs_marked_tests_with_redis():
+    doc = _load("security.yml")
+    job = doc["jobs"]["fuzz-nightly"]
+    services = job.get("services") or {}
+    assert "redis" in services
+    env = job.get("env") or {}
+    assert env.get("HYPOTHESIS_PROFILE") == "nightly"
+    run_text = _job_step_run_text(doc, "fuzz-nightly")
+    assert '-m fuzz' in run_text or '-m "fuzz"' in run_text
+    assert "tests/security" in run_text
+
+
 def test_test_job_has_redis_and_postgres_services():
     doc = _load("test-gate.yml")
     test_job = doc["jobs"]["test"]
