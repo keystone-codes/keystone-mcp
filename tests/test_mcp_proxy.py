@@ -166,6 +166,21 @@ async def test_mcp_proxy_maps_accepted_as_pending():
     assert out["result"]["status"] == "accepted"
 
 
+def _route(
+    name: str,
+    *,
+    namespace: str = "reports",
+    upstream_tool: str | None = None,
+) -> Route:
+    return Route(
+        name=name,
+        target=McpProxyAdapter("http://unused"),
+        upstream_tool=upstream_tool or name,
+        namespace=namespace,
+        mode="live",
+    )
+
+
 def test_mcp_proxy_per_tool_timeout_override():
     adapter = McpProxyAdapter(
         "http://unused",
@@ -175,14 +190,14 @@ def test_mcp_proxy_per_tool_timeout_override():
             "reports_publish": 30,
         },
     )
-    assert adapter._timeout_for("reports_build") == 30
-    assert adapter._timeout_for("reports_publish") == 30
-    assert adapter._timeout_for("catalog_status") == 180
+    assert adapter._timeout_for(_route("build", upstream_tool="reports_build")) == 30
+    assert adapter._timeout_for(_route("publish", upstream_tool="reports_publish")) == 30
+    assert adapter._timeout_for(_route("status", namespace="catalog")) == 180
 
 
 def test_mcp_proxy_falls_back_to_default_timeout_without_overrides():
     adapter = McpProxyAdapter("http://unused", tool_timeout_seconds=180)
-    assert adapter._timeout_for("reports_build") == 180
+    assert adapter._timeout_for(_route("build", upstream_tool="reports_build")) == 180
 
 
 def test_mcp_proxy_http_client_disables_redirects():
@@ -215,8 +230,11 @@ def test_configured_tool_timeouts_reach_the_proxy_adapter(monkeypatch):
     upstreams.add_upstream("catalog-mcp", "http://unused", namespace="catalog")
 
     adapter = upstreams._adapters["catalog"]
-    assert adapter._timeout_for("reports_build") == 25
-    assert adapter._timeout_for("catalog_status") == 180
+    assert (
+        adapter._timeout_for(_route("build", namespace="catalog", upstream_tool="reports_build"))
+        == 25
+    )
+    assert adapter._timeout_for(_route("status", namespace="catalog")) == 180
 
 
 # ── Identity and timeout reach the upstream on the live path ────────────────

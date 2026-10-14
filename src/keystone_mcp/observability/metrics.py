@@ -97,6 +97,11 @@ _UPSTREAM_ELICITATIONS = Counter(
     "Upstream elicitation rounds forwarded to the Keystone client",
     ["namespace", "action"],
 )
+_UPSTREAM_INPUT_ROUNDS_EXCEEDED = Counter(
+    "keystone_mcp_upstream_input_rounds_exceeded_total",
+    "Tool calls stopped because the upstream kept requesting input",
+    ["namespace"],
+)
 _OAUTH_CLIENT_REGISTRATIONS = Counter(
     "keystone_mcp_oauth_client_registrations_total",
     "Dynamic client registration (POST /register) outcomes",
@@ -240,6 +245,11 @@ class RbacMetrics:
             return
         _UPSTREAM_ELICITATIONS.labels(namespace=namespace, action=action).inc()
 
+    def record_upstream_input_rounds_exceeded(self, *, namespace: str) -> None:
+        if not self._enabled:
+            return
+        _UPSTREAM_INPUT_ROUNDS_EXCEEDED.labels(namespace=namespace).inc()
+
     def record_oauth_client_registration(self, *, outcome: str) -> None:
         if not self._enabled:
             return
@@ -257,3 +267,8 @@ class RbacMetrics:
 def record_upstream_elicitation(*, namespace: str, action: str) -> None:
     """Increment elicitation counter without an observability handle (proxy path)."""
     _UPSTREAM_ELICITATIONS.labels(namespace=namespace, action=action).inc()
+
+
+def record_upstream_input_rounds_exceeded(*, namespace: str) -> None:
+    """Increment input-round cap counter without an observability handle."""
+    _UPSTREAM_INPUT_ROUNDS_EXCEEDED.labels(namespace=namespace).inc()

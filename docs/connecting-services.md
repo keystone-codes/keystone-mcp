@@ -296,6 +296,11 @@ passwords or other secrets through elicitation — the MCP specification
 forbids it. URL-mode elicitation is declined by Keystone and never shown to
 the client.
 
+Keystone stops a tool call after at most **10** elicitation or `input_required`
+rounds (including URL-mode auto-declines). Further asks fail the call or receive
+`cancel` on the handshake protocol. All rounds share the configured per-tool
+timeout.
+
 ## Running a stdio server
 
 Why: [ADR 0012](adr/0012-stdio-upstreams-run-unsandboxed.md).

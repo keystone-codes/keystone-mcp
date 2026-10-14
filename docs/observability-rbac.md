@@ -71,6 +71,7 @@ Emitted for every `users_*` admin tool attempt, including ambiguous outcomes
 | `keystone_mcp_catalog_refresh_changes_total` | `direction` | Tools added or removed (`added` / `removed`; counts only, no tool names) |
 | `keystone_mcp_upstream_available` | `namespace` | 1 if the upstream is considered available, else 0. For HTTP: last discovery or refresh succeeded. **For stdio: the supervised process is running** (not in `backoff` / `stopped`). |
 | `keystone_mcp_upstream_process_restarts_total` | `namespace` | Cumulative restarts of a stdio upstream child after crash, hang, or failed start |
+| `keystone_mcp_upstream_input_rounds_exceeded_total` | `namespace` | Tool calls stopped because the upstream kept requesting input |
 | `keystone_mcp_list_changed_sessions_total` | `kind` | Sessions notified that a list of tools/prompts/resources changed. A "session" is a handshake-era connection or an open `subscriptions/listen` stream |
 | `keystone_mcp_users_mutation_total` | `operation`, `outcome` | Admin mutation attempts |
 | `keystone_mcp_oauth_client_registrations_total` | `outcome` | `POST /register` outcomes (`created`, `rejected_limit`, `rejected_redirect_host`) |

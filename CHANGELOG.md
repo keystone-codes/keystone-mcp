@@ -8,6 +8,28 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ## [Unreleased]
 
+### Security
+
+- An upstream that keeps asking for input can no longer hold a tool call (and keystone-mcp's CPU) forever: at most 10 rounds per call, all within the tool timeout.
+
+### Added
+
+- Metric `keystone_mcp_upstream_input_rounds_exceeded_total{namespace}`.
+
+### Fixed
+
+- `KEYSTONE_MCP_UPSTREAM_TOOL_TIMEOUTS` keys are matched against the published tool name, as documented.
+- Tools whose `inputSchema` uses `x-mcp-header` can be called on MCP 2026-07-28 upstreams.
+
+### Deprecated
+
+- `KEYSTONE_MCP_UPSTREAM_TOOL_TIMEOUTS` keys that name the upstream's own tool name (deprecated since 0.6.0; use the published name).
+
+### Migration
+
+- An upstream that asks more than 10 questions in one tool call now gets `cancel` (handshake protocol) or the call fails (`kept requesting input`, MCP 2026-07-28).
+- If you keyed `KEYSTONE_MCP_UPSTREAM_TOOL_TIMEOUTS` by the upstream's tool name, it keeps working; a startup warning names the published key to switch to.
+
 ## [0.5.0] - 2026-10-13
 
 ### Added

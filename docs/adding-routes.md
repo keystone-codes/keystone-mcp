@@ -88,6 +88,12 @@ tool name:
 {"mysvc_bulk_export": 60, "mysvc_ping": 5}
 ```
 
+Keys must name the **published** tool (what the client calls). The upstream's
+own tool name still works as a key but is deprecated since 0.6.0 — Keystone logs
+a warning naming the published key to use instead. Keys that match no discovered
+tool are listed in a startup warning after discovery (unavailable upstreams may
+not be known yet).
+
 ### Patching a thin upstream schema
 
 If an upstream's advertised `inputSchema` lags its actual runtime (a common gap
