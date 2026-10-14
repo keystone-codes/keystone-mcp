@@ -139,6 +139,9 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 - Tools whose `inputSchema` uses `x-mcp-header` can be called on MCP 2026-07-28 upstreams.
 - `docs/compatibility.md` matched to the code: `KEYSTONE_MCP_ENV_FILE` is listed; `KEYSTONE_MCP_USERS_SERVICE_*` are not deprecated; the policy `version` is any non-empty string; `/login/<provider>` and `/login/redirect-not-allowed` are listed; `users import` never had `--email`; `catalog export` has no `--live-url`.
 - `users block`, `users logout` and `users import` report sessions that could not be revoked because Redis was down and exit with `3` instead of a traceback or `0`; `users import` revokes the sessions of every user blocked in the source on each run.
+- The first-administrator startup message says whether the account was created or already present.
+- `keystone-mcp serve` reads `.env` once and logs how many settings it loaded.
+- A relative stdio `command` is checked against the entry's `cwd`.
 
 ### Security
 
