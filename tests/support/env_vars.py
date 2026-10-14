@@ -113,12 +113,44 @@ def reads_in_source(text: str) -> set[str]:
     return visitor.reads
 
 
+def _secret_file_variables() -> set[str]:
+    config_path = SRC_ROOT / "config.py"
+    tree = ast.parse(config_path.read_text(encoding="utf-8"))
+    def _tuple_from(node: ast.AST | None) -> ast.Tuple | None:
+        if isinstance(node, ast.Tuple):
+            return node
+        return None
+
+    for node in tree.body:
+        value_node: ast.AST | None = None
+        target_name: str | None = None
+        if isinstance(node, ast.Assign):
+            if len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+                target_name = node.targets[0].id
+                value_node = node.value
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            target_name = node.target.id
+            value_node = node.value
+        if target_name != "SECRET_VARIABLES":
+            continue
+        tuple_node = _tuple_from(value_node)
+        if tuple_node is None:
+            continue
+        names: set[str] = set()
+        for elt in tuple_node.elts:
+            if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
+                names.add(f"{elt.value}_FILE")
+        return names
+    return set()
+
+
 def code_variables(root: Path = SRC_ROOT) -> set[str]:
     names: set[str] = set()
     for path in root.rglob("*.py"):
         if _is_contrib_path(path, root):
             continue
         names.update(reads_in_source(path.read_text(encoding="utf-8")))
+    names.update(_secret_file_variables())
     return names
 
 
