@@ -430,6 +430,8 @@ class McpProxyAdapter:
                         client = self._connection.call_client(headers=headers, timeout=timeout)
                     except UpstreamProcessUnavailableError:
                         raise ToolError(f"upstream {route.namespace} is unavailable") from None
+                    except ToolError:
+                        raise
                     except Exception as exc:
                         if (
                             attempt + 1 < max_attempts
@@ -437,7 +439,21 @@ class McpProxyAdapter:
                             and self._connection.prepare_stale_era_retry(exc)
                         ):
                             continue
-                        raise
+                        from keystone_mcp.router.upstream_errors import (
+                            log_upstream_failure,
+                            rethrow_upstream_error,
+                        )
+
+                        log_upstream_failure(
+                            route.namespace,
+                            exc,
+                            upstream_tool=tool_name,
+                        )
+                        rethrow_upstream_error(
+                            route.namespace,
+                            exc,
+                            timeout=timeout,
+                        )
                     if elicitation_callback is not None:
                         attach_upstream_elicitation_callback(client, elicitation_callback)
                     try:
@@ -474,6 +490,8 @@ class McpProxyAdapter:
                             f"upstream {route.namespace} answer is larger than "
                             f"{self._max_response_bytes} bytes"
                         ) from exc
+                    except ToolError:
+                        raise
                     except Exception as exc:
                         if (
                             attempt + 1 < max_attempts
@@ -481,7 +499,21 @@ class McpProxyAdapter:
                             and self._connection.prepare_stale_era_retry(exc)
                         ):
                             continue
-                        raise
+                        from keystone_mcp.router.upstream_errors import (
+                            log_upstream_failure,
+                            rethrow_upstream_error,
+                        )
+
+                        log_upstream_failure(
+                            route.namespace,
+                            exc,
+                            upstream_tool=tool_name,
+                        )
+                        rethrow_upstream_error(
+                            route.namespace,
+                            exc,
+                            timeout=timeout,
+                        )
 
             if self._status_envelope:
                 return self._wrap_status_envelope(parsed, route, ctx)

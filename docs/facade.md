@@ -269,10 +269,17 @@ not implemented yet or deliberately never forwarded.
 | `notifications/resources/list_changed` | yes, after an upstream resource catalog change; both protocol eras |
 | `resources/subscribe`, `notifications/resources/updated` | no |
 | `elicitation/create` (upstream → user) | yes for HTTP upstreams: form mode only, prefixed with `[namespace]`; URL mode is declined; not for stdio upstreams. On MCP 2026-07-28 the question reaches the client as an `input_required` result of the tool call; a 2026-07-28 client cannot be asked by an upstream that speaks the handshake protocol (the upstream gets `decline`). At most 10 question rounds per tool call (automatic declines and questions to the user alike); the whole exchange counts against the tool timeout |
-| `sampling/createMessage`, `roots/list` | no, by design: needs its own trust model |
+| `sampling/createMessage`, `roots/list` | no, by design; an upstream that asks for one fails the call with a clear error |
 | `notifications/message` (upstream logs) | no: upstream logs stay with the upstream |
 | `completion/complete` | no |
 | MCP tasks (`tasks/*`) | no |
+
+When an upstream call fails before a normal tool, prompt or resource answer,
+the client sees a short message: `upstream <namespace> is unavailable`,
+`upstream <namespace> did not answer within <timeout>s`,
+`upstream <namespace> returned an error (code …)`, or
+`upstream <namespace> failed to answer`. Keystone-MCP logs the underlying
+exception class and text (with `request_id` when present).
 
 Tool and prompt results forward the upstream's `_meta` except connection stamps
 (`io.modelcontextprotocol/serverInfo`, `protocolVersion`, `clientInfo`,
@@ -284,9 +291,10 @@ user), which is not forwarded for stdio either.
 Upstream elicitation text is written by the service; the human sees the
 service namespace in the question prefix. Time spent answering counts against
 the tool-call timeout (on MCP 2026-07-28 each guard round is a separate call).
-With more than one Keystone replica, a repeat call after a question must hit
-the same instance — `request_state` is sealed with a process-local key unless
-you configure shared state elsewhere.
+With more than one Keystone replica, a repeat call after a question (MCP
+2026-07-28) must reach the same replica: `request_state` is sealed with a key
+local to each process, and keystone-mcp has no setting to share it yet. Use
+sticky sessions.
 
 ## Custom routes
 

@@ -104,13 +104,6 @@ PRIVATE_APIS: tuple[PrivateApiRow, ...] = (
         "surface/client_sessions.py",
     ),
     PrivateApiRow(
-        "fastmcp.server.providers.proxy",
-        "_stash_proxy_request_context",
-        "function",
-        "(client: 'Client', ctx: 'Context') -> 'None'",
-        "router/proxy_components.py",
-    ),
-    PrivateApiRow(
         "fastmcp.resources.template",
         "forward_uri",
         "function",

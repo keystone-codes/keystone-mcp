@@ -421,6 +421,10 @@ Consequences:
   revision marker invalidates the cache everywhere, and a critical tool
   (`is_critical_tool`) always bypasses the allow-cache and re-checks on every
   call.
+- With more than one Keystone replica, a repeat call after a question (MCP
+  2026-07-28) must reach the same replica: `request_state` is sealed with a
+  key local to each process, and keystone-mcp has no setting to share it yet.
+  Use sticky sessions.
 - The live catalog (which upstream tools are published) can differ between
   replicas until each has completed its own refresh tick
   (`KEYSTONE_MCP_REFRESH_INTERVAL_SECONDS`).
@@ -629,7 +633,7 @@ Who is created first, and how later people are added, is [users.md](users.md).
 | `KEYSTONE_MCP_UPSTREAMS_PATH` | `""` | Path to a YAML or JSON upstream registry (`schema_version: 1`, `entries: [...]`). When non-empty and the file exists, this wins over `KEYSTONE_MCP_UPSTREAMS`. Edits are picked up on the next refresh tick after the file changes, or immediately on `SIGHUP`. |
 | `KEYSTONE_MCP_UPSTREAM_ALLOW_INSECURE_HTTP` | `false` | Allow `http://` upstream URLs. Needed for services on an internal network; the production profile logs a warning. |
 | `KEYSTONE_MCP_UPSTREAM_EGRESS_ALLOW_PRIVATE` | `false` | Allow upstream hosts treated as private: `localhost`, `*.localhost`, `*.local` (including `*.svc.cluster.local`), `*.internal`, and loopback, link-local, private or reserved IP literals (a non-canonical IP literal such as `2130706433` is refused outright). Both this and `KEYSTONE_MCP_UPSTREAM_ALLOW_INSECURE_HTTP` must be `true` for such hosts. |
-| `KEYSTONE_MCP_UPSTREAMS` | `""` | Fallback: the registry entries as one JSON array, used when no registry file is loaded (`KEYSTONE_MCP_UPSTREAMS_PATH` wins when both are set). Fields: `name`, `url`, `namespace`, `enabled`, `include_prefixes`, `exclude_prefixes`, `strip_prefix`, `tool_prefix`, `publish_resources`, `resource_include_prefixes`, `resource_exclude_prefixes`, `discovery_timeout_seconds`, `tool_timeout_seconds`, `route_mode`, `auth` (`{"bearer_env": "VAR_NAME", "identity_secret_env": "VAR_NAME", "identity_alg": "ES256"}`, see below). |
+| `KEYSTONE_MCP_UPSTREAMS` | `""` | Fallback: the registry entries as one JSON array, validated like the registry file, used when no registry file is loaded (`KEYSTONE_MCP_UPSTREAMS_PATH` wins when both are set). Fields: `name`, `url`, `namespace`, `enabled`, `include_prefixes`, `exclude_prefixes`, `strip_prefix`, `tool_prefix`, `publish_resources`, `resource_include_prefixes`, `resource_exclude_prefixes`, `discovery_timeout_seconds`, `tool_timeout_seconds`, `route_mode`, `auth` (`{"bearer_env": "VAR_NAME", "identity_secret_env": "VAR_NAME", "identity_alg": "ES256"}`, see below). |
 | `KEYSTONE_MCP_IDENTITY_SIGNING_KEY` | `` (empty) | Optional EC P-256 private key in PEM form for ES256 identity assertions (`auth.identity_alg: ES256`); publishes `/.well-known/keystone-identity-jwks.json`. Startup refuses a non-P-256 or malformed value. Generate with `openssl ecparam -name prime256v1 -genkey -noout \| openssl pkcs8 -topk8 -nocrypt`. See the prose below. |
 | `KEYSTONE_MCP_IDENTITY_SIGNING_KEY_PREVIOUS` | `` (empty) | Optional previous EC P-256 private key (same PEM format) published alongside the current key in JWKS during ES256 rotation; only the public halves are exposed. Empty by default. |
 | `KEYSTONE_MCP_UPSTREAM_DISCOVERY_RETRIES` | `3` | Retries per upstream at startup; upstreams are discovered in parallel. |
