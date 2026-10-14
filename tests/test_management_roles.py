@@ -192,13 +192,9 @@ async def test_delegated_users_role_manages_ordinary_people(tmp_path: Path) -> N
         hr,
     )
     assert out["state"] == "done"
-    out = await _run(
-        h["engine"], h["registry"], "users_block", {"email": "m@corp.example"}, hr
-    )
+    out = await _run(h["engine"], h["registry"], "users_block", {"email": "m@corp.example"}, hr)
     assert out["state"] == "done"
-    out = await _run(
-        h["engine"], h["registry"], "users_unblock", {"email": "m@corp.example"}, hr
-    )
+    out = await _run(h["engine"], h["registry"], "users_unblock", {"email": "m@corp.example"}, hr)
     assert out["state"] == "done"
     out = await _run(
         h["engine"],
@@ -222,9 +218,7 @@ async def test_full_administrator_manages_management_roles(tmp_path: Path) -> No
         admin,
     )
     assert out["state"] == "done"
-    out = await _run(
-        h["engine"], h["registry"], "users_block", {"email": "hr@corp.example"}, admin
-    )
+    out = await _run(h["engine"], h["registry"], "users_block", {"email": "hr@corp.example"}, admin)
     assert out["state"] == "done"
 
 
@@ -243,9 +237,7 @@ roles:
     await h["directory"].replace_roles(
         email="a1@corp.example", roles=["owner"], actor="system:test"
     )
-    await h["store"].set_blocked(
-        email="a1@corp.example", blocked=False, actor_email="system:test"
-    )
+    await h["store"].set_blocked(email="a1@corp.example", blocked=False, actor_email="system:test")
     out = await _run(
         h["engine"],
         h["registry"],

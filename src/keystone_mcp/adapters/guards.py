@@ -123,9 +123,7 @@ async def check_management_authority(
     if view.management_roles(target_roles) or touched:
         if observability is not None:
             try:
-                observability.record_admin_refusal(
-                    operation=route.name, reason="management_role"
-                )
+                observability.record_admin_refusal(operation=route.name, reason="management_role")
             except Exception:
                 logger.warning("admin refusal metric failed", exc_info=True)
         return {
