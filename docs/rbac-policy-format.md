@@ -188,6 +188,16 @@ holds a management role (including granting or revoking an ordinary role on
 such a person). Delegated roles such as `hr: ["users_*"]` may still create,
 block, or update people who hold only non-management roles.
 
+**Delegation:** a person who is not a full administrator may grant (through
+`users_*` and `service_accounts_*`) only roles whose permissions they already
+have. Comparison uses published tool names from the live catalog plus the
+catalog snapshot (`active`, `reserved`, `wip`). For allow patterns that do not
+match any published name (for example a glob for a service that is not live
+yet), the grant is allowed only when the actor's roles include the same
+pattern literally (or `*`). Removing roles is not limited. Example:
+`hr: ["users_*", "docs_read"]` may grant `reader: ["docs_read"]` but not
+`finance: ["finance_*"]`.
+
 Use patterns that cover whole administration families (`api_keys_*`, not a
 hand-picked subset of key tools) so a full administrator is recognized
 reliably. Management checks use the stricter of the in-memory policy snapshot

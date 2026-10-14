@@ -15,6 +15,8 @@ from keystone_mcp.user_directory.types import ServiceAccountRecord, UserRecord
 
 logger = logging.getLogger(__name__)
 
+_WILDCARD = "*"
+
 ADMIN_TOOL_NAMES: frozenset[str] = BUILTIN_TOOL_NAMES
 MANAGEMENT_TOOL_NAMES: frozenset[str] = MUTATING_ADMIN_TOOL_NAMES
 
@@ -24,9 +26,7 @@ def is_management_role(policy: RbacPolicy, role: str) -> bool:
 
 
 def management_role_names(policy: RbacPolicy) -> frozenset[str]:
-    return frozenset(
-        role.name for role in policy.roles if is_management_role(policy, role.name)
-    )
+    return frozenset(role.name for role in policy.roles if is_management_role(policy, role.name))
 
 
 def is_full_administrator(policy: RbacPolicy, roles: Iterable[str]) -> bool:
@@ -37,10 +37,43 @@ def is_full_administrator(policy: RbacPolicy, roles: Iterable[str]) -> bool:
 
 def full_administrator_roles(policy: RbacPolicy) -> frozenset[str]:
     return frozenset(
-        role.name
-        for role in policy.roles
-        if is_full_administrator(policy, (role.name,))
+        role.name for role in policy.roles if is_full_administrator(policy, (role.name,))
     )
+
+
+def _actor_allow_patterns(policy: RbacPolicy, actor_roles: frozenset[str]) -> frozenset[str]:
+    patterns: set[str] = set()
+    for role_name in actor_roles:
+        role_policy = policy.role(role_name)
+        if role_policy is not None:
+            patterns.update(role_policy.allow_patterns)
+    return frozenset(patterns)
+
+
+def role_exceeds_actor(
+    policy: RbacPolicy,
+    role: str,
+    actor_roles: frozenset[str],
+    catalog_names: frozenset[str],
+) -> bool:
+    """Return True when ``role`` grants something ``actor_roles`` does not."""
+    if role in actor_roles:
+        return False
+    role_policy = policy.role(role)
+    if role_policy is None:
+        return False
+    for tool_name in catalog_names:
+        if policy.allows_role(role, tool_name) and not policy.allows(actor_roles, tool_name):
+            return True
+    actor_patterns = _actor_allow_patterns(policy, actor_roles)
+    if _WILDCARD in actor_patterns:
+        return False
+    for pattern in role_policy.allow_patterns:
+        if pattern in catalog_names:
+            continue
+        if pattern not in actor_patterns:
+            return True
+    return False
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,8 +89,20 @@ class ManagementView:
         return frozenset(role for role in roles if self.is_management_role(role))
 
     def is_full_administrator(self, roles: Iterable[str]) -> bool:
+        if not self.policies:
+            return False
         role_set = tuple(roles)
         return all(is_full_administrator(policy, role_set) for policy in self.policies)
+
+    def role_exceeds_actor(
+        self,
+        role: str,
+        actor_roles: frozenset[str],
+        catalog_names: frozenset[str],
+    ) -> bool:
+        return any(
+            role_exceeds_actor(policy, role, actor_roles, catalog_names) for policy in self.policies
+        )
 
 
 ManagementSource = Callable[[], Awaitable[ManagementView]]
@@ -70,9 +115,7 @@ def snapshot_and_file_management_source(policy_manager: RbacPolicyManager) -> Ma
             raise PolicyLoadError("RBAC policy has not been loaded")
         try:
             path = policy_manager.policy_path()
-            fresh_policy, content_hash = await asyncio.to_thread(
-                load_policy_file_with_hash, path
-            )
+            fresh_policy, content_hash = await asyncio.to_thread(load_policy_file_with_hash, path)
         except (PolicyLoadError, PolicyContractError, OSError) as exc:
             logger.warning("management check uses the loaded policy only: %s", exc)
             return ManagementView((snapshot.policy,))
@@ -129,12 +172,8 @@ def build_admins_report(
     for account in services:
         for role in account.roles:
             if role in holders:
-                holders[role].append(
-                    _holder_label(account.subject, is_blocked=account.is_blocked)
-                )
-    holders_sorted = {
-        role: tuple(sorted(holders[role])) for role in mgmt_roles
-    }
+                holders[role].append(_holder_label(account.subject, is_blocked=account.is_blocked))
+    holders_sorted = {role: tuple(sorted(holders[role])) for role in mgmt_roles}
     return AdminsReport(
         management_roles=mgmt_roles,
         full_administrator_roles=full_roles,
