@@ -10,6 +10,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ### Added
 
+- The upstream registry file is reloaded without a restart: on the next refresh tick after the file changes, or at once on `SIGHUP`. Added entries are discovered and published, removed ones disappear with their tools, prompts and resources, changed ones are rebuilt; an invalid file keeps the previous registry. `SIGHUP` also re-reads upstream secrets. Metrics `keystone_mcp_upstream_registry_reload_total`, `keystone_mcp_upstream_registry_info`.
 - Upstream registry `limits`: concurrent calls per replica (`concurrency`), calls per window for the whole service (`rate`, `window`; shared across replicas with `KEYSTONE_MCP_THROTTLE_BACKEND=redis`), and a circuit breaker with a half-open probe (`breaker_failures`, `breaker_recovery_seconds`). Metrics `keystone_mcp_upstream_limit_rejections_total`, `keystone_mcp_upstream_circuit_state`, `keystone_mcp_upstream_inflight`.
 - CI: daily canary against the newest fastmcp/mcp and against the lowest allowed dependency versions; a sentinel test lists every private fastmcp/mcp API Keystone relies on.
 - Helm chart `charts/keystone-mcp`: replicas, probes, policy, upstream registry and sign-in providers from ConfigMaps, secrets from an existing Secret, optional Ingress with TLS, HPA, PodDisruptionBudget, NetworkPolicy and ServiceMonitor; built-in Redis and Postgres for demos. CI lints and renders the chart.
