@@ -22,6 +22,7 @@ from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import Settings
 from keystone_mcp.identity import VerifiedIdentity
 from keystone_mcp.identity_assertion import IDENTITY_META_KEY
+from keystone_mcp.router.upstream_content import published_uri_for_namespace
 from keystone_mcp.server import bootstrap_rbac_policy, bootstrap_upstreams, build_server
 from keystone_mcp.user_directory import build_in_memory_user_directory_resolver
 from support.login import dev_token_login
@@ -378,6 +379,119 @@ async def test_reconciler_tick_reuses_the_process(monkeypatch, tmp_path):
             await reconciler.tick()
             pid2 = (await client.call_tool("notes_pid", {})).content[0].text
     assert pid1 == pid2
+
+
+async def _decode_identity_from_stdio_payload(
+    raw_text: str, *, secret: str, audience: str, mcp_method: str, mcp_target: str
+) -> dict:
+    meta = json.loads(raw_text)
+    token = meta[IDENTITY_META_KEY]
+    claims = jwt.decode(
+        token,
+        secret,
+        algorithms=["HS256"],
+        audience=audience,
+        options={"verify_aud": True},
+    )
+    assert claims["aud"] == audience
+    assert claims["mcp_method"] == mcp_method
+    assert claims["mcp_target"] == mcp_target
+    return claims
+
+
+@pytest.mark.asyncio
+async def test_stdio_prompt_get_carries_identity_in_meta(monkeypatch, tmp_path):
+    secret = "y" * 40
+    monkeypatch.setenv("KEYSTONE_MCP_UPSTREAM_NOTES_IDENTITY_SECRET", secret)
+    payload = _stdio_upstream_payload(
+        auth={"identity_secret_env": "KEYSTONE_MCP_UPSTREAM_NOTES_IDENTITY_SECRET"}
+    )
+    resolver, backend, _revision = build_in_memory_user_directory_resolver()
+    backend.seed(ANN.email, roles=("member",))
+    async with _with_stdio_stack(
+        monkeypatch,
+        tmp_path,
+        upstream_payload=payload,
+        policy=True,
+        rbac_mode="enforce",
+        user_resolver=resolver,
+    ) as (mcp, _upstreams, _reconciler):
+        async with Client(mcp) as client:
+            result = await client.get_prompt("notes_whoami", {})
+            text = result.messages[0].content.text
+            await _decode_identity_from_stdio_payload(
+                text,
+                secret=secret,
+                audience="notes",
+                mcp_method="prompts/get",
+                mcp_target="whoami",
+            )
+
+
+@pytest.mark.asyncio
+async def test_stdio_resource_read_carries_identity_in_meta(monkeypatch, tmp_path):
+    secret = "z" * 40
+    monkeypatch.setenv("KEYSTONE_MCP_UPSTREAM_NOTES_IDENTITY_SECRET", secret)
+    payload = _stdio_upstream_payload(
+        auth={"identity_secret_env": "KEYSTONE_MCP_UPSTREAM_NOTES_IDENTITY_SECRET"}
+    )
+    resolver, backend, _revision = build_in_memory_user_directory_resolver()
+    backend.seed(ANN.email, roles=("member",))
+    async with _with_stdio_stack(
+        monkeypatch,
+        tmp_path,
+        upstream_payload=payload,
+        policy=True,
+        rbac_mode="enforce",
+        user_resolver=resolver,
+    ) as (mcp, _upstreams, _reconciler):
+        async with Client(mcp) as client:
+            published = published_uri_for_namespace("notes", "meta://whoami")
+            blocks = await client.read_resource(published)
+            text = blocks[0].text
+            await _decode_identity_from_stdio_payload(
+                text,
+                secret=secret,
+                audience="notes",
+                mcp_method="resources/read",
+                mcp_target="meta://whoami",
+            )
+
+
+@pytest.mark.asyncio
+async def test_client_meta_identity_is_not_forwarded_to_stdio(monkeypatch, tmp_path):
+    secret = "w" * 40
+    monkeypatch.setenv("KEYSTONE_MCP_UPSTREAM_NOTES_IDENTITY_SECRET", secret)
+    payload = _stdio_upstream_payload(
+        auth={"identity_secret_env": "KEYSTONE_MCP_UPSTREAM_NOTES_IDENTITY_SECRET"}
+    )
+    resolver, backend, _revision = build_in_memory_user_directory_resolver()
+    backend.seed(ANN.email, roles=("member",))
+    async with _with_stdio_stack(
+        monkeypatch,
+        tmp_path,
+        upstream_payload=payload,
+        policy=True,
+        rbac_mode="enforce",
+        user_resolver=resolver,
+    ) as (mcp, _upstreams, _reconciler):
+        async with Client(mcp) as client:
+            result = await client.get_prompt(
+                "notes_whoami",
+                {},
+                meta={"keystone-mcp/identity": "forged"},
+            )
+            text = result.messages[0].content.text
+            meta = json.loads(text)
+            token = meta[IDENTITY_META_KEY]
+            assert token != "forged"
+            jwt.decode(
+                token,
+                secret,
+                algorithms=["HS256"],
+                audience="notes",
+                options={"verify_aud": True},
+            )
 
 
 @pytest.mark.asyncio

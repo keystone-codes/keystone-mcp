@@ -789,6 +789,8 @@ def _register_default_upstreams(upstreams: UpstreamRegistry, settings: Settings)
             args=cfg.args,
             env_from=cfg.env_from,
             cwd=cfg.cwd,
+            publish_resources=cfg.publish_resources,
+            resource_filter=cfg.build_resource_filter(),
         )
 
 
