@@ -16,6 +16,8 @@ _SESSION_REDIS_URL: str = os.environ.get("KEYSTONE_MCP_REDIS_URL", "")
 
 UNUSED_REDIS_URL = "redis://redis-not-used.invalid:6379/0"
 
+LOOPBACK_REDIS_NO_PASSWORD_URL = "redis://[::1]:6379/0"
+
 # ``KEYSTONE_MCP_*`` names that may remain in ``os.environ`` during a test after
 # ``_isolated_keystone_env`` (plus ``KEYSTONE_MCP_REDIS_URL``, which is kept
 # from the developer shell / CI and is not set by the autouse fixture).

@@ -82,12 +82,14 @@ async def test_marker_written_in_same_transaction(redis_url: str):
     original_put_refresh = oauth_store._pipe_put_refresh
     original_put_meta = oauth_store._pipe_put_refresh_meta
 
+    from keystone_mcp.auth.oauth_store import token_digest
+
     def tracking_put_refresh(pipe, refresh):
-        tracked.append(f"rt:{refresh.token}")
+        tracked.append(f"rt:{token_digest(refresh.token)}")
         original_put_refresh(pipe, refresh)
 
     def tracking_put_meta(pipe, token, payload, ttl):
-        tracked.append(f"meta:{token}")
+        tracked.append(f"meta:{token_digest(token)}")
         original_put_meta(pipe, token, payload, ttl)
 
     oauth_store._pipe_put_refresh = tracking_put_refresh  # type: ignore[method-assign]
@@ -128,8 +130,8 @@ async def test_marker_written_in_same_transaction(redis_url: str):
         refresh=refresh,
         refresh_meta=meta,
     )
-    assert f"rt:{refresh.token}" in tracked
-    assert f"meta:{refresh.token}" in tracked
+    assert f"rt:{token_digest(refresh.token)}" in tracked
+    assert f"meta:{token_digest(refresh.token)}" in tracked
     await oauth_store.aclose()
 
 

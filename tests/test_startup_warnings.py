@@ -11,7 +11,7 @@ from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import Settings, startup_warnings
 from keystone_mcp.server import build_server
 from support.login import dev_token_login
-from support.test_env import UNUSED_REDIS_URL
+from support.test_env import LOOPBACK_REDIS_NO_PASSWORD_URL, UNUSED_REDIS_URL
 
 BASE_URL = "http://localhost:8080"
 
@@ -185,3 +185,43 @@ def test_dcr_without_allowlist_warns_in_production():
     assert not any(
         "KEYSTONE_MCP_OAUTH_ALLOWED_REDIRECT_HOSTS is empty" in w for w in startup_warnings(local)
     )
+
+
+def test_redis_without_password_warns_in_production():
+    settings = Settings(
+        base_url=BASE_URL,
+        deployment_profile="production",
+        redis_url="redis://redis.internal:6379/0",
+    )
+    warnings = startup_warnings(settings)
+    assert any("KEYSTONE_MCP_REDIS_URL has no password" in w for w in warnings)
+
+
+def test_redis_with_password_or_loopback_no_warning():
+    cases = (
+        Settings(
+            base_url=BASE_URL,
+            deployment_profile="production",
+            redis_url="redis://:secret@redis.internal:6379/0",
+        ),
+        Settings(
+            base_url=BASE_URL,
+            deployment_profile="production",
+            redis_url="rediss://user:secret@redis.internal:6379/0",
+        ),
+        Settings(
+            base_url=BASE_URL,
+            deployment_profile="production",
+            redis_url=LOOPBACK_REDIS_NO_PASSWORD_URL,
+        ),
+        Settings(
+            base_url=BASE_URL,
+            deployment_profile="production",
+            redis_url="unix:///run/redis.sock",
+        ),
+        Settings(base_url=BASE_URL, deployment_profile="local", redis_url=UNUSED_REDIS_URL),
+    )
+    for settings in cases:
+        assert not any(
+            "KEYSTONE_MCP_REDIS_URL has no password" in w for w in startup_warnings(settings)
+        )

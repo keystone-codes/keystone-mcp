@@ -79,6 +79,7 @@ reached from outside this machine. Two further rules are warnings — logged by
 | W5 | `local` | `KEYSTONE_MCP_HOST` is unspecified (`0.0.0.0`, `::`) and `KEYSTONE_MCP_DEV_TOKENS` is non-empty. Not a refusal — the Docker demo's own container legitimately binds `0.0.0.0` internally, relying on its port mapping to restrict reachability — but anyone who *can* reach the port signs in as any directory member. |
 | W20 | `production` | `KEYSTONE_MCP_USERS_BACKEND=http`, `KEYSTONE_MCP_USERS_SERVICE_URL` uses `http` on a non-loopback host, and `KEYSTONE_MCP_USERS_SERVICE_ALLOW_INSECURE_HTTP` is not set. |
 | W21 | `production` | `KEYSTONE_MCP_OAUTH_DCR_ENABLED=true` and `KEYSTONE_MCP_OAUTH_ALLOWED_REDIRECT_HOSTS` (and custom-scheme entries) are empty: any site can register an OAuth client. List the redirect hosts of the clients you use. |
+| W22 | `production` | `KEYSTONE_MCP_REDIS_URL` has no password on a non-loopback host (and is not a Unix socket). |
 | W7 | both | RBAC is `enforce`, `KEYSTONE_MCP_POLICY_TOOLS=full` (the default) and the policy file is not writable (e.g. mounted `:ro`). Not a refusal — `policy_read`/`policy_validate` still work — but every mutating `policy_*` call refuses with `policy_readonly` until the mount is read-write or this replica is switched to `KEYSTONE_MCP_POLICY_TOOLS=read-only`. |
 
 ## Startup warnings
@@ -108,6 +109,9 @@ more rows (W20+).
 | W17 | both | `KEYSTONE_MCP_RBAC_MODE=off` and `KEYSTONE_MCP_REFRESH_INTERVAL_SECONDS` < 0. | Set a non-negative interval. |
 | W18 | `production` | `FORWARDED_ALLOW_IPS` unset while `KEYSTONE_MCP_ALLOWED_HOSTS` is set or `KEYSTONE_MCP_HOST` is not loopback. | Set `FORWARDED_ALLOW_IPS` to trusted proxy CIDRs. |
 | W19 | both | A boolean `KEYSTONE_MCP_*` variable is set to an empty string (read as `false`). | Set `true` or `false` explicitly. |
+| W20 | `production` | `KEYSTONE_MCP_USERS_SERVICE_URL` uses `http` on a non-loopback host while the HTTP users backend is enabled and insecure HTTP is not explicitly allowed. | Use https or set `KEYSTONE_MCP_USERS_SERVICE_ALLOW_INSECURE_HTTP=true` on a trusted network. |
+| W21 | `production` | Dynamic client registration is open and no redirect hosts are listed. | Set `KEYSTONE_MCP_OAUTH_ALLOWED_REDIRECT_HOSTS`. |
+| W22 | `production` | `KEYSTONE_MCP_REDIS_URL` has no password on a non-loopback host. | Use a Redis only Keystone-MCP can reach, with a password and TLS; see [security-model.md](security-model.md#redis-is-the-root-of-trust). |
 
 ## Where settings come from
 
@@ -336,13 +340,13 @@ than one replica.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `KEYSTONE_MCP_REDIS_URL` | `""` (required) | Shared Redis for OAuth clients/tokens and login-pending state. |
+| `KEYSTONE_MCP_REDIS_URL` | `""` (required) | A Redis only Keystone-MCP can reach (or an ACL user limited to its prefixes); see [security-model.md](security-model.md#redis-is-the-root-of-trust). |
 | `KEYSTONE_MCP_REDIS_KEY_PREFIX` | `km:oauth:` | Key namespace for OAuth data. |
 | `KEYSTONE_MCP_LOGIN_PENDING_KEY_PREFIX` | `km:login:` | Key namespace for pending login transactions and one-time codes. |
 | `KEYSTONE_MCP_LOGIN_PENDING_TXN_TTL` | `600` | Pending login transaction TTL, seconds. |
 
 Under `KEYSTONE_MCP_LOGIN_PENDING_KEY_PREFIX`, namespaced keys include
-`refresh_auth:<refresh token>` (JSON session marker for a refresh token; fields
+`refresh_auth:<SHA-256 hex of refresh token>` (JSON session marker for a refresh token; fields
 are only ever added, an older Keystone ignores unknown fields), `code:<…>`,
 `code_used:<SHA-256 hex of code>` (JSON `subject`/`client_id` after a code
 exchange), `txn:<…>`, and `login_attempt:<…>`.
@@ -369,7 +373,8 @@ time the record is read (see the Migration note in `CHANGELOG.md`).
 
 | Key pattern | Type | Meaning | TTL |
 |---|---|---|---|
-| `subject:<sub>` | SET | Members `at:<token>` and `rt:<token>` for that subject (`sub` is the normalized email) | `max(REFRESH_TOKEN_TTL, TOKEN_TTL)` plus one day, renewed when a token is added |
+| `at:<SHA-256 hex>` / `rt:<SHA-256 hex>` / `rt_revoked:<SHA-256 hex>` | STRING | OAuth access, refresh, and revoked-grant markers | Per token lifetime |
+| `subject:<sub>` | SET | Members `at:<SHA-256 hex>` and `rt:<SHA-256 hex>` for that subject (`sub` is the normalized email) | `max(REFRESH_TOKEN_TTL, TOKEN_TTL)` plus one day, renewed when a token is added |
 | `subject_nbf:<sub>` | STRING | Unix seconds: tokens issued before this moment are invalid | Same as the subject set |
 | `client_index` | ZSET | Live registered client ids (score = expiry time) | n/a (members expire with clients) |
 | `client_unused` | ZSET | Client ids that never completed sign-in (score = registration time) | n/a (entries older than 24 h are pruned) |

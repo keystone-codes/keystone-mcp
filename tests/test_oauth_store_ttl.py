@@ -13,7 +13,7 @@ import pytest_asyncio
 from mcp.server.auth.provider import RefreshToken
 from mcp.shared.auth import OAuthClientInformationFull
 
-from keystone_mcp.auth.oauth_store import RedisOAuthStore
+from keystone_mcp.auth.oauth_store import RedisOAuthStore, token_digest
 from support.test_env import redis_key_prefix
 
 
@@ -76,7 +76,7 @@ async def test_put_refresh_token_ttl_follows_expires_at(store: RedisOAuthStore):
         subject="u@example.com",
     )
     await store.put_refresh_token(refresh)
-    ttl = await store.redis.ttl(store._refresh_key("rt1"))
+    ttl = await store.redis.ttl(store._refresh_key(token_digest("rt1")))
     assert abs(ttl - 1000) < 10
 
 
@@ -108,7 +108,8 @@ async def test_legacy_refresh_token_without_ttl_gets_expireat_on_read(store: Red
     loaded = await store.get_refresh_token("rt2")
 
     assert loaded is not None
-    ttl = await store.redis.ttl(key)
+    migrated_key = store._refresh_key(token_digest("rt2"))
+    ttl = await store.redis.ttl(migrated_key)
     assert 0 < ttl <= 500
 
 
@@ -128,6 +129,7 @@ async def test_legacy_refresh_token_past_expiry_is_deleted_on_read(store: RedisO
 
     assert loaded is None
     assert await store.redis.exists(key) == 0
+    assert await store.redis.exists(store._refresh_key(token_digest("rt3"))) == 0
 
 
 async def test_legacy_refresh_token_without_expires_at_gets_default_ttl(store: RedisOAuthStore):
@@ -144,7 +146,8 @@ async def test_legacy_refresh_token_without_expires_at_gets_default_ttl(store: R
     loaded = await store.get_refresh_token("rt4")
 
     assert loaded is not None
-    ttl = await store.redis.ttl(key)
+    migrated_key = store._refresh_key(token_digest("rt4"))
+    ttl = await store.redis.ttl(migrated_key)
     assert abs(ttl - 3000) < 10
 
 

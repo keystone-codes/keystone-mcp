@@ -9,7 +9,7 @@ import pytest
 import pytest_asyncio
 from mcp.server.auth.provider import AccessToken, RefreshToken
 
-from keystone_mcp.auth.oauth_store import InMemoryOAuthStore, RedisOAuthStore
+from keystone_mcp.auth.oauth_store import InMemoryOAuthStore, RedisOAuthStore, token_digest
 from support.test_env import redis_key_prefix, require_redis_url
 
 
@@ -69,32 +69,36 @@ async def _put_pair(store, *, email: str = "user@example.com") -> tuple[str, str
 
 async def test_put_tokens_adds_to_subject_index(oauth_store):
     at, rt = await _put_pair(oauth_store)
+    at_ref = token_digest(at)
+    rt_ref = token_digest(rt)
     if isinstance(oauth_store, RedisOAuthStore):
         members = await oauth_store.redis.smembers(
             oauth_store._subject_index_key("user@example.com")
         )
         ttl = await oauth_store.redis.ttl(oauth_store._subject_index_key("user@example.com"))
-        assert f"at:{at}" in members
-        assert f"rt:{rt}" in members
+        assert f"at:{at_ref}" in members
+        assert f"rt:{rt_ref}" in members
         assert abs(ttl - 5000) < 15
     else:
         members = oauth_store._subject_index.get("user@example.com", set())
-        assert f"at:{at}" in members
-        assert f"rt:{rt}" in members
+        assert f"at:{at_ref}" in members
+        assert f"rt:{rt_ref}" in members
 
 
 async def test_delete_token_removes_from_index(oauth_store):
     at, rt = await _put_pair(oauth_store)
     await oauth_store.delete_access_token(at)
+    at_ref = token_digest(at)
+    rt_ref = token_digest(rt)
     if isinstance(oauth_store, RedisOAuthStore):
         members = await oauth_store.redis.smembers(
             oauth_store._subject_index_key("user@example.com")
         )
-        assert f"at:{at}" not in members
-        assert f"rt:{rt}" in members
+        assert f"at:{at_ref}" not in members
+        assert f"rt:{rt_ref}" in members
     else:
         members = oauth_store._subject_index.get("user@example.com", set())
-        assert f"at:{at}" not in members
+        assert f"at:{at_ref}" not in members
 
 
 async def test_revoke_subject_deletes_all_tokens_and_index(oauth_store):
@@ -102,7 +106,7 @@ async def test_revoke_subject_deletes_all_tokens_and_index(oauth_store):
     now = int(time.time())
     revoked = await oauth_store.revoke_subject("user@example.com", now=now)
     assert revoked.access == 1
-    assert rt in revoked.refresh_tokens
+    assert token_digest(rt) in revoked.refresh_tokens
     assert await oauth_store.get_access_token(at) is None
     assert await oauth_store.get_refresh_token(rt) is None
     if isinstance(oauth_store, RedisOAuthStore):
@@ -127,7 +131,9 @@ async def test_token_issued_before_not_before_is_rejected(oauth_store):
     await oauth_store.revoke_subject("user@example.com", now=now)
     assert await oauth_store.get_access_token(at) is None
     if isinstance(oauth_store, RedisOAuthStore):
-        assert await oauth_store.redis.exists(oauth_store._access_key(at)) == 0
+        from keystone_mcp.auth.oauth_store import token_digest
+
+        assert await oauth_store.redis.exists(oauth_store._access_key(token_digest(at))) == 0
 
 
 async def test_token_issued_after_revocation_is_accepted(oauth_store):
@@ -177,8 +183,11 @@ async def test_legacy_access_token_is_indexed_on_read(oauth_store):
         members = await oauth_store.redis.smembers(
             oauth_store._subject_index_key("user@example.com")
         )
-        assert f"at:{at}" in members
-        ttl_after = await oauth_store.redis.ttl(oauth_store._access_key(at))
+        from keystone_mcp.auth.oauth_store import token_digest
+
+        digest = token_digest(at)
+        assert f"at:{digest}" in members
+        ttl_after = await oauth_store.redis.ttl(oauth_store._access_key(digest))
         assert abs(ttl_after - ttl_before) < 5
 
 

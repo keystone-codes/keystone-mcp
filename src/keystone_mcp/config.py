@@ -976,7 +976,7 @@ class Settings:
         default_factory=lambda: _env_int("KEYSTONE_MCP_OAUTH_REFRESH_GRACE_SECONDS", 10)
     )
 
-    # OAuth session store (shared platform Redis; required at runtime outside tests).
+    # OAuth session store (required at runtime outside tests).
     redis_url: str = field(default_factory=lambda: _env("KEYSTONE_MCP_REDIS_URL", ""))
     redis_key_prefix: str = field(
         default_factory=lambda: _env("KEYSTONE_MCP_REDIS_KEY_PREFIX", "km:oauth:")
@@ -1987,6 +1987,19 @@ def startup_warnings(settings: Settings, *, environ: Mapping[str, str] | None = 
                 "and KEYSTONE_MCP_OAUTH_ALLOWED_REDIRECT_HOSTS is empty: any site can "
                 "register an OAuth client. List the redirect hosts of the clients you use."
             )
+        # W22
+        redis_url = settings.redis_url.strip()
+        if redis_url:
+            redis_parsed = urlparse(redis_url)
+            if redis_parsed.scheme != "unix":
+                redis_host = (redis_parsed.hostname or "").lower()
+                if not _is_loopback_host(redis_host) and not redis_parsed.password:
+                    warnings.append(
+                        "KEYSTONE_MCP_REDIS_URL has no password: anyone who can reach "
+                        "this Redis can read and forge sessions. Use a Redis (or ACL user) "
+                        "that only Keystone-MCP can reach, with a password and TLS "
+                        "(rediss://)."
+                    )
     else:
         dev_token_set = {t for t in settings.dev_tokens.split(",") if t.strip()}
         # W4: the only local-profile warning (dev tokens under off/observe are

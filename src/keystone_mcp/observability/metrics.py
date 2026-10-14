@@ -146,6 +146,11 @@ _LOGIN_IDENTITY_BINDING = Counter(
     "OIDC login identity binding outcomes",
     ["outcome"],
 )
+_OAUTH_TOKEN_KEYS_MIGRATED = Counter(
+    "keystone_mcp_oauth_token_keys_migrated_total",
+    "OAuth token Redis keys migrated to the hashed layout",
+    ["kind", "direction"],
+)
 _OAUTH_CLIENTS = Gauge(
     "keystone_mcp_oauth_clients",
     "Live (non-expired) registered OAuth clients, as seen by this replica",
@@ -395,6 +400,10 @@ class RbacMetrics:
 
     def scrape(self) -> tuple[bytes, str]:
         return generate_latest(), CONTENT_TYPE_LATEST
+
+
+def record_oauth_token_key_migration(*, kind: str, direction: str) -> None:
+    _OAUTH_TOKEN_KEYS_MIGRATED.labels(kind=kind, direction=direction).inc()
 
 
 def record_upstream_elicitation(*, namespace: str, action: str) -> None:
