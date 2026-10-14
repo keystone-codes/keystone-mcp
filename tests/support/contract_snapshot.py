@@ -25,6 +25,12 @@ SECTIONS = (
     "protocols",
     "builtin-tools",
     "metrics",
+    "error-codes",
+    "db-columns",
+    "registry-fields",
+    "routes",
+    "cli-flags",
+    "defaults",
 )
 
 PYTHON_SURFACE = (
@@ -41,7 +47,17 @@ PYTHON_SURFACE = (
 
 
 def anchor(section: str, key: str) -> str:
-    if section in ("env-vars", "policy-keys", "cli-commands"):
+    if section in ("env-vars", "policy-keys", "cli-commands", "defaults"):
+        return key
+    if section == "error-codes":
+        return key.split(":", 1)[-1]
+    if section == "db-columns":
+        if key.startswith("migration:"):
+            return key.removeprefix("migration:")
+        if "." in key:
+            return key.rsplit(".", 1)[-1]
+        return key
+    if section in ("registry-fields", "routes", "cli-flags"):
         return key
     if section == "metrics":
         return key.split("{", 1)[0]
@@ -123,7 +139,12 @@ def build_cli_parser() -> argparse.ArgumentParser:
     catalog_sub = catalog.add_subparsers(dest="catalog_command", required=True)
     parent = _catalog_parent_parser()
 
-    catalog_sub.add_parser("validate", parents=[parent], help="Validate policy")
+    validate = catalog_sub.add_parser("validate", parents=[parent], help="Validate policy")
+    validate.add_argument(
+        "--strict-unreachable",
+        action="store_true",
+        help="Fail when tools are unreachable by every role",
+    )
     catalog_sub.add_parser("diff", parents=[parent], help="Diff policy")
     export = catalog_sub.add_parser("export", help="Export snapshot")
     export.add_argument("--live-file", type=Path, required=True)
@@ -333,6 +354,134 @@ def generate_builtin_tools(_src_root: Path) -> dict[str, str]:
     return rows
 
 
+def generate_error_codes(_src_root: Path) -> dict[str, str]:
+    from support.admin_error_codes import adapter_error_codes
+
+    rows: dict[str, str] = {}
+    for family in ("users", "service_accounts", "api_keys", "policy"):
+        for code in sorted(adapter_error_codes(family, src_root=_src_root)):
+            rows[f"{family}:{code}"] = ""
+    return rows
+
+
+def generate_db_columns(_src_root: Path) -> dict[str, str]:
+    import importlib.resources
+
+    from sqlalchemy import inspect
+
+    from keystone_mcp.users.db import create_users_engine
+    from keystone_mcp.users.migrate import upgrade_to_head
+
+    with tempfile.TemporaryDirectory() as tmp:
+        engine = create_users_engine(f"sqlite:///{tmp}/keystone-users.db")
+        upgrade_to_head(engine)
+        inspector = inspect(engine)
+        rows: dict[str, str] = {}
+        for table in sorted(inspector.get_table_names()):
+            if not table.startswith("keystone_"):
+                continue
+            rows[table] = ""
+            pk_cols = set(inspector.get_pk_constraint(table).get("constrained_columns") or ())
+            for column in inspector.get_columns(table):
+                name = column["name"]
+                nullable = "yes" if column.get("nullable") else "no"
+                pk = "yes" if name in pk_cols else "no"
+                col_type = str(column["type"]).upper()
+                rows[f"{table}.{name}"] = _format_attrs(
+                    {"nullable": nullable, "pk": pk, "type": col_type}
+                )
+        versions_dir = importlib.resources.files("keystone_mcp.users") / "migrations" / "versions"
+        for path in sorted(versions_dir.iterdir()):
+            if path.name.endswith(".py") and not path.name.startswith("__"):
+                rows[f"migration:{path.name.removesuffix('.py')}"] = ""
+        engine.dispose()
+    return rows
+
+
+def generate_registry_fields(_src_root: Path) -> dict[str, str]:
+    from support.registry_fields import collect_registry_field_rows
+
+    return collect_registry_field_rows()
+
+
+_ROUTE_PROVIDER_PLACEHOLDER = "/login/<provider>"
+
+
+def _normalize_route_path(path: str, *, provider_names: set[str]) -> str:
+    normalized = path
+    for name in sorted(provider_names, key=len, reverse=True):
+        normalized = normalized.replace(f"/login/{name}", _ROUTE_PROVIDER_PLACEHOLDER)
+        normalized = normalized.replace(
+            f"/login/{name}/callback", f"{_ROUTE_PROVIDER_PLACEHOLDER}/callback"
+        )
+    return normalized
+
+
+def generate_routes(_src_root: Path) -> dict[str, str]:
+    from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
+    from keystone_mcp.config import Settings
+    from keystone_mcp.server import build_server
+    from support.fake_login import FakeFormProvider, FakeRedirectProvider
+    from support.test_env import UNUSED_REDIS_URL
+
+    signing_pem = """-----BEGIN PRIVATE KEY-----
+MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgAAASNFZ4kKvN7xI0
+VniQq83vEjRWeJCrze8SNFZ4kKuhRANCAASz4IlGK3RL3RBRnQF+nI0mGeh5oUm9
+0Nw9WnsV7MhcHuDOfAtt6zB8ntgq44aZEiUDMF99mUUG5VgYkbtTBVOC
+-----END PRIVATE KEY-----"""
+    providers = [FakeRedirectProvider("example"), FakeFormProvider("formstub")]
+    provider_names = {provider.name for provider in providers}
+    settings = Settings(
+        deployment_profile="local",
+        base_url="http://localhost:8080",
+        metrics_enabled=True,
+        internal_endpoints_enabled=True,
+        identity_signing_key=signing_pem,
+        redis_url=UNUSED_REDIS_URL,
+        rbac_audit_subject_salt="contract-route-snapshot",
+    )
+    mcp, *_rest = build_server(
+        settings=settings,
+        oauth_store=InMemoryOAuthStore(),
+        login_providers=providers,
+        register_builtin_catalog=False,
+    )
+    app = mcp.http_app(path=settings.http_path)
+    rows: dict[str, str] = {}
+    http_placeholder = "<KEYSTONE_MCP_HTTP_PATH>"
+    metrics_placeholder = "<KEYSTONE_MCP_METRICS_PATH>"
+    metrics_path = settings.metrics_path.strip() or "/metrics"
+    for route in app.routes:
+        path = getattr(route, "path", None)
+        methods = getattr(route, "methods", None)
+        if path is None or not methods:
+            continue
+        display_path = _normalize_route_path(path, provider_names=provider_names)
+        if path == settings.http_path or path.rstrip("/") == settings.http_path.rstrip("/"):
+            display_path = http_placeholder
+        if path == metrics_path:
+            display_path = metrics_placeholder
+        for method in sorted(methods):
+            if method == "HEAD":
+                continue
+            rows[f"{method} {display_path}"] = ""
+    return rows
+
+
+def generate_cli_flags(_src_root: Path) -> dict[str, str]:
+    from support.cli_snapshot import collect_cli_flags
+
+    parser = build_cli_parser()
+    return collect_cli_flags(parser, ())
+
+
+def generate_defaults(src_root: Path) -> dict[str, str]:
+    from support.settings_defaults import collect_default_rows
+
+    config_path = src_root / "keystone_mcp" / "config.py"
+    return collect_default_rows(strip_env=True, config_path=config_path)
+
+
 def generate_metrics(_src_root: Path) -> dict[str, str]:
     from prometheus_client.metrics import MetricWrapperBase
 
@@ -358,6 +507,12 @@ _GENERATORS = {
     "protocols": generate_protocols,
     "builtin-tools": generate_builtin_tools,
     "metrics": generate_metrics,
+    "error-codes": generate_error_codes,
+    "db-columns": generate_db_columns,
+    "registry-fields": generate_registry_fields,
+    "routes": generate_routes,
+    "cli-flags": generate_cli_flags,
+    "defaults": generate_defaults,
 }
 
 

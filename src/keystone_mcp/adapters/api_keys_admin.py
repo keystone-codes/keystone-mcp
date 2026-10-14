@@ -9,6 +9,22 @@ from keystone_mcp.plugins import missing_members
 from keystone_mcp.user_directory.errors import UsersError
 from keystone_mcp.user_directory.protocol import ApiKeyDirectory, UserDirectory
 
+API_KEYS_ADMIN_ERROR_CODES: frozenset[str] = frozenset(
+    {
+        "actor_email_required",
+        "bad_request",
+        "conflict",
+        "forbidden",
+        "last_administrator",
+        "self_admin_mutation_forbidden",
+        "service_error",
+        "service_timeout",
+        "service_unavailable",
+        "user_not_found",
+        "validation_error",
+    }
+)
+
 if TYPE_CHECKING:
     from keystone_mcp.observability.service import RbacObservability
     from keystone_mcp.rbac.management import ManagementSource

@@ -134,7 +134,16 @@ def findings(section: str, base: dict[str, str], current: dict[str, str]) -> lis
         )
 
     for key in sorted(base_keys & current_keys):
-        if not _attrs_relaxed(parse_attrs(base[key]), parse_attrs(current[key])):
+        before_attrs = parse_attrs(base[key])
+        after_attrs = parse_attrs(current[key])
+        if section == "defaults" and before_attrs.get("allowed") and after_attrs.get("allowed"):
+            before_set = {part for part in before_attrs["allowed"].split(",") if part}
+            after_set = {part for part in after_attrs["allowed"].split(",") if part}
+            if before_set <= after_set and before_attrs.get("default") == after_attrs.get(
+                "default"
+            ):
+                continue
+        if not _attrs_relaxed(before_attrs, after_attrs):
             out.append(
                 Finding(
                     kind="changed",
@@ -167,6 +176,23 @@ def findings(section: str, base: dict[str, str], current: dict[str, str]) -> lis
                 tool = _tool_name_for_arg(key)
                 if tool in base_keys:
                     kind = "breaking_addition"
+        elif section == "db-columns" and "." in key:
+            attrs = parse_attrs(current[key])
+            table = key.split(".", 1)[0]
+            if table in base_keys and attrs.get("nullable") == "no":
+                kind = "breaking_addition"
+        elif section == "registry-fields":
+            attrs = parse_attrs(current[key])
+            if attrs.get("required") == "yes":
+                kind = "breaking_addition"
+        elif section == "cli-flags":
+            attrs = parse_attrs(current[key])
+            if attrs.get("required") == "yes":
+                head, _, tail = key.partition(" ")
+                if tail.startswith("-"):
+                    prefix = head
+                    if any(item.startswith(f"{prefix} ") for item in base_keys):
+                        kind = "breaking_addition"
         out.append(
             Finding(
                 kind=kind,

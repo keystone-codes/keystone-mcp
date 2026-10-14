@@ -41,6 +41,23 @@ RoleSource = Callable[[], frozenset[str] | None]
 # before the directory is ever called (the directory only checks format).
 _ROLE_CHECKED_TOOLS = frozenset({"users_add", "users_set_roles", "users_grant_role"})
 
+USERS_ADMIN_ERROR_CODES: frozenset[str] = frozenset(
+    {
+        "actor_email_required",
+        "bad_request",
+        "conflict",
+        "forbidden",
+        "last_administrator",
+        "self_admin_mutation_forbidden",
+        "service_error",
+        "service_timeout",
+        "service_unavailable",
+        "service_unconfigured",
+        "user_not_found",
+        "validation_error",
+    }
+)
+
 
 class UsersAdminAdapter:
     """Dispatches ``users_*`` tool calls to a ``UserDirectory`` implementation."""
