@@ -94,6 +94,13 @@ the [contract tests](plugins.md#contract-tests) for validating your
 implementation.
 Why: [ADR 0009](adr/0009-plugins-via-entry-points.md).
 
+## `LoginIdentity` fields
+
+`LoginIdentity` carries optional `key_id` and `key_expires_at`. Set them only
+when your form provider signs people in with a Keystone API key from the users
+directory; Keystone uses them to end the session when that key is revoked or
+expires. Other providers leave both fields unset.
+
 ## What the sign-in page looks like
 
 Keystone renders consent, credential, and error screens with one built-in HTML

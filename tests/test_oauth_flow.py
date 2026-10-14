@@ -21,6 +21,7 @@ from conftest import (
     authorize_to_login,
     make_pkce,
     obtain_access_token,
+    refresh_access_token,
     register_client,
 )
 from keystone_mcp.auth.keystone_oauth_provider import TRANSLATIONS
@@ -270,3 +271,22 @@ async def test_explicit_lang_override_beats_the_configured_default():
     async with login_page_client(login_default_lang="en") as client:
         page = await open_login_page(client, lang="ru")
         assert TRANSLATIONS["ru"]["submit"] in page.text
+
+
+async def test_token_carries_subject_type_human(harness):
+    res = await obtain_access_token(harness.client, harness.settings.resource_url)
+    assert res["status"] == 200
+    access = await harness.oauth._store.get_access_token(res["body"]["access_token"])
+    assert access is not None
+    assert access.claims.get("subject_type") == "human"
+
+    refreshed = await refresh_access_token(
+        harness.client,
+        res["client_id"],
+        res["body"]["refresh_token"],
+        harness.settings.resource_url,
+    )
+    assert refreshed["status"] == 200
+    access2 = await harness.oauth._store.get_access_token(refreshed["body"]["access_token"])
+    assert access2 is not None
+    assert access2.claims.get("subject_type") == "human"
