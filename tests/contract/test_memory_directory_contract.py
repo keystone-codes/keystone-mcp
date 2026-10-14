@@ -8,6 +8,7 @@ import pytest
 
 from keystone_mcp.contract_tests import (
     AdminDirectoryContract,
+    DeletionDirectoryContract,
     ServiceAccountDirectoryContract,
     seed_contract_dataset,
 )
@@ -26,5 +27,9 @@ def keystone_directory_factory() -> Callable[[], Awaitable[UserDirectory]]:
 
 
 @pytest.mark.keystone_contract_lenient(reason="in-memory directory cannot be unavailable")
-class TestMemoryDirectory(AdminDirectoryContract, ServiceAccountDirectoryContract):
+class TestMemoryDirectory(
+    AdminDirectoryContract,
+    ServiceAccountDirectoryContract,
+    DeletionDirectoryContract,
+):
     pass

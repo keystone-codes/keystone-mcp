@@ -24,6 +24,8 @@ from sqlalchemy.exc import SQLAlchemyError
 from keystone_mcp.user_directory.types import (
     ApiKeyRecord,
     ApiKeyVerification,
+    DeleteMode,
+    DeletionResult,
     IdentityBinding,
     IssuedApiKey,
     MutationResult,
@@ -143,6 +145,40 @@ class UsersStore:
 
     async def clear_identity_binding(self, *, email: str, actor: str) -> bool:
         return await self._commit_binding(service.clear_identity_binding, email=email, actor=actor)
+
+    async def count_person_references(self, email: str) -> int:
+        return await self._read(service.count_person_references, email=email)
+
+    async def delete_user(
+        self,
+        *,
+        email: str,
+        actor: str,
+        mode: DeleteMode,
+        pseudonym: str,
+    ) -> DeletionResult:
+        def _call() -> DeletionResult:
+            def _in_session() -> DeletionResult:
+                with session_scope(self._session_factory) as session:
+                    return service.delete_user(
+                        session,
+                        email=email,
+                        actor=actor,
+                        mode=mode,
+                        pseudonym=pseudonym,
+                    )
+
+            if self._write_lock is not None:
+                with self._write_lock:
+                    return _in_session()
+            return _in_session()
+
+        try:
+            result = await asyncio.to_thread(_call)
+        except Exception as exc:
+            raise _wrap_database_errors(exc) from exc
+        await self._after_change()
+        return result
 
     async def list_service_accounts(
         self,

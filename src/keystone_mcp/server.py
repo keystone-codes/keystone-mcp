@@ -589,6 +589,8 @@ def build_server(
             catalog_names_source=catalog_names_source,
             policy_store=policy_store,
             session_revoker=session_revoker,
+            login_pending_store=pending_store,
+            oauth_store=store,
         )
         _warn_if_admin_tools_are_unguarded(registry, settings)
 

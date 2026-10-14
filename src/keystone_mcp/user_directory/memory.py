@@ -20,6 +20,8 @@ from keystone_mcp.user_directory.errors import (
     UserNotFoundError,
 )
 from keystone_mcp.user_directory.types import (
+    DeleteMode,
+    DeletionResult,
     MutationResult,
     ServiceAccountMutation,
     ServiceAccountRecord,
@@ -34,6 +36,7 @@ from keystone_mcp.users.errors import InvalidRoleError, InvalidUserFieldError
 from keystone_mcp.users.roles import ROLE_ADMINISTRATOR, check_role_name
 
 _EPOCH = datetime(2026, 1, 1, tzinfo=UTC)
+_DELETED_PREFIX = "deleted:"
 
 
 @dataclass
@@ -71,7 +74,7 @@ class InMemoryUserDirectory(UserDirectoryAdminBase):
 
     @property
     def capabilities(self) -> frozenset[str]:
-        return frozenset({"admin", "service_accounts"})
+        return frozenset({"admin", "service_accounts", "delete"})
 
     # ── Test-only seeding helpers (kept from the 0.4.0 backend) ────────────
 
@@ -124,6 +127,8 @@ class InMemoryUserDirectory(UserDirectoryAdminBase):
                 subject_type="service",
             )
         normalized = normalize_email(subject)
+        if normalized.startswith(_DELETED_PREFIX):
+            return UserResolveResult(exists=False, roles=(), is_blocked=False)
         entry = self._users.get(normalized)
         if entry is None:
             return UserResolveResult(exists=False, roles=(), is_blocked=False)
@@ -139,6 +144,8 @@ class InMemoryUserDirectory(UserDirectoryAdminBase):
         role_name = check_role_name(role) if role else None
         records = []
         for email, entry in sorted(self._users.items()):
+            if email.startswith(_DELETED_PREFIX):
+                continue
             if is_blocked is not None and entry.is_blocked != is_blocked:
                 continue
             if role_name is not None and role_name not in entry.roles:
@@ -160,7 +167,9 @@ class InMemoryUserDirectory(UserDirectoryAdminBase):
         return {
             email
             for email, entry in self._users.items()
-            if not entry.is_blocked and ROLE_ADMINISTRATOR in entry.roles
+            if not email.startswith(_DELETED_PREFIX)
+            and not entry.is_blocked
+            and ROLE_ADMINISTRATOR in entry.roles
         }
 
     def _record(self, email: str, entry: _Entry) -> UserRecord:
@@ -377,6 +386,51 @@ class InMemoryUserDirectory(UserDirectoryAdminBase):
             changed=changed,
             roles_before=roles_before,
             blocked_before=blocked_before,
+        )
+
+    async def delete_user(
+        self, *, email: str, actor: str, mode: DeleteMode, pseudonym: str
+    ) -> DeletionResult:
+        normalized, entry = self._require(email)
+        actor_email = normalize_email(actor)
+        if actor_email == normalized:
+            raise SelfAdminMutationError("delete")
+        roles_before = tuple(sorted(entry.roles))
+        if ROLE_ADMINISTRATOR in entry.roles and self._active_administrators() <= {normalized}:
+            raise LastAdministratorError()
+        marker = f"{_DELETED_PREFIX}{pseudonym}"
+        references_rewritten = 0
+        for user_email, user_entry in self._users.items():
+            if user_entry.created_by == normalized:
+                user_entry.created_by = marker
+                references_rewritten += 1
+        for svc_entry in self._services.values():
+            if svc_entry.created_by == normalized:
+                svc_entry.created_by = marker
+                references_rewritten += 1
+        now = datetime.now(UTC)
+        if mode == "delete":
+            del self._users[normalized]
+        else:
+            if marker in self._users:
+                del self._users[marker]
+            self._users[marker] = _Entry(
+                full_name="",
+                roles=(),
+                is_blocked=True,
+                note=f"deleted_at={now.isoformat()}",
+                created_by=None,
+                created_at=entry.created_at,
+                updated_at=now,
+            )
+            del self._users[normalized]
+        return DeletionResult(
+            email=normalized,
+            mode=mode,
+            pseudonym=pseudonym,
+            roles_before=roles_before,
+            api_keys_revoked=0,
+            references_rewritten=references_rewritten,
         )
 
 

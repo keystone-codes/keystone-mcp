@@ -248,6 +248,53 @@ class TestBroken(UserDirectoryContract):
     assert result.parseoutcomes().get("failed", 0) >= 1
 
 
+def test_deletion_that_allows_last_administrator_fails_contract(pytester: pytest.Pytester) -> None:
+    pytester.makepyfile(
+        """
+from collections.abc import Awaitable, Callable
+import pytest
+from keystone_mcp.contract_tests import DeletionDirectoryContract, seed_contract_dataset
+from keystone_mcp.user_directory.memory import InMemoryUserDirectory
+from keystone_mcp.user_directory.protocol import UserDirectory
+from keystone_mcp.user_directory.types import DeletionResult, DeleteMode
+
+class PermissiveDelete(InMemoryUserDirectory):
+    async def delete_user(
+        self, *, email: str, actor: str, mode: DeleteMode, pseudonym: str
+    ) -> DeletionResult:
+        from keystone_mcp.user_directory.util import normalize_email
+
+        normalized = normalize_email(email)
+        entry = self._users.pop(normalized, None)
+        if entry is None:
+            from keystone_mcp.user_directory.errors import UserNotFoundError
+            raise UserNotFoundError(normalized)
+        return DeletionResult(
+            email=normalized,
+            mode=mode,
+            pseudonym=pseudonym,
+            roles_before=tuple(sorted(entry.roles)),
+            api_keys_revoked=0,
+            references_rewritten=0,
+        )
+
+@pytest.fixture
+def keystone_directory_factory() -> Callable[[], Awaitable[UserDirectory]]:
+    async def factory() -> UserDirectory:
+        directory = PermissiveDelete()
+        await seed_contract_dataset(directory)
+        return directory
+    return factory
+
+class TestBroken(DeletionDirectoryContract):
+    pass
+"""
+    )
+    pytester.makeconftest('pytest_plugins = ["keystone_mcp.contract_tests"]')
+    result = pytester.runpytest("-p", "keystone_mcp.contract_tests", "-q")
+    assert result.parseoutcomes().get("failed", 0) >= 1
+
+
 def test_missing_unavailable_fixture_fails(pytester: pytest.Pytester) -> None:
     pytester.makepyfile(
         """

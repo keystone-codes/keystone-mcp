@@ -36,6 +36,7 @@ MUTATING_CALLS: tuple[tuple[str, dict], ...] = (
     ("users_grant_role", {"email": "admin@example.com", "role": "robot"}),
     ("users_block", {"email": "admin@example.com"}),
     ("users_logout", {"email": "admin@example.com"}),
+    ("users_delete", {"email": "admin@example.com"}),
     ("service_accounts_add", {"name": "evil", "roles": ["robot"]}),
     ("service_accounts_update", {"name": "ci", "description": "pwned"}),
     ("api_keys_issue", {"subject": "svc:ci"}),

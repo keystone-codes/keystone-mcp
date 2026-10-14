@@ -187,6 +187,15 @@ implements `IdentityBindingDirectory`: `get_identity_binding`, `bind_identity`
 `bind_identity` during interactive OIDC login when
 `KEYSTONE_MCP_LOGIN_IDENTITY_BINDING=bind`.
 
+The built-in directory also declares the optional `delete` capability and
+implements `UserDeletionDirectory`: `delete_user(email, actor, mode, pseudonym)`.
+Invariants: unknown email → `user_not_found`; last active `administrator` →
+`last_administrator`; `actor == email` → `self_admin_mutation_forbidden`; a
+successful delete bumps the Redis revision. Modes are `anonymize` (row becomes
+`deleted:<pseudonym>`) or `delete` (row removed). Plugin directories that
+declare `"delete"` must inherit `DeletionDirectoryContract` in contract tests.
+The HTTP directory does **not** declare `delete`.
+
 ## The HTTP directory contract
 
 With `KEYSTONE_MCP_USERS_BACKEND=http`, Keystone calls the external service

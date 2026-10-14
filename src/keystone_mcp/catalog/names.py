@@ -13,6 +13,7 @@ BUILTIN_TOOL_NAMES: frozenset[str] = frozenset(
         "users_grant_role",
         "users_revoke_role",
         "users_logout",
+        "users_delete",
         "service_accounts_list",
         "service_accounts_add",
         "service_accounts_update",
