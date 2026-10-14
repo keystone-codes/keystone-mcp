@@ -1,4 +1,4 @@
-"""Contract tests for the ``UserDirectory`` protocol itself (X06).
+"""Contract tests for the ``UserDirectory`` protocol itself.
 
 These are not about any one implementation's behavior (``local`` and
 ``http`` have their own test files) -- they check the shape of the protocol:
@@ -130,7 +130,7 @@ def test_build_server_validates_an_injected_user_directory() -> None:
 
     directory ``build_user_directory`` constructs itself: an embedding
     process, a test, or a plugin that hands in a misdeclared directory does
-    not silently publish broken admin tools (X06 review finding).
+ not silently publish broken admin tools (contract review finding).
     """
     settings = Settings(base_url="http://localhost:8080", rbac_mode="off")
     with pytest.raises(ConfigError, match="declares 'admin'"):
@@ -170,7 +170,7 @@ async def test_in_memory_directory_create_user_conflicts_on_existing_email() -> 
     """``create_user`` for an email that already exists must raise ``conflict``,
 
     not silently overwrite the existing entry -- matching ``LocalUserDirectory``
-    and the HTTP contract's own ``user_already_exists`` normalization (X06
+ and the HTTP contract's own ``user_already_exists`` normalization
     review finding).
     """
     from keystone_mcp.user_directory.errors import UsersError

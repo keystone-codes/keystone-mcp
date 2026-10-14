@@ -3,7 +3,7 @@
 Mirrors ``tests/test_users_admin_adapter.py`` (the HTTP branch) but exercises
 ``UsersAdminAdapter`` with ``settings.users_backend == "local"``: no mock
 HTTP transport, a real (SQLite-backed) ``UsersStore``, and the RBAC-policy
-role check described in ``internal/tasks-0.4.0/U-users/U03-...``.
+role check described in the users admin local-backend acceptance notes (private task archive).
 """
 
 from __future__ import annotations

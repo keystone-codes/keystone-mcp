@@ -51,7 +51,7 @@ _HEADER_TEMPLATE = (
 class PolicyChangeError(Exception):
     """Raised when a :class:`PolicyChange` cannot be applied to a document.
 
-    ``code`` is one of the stable error codes the ``policy_*`` tools (V02)
+ ``code`` is one of the stable error codes the ``policy_*`` tools
     promise their callers: ``role_not_found`` or ``validation_error`` from
     this module; ``policy_invariant``, ``self_lockout_forbidden``,
     ``role_in_use`` and ``service_unavailable`` from

@@ -100,7 +100,7 @@ async def test_authorization_server_metadata(harness):
 
 
 async def test_metadata_issuer_equals_base_url(harness):
-    """``issuer_url=settings.base_url`` (unchanged across the fastmcp 4 move, X02):
+    """``issuer_url=settings.base_url`` (unchanged across the fastmcp 4 move):
 
     the authorization server metadata's ``issuer`` must still name the
     configured base URL, exactly as it did on fastmcp 3.4.4.

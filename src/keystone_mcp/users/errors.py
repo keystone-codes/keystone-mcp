@@ -1,7 +1,7 @@
-"""Deprecated location of the users domain errors -- re-exported (X06).
+"""Deprecated location of the users domain errors -- re-exported.
 
 These error classes moved to :mod:`keystone_mcp.user_directory.errors`
-alongside the read-path's ``UserDirectoryUnavailableError`` (X06), since both
+alongside the read-path's ``UserDirectoryUnavailableError``, since both
 are "classes from ``keystone_mcp.user_directory.errors``" per the
 ``UserDirectory`` protocol's error rule. This module is kept only so existing
 imports of ``keystone_mcp.users.errors.*`` keep working; new code should

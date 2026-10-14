@@ -45,7 +45,7 @@ _MUTATION_TOOLS = frozenset(
     }
 )
 
-#: Stable ``code`` values :class:`PolicyAdminAdapter` may return (V02 contract).
+#: Stable ``code`` values :class:`PolicyAdminAdapter` may return.
 POLICY_ADMIN_ERROR_CODES: frozenset[str] = frozenset(
     {
         "forbidden",

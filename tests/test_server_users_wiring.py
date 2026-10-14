@@ -2,7 +2,7 @@
 role names into the users_* tools, end to end.
 
 The shipped default policy (``config/rbac-policy.yaml``) declares only the
-``administrator`` role (C09), which is always accepted regardless of policy
+``administrator`` role (always-on admin bypass), which is always accepted regardless of policy
 and so would not exercise the policy-role-source wiring on its own. This test
 therefore uses a temporary policy file with one additional role (``member``),
 the same pattern already used by

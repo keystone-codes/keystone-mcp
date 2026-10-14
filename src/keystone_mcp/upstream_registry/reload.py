@@ -1,4 +1,4 @@
-"""Hot-reload helpers for the upstream registry file (F03)."""
+"""Hot-reload helpers for the upstream registry file."""
 
 from __future__ import annotations
 

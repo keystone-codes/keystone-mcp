@@ -1,6 +1,6 @@
-"""Anti-framing and CSP headers on the login page's HTML responses (A16).
+"""Anti-framing and CSP headers on the login page's HTML responses.
 
-These responses carry the api_token and, once A13 lands, a consent screen —
+These responses carry the api_token and, once the consent screen ships, a consent screen —
 blocking embedding in a hidden iframe (clickjacking) matters here even though
 the page has no cookies yet.
 """
@@ -108,7 +108,7 @@ async def test_post_login_with_invalid_token_has_security_headers():
 
 @pytest.mark.asyncio
 async def test_get_login_google_disabled_has_security_headers():
-    """X03: with Google disabled, no ``/login/google`` route is registered at all.
+    """With Google disabled, no ``/login/google`` route is registered at all.
 
     Keystone only registers a route per *configured* redirect login
     provider, so this is now a bare Starlette 404 rather than a Keystone

@@ -1,6 +1,6 @@
 """Full-stack smoke test: fresh server, administrator seeded, adds a member.
 
-This is the release's readiness criterion in miniature (U05): a server that
+This is the release's readiness criterion in miniature: a server that
 has never run before starts against an empty users database, the configured
 ``KEYSTONE_MCP_SUPERADMIN_EMAIL`` can log in and sees the ``users_*`` tools,
 can create a new user with an ordinary role, and that new user cannot see any
@@ -10,7 +10,7 @@ The shipped default policy (``config/rbac-policy.yaml``) only declares the
 ``administrator`` role -- the built-in ``member`` example role was removed
 when the always-on file tools were gated behind an opt-in variable (see
 ``a7cccb1``); those file tools and the variable gating them were later
-removed outright (0.5.0, Z03). A non-administrator role must still be
+removed outright (0.5.0). A non-administrator role must still be
 declared in the *active* policy for ``users_add
 roles=["member"]`` to be accepted (role names are validated against
 ``RbacPolicyManager.active_policy.role_names``), so this test uses its own

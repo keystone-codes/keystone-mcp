@@ -1,4 +1,4 @@
-"""Y05: ``notifications/tools/list_changed`` to open sessions and listen streams.
+"""``notifications/tools/list_changed`` to open sessions and listen streams.
 
 Covers both protocol eras: handshake-era clients (``mode="legacy"``), which get
 the notification pushed onto their standing connection, and 2026-07-28-era

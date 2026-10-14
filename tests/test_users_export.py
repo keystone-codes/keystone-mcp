@@ -1,4 +1,4 @@
-"""Acceptance tests for ``users_export`` (F12)."""
+"""Acceptance tests for ``users_export``."""
 
 from __future__ import annotations
 

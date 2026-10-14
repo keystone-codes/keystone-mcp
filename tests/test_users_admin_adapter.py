@@ -262,7 +262,7 @@ async def test_audit_is_recorded_when_service_response_cannot_be_parsed():
     """The service already applied the mutation once it answers 200: a
 
     malformed response body must still produce an audited error, not a bare
-    exception that skips ``_record_mutation_audit`` entirely (X06 review
+ exception that skips ``_record_mutation_audit`` entirely (contract review
     finding).
     """
 

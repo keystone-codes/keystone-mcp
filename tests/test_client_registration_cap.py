@@ -1,10 +1,10 @@
 """`KEYSTONE_MCP_OAUTH_MAX_CLIENTS`: refuse `POST /register` past the cap.
 
-Covers the registration-time limit (A12): a soft cap on the number of live
+Covers the registration-time limit: a soft cap on the number of live
 (non-expired) OAuth clients tracked by the store, plus the Prometheus counters
 and gauge that make the cap observable. The limit is enforced in
 ``KeystoneOAuthProvider.register_client`` against ``OAuthStore.count_clients``;
-expired clients (TTL from A02) never count against it.
+expired clients (refresh-token TTL) never count against it.
 """
 
 from __future__ import annotations

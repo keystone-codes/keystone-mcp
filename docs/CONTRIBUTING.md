@@ -6,6 +6,7 @@
 - Bugs and features: [issue templates](../.github/ISSUE_TEMPLATE/) (security issues go through [SECURITY.md](../SECURITY.md), not public issues).
 - Dependency updates: [Dependabot](../.github/dependabot.yml) opens weekly PRs for GitHub Actions and Python (`uv` ecosystem, `uv.lock`). See "Dependencies" below.
 - Default reviewers: [CODEOWNERS](../.github/CODEOWNERS) (uncomment an owner line after creating `@keystone-codes/maintainers` in the org).
+- Do not reference internal task or audit IDs in code, tests or docs; explain the reason or link an ADR.
 
 ## Setup
 

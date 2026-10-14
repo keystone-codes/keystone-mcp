@@ -234,7 +234,7 @@ class McpProxyAdapter:
         # e.g. the upstream's ``Authorization: Bearer ...`` (auth.bearer_env).
         # Copied once at construction time, never logged as a whole.
         self._extra_headers = dict(extra_headers or {})
-        # Signs X-Keystone-Identity (Y01); None means this upstream has no
+ # Signs X-Keystone-Identity; None means this upstream has no
         # auth.identity_secret_env and gets only the unsigned X-Author-Email.
         self._identity_signer = identity_signer
         self._guard = guard

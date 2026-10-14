@@ -856,7 +856,7 @@ for index, line in enumerate(lines):
             # .env.example has a commented-out duplicate of this key in its
             # production section (same name, different default); only the
             # first occurrence (the active one in section 1) is replaced, so
-            # one variable never ends up written twice (decision S11).
+ # one variable never ends up written twice.
             continue
         if body.startswith(key + "="):
             lines[index] = f"{key}={value}"

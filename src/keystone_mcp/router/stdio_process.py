@@ -4,7 +4,7 @@
 ``fastmcp.Client`` session open against it for as long as it is healthy,
 detects a crash or a hang, and restarts it with a rate-limited backoff. It
 owns nothing else: wiring this into :class:`~keystone_mcp.router.registry
-.UpstreamRegistry`, discovery, the proxy, ``/readyz``, or metrics is Y09's
+.UpstreamRegistry`, discovery, the proxy, ``/readyz``, or metrics is stdio upstream wiring
 job, not this module's.
 
 Health is driven by two independent signals while the session is open:
@@ -124,7 +124,7 @@ class StdioUpstreamProcess:
 
     ``env`` must already be the resolved child environment (name -> value);
     this class does not read ``KEYSTONE_MCP_*`` itself — resolving an
-    entry's ``env_from`` pairs into values is Y09's job, at the call site
+ entry's ``env_from`` pairs into values is stdio upstream wiring job, at the call site
     that constructs this object.
 
     ``start()`` after ``stop()`` is not supported: it returns ``False`` and

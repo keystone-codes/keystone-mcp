@@ -30,7 +30,7 @@ _ERROR_LOG_INTERVAL_SECONDS = 60.0
 _last_login_fail_error_log_at = 0.0
 _login_fail_error_log_lock = threading.Lock()
 
-# Bounds on `LoginAttemptThrottle._ip_hits` (A11 finding #6). Without them, an
+# Bounds on `LoginAttemptThrottle._ip_hits`. Without them, an
 # attacker who never repeats a source address — trivial with IPv6, which
 # offers an effectively unlimited pool — leaves one stale, single-timestamp
 # bucket behind per address forever: `check_ip` only prunes the bucket for
@@ -59,7 +59,7 @@ def ip_bucket(host: str) -> str:
     return str(ipaddress.ip_network(f"{ip}/64", strict=False))
 
 
-# Same shape of bound on `LoginAttemptThrottle._email_failures` (finding #2).
+# Same shape of bound on `LoginAttemptThrottle._email_failures`.
 # `check_email_failures` used to read `self._email_failures[normalized]` on a
 # `defaultdict`, so merely *checking* an email — no failed login required —
 # planted a permanent empty bucket for it: an attacker probing one login per
@@ -72,7 +72,7 @@ _MAX_TRACKED_EMAILS = 20_000
 _EMAIL_SWEEP_EVERY_N_CALLS = 2_000
 
 # Longest email `LoginAttemptThrottle` will use verbatim as a dict key
-# (finding #2). RFC 5321 caps a real address at 254 octets; 320 leaves room
+#. RFC 5321 caps a real address at 254 octets; 320 leaves room
 # for callers that pass something a little longer without being unbounded.
 # Truncating (rather than refusing) is deliberately safe either way: two
 # distinct attacker-controlled strings sharing the first 320 characters now
@@ -222,7 +222,7 @@ class LoginAttemptThrottle:
         """Return whether another login attempt is allowed for *email* (failures only).
 
         A read-only check: an email with no recorded failure is never added to
-        `_email_failures` (finding #2) — there is nothing to look up, so this
+ `_email_failures` — there is nothing to look up, so this
         returns the "allowed" default without creating an entry.
         """
         if self._email_max <= 0:

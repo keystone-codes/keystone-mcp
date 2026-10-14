@@ -1,7 +1,7 @@
-"""Track open client connections so a surface change can reach them (Y05).
+"""Track open client connections so a surface change can reach them.
 
 MCP has two protocol eras that need different delivery for
-``notifications/tools/list_changed`` (and, once Y06/Y12 publish them,
+``notifications/tools/list_changed`` (and, once prompt/resource notifications publish them,
 prompts/resources):
 
 - **Handshake era** (``initialize``, pre-``2026-07-28``): the connection has a
@@ -129,7 +129,7 @@ class ClientSessionRegistry:
 
     One instance per server (``build_server``); each replica's registry only
     knows about its own connections and streams -- no cross-replica fan-out
-    (see Y05's developer notes: a Redis-backed bus is not needed because each
+ (see the list_changed developer notes: a Redis-backed bus is not needed because each
     instance's reconciler only ever notifies its own clients).
     """
 

@@ -54,7 +54,7 @@ DUNDER_SOURCE = "src/keystone_mcp/__init__.py"
 CHANGELOG_SOURCE = "CHANGELOG.md"
 CHART_SOURCE = "charts/keystone-mcp/Chart.yaml"
 
-# The project's PyPI distribution name (S14 / X10): "keystone-mcp" was
+# The project's PyPI distribution name: "keystone-mcp" was
 # already taken by an unrelated project, so the distribution is named
 # differently from the importable module (`keystone_mcp`) and the `keystone-mcp`
 # command. PEP 427/625 normalize both the wheel and the sdist filename to
@@ -66,12 +66,12 @@ _WHEEL_RE = re.compile(rf"^{re.escape(NORMALIZED_DIST_NAME)}-(?P<version>[^-]+)-
 _SDIST_RE = re.compile(rf"^{re.escape(NORMALIZED_DIST_NAME)}-(?P<version>.+)\.tar\.gz$")
 
 # Files the wheel must carry so that `pip install keystone-mcp-gateway` ships
-# a usable, typed package: type information for plugin authors (X10) and the
-# Alembic migrations for the built-in users directory (U01's
+# a usable, typed package: type information for plugin authors and the
+# Alembic migrations for the built-in users directory (the built-in users-directory
 # ``test_migration_files_are_packaged`` checks the same thing on an installed
 # checkout; this constant checks it on the *built* wheel instead). Later
-# cards append their own required files here (X09: ``entry_points.txt``;
-# X11: contract-test modules) rather than adding a second constant.
+# release checks append their own required files here (e.g. ``entry_points.txt``;
+# contract-test modules) rather than adding a second constant.
 REQUIRED_WHEEL_FILES: tuple[str, ...] = (
     "keystone_mcp/py.typed",
     "keystone_mcp/users/migrations/env.py",

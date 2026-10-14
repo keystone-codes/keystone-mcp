@@ -1,4 +1,4 @@
-"""Redis-backed shared throttles (F01)."""
+"""Redis-backed shared throttles."""
 
 from __future__ import annotations
 
@@ -98,7 +98,7 @@ async def _tool_calls(mcp, times: int) -> None:
 async def test_two_replicas_share_one_budget(
     policy_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Four call_tool hits plus one tools/list per Client session (D08).
+ # Four call_tool hits plus one tools/list per Client session.
     settings = _redis_settings(throttle_max_requests=6, throttle_window_seconds=60)
     mcp_a = _build_mcp(settings, policy_path, monkeypatch)
     mcp_b = _build_mcp(settings, policy_path, monkeypatch)

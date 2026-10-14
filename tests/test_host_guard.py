@@ -1,4 +1,4 @@
-"""`HostGuardMiddleware` and `config.effective_allowed_hosts` (finding #1, DNS rebinding).
+"""`HostGuardMiddleware` and `config.effective_allowed_hosts` (DNS rebinding).
 
 A demo deployment (``docker-compose.demo.yml``, DEV tokens, DCR enabled)
 binds its HTTP port with no Host/Origin check by default: fastmcp 3.4.4's own

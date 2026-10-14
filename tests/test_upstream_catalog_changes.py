@@ -1,4 +1,4 @@
-"""Reconciler survives upstream catalog edits and listing failures (C01 acceptance)."""
+"""Reconciler survives upstream catalog edits and listing failures."""
 
 from __future__ import annotations
 

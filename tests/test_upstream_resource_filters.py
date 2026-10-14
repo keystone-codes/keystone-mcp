@@ -1,4 +1,4 @@
-"""Upstream resource publish filters and RBAC name collision (C03)."""
+"""Upstream resource publish filters and RBAC name collision."""
 
 from __future__ import annotations
 

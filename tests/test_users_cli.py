@@ -1429,7 +1429,7 @@ def test_import_dry_run_never_revokes(tmp_path: Path, monkeypatch, capsys) -> No
     assert calls == []
 
 
-# --- grant-admin reads KEYSTONE_MCP_ENV_FILE (deferred by A06) --------------
+# --- grant-admin reads KEYSTONE_MCP_ENV_FILE (deferred to a follow-up) --------------
 
 
 def test_grant_admin_reads_users_db_url_from_env_file(tmp_path: Path, monkeypatch, capsys) -> None:

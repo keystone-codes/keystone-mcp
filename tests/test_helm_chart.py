@@ -1,4 +1,4 @@
-"""Helm chart render checks (F04).
+"""Helm chart render checks.
 
 Skipped locally when ``helm`` is not on ``PATH`` unless
 ``KEYSTONE_REQUIRE_HELM=1`` (CI sets this in the ``helm`` job).

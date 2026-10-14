@@ -269,21 +269,21 @@ def build_server(
 
     # An explicitly-injected resolver (tests, or an embedding process wiring
     # its own) is always honored: only the *automatic* construction below is
-    # gated (U02's decision, extended by A04). Token-based login's directory
-    # check (A01) relies on this — a caller (or test) that wants the check
+    # gated (RBAC off-mode profile). Token-based login's directory
+    # check relies on this — a caller (or test) that wants the check
     # active with Google, RBAC and DEV tokens all off supplies its own
     # resolver.
     #
-    # A04 coordinator finding: with RBAC_MODE=off and no Google (the `local`
+    # With RBAC_MODE=off and no Google (the `local`
     # profile's common case), the gate below used to stay closed, so a DEV
     # token let its holder sign in as *any* email — the users directory was
     # never consulted. Fixed narrowly: the gate also opens whenever DEV
     # tokens are configured for api_key sign-in, so a DEV token still only
     # admits people the directory lists. It does not open for every api_key
-    # deployment (the card's literal wording), because most of this test
+    # deployment for every api_key-only setup, because most of this test
     # suite builds a server with api_key sign-in enabled, local backend, but
     # a *test* identity provider standing in for a real one and no
-    # KEYSTONE_MCP_DEV_TOKENS set at all — the vulnerability this closes does
+    # KEYSTONE_MCP_DEV_TOKENS set at all — the DEV-token impersonation gap does
     # not apply there, and auto-building a resolver for them would demand an
     # unrelated, repo-wide rewrite of every such test's login fixtures.
     #
@@ -368,14 +368,14 @@ def build_server(
 
     # Built before the OAuth provider (rather than alongside registry/upstream
     # wiring further down) so the provider itself can record client
-    # registration metrics (KEYSTONE_MCP_OAUTH_MAX_CLIENTS, A12).
+ # registration metrics (KEYSTONE_MCP_OAUTH_MAX_CLIENTS).
     # ``upstreams`` is constructed further down (it needs ``mcp``, which needs
     # ``oauth``, which needs ``rbac_observability``, which needs
     # ``policy_manager`` -- so ``upstreams`` cannot exist yet here). This
     # closure only reads the name at call time (``bootstrap_platform``, well
     # after ``build_server`` has returned and ``upstreams`` is fully
     # populated), so the forward reference to a not-yet-assigned local is safe
-    # (P06).
+    # (forward reference is resolved before the closure runs).
     policy_manager = (
         RbacPolicyManager(
             settings,
@@ -458,9 +458,9 @@ def build_server(
 
     # Tracks open connections (handshake era) and ``subscriptions/listen``
     # streams (2026-07-28 era) so the surface reconciler can notify them of a
-    # catalog change, a policy reload or a users-directory change (Y05).
+ # catalog change, a policy reload or a users-directory change.
     # Registered on the private low-level server (``FastMCP._mcp_server``,
-    # the same field X01 documented as closed API) so the SDK advertises
+ # the same closed-API field documented in the spike report) so the SDK advertises
     # ``tools.listChanged=true`` to 2026-07-28 clients -- FastMCP 4.1 does not
     # serve ``subscriptions/listen`` on its own (test-sentinel:
     # ``test_list_changed_is_advertised_on_both_eras``).
@@ -483,7 +483,7 @@ def build_server(
     async def _login_post(request):  # noqa: ANN001
         return await oauth.handle_login(request)
 
-    # One GET/POST/callback trio per configured redirect provider (X03): a
+ # One GET/POST/callback trio per configured redirect redirect login provider: a
     # provider that is not configured gets no route at all, so a request for
     # it 404s from Starlette's own routing rather than a Keystone error page.
     # The provider named "google" gets exactly the paths it always has
@@ -511,14 +511,14 @@ def build_server(
         mcp.custom_route(f"/login/{_provider.name}", methods=["GET"])(_login_get_handler)
         # Consent screen's provider button posts here (CSRF-checked) instead
         # of following a bare link, so the redirect sign-in cannot be
-        # triggered from a cross-site page or an emailed URL (A13).
+ # triggered from a cross-site page or an emailed URL.
         mcp.custom_route(f"/login/{_provider.name}", methods=["POST"])(_login_post_handler)
         mcp.custom_route(f"/login/{_provider.name}/callback", methods=["GET"])(
             _login_callback_handler
         )
 
     # Where authorize() sends a request whose redirect_uri host is not on
-    # KEYSTONE_MCP_OAUTH_ALLOWED_REDIRECT_HOSTS (A17): a local error page
+ # KEYSTONE_MCP_OAUTH_ALLOWED_REDIRECT_HOSTS: a local error page
     # instead of a redirect carrying `error`/`state` to that disallowed host.
     @mcp.custom_route("/login/redirect-not-allowed", methods=["GET"])
     async def _login_redirect_not_allowed(request):  # noqa: ANN001
@@ -1182,7 +1182,7 @@ def _http_asgi_middleware(settings: Settings) -> list:
     route's own handler does: this list is appended after fastmcp's own
     auth middleware (bearer-token parsing) in the final stack, but still
     wraps the router, so no OAuth endpoint, ``/mcp`` call, or custom route
-    ever executes for a request this guard refuses (finding #1).
+ ever executes for a request this guard refuses.
     """
     from starlette.middleware import Middleware
 

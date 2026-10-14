@@ -69,7 +69,7 @@ def prompt_fingerprint(
     description: str | None,
     arguments: list[dict[str, Any]],
 ) -> str:
-    """Stable fingerprint for one upstream prompt (Y06)."""
+    """Stable fingerprint for one upstream prompt."""
     payload = {
         "name": name,
         "title": title or "",
@@ -88,7 +88,7 @@ def resource_fingerprint(
     description: str | None,
     mime_type: str | None,
 ) -> str:
-    """Stable fingerprint for one upstream resource (Y12)."""
+    """Stable fingerprint for one upstream resource template."""
     payload = {
         "uri": uri,
         "name": name,
@@ -108,7 +108,7 @@ def template_fingerprint(
     description: str | None,
     mime_type: str | None,
 ) -> str:
-    """Stable fingerprint for one upstream resource template (Y12)."""
+    """Stable fingerprint for one upstream resource template."""
     payload = {
         "uri_template": uri_template,
         "name": name,
