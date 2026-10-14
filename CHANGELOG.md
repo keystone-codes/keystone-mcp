@@ -64,6 +64,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ### Changed
 
+- The identity-assertion examples refuse a JWKS URL over plain `http` (loopback excepted).
 - Identity verification examples (Python, TypeScript) require `issuer`, keep one JWKS client per process and refuse an assertion with `rbac_decision: "deny"` by default.
 - In `observe` mode, a call RBAC would deny now reaches the upstream with an empty `roles` list and the new claim `rbac_decision: "deny"` in `X-Keystone-Identity`.
 - Startup warns when two upstreams use the same HS256 signing secret value under different variables.
@@ -100,6 +101,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ### Fixed
 
+- Docs no longer describe the `policy_*` tools and service-account subjects as future work; deprecation notes say "removed in 2.0" everywhere.
 - Skills: `users_block` reports `service_unavailable` when sessions could not be
   revoked; `keystone-policy-admin` passes `file_hash` as `expected_hash`; error
   tables list only codes the tools return; service accounts and API keys are

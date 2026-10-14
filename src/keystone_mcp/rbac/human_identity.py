@@ -38,6 +38,6 @@ def has_interactive_human_identity(identity: VerifiedIdentity | None) -> bool:
     claims = identity.claims or {}
     if "interactive" in claims:
         return claims["interactive"] is True
-    # Tokens minted before 0.5.0 carry only auth_method; they expire within
-    # KEYSTONE_MCP_TOKEN_TTL. Remove this fallback once tokens issued before 0.5.0 can no longer be valid (next minor at the earliest).
+    # Kept until 2.0: sessions upgraded from 0.4.x still carry refresh markers
+    # without ``interactive``, and they must survive an upgrade.
     return claims.get("auth_method") == "google"
