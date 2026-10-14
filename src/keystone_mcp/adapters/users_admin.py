@@ -15,7 +15,15 @@ from typing import TYPE_CHECKING, Any
 
 from redis.exceptions import RedisError
 
-from keystone_mcp.adapters.guards import check_management_authority, require_human_actor
+from keystone_mcp.adapters.guards import (
+    AdminCall,
+    CatalogNamesSource,
+    check_delegation,
+    check_management_authority,
+    delegation_roles_granted,
+    require_human_actor,
+    resolve_admin_call,
+)
 from keystone_mcp.plugins import missing_members
 from keystone_mcp.user_directory.errors import UsersError
 from keystone_mcp.user_directory.protocol import UserDirectory, UserDirectoryAdmin
@@ -68,12 +76,14 @@ class UsersAdminAdapter:
         directory: UserDirectory | None = None,
         role_source: RoleSource | None = None,
         management_source: ManagementSource | None = None,
+        catalog_names_source: CatalogNamesSource | None = None,
         observability: RbacObservability | None = None,
         session_revoker: SessionRevoker | None = None,
     ) -> None:
         self._directory = directory
         self._role_source = role_source
         self._management_source = management_source
+        self._catalog_names_source = catalog_names_source
         self._observability = observability
         self._session_revoker = session_revoker
 
@@ -170,20 +180,51 @@ class UsersAdminAdapter:
                 self._record_mutation_audit(route, ctx, spec, result)
                 return result
 
-        if name != "users_list":
+        admin_call: AdminCall | dict[str, Any] | None = None
+        needs_admin_context = name != "users_list" and (
+            self._management_source is not None
+            or (name in _ROLE_CHECKED_TOOLS and self._catalog_names_source is not None)
+        )
+        if needs_admin_context:
             target_subject, roles_touched = self._management_targets(name, spec)
-            mgmt_refusal = await check_management_authority(
+            admin_call = await resolve_admin_call(
                 route,
                 ctx,
                 directory=directory,
                 management_source=self._management_source,
-                observability=self._observability,
                 target_subject=target_subject,
-                roles_touched=roles_touched,
             )
-            if mgmt_refusal is not None:
-                self._record_mutation_audit(route, ctx, spec, mgmt_refusal)
-                return mgmt_refusal
+            if isinstance(admin_call, dict):
+                self._record_mutation_audit(route, ctx, spec, admin_call)
+                return admin_call
+            if self._management_source is not None:
+                mgmt_refusal = check_management_authority(
+                    route,
+                    ctx,
+                    call=admin_call,
+                    observability=self._observability,
+                    roles_touched=roles_touched,
+                )
+                if mgmt_refusal is not None:
+                    self._record_mutation_audit(route, ctx, spec, mgmt_refusal)
+                    return mgmt_refusal
+            if name in _ROLE_CHECKED_TOOLS and self._catalog_names_source is not None:
+                roles_granted = delegation_roles_granted(
+                    name,
+                    spec,
+                    target_roles=admin_call.target_roles,
+                )
+                delegation_refusal = check_delegation(
+                    route,
+                    ctx,
+                    call=admin_call,
+                    roles_granted=roles_granted,
+                    catalog_names_source=self._catalog_names_source,
+                    observability=self._observability,
+                )
+                if delegation_refusal is not None:
+                    self._record_mutation_audit(route, ctx, spec, delegation_refusal)
+                    return delegation_refusal
 
         if name == "users_logout":
             return await self._execute_logout(route, ctx, spec)

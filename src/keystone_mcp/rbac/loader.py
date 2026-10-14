@@ -268,6 +268,20 @@ def live_catalog_names(
     return names | extra()
 
 
+def delegation_catalog_names(
+    policy_manager: RbacPolicyManager,
+    registry: RouterRegistry,
+) -> frozenset[str]:
+    """Live tool names plus catalog snapshot names used for delegation checks."""
+    snapshot = policy_manager.catalog_snapshot()
+    return (
+        live_catalog_names(policy_manager, registry)
+        | snapshot.active
+        | snapshot.reserved
+        | snapshot.wip
+    )
+
+
 _live_catalog_names = live_catalog_names
 
 

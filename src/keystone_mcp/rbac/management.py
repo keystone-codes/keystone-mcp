@@ -15,6 +15,8 @@ from keystone_mcp.user_directory.types import ServiceAccountRecord, UserRecord
 
 logger = logging.getLogger(__name__)
 
+_WILDCARD = "*"
+
 ADMIN_TOOL_NAMES: frozenset[str] = BUILTIN_TOOL_NAMES
 MANAGEMENT_TOOL_NAMES: frozenset[str] = MUTATING_ADMIN_TOOL_NAMES
 
@@ -39,6 +41,41 @@ def full_administrator_roles(policy: RbacPolicy) -> frozenset[str]:
     )
 
 
+def _actor_allow_patterns(policy: RbacPolicy, actor_roles: frozenset[str]) -> frozenset[str]:
+    patterns: set[str] = set()
+    for role_name in actor_roles:
+        role_policy = policy.role(role_name)
+        if role_policy is not None:
+            patterns.update(role_policy.allow_patterns)
+    return frozenset(patterns)
+
+
+def role_exceeds_actor(
+    policy: RbacPolicy,
+    role: str,
+    actor_roles: frozenset[str],
+    catalog_names: frozenset[str],
+) -> bool:
+    """Return True when ``role`` grants something ``actor_roles`` does not."""
+    if role in actor_roles:
+        return False
+    role_policy = policy.role(role)
+    if role_policy is None:
+        return False
+    for tool_name in catalog_names:
+        if policy.allows_role(role, tool_name) and not policy.allows(actor_roles, tool_name):
+            return True
+    actor_patterns = _actor_allow_patterns(policy, actor_roles)
+    if _WILDCARD in actor_patterns:
+        return False
+    for pattern in role_policy.allow_patterns:
+        if pattern in catalog_names:
+            continue
+        if pattern not in actor_patterns:
+            return True
+    return False
+
+
 @dataclass(frozen=True, slots=True)
 class ManagementView:
     """The policies a management check must satisfy: snapshot and optional on-disk file."""
@@ -52,8 +89,20 @@ class ManagementView:
         return frozenset(role for role in roles if self.is_management_role(role))
 
     def is_full_administrator(self, roles: Iterable[str]) -> bool:
+        if not self.policies:
+            return False
         role_set = tuple(roles)
         return all(is_full_administrator(policy, role_set) for policy in self.policies)
+
+    def role_exceeds_actor(
+        self,
+        role: str,
+        actor_roles: frozenset[str],
+        catalog_names: frozenset[str],
+    ) -> bool:
+        return any(
+            role_exceeds_actor(policy, role, actor_roles, catalog_names) for policy in self.policies
+        )
 
 
 ManagementSource = Callable[[], Awaitable[ManagementView]]

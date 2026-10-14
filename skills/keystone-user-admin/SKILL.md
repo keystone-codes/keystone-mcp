@@ -90,7 +90,7 @@ Report the resulting roles and blocked status back to the user — do not just s
 | `validation_error` | Missing or malformed argument, unknown role | Fix the argument; verify the role exists in the deployment's RBAC policy |
 | `last_administrator` | Would leave no active administrator | Refuse; ask for another administrator to be appointed first |
 | `self_admin_mutation_forbidden` | Actor is removing their own administrator access | Refuse; another administrator must do it |
-| `forbidden` | You are not a full administrator, and the change touches a management role or a person/service account holding one. Stop and report; do not retry. |
+| `forbidden` | You are not a full administrator, and the change touches a management role or a person/service account holding one, or the role gives permissions you do not have yourself; ask a full administrator. Stop and report; do not retry. |
 | `service_timeout`, `service_unavailable` | Directory unreachable | Report it; see the retry rule below |
 | `service_unconfigured` | Server is missing directory settings | Report to whoever operates the server |
 
