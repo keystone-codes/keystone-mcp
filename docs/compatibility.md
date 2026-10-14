@@ -23,15 +23,19 @@ without `/` or equal to the MCP path) are refused at startup.
 | `KEYSTONE_MCP_BASE_URL` | 0.5.0 | stable |
 | `KEYSTONE_MCP_DEPLOYMENT_PROFILE` | 0.5.0 | stable |
 | `KEYSTONE_MCP_DEV_TOKENS` | 0.5.0 | stable |
+| `KEYSTONE_MCP_DEV_TOKENS_FILE` | 0.6.0 | stable |
 | `KEYSTONE_MCP_ENABLED_LOGIN_METHODS` | 0.5.0 | deprecated (since 0.5.0, use KEYSTONE_MCP_LOGIN_PROVIDERS_PATH) |
 | `KEYSTONE_MCP_ENV_FILE` | 0.5.0 | stable |
 | `KEYSTONE_MCP_GOOGLE_ALLOWED_DOMAIN` | 0.5.0 | deprecated (since 0.5.0, use KEYSTONE_MCP_LOGIN_PROVIDERS_PATH) |
 | `KEYSTONE_MCP_GOOGLE_CLIENT_ID` | 0.5.0 | deprecated (since 0.5.0, use KEYSTONE_MCP_LOGIN_PROVIDERS_PATH) |
 | `KEYSTONE_MCP_GOOGLE_CLIENT_SECRET` | 0.5.0 | deprecated (since 0.5.0, use KEYSTONE_MCP_LOGIN_PROVIDERS_PATH) |
+| `KEYSTONE_MCP_GOOGLE_CLIENT_SECRET_FILE` | 0.6.0 | stable |
 | `KEYSTONE_MCP_HOST` | 0.5.0 | stable |
 | `KEYSTONE_MCP_HTTP_PATH` | 0.5.0 | stable |
 | `KEYSTONE_MCP_IDENTITY_SIGNING_KEY` | 0.5.0 | stable |
+| `KEYSTONE_MCP_IDENTITY_SIGNING_KEY_FILE` | 0.6.0 | stable |
 | `KEYSTONE_MCP_IDENTITY_SIGNING_KEY_PREVIOUS` | 0.6.0 | stable |
+| `KEYSTONE_MCP_IDENTITY_SIGNING_KEY_PREVIOUS_FILE` | 0.6.0 | stable |
 | `KEYSTONE_MCP_INTERNAL_ALLOWED_CIDRS` | 0.5.0 | stable |
 | `KEYSTONE_MCP_INTERNAL_ENDPOINTS_ENABLED` | 0.5.0 | stable |
 | `KEYSTONE_MCP_LOGIN_IDENTITY_BINDING` | 0.6.0 | stable |
@@ -67,11 +71,13 @@ without `/` or equal to the MCP path) are refused at startup.
 | `KEYSTONE_MCP_RBAC_AUDIT_ENABLED` | 0.5.0 | stable |
 | `KEYSTONE_MCP_RBAC_AUDIT_LIST_TOOLS_SAMPLE_RATE` | 0.5.0 | stable |
 | `KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT` | 0.5.0 | stable |
+| `KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT_FILE` | 0.6.0 | stable |
 | `KEYSTONE_MCP_RBAC_CATALOG_SNAPSHOT` | 0.5.0 | stable |
 | `KEYSTONE_MCP_RBAC_MODE` | 0.5.0 | stable |
 | `KEYSTONE_MCP_RBAC_POLICY_PATH` | 0.5.0 | stable |
 | `KEYSTONE_MCP_REDIS_KEY_PREFIX` | 0.5.0 | stable |
 | `KEYSTONE_MCP_REDIS_URL` | 0.5.0 | stable |
+| `KEYSTONE_MCP_REDIS_URL_FILE` | 0.6.0 | stable |
 | `KEYSTONE_MCP_REFRESH_INTERVAL_SECONDS` | 0.5.0 | stable |
 | `KEYSTONE_MCP_SHUTDOWN_GRACE_SECONDS` | 0.6.0 | stable |
 | `KEYSTONE_MCP_REFRESH_TOKEN_TTL` | 0.5.0 | stable |
@@ -100,11 +106,13 @@ without `/` or equal to the MCP path) are refused at startup.
 | `KEYSTONE_MCP_USERS_CIRCUIT_FAILURE_THRESHOLD` | 0.5.0 | stable |
 | `KEYSTONE_MCP_USERS_CIRCUIT_RECOVERY_SECONDS` | 0.5.0 | stable |
 | `KEYSTONE_MCP_USERS_DB_URL` | 0.5.0 | stable |
+| `KEYSTONE_MCP_USERS_DB_URL_FILE` | 0.6.0 | stable |
 | `KEYSTONE_MCP_USERS_REDIS_REVISION_KEY` | 0.5.0 | stable |
 | `KEYSTONE_MCP_POLICY_REDIS_REVISION_KEY` | 0.6.0 | stable |
 | `KEYSTONE_MCP_USERS_SERVICE_ALLOW_INSECURE_HTTP` | 0.6.0 | stable |
 | `KEYSTONE_MCP_USERS_SERVICE_TIMEOUT_SECONDS` | 0.5.0 | stable |
 | `KEYSTONE_MCP_USERS_SERVICE_TOKEN` | 0.5.0 | stable |
+| `KEYSTONE_MCP_USERS_SERVICE_TOKEN_FILE` | 0.6.0 | stable |
 | `KEYSTONE_MCP_USERS_SERVICE_URL` | 0.5.0 | stable |
 
 What is frozen for each variable: its name, meaning, default, and the set of
@@ -112,7 +120,9 @@ allowed values. Adding a new allowed value is not a breaking change.
 
 Variables named in the upstream registry (`auth.bearer_env`,
 `auth.identity_secret_env`, and the values in a stdio entry's `env` map) are
-chosen by you; their names are not part of this contract.
+chosen by you; their names are not part of this contract. The same `<NAME>_FILE`
+rule as for built-in secrets applies to those operator-chosen names (see
+[environment.md#secrets-from-files](environment.md#secrets-from-files)).
 `KEYSTONE_MCP_CONTRIB_*` variables belong to contrib and are not covered (see
 [contrib/README.md](contrib/README.md)). Removed variables:
 [environment.md#removed-variables](environment.md#removed-variables).

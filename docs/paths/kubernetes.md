@@ -44,7 +44,9 @@ workload.
    ```
 
    `secret.example.yaml` shows the same four keys with placeholder values, for
-   reference only — never apply it as written.
+   reference only — never apply it as written. Alternatively, mount each value
+   as a file and set `KEYSTONE_MCP_<NAME>_FILE` to the mount path (see
+   [environment.md#secrets-from-files](../environment.md#secrets-from-files)).
 4. Edit `configmap.yaml`'s `login-providers.yaml` (`client_id`, optional
    `allowed_domain`) and `deployment.yaml`'s plain (non-secret) `env` block:
    `KEYSTONE_MCP_BASE_URL`, `KEYSTONE_MCP_SUPERADMIN_EMAIL`, and

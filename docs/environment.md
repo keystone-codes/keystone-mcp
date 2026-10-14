@@ -132,6 +132,62 @@ kubectl run config-check --rm -it --restart=Never \
   keystone-mcp config check
 ```
 
+## Secrets from files
+
+For every built-in secret variable listed below, you may set
+``KEYSTONE_MCP_<NAME>_FILE`` to a filesystem path instead of putting the value
+in the environment. When both the variable and its ``_FILE`` companion are set,
+the file wins; Keystone logs one warning (without printing either value). The
+file is read as UTF-8 text; a single trailing newline (``\\n`` or ``\\r\\n``) is
+removed. An empty file is treated as an empty value. If the path is missing,
+not readable, a directory, larger than 64 KiB, or not valid UTF-8, startup
+refuses with the variable name and path only — never the file contents. Values
+read from files are not copied into the process environment (so child processes
+do not inherit them). Secrets are loaded when settings are built at startup;
+upstream registry secrets are read again when entries are mounted (and on
+``SIGHUP`` reload when that feature is enabled).
+
+``KEYSTONE_MCP_ENV_FILE`` names the optional ``.env`` file to load; it is not a
+secret and does not use the ``_FILE`` convention above.
+
+Any variable named by an upstream registry entry's ``auth.bearer_env``,
+``auth.identity_secret_env``, a stdio entry's ``env``, or a sign-in provider's
+``*_env`` option may be given as ``<NAME>_FILE`` with the same rules.
+
+<!-- secret-files:begin -->
+| Variable | Meaning |
+|---|---|
+| `KEYSTONE_MCP_DEV_TOKENS_FILE` | reads `KEYSTONE_MCP_DEV_TOKENS` from a file |
+| `KEYSTONE_MCP_GOOGLE_CLIENT_SECRET_FILE` | reads `KEYSTONE_MCP_GOOGLE_CLIENT_SECRET` from a file |
+| `KEYSTONE_MCP_IDENTITY_SIGNING_KEY_FILE` | reads `KEYSTONE_MCP_IDENTITY_SIGNING_KEY` from a file |
+| `KEYSTONE_MCP_IDENTITY_SIGNING_KEY_PREVIOUS_FILE` | reads `KEYSTONE_MCP_IDENTITY_SIGNING_KEY_PREVIOUS` from a file |
+| `KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT_FILE` | reads `KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT` from a file |
+| `KEYSTONE_MCP_REDIS_URL_FILE` | reads `KEYSTONE_MCP_REDIS_URL` from a file |
+| `KEYSTONE_MCP_USERS_DB_URL_FILE` | reads `KEYSTONE_MCP_USERS_DB_URL` from a file |
+| `KEYSTONE_MCP_USERS_SERVICE_TOKEN_FILE` | reads `KEYSTONE_MCP_USERS_SERVICE_TOKEN` from a file |
+<!-- secret-files:end -->
+
+Docker Compose example (Redis URL and audit salt as mounted secrets):
+
+```yaml
+services:
+  keystone-mcp:
+    environment:
+      KEYSTONE_MCP_REDIS_URL_FILE: /run/secrets/redis_url
+      KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT_FILE: /run/secrets/audit_salt
+    secrets:
+      - redis_url
+      - audit_salt
+secrets:
+  redis_url:
+    file: ./secrets/redis_url.txt
+  audit_salt:
+    file: ./secrets/audit_salt.txt
+```
+
+Kubernetes: mount a Secret volume and point ``KEYSTONE_MCP_REDIS_URL_FILE`` at
+the mounted key file (for example ``/etc/keystone/secrets/redis_url``).
+
 | # | Profile | Logged when | What to do |
 |---|---|---|---|
 | W1 | `production` | `KEYSTONE_MCP_BASE_URL` uses `http` on a non-public host. | Terminate TLS at a trusted proxy, or accept plain http only inside the private network. |
