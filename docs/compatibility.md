@@ -165,7 +165,10 @@ Frozen since 0.5.0. Structural validation:
   `discovery_timeout_seconds`, `tool_timeout_seconds`, `route_mode` (`live` or
   `stub`, default `live`), `auth` (`bearer_env`, `identity_secret_env`,
   `identity_alg` with value `ES256`), `transport` (`http` default or `stdio`),
-  and for `stdio`: `command`, `args`, `env`, `cwd`.
+  and for `stdio`: `command`, `args`, `env`, `cwd`. Optional `limits`:
+  `concurrency`, `rate`, `window`, `breaker_failures`,
+  `breaker_recovery_seconds` (per-entry service protection; omitted means no
+  limit).
 - `auth.bearer_env` and `auth.identity_secret_env` name
   `KEYSTONE_MCP_UPSTREAM_*` variables (never secret values in the file).
 - `name` and `namespace` must be unique across entries.
@@ -428,6 +431,9 @@ Frozen since 0.5.0. Metric names and label keys (not log message text):
 | `keystone_mcp_upstream_items_rejected_total` | `namespace`, `kind`, `reason` |
 | `keystone_mcp_upstream_input_rounds_exceeded_total` | `namespace` |
 | `keystone_mcp_upstream_elicitations_total` | `namespace`, `action` |
+| `keystone_mcp_upstream_limit_rejections_total` | `namespace`, `reason` |
+| `keystone_mcp_upstream_circuit_state` | `namespace` |
+| `keystone_mcp_upstream_inflight` | `namespace` |
 | `keystone_mcp_oauth_client_registrations_total` | `outcome` |
 | `keystone_mcp_oauth_client_evictions_total` | (counter, no labels) |
 | `keystone_mcp_oauth_token_exchange_total` | `grant_type`, `outcome` |

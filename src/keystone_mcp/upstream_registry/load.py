@@ -11,7 +11,7 @@ from typing import Any, Literal
 
 import yaml
 
-from keystone_mcp.config import UpstreamConfig, _parse_prefix_list
+from keystone_mcp.config import UpstreamConfig, UpstreamLimits, _parse_prefix_list
 from keystone_mcp.identity_assertion import identity_signing_key_from_env, resolve_identity_secret
 from keystone_mcp.secrets import read_secret, secret_is_set
 from keystone_mcp.upstream_registry.policy import UpstreamSecurityPolicy
@@ -21,6 +21,7 @@ from keystone_mcp.upstream_registry.validate import (
     auth_field_errors,
     env_field_errors,
     identity_secret_reuse_errors,
+    limits_field_errors,
     namespace_errors,
     validate_upstream_url,
 )
@@ -158,6 +159,25 @@ def _parse_env_from(
     return tuple(pairs)
 
 
+def _parse_limits(item: dict[str, Any], *, name: str) -> UpstreamLimits | None:
+    raw = item.get("limits")
+    if raw is None:
+        return None
+    errors = limits_field_errors(raw)
+    if errors:
+        raise ValueError(f"upstream {name!r}: {errors[0]}")
+    assert isinstance(raw, dict)
+    window_raw = raw.get("window", 60)
+    recovery_raw = raw.get("breaker_recovery_seconds", 30)
+    return UpstreamLimits(
+        concurrency=raw.get("concurrency"),
+        rate=raw.get("rate"),
+        window_seconds=float(window_raw),
+        breaker_failures=raw.get("breaker_failures"),
+        breaker_recovery_seconds=float(recovery_raw),
+    )
+
+
 def parse_upstream_entry(
     item: dict[str, Any],
     *,
@@ -281,6 +301,8 @@ def parse_upstream_entry(
         field_name="resource_exclude_prefixes",
     )
 
+    limits = _parse_limits(item, name=name)
+
     return UpstreamConfig(
         name=name,
         url=url,
@@ -303,6 +325,7 @@ def parse_upstream_entry(
         publish_resources=publish_resources,
         resource_include_prefixes=resource_include_prefixes,
         resource_exclude_prefixes=resource_exclude_prefixes,
+        limits=limits,
     )
 
 

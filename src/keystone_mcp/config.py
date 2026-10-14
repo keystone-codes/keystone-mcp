@@ -755,6 +755,17 @@ def resources_equivalent(left: str, right: str) -> bool:
     return _normalize_resource(left) == _normalize_resource(right)
 
 
+@dataclass(frozen=True, slots=True)
+class UpstreamLimits:
+    """Optional per-upstream call limits from the registry ``limits`` block."""
+
+    concurrency: int | None = None
+    rate: int | None = None
+    window_seconds: float = 60
+    breaker_failures: int | None = None
+    breaker_recovery_seconds: float = 30
+
+
 @dataclass(frozen=True)
 class UpstreamConfig:
     """One proxied downstream MCP API registered on the router."""
@@ -793,6 +804,7 @@ class UpstreamConfig:
     publish_resources: bool = True
     resource_include_prefixes: tuple[str, ...] = ()
     resource_exclude_prefixes: tuple[str, ...] = ()
+    limits: UpstreamLimits | None = None
 
     def build_tool_filter(self):
         """Return a predicate for downstream tool names (discovery filter)."""

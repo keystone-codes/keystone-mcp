@@ -51,6 +51,7 @@ if TYPE_CHECKING:
     from keystone_mcp.router.context import RouteContext
     from keystone_mcp.router.route import Route
     from keystone_mcp.router.upstream_connection import UpstreamConnection
+    from keystone_mcp.router.upstream_guard import UpstreamGuard
 
 logger = logging.getLogger(__name__)
 
@@ -201,6 +202,7 @@ class McpProxyAdapter:
         extra_headers: Mapping[str, str] | None = None,
         identity_signer: IdentityAssertionSigner | None = None,
         max_response_bytes: int = DEFAULT_UPSTREAM_MAX_RESPONSE_BYTES,
+        guard: "UpstreamGuard | None" = None,
     ) -> None:
         from keystone_mcp.router.upstream_connection import HttpUpstreamConnection
 
@@ -235,6 +237,7 @@ class McpProxyAdapter:
         # Signs X-Keystone-Identity (Y01); None means this upstream has no
         # auth.identity_secret_env and gets only the unsigned X-Author-Email.
         self._identity_signer = identity_signer
+        self._guard = guard
 
     @classmethod
     def for_url(
@@ -278,6 +281,10 @@ class McpProxyAdapter:
         conn = self._connection
         if isinstance(conn, HttpUpstreamConnection):
             conn._http_client_factory = factory
+
+    @property
+    def guard(self) -> "UpstreamGuard | None":
+        return self._guard
 
     @property
     def status_envelope(self) -> bool:
@@ -412,75 +419,85 @@ class McpProxyAdapter:
             mcp_method="tools/call",
             upstream_tool=tool_name,
         )
-        max_attempts = 2 if isinstance(self._connection, HttpUpstreamConnection) else 1
-        raw = None
-        parsed = None
-        with traced("keystone.upstream.call", **span_attrs):
-            for attempt in range(max_attempts):
-                try:
-                    client = self._connection.call_client(headers=headers, timeout=timeout)
-                except UpstreamProcessUnavailableError:
-                    raise ToolError(f"upstream {route.namespace} is unavailable") from None
-                except Exception as exc:
-                    if (
-                        attempt + 1 < max_attempts
-                        and isinstance(self._connection, HttpUpstreamConnection)
-                        and self._connection.prepare_stale_era_retry(exc)
-                    ):
-                        continue
-                    raise
-                if elicitation_callback is not None:
-                    attach_upstream_elicitation_callback(client, elicitation_callback)
-                try:
-                    async with client:
-                        raw = await call_upstream_tool(
-                            client,
-                            tool_name,
-                            payload,
-                            timeout=timeout,
-                            meta=call_meta,
-                            downstream=downstream,
-                            log_namespace=route.namespace,
-                            input_responses=input_responses,
-                            request_state=request_state,
-                            proxy_elicitation=self._proxy_elicitation,
+
+        async def _invoke_upstream() -> dict[str, Any] | ToolResult:
+            max_attempts = 2 if isinstance(self._connection, HttpUpstreamConnection) else 1
+            raw = None
+            parsed = None
+            with traced("keystone.upstream.call", **span_attrs):
+                for attempt in range(max_attempts):
+                    try:
+                        client = self._connection.call_client(headers=headers, timeout=timeout)
+                    except UpstreamProcessUnavailableError:
+                        raise ToolError(f"upstream {route.namespace} is unavailable") from None
+                    except Exception as exc:
+                        if (
+                            attempt + 1 < max_attempts
+                            and isinstance(self._connection, HttpUpstreamConnection)
+                            and self._connection.prepare_stale_era_retry(exc)
+                        ):
+                            continue
+                        raise
+                    if elicitation_callback is not None:
+                        attach_upstream_elicitation_callback(client, elicitation_callback)
+                    try:
+                        async with client:
+                            raw = await call_upstream_tool(
+                                client,
+                                tool_name,
+                                payload,
+                                timeout=timeout,
+                                meta=call_meta,
+                                downstream=downstream,
+                                log_namespace=route.namespace,
+                                input_responses=input_responses,
+                                request_state=request_state,
+                                proxy_elicitation=self._proxy_elicitation,
+                            )
+                            if isinstance(raw, InputRequiredToolResult):
+                                return raw
+                            if self._status_envelope:
+                                # Parsed inside the ``async with`` block: _parse_call_tool_result
+                                # decodes against the upstream's output schema, cached on the
+                                # still-open session.
+                                parsed = await parse_for_status_envelope(client, tool_name, raw)
+                        break
+                    except UpstreamResponseTooLargeError as exc:
+                        from keystone_mcp.observability.metrics import record_upstream_item_rejected
+
+                        record_upstream_item_rejected(
+                            namespace=route.namespace,
+                            kind="response",
+                            reason="response_too_large",
                         )
-                        if isinstance(raw, InputRequiredToolResult):
-                            return raw
-                        if self._status_envelope:
-                            # Parsed inside the ``async with`` block: _parse_call_tool_result
-                            # decodes against the upstream's output schema, cached on the
-                            # still-open session.
-                            parsed = await parse_for_status_envelope(client, tool_name, raw)
-                    break
-                except UpstreamResponseTooLargeError as exc:
-                    from keystone_mcp.observability.metrics import record_upstream_item_rejected
+                        raise ToolError(
+                            f"upstream {route.namespace} answer is larger than "
+                            f"{self._max_response_bytes} bytes"
+                        ) from exc
+                    except Exception as exc:
+                        if (
+                            attempt + 1 < max_attempts
+                            and isinstance(self._connection, HttpUpstreamConnection)
+                            and self._connection.prepare_stale_era_retry(exc)
+                        ):
+                            continue
+                        raise
 
-                    record_upstream_item_rejected(
-                        namespace=route.namespace,
-                        kind="response",
-                        reason="response_too_large",
-                    )
-                    raise ToolError(
-                        f"upstream {route.namespace} answer is larger than "
-                        f"{self._max_response_bytes} bytes"
-                    ) from exc
-                except Exception as exc:
-                    if (
-                        attempt + 1 < max_attempts
-                        and isinstance(self._connection, HttpUpstreamConnection)
-                        and self._connection.prepare_stale_era_retry(exc)
-                    ):
-                        continue
-                    raise
+            if self._status_envelope:
+                return self._wrap_status_envelope(parsed, route, ctx)
 
-        if self._status_envelope:
-            return self._wrap_status_envelope(parsed, route, ctx)
+            from keystone_mcp.router.proxy_components import strip_upstream_connection_meta
 
-        from keystone_mcp.router.proxy_components import strip_upstream_connection_meta
+            raw = raw.model_copy(update={"meta": strip_upstream_connection_meta(raw.meta)})
+            return ToolResult.from_mcp_result(raw)
 
-        raw = raw.model_copy(update={"meta": strip_upstream_connection_meta(raw.meta)})
-        return ToolResult.from_mcp_result(raw)
+        if self._guard is not None:
+            async with self._guard.call(
+                timeout=timeout,
+                slot_wait_timeout=min(timeout, 30.0),
+            ):
+                return await _invoke_upstream()
+        return await _invoke_upstream()
 
     @staticmethod
     def _wrap_status_envelope(result: Any, route: "Route", ctx: "RouteContext") -> dict[str, Any]:
