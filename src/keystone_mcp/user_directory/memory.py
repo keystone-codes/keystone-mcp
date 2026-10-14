@@ -32,6 +32,7 @@ from keystone_mcp.user_directory.types import (
     service_subject,
 )
 from keystone_mcp.user_directory.util import normalize_email
+from keystone_mcp.users.emails import require_valid_email
 from keystone_mcp.users.errors import InvalidRoleError, InvalidUserFieldError
 from keystone_mcp.users.roles import ROLE_ADMINISTRATOR, check_role_name
 
@@ -200,7 +201,7 @@ class InMemoryUserDirectory(UserDirectoryAdminBase):
         note: str | None,
         actor: str,
     ) -> MutationResult:
-        normalized = normalize_email(email)
+        normalized = require_valid_email(email)
         if normalized in self._users:
             raise UserAlreadyExistsError(normalized)
         role_list = tuple(dict.fromkeys(check_role_name(role) for role in roles))

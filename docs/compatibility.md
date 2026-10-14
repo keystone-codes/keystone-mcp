@@ -400,7 +400,9 @@ optional.
 declared directory capability; availability tests require
 `keystone_unavailable_directory_factory` (or
 `@pytest.mark.keystone_contract_lenient(reason=…)` on the class). Other 0.5.0 contract
-checks are unchanged; new checks ship in separate opt-in classes.
+checks are unchanged; new checks ship in separate opt-in classes. Checks added in 0.6.0
+live in opt-in `*Checks06` classes (see [plugins.md](plugins.md)); they join the main
+contract classes in 2.0.
 
 ## Observability
 
