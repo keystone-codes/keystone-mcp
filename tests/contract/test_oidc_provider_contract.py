@@ -11,8 +11,6 @@ from keystone_mcp.contract_tests.fake_oidc import FakeOidcIssuer
 from keystone_mcp.login.oidc import OidcLoginProvider, google_provider_config
 from keystone_mcp.login.protocol import RedirectLoginProvider
 
-pytest_plugins = ["keystone_mcp.contract_tests"]
-
 
 @pytest.fixture
 def keystone_oidc_provider_factory() -> Callable[[FakeOidcIssuer], RedirectLoginProvider]:

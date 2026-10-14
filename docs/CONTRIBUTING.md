@@ -88,7 +88,12 @@ fails the build if they would silently skip).
 The suite must pass without reruns or forced ordering; a flaky test is a bug
 to fix, not to retry (`tests/test_ci_hygiene.py`).
 
-CI runs the suite on Python 3.11, 3.12 and 3.13.
+CI runs the suite on Python 3.11 through 3.14. Coverage (line and branch,
+combined) is measured in the Python 3.12 job and must stay at or above the
+``fail_under`` threshold in ``pyproject.toml`` (currently 86 %). Register new
+pytest markers in ``pyproject.toml``; the suite runs with ``--strict-markers``.
+Use a concrete exception type in ``pytest.raises(...)``, not bare
+``Exception``.
 
 Changing a protocol in `keystone_mcp.login` or `keystone_mcp.user_directory`
 means changing the contract tests in the same pull request; the contract is

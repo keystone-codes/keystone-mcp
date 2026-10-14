@@ -10,8 +10,6 @@ from keystone_mcp.contract_tests.fake_oidc import FakeOidcIssuer
 from keystone_mcp.login.oidc import OidcLoginProvider, google_provider_config
 from keystone_mcp.login.protocol import LoginRejected
 
-pytestmark = pytest.mark.asyncio
-
 
 def _provider(fake: FakeOidcIssuer, **config_overrides) -> OidcLoginProvider:
     cache_ttl = float(config_overrides.pop("cache_ttl_seconds", 3600.0))
