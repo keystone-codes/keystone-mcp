@@ -37,6 +37,15 @@ roles:
 """
 
 
+def _catalog_read(**kwargs: object) -> UpstreamCatalogRead:
+    return UpstreamCatalogRead(
+        tools=kwargs.get("tools", []),
+        prompts=kwargs.get("prompts", []),
+        resources=kwargs.get("resources", []),
+        templates=kwargs.get("templates", []),
+    )
+
+
 @pytest.fixture
 def policy_path(tmp_path: Path) -> Path:
     path = tmp_path / "policy.yaml"
@@ -153,13 +162,13 @@ def test_repr_does_not_leak_bearer_token_via_upstreams_field(monkeypatch, policy
 
 
 async def test_upstream_timeout_keeps_previous_catalog(reconciler_stack):
-    reconciler, registry, _policy_path, _policy_manager, _upstreams = reconciler_stack
+    reconciler, registry, _policy_path, _policy_manager, upstreams = reconciler_stack
     before = set(registry.routes.keys())
 
-    with patch(
-        "keystone_mcp.router.upstream.fetch_upstream_tools",
-        new_callable=AsyncMock,
-        side_effect=UpstreamListToolsError("timeout"),
+    with patch.object(
+        upstreams,
+        "read_catalog",
+        AsyncMock(side_effect=UpstreamListToolsError("timeout")),
     ):
         await reconciler.tick()
 
@@ -167,13 +176,13 @@ async def test_upstream_timeout_keeps_previous_catalog(reconciler_stack):
 
 
 async def test_single_empty_upstream_list_holds_catalog(reconciler_stack):
-    reconciler, registry, _policy_path, _policy_manager, _upstreams = reconciler_stack
+    reconciler, registry, _policy_path, _policy_manager, upstreams = reconciler_stack
     before = set(registry.routes.keys())
 
-    with patch(
-        "keystone_mcp.router.upstream.fetch_upstream_tools",
-        new_callable=AsyncMock,
-        return_value=[],
+    with patch.object(
+        upstreams,
+        "read_catalog",
+        AsyncMock(return_value=_catalog_read(tools=[])),
     ):
         await reconciler.tick()
 
@@ -185,15 +194,15 @@ async def test_unreachable_upstream_does_not_crash_tick(reconciler_stack, caplog
     """A connection-level RuntimeError (not UpstreamListToolsError) must not
     propagate out of tick(): the namespace keeps its previous catalog and the
     failure is logged, instead of killing the reconciler task."""
-    reconciler, registry, _policy_path, _policy_manager, _upstreams = reconciler_stack
+    reconciler, registry, _policy_path, _policy_manager, upstreams = reconciler_stack
     before = set(registry.routes.keys())
 
     with (
         caplog.at_level(logging.WARNING, logger=reconciler_module.__name__),
-        patch(
-            "keystone_mcp.router.upstream.fetch_upstream_tools",
-            new_callable=AsyncMock,
-            side_effect=RuntimeError("Client failed to connect"),
+        patch.object(
+            upstreams,
+            "read_catalog",
+            AsyncMock(side_effect=RuntimeError("Client failed to connect")),
         ),
     ):
         await reconciler.tick()
@@ -221,16 +230,12 @@ async def test_one_failing_namespace_does_not_block_others(reconciler_stack):
 
     upstreams.add_upstream("ledger", "http://ledger:8082/mcp", namespace="ledger")
 
-    async def _fake_fetch(url: str, *, timeout_seconds: float, **_kwargs):
-        if "reports" in url:
+    async def _fake_read(cfg):
+        if cfg.namespace == "reports":
             raise UpstreamListToolsError("reports upstream unreachable")
-        return [_FakeTool("do_thing")]
+        return _catalog_read(tools=[_FakeTool("do_thing")])
 
-    with patch(
-        "keystone_mcp.router.upstream.fetch_upstream_tools",
-        new_callable=AsyncMock,
-        side_effect=_fake_fetch,
-    ):
+    with patch.object(upstreams, "read_catalog", side_effect=_fake_read):
         await reconciler.tick()
 
     assert "ledger:do_thing" in registry.routes
@@ -352,10 +357,10 @@ async def test_unpublishable_tool_is_retried_every_tick_not_cached_as_done(
     reconciler, registry, _policy_path, _policy_manager, upstreams = reconciler_stack
     upstreams.add_upstream("ledger", "http://ledger:8082/mcp", namespace="ledger")
 
-    async def _fake_fetch(url: str, *, timeout_seconds: float, **_kwargs):
-        if "reports" in url:
+    async def _fake_read(cfg):
+        if cfg.namespace == "reports":
             raise UpstreamListToolsError("reports upstream unreachable")
-        return [_FakeSchemaTool("bad_tool", _GOOD_SCHEMA)]
+        return _catalog_read(tools=[_FakeSchemaTool("bad_tool", _GOOD_SCHEMA)])
 
     original_register_tool = RouterRegistry._register_tool
 
@@ -368,11 +373,7 @@ async def test_unpublishable_tool_is_retried_every_tick_not_cached_as_done(
 
     with (
         caplog.at_level(logging.ERROR),
-        patch(
-            "keystone_mcp.router.upstream.fetch_upstream_tools",
-            new_callable=AsyncMock,
-            side_effect=_fake_fetch,
-        ),
+        patch.object(upstreams, "read_catalog", side_effect=_fake_read),
     ):
         await reconciler.tick()
         first_tick_errors = sum("upstream tool skipped" in r.message for r in caplog.records)
@@ -403,19 +404,19 @@ async def test_failed_update_keeps_old_tool_and_removal_still_works(
     upstreams.add_upstream("ledger", "http://ledger:8082/mcp", namespace="ledger")
     sub = upstreams._sub_servers["ledger"]
 
-    def _fetch_returning(namespace_tools: list):
-        async def _fake_fetch(url: str, *, timeout_seconds: float, **_kwargs):
-            if "reports" in url:
+    def _read_returning(namespace_tools: list):
+        async def _fake_read(cfg):
+            if cfg.namespace == "reports":
                 raise UpstreamListToolsError("reports upstream unreachable")
-            return namespace_tools
+            return _catalog_read(tools=namespace_tools)
 
-        return _fake_fetch
+        return _fake_read
 
     # Tick 1: publish good_tool normally.
-    with patch(
-        "keystone_mcp.router.upstream.fetch_upstream_tools",
-        new_callable=AsyncMock,
-        side_effect=_fetch_returning([_FakeSchemaTool("good_tool", _GOOD_SCHEMA)]),
+    with patch.object(
+        upstreams,
+        "read_catalog",
+        side_effect=_read_returning([_FakeSchemaTool("good_tool", _GOOD_SCHEMA)]),
     ):
         await reconciler.tick()
 
@@ -439,10 +440,10 @@ async def test_failed_update_keeps_old_tool_and_removal_still_works(
 
     with (
         caplog.at_level(logging.ERROR),
-        patch(
-            "keystone_mcp.router.upstream.fetch_upstream_tools",
-            new_callable=AsyncMock,
-            side_effect=_fetch_returning(
+        patch.object(
+            upstreams,
+            "read_catalog",
+            side_effect=_read_returning(
                 [_FakeSchemaTool("good_tool", _GOOD_SCHEMA, description="good tool, v2")]
             ),
         ),
@@ -462,10 +463,10 @@ async def test_failed_update_keeps_old_tool_and_removal_still_works(
     # Tick 3: the upstream drops the tool entirely. It must actually be
     # removed now -- the failed update in tick 2 must not have orphaned it
     # from the fingerprint bookkeeping that drives removal.
-    with patch(
-        "keystone_mcp.router.upstream.fetch_upstream_tools",
-        new_callable=AsyncMock,
-        side_effect=_fetch_returning([_FakeSchemaTool("other_tool", _GOOD_SCHEMA)]),
+    with patch.object(
+        upstreams,
+        "read_catalog",
+        side_effect=_read_returning([_FakeSchemaTool("other_tool", _GOOD_SCHEMA)]),
     ):
         await reconciler.tick()
 
@@ -498,18 +499,18 @@ async def test_enum_change_triggers_update(reconciler_stack, caplog):
     upstreams.add_upstream("ledger", "http://ledger:8082/mcp", namespace="ledger")
     sub = upstreams._sub_servers["ledger"]
 
-    def _fetch_returning(tools: list):
-        async def _fake_fetch(url: str, *, timeout_seconds: float, **_kwargs):
-            if "reports" in url:
+    def _read_returning(tools: list):
+        async def _fake_read(cfg):
+            if cfg.namespace == "reports":
                 raise UpstreamListToolsError("reports upstream unreachable")
-            return tools
+            return _catalog_read(tools=tools)
 
-        return _fake_fetch
+        return _fake_read
 
-    with patch(
-        "keystone_mcp.router.upstream.fetch_upstream_tools",
-        new_callable=AsyncMock,
-        side_effect=_fetch_returning([_FakeSchemaTool("set_mode", _ENUM_SCHEMA_V1)]),
+    with patch.object(
+        upstreams,
+        "read_catalog",
+        side_effect=_read_returning([_FakeSchemaTool("set_mode", _ENUM_SCHEMA_V1)]),
     ):
         await reconciler.tick()
 
@@ -521,10 +522,10 @@ async def test_enum_change_triggers_update(reconciler_stack, caplog):
 
     with (
         caplog.at_level(logging.INFO),
-        patch(
-            "keystone_mcp.router.upstream.fetch_upstream_tools",
-            new_callable=AsyncMock,
-            side_effect=_fetch_returning([_FakeSchemaTool("set_mode", _ENUM_SCHEMA_V2)]),
+        patch.object(
+            upstreams,
+            "read_catalog",
+            side_effect=_read_returning([_FakeSchemaTool("set_mode", _ENUM_SCHEMA_V2)]),
         ),
     ):
         await reconciler.tick()
@@ -674,10 +675,10 @@ async def test_upstream_down_at_start_is_added_when_it_comes_up():
     )
     reconciler.seed_snapshots()
 
-    with patch(
-        "keystone_mcp.router.upstream.fetch_upstream_tools",
-        new_callable=AsyncMock,
-        return_value=[_FakeTool("read"), _FakeTool("write")],
+    with patch.object(
+        upstreams,
+        "read_catalog",
+        AsyncMock(return_value=_catalog_read(tools=[_FakeTool("read"), _FakeTool("write")])),
     ):
         await reconciler.tick()
 
@@ -696,10 +697,10 @@ async def test_upstream_lost_after_start_keeps_tools_and_is_reported(
 
     with (
         caplog.at_level(logging.WARNING, logger=reconciler_module.__name__),
-        patch(
-            "keystone_mcp.router.upstream.fetch_upstream_tools",
-            new_callable=AsyncMock,
-            side_effect=UpstreamListToolsError("reports down"),
+        patch.object(
+            upstreams,
+            "read_catalog",
+            AsyncMock(side_effect=UpstreamListToolsError("reports down")),
         ),
     ):
         await reconciler.tick()
@@ -731,10 +732,14 @@ async def test_upstream_recovery_is_logged(reconciler_stack, caplog: pytest.LogC
         # reconciler itself, so capture at the root logger instead of scoping
         # to one module.
         caplog.at_level(logging.INFO),
-        patch(
-            "keystone_mcp.router.upstream.fetch_upstream_tools",
-            new_callable=AsyncMock,
-            return_value=[_FakeTool("reports_read"), _FakeTool("reports_write")],
+        patch.object(
+            upstreams,
+            "read_catalog",
+            AsyncMock(
+                return_value=_catalog_read(
+                    tools=[_FakeTool("reports_read"), _FakeTool("reports_write")]
+                )
+            ),
         ),
     ):
         await reconciler.tick()
@@ -813,10 +818,10 @@ async def test_drift_check_runs_when_unavailable_upstream_comes_up(
 
     with (
         caplog.at_level(logging.ERROR),
-        patch(
-            "keystone_mcp.router.upstream.fetch_upstream_tools",
-            new_callable=AsyncMock,
-            return_value=[_FakeTool("search")],
+        patch.object(
+            upstreams,
+            "read_catalog",
+            AsyncMock(return_value=_catalog_read(tools=[_FakeTool("search")])),
         ),
     ):
         await reconciler.tick()
@@ -845,10 +850,10 @@ async def test_drift_check_runs_when_upstream_comes_up_with_empty_list(
 
     with (
         caplog.at_level(logging.ERROR),
-        patch(
-            "keystone_mcp.router.upstream.fetch_upstream_tools",
-            new_callable=AsyncMock,
-            return_value=[],
+        patch.object(
+            upstreams,
+            "read_catalog",
+            AsyncMock(return_value=_catalog_read(tools=[])),
         ),
     ):
         await reconciler.tick()
