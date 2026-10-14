@@ -139,6 +139,9 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 - Tools whose `inputSchema` uses `x-mcp-header` can be called on MCP 2026-07-28 upstreams.
 - `docs/compatibility.md` matched to the code: `KEYSTONE_MCP_ENV_FILE` is listed; `KEYSTONE_MCP_USERS_SERVICE_*` are not deprecated; the policy `version` is any non-empty string; `/login/<provider>` and `/login/redirect-not-allowed` are listed; `users import` never had `--email`; `catalog export` has no `--live-url`.
 - `users block`, `users logout` and `users import` report sessions that could not be revoked because Redis was down and exit with `3` instead of a traceback or `0`; `users import` revokes the sessions of every user blocked in the source on each run.
+- `KEYSTONE_MCP_UPSTREAMS` (JSON) is validated like the registry file.
+- An upstream asking for sampling or roots fails the call with a clear error instead of receiving a malformed answer.
+- Errors from an upstream reach the client as short, neutral messages (unavailable, timed out, returned an error); details stay in keystone-mcp's log.
 
 ### Security
 
@@ -162,6 +165,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 - An upstream resource whose RBAC name equals a published tool or prompt name is no longer published, so one policy rule cannot open both by accident.
 - In `enforce` mode a resource without an RBAC name is no longer listed.
 - OAuth access and refresh tokens are stored in Redis under their SHA-256 hash; production warns when `KEYSTONE_MCP_REDIS_URL` has no password on a non-loopback host (W22).
+- Client-visible proxy errors no longer include upstream transport details, upstream tool names or upstream resource URIs.
 
 ### Migration
 
@@ -177,6 +181,8 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 - Plugin authors: change `keystone-mcp-gateway<0.6` to `<2`; mix in the contract class for every declared capability and add a `keystone_unavailable_directory_factory` fixture (or mark the class `keystone_contract_lenient` with a reason). Directory config files with inline secrets under keys like `client_secret` or inside lists now refuse startup: move the value to an environment variable and reference it with `<key>_env`.
 - A stdio upstream that blocks for more than ~35 s without answering pings is now restarted only after three missed pings (about a minute).
 - The policy directory gets a lock file `<policy>.lock`; do not delete it while the server runs. Temporary files are now named `.<policy>.*.tmp`.
+- A `KEYSTONE_MCP_UPSTREAMS` entry with `tool_timeout_seconds` or `discovery_timeout_seconds` of zero or less is now refused at startup (it made every call or discovery fail).
+- If you match on proxy error texts (for example `Error calling tool '…': Client failed to connect`), switch to the new messages listed in `docs/facade.md`.
 - Upstream resources and templates whose URI has no `scheme://` part are no longer published (a startup warning names each one). Give them a scheme, e.g. `file:///…` or `myapp://…`.
 - If an upstream names a resource like one of its tools or prompts, that resource disappears (startup warning, metric `reason="rbac_name_collision"`); ask the upstream to rename it.
 - In `enforce` mode, a resource keystone-mcp has no RBAC name for no longer appears in `resources/list` or `resources/templates/list` (reading it was already refused); a client that relied on seeing it in the list must not.

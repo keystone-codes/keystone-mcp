@@ -903,6 +903,18 @@ def _parse_upstreams_json(
         raise ValueError("KEYSTONE_MCP_UPSTREAMS must be a JSON array")
 
     from keystone_mcp.upstream_registry.load import parse_upstream_entries
+    from keystone_mcp.upstream_registry.validate import validate_upstream_registry
+
+    messages = validate_upstream_registry(
+        {"schema_version": 1, "entries": payload},
+        policy=policy,
+    )
+    over_limit = [m for m in messages if m.startswith("entries must contain at most")]
+    hard_errors = [m for m in messages if m not in over_limit]
+    for message in over_limit:
+        logger.warning("KEYSTONE_MCP_UPSTREAMS: %s", message)
+    if hard_errors:
+        raise ValueError("KEYSTONE_MCP_UPSTREAMS: " + "; ".join(hard_errors))
 
     return parse_upstream_entries(payload, policy=policy)
 

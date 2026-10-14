@@ -11,6 +11,7 @@ from asgi_lifespan import LifespanManager
 from fastmcp import Client, FastMCP
 from fastmcp.client.elicitation import ElicitResult
 from fastmcp.client.transports import StreamableHttpTransport
+from fastmcp.exceptions import ToolError
 from fastmcp.utilities.tests import asgi_server
 
 from keystone_mcp.config import Settings
@@ -232,6 +233,101 @@ def test_fastmcp_private_elicitation_apis_confined_to_upstream_call():
         if "_session_kwargs" in text or "_await_with_session_monitoring" in text:
             offenders.append(str(path.relative_to(root.parent)))
     assert offenders == []
+
+
+def _build_input_required_upstream(*, method: str, observed: dict[str, int]) -> Any:
+    import contextlib
+
+    from mcp import types
+    from mcp.server.lowlevel import Server
+    from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+    from starlette.applications import Starlette
+    from starlette.routing import Route
+
+    tool_name = "ask_special"
+
+    async def on_list_tools(_ctx, _params):
+        return types.ListToolsResult(
+            tools=[
+                types.Tool(
+                    name=tool_name,
+                    description="ask",
+                    inputSchema={"type": "object", "properties": {}},
+                )
+            ]
+        )
+
+    async def on_call_tool(_ctx, _params):
+        observed["calls"] = observed.get("calls", 0) + 1
+        if method == "sampling/createMessage":
+            request = types.CreateMessageRequest(
+                method=method,
+                params=types.CreateMessageRequestParams(messages=[], max_tokens=1),
+            )
+        else:
+            request = types.ListRootsRequest(method=method)
+        return types.InputRequiredResult(input_requests={"q": request})
+
+    server = Server("special", on_list_tools=on_list_tools, on_call_tool=on_call_tool)
+    manager = StreamableHTTPSessionManager(app=server, stateless=True, json_response=True)
+
+    class _Endpoint:
+        async def __call__(self, scope, receive, send):
+            await manager.handle_request(scope, receive, send)
+
+    @contextlib.asynccontextmanager
+    async def lifespan(_app):
+        async with manager.run():
+            yield
+
+    return Starlette(
+        routes=[Route("/mcp", endpoint=_Endpoint(), methods=["GET", "POST", "DELETE"])],
+        lifespan=lifespan,
+    )
+
+
+async def test_sampling_request_fails_call_with_clear_text(monkeypatch):
+    observed: dict[str, int] = {}
+    app = _build_input_required_upstream(method="sampling/createMessage", observed=observed)
+    async with LifespanManager(app):
+        settings = Settings(base_url="http://127.0.0.1:8080")
+        main = FastMCP("keystone-test")
+        registry = RouterRegistry(RouterEngine(settings), main)
+        upstreams = UpstreamRegistry(
+            main_mcp=main,
+            registry=registry,
+            http_client_factory=asgi_http_client_factory(app),
+        )
+        upstreams.add_upstream("hello-upstream", UPSTREAM_MCP_URL, namespace="hello")
+        await upstreams.discover_all()
+
+        async with asgi_server(main) as running:
+            async with running.client() as client:
+                with pytest.raises(ToolError, match="asked for sampling/createMessage"):
+                    await client.call_tool("hello_ask_special", {})
+    assert observed.get("calls") == 1
+
+
+async def test_roots_request_fails_call_with_clear_text(monkeypatch):
+    observed: dict[str, int] = {}
+    app = _build_input_required_upstream(method="roots/list", observed=observed)
+    async with LifespanManager(app):
+        settings = Settings(base_url="http://127.0.0.1:8080")
+        main = FastMCP("keystone-test")
+        registry = RouterRegistry(RouterEngine(settings), main)
+        upstreams = UpstreamRegistry(
+            main_mcp=main,
+            registry=registry,
+            http_client_factory=asgi_http_client_factory(app),
+        )
+        upstreams.add_upstream("hello-upstream", UPSTREAM_MCP_URL, namespace="hello")
+        await upstreams.discover_all()
+
+        async with asgi_server(main) as running:
+            async with running.client() as client:
+                with pytest.raises(ToolError, match="asked for roots/list"):
+                    await client.call_tool("hello_ask_special", {})
+    assert observed.get("calls") == 1
 
 
 def test_upstream_call_uses_only_allowed_private_fastmcp_apis():
