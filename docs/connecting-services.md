@@ -421,6 +421,38 @@ entries:
     resource_exclude_prefixes: [private_]
 ```
 
+## Per-service limits (`limits`)
+
+Optional registry `limits` protect one upstream from a runaway agent without
+changing personal rate limits (`rate limit exceeded` stays separate).
+
+```yaml
+    limits:
+      concurrency: 4
+      rate: 600
+      window: 60
+      breaker_failures: 5
+      breaker_recovery_seconds: 30
+```
+
+- **`concurrency`** — simultaneous proxied calls on each Keystone replica
+  (tools, prompts, resources). Extra callers wait up to
+  `min(tool_timeout_seconds, 30)` for a slot, then see
+  `upstream <namespace> is busy; retry later`. Waiting for a slot does not
+  consume the upstream call timeout; the timer starts after the slot is taken.
+- **`rate`** / **`window`** — shared call budget for the whole service from
+  every caller. With `KEYSTONE_MCP_THROTTLE_BACKEND=redis` the count is shared
+  across replicas; with `memory` it is per replica. Refusal:
+  `upstream <namespace> is over its call limit; retry in <n>s`.
+- **`breaker_failures`** / **`breaker_recovery_seconds`** — after this many
+  consecutive transport or timeout failures (not upstream `isError` tool
+  answers), Keystone stops calling the service until a single half-open probe
+  succeeds. Refusal:
+  `upstream <namespace> is temporarily unavailable after repeated failures; retry later`.
+
+Omit `limits` entirely to keep 0.5.x behaviour. Discovery and catalog refresh
+do not pass through these guards.
+
 ## Tool naming
 
 Client-visible tool names are `<namespace>_<upstream tool name>` (or the name

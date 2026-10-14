@@ -110,6 +110,9 @@ OAuth rotation and replay events. Fields: `action` (`grace_reissue`,
 | `keystone_mcp_upstream_stderr_suppressed_total` | `namespace` | Stderr log lines dropped by the stdio supervisor's rate limiter |
 | `keystone_mcp_upstream_items_rejected_total` | `namespace`, `kind`, `reason` | Catalog items Keystone refused to publish or pass on. `kind`: `tool`, `prompt`, `resource`, `template`, `catalog`, or `response`. `reason` (at 0.6.0): `name_collision`, `rbac_name_collision`, `unpublishable_schema`, `uri_without_scheme`, `schema_too_large`, `schema_pattern_too_long`, `schema_too_deep`, `catalog_limit`, `response_too_large`. Increments on every reconciliation attempt while the condition persists. |
 | `keystone_mcp_upstream_input_rounds_exceeded_total` | `namespace` | Tool calls stopped because the upstream kept requesting input |
+| `keystone_mcp_upstream_limit_rejections_total` | `namespace`, `reason` | Proxied calls refused by per-service limits (`rate`, `concurrency`, `circuit_open`) |
+| `keystone_mcp_upstream_circuit_state` | `namespace` | Circuit breaker gauge: `0` closed, `1` open, `2` half_open |
+| `keystone_mcp_upstream_inflight` | `namespace` | Proxied calls in progress on this replica |
 | `keystone_mcp_list_changed_sessions_total` | `kind` | Sessions notified that a list of tools/prompts/resources changed. A "session" is a handshake-era connection or an open `subscriptions/listen` stream |
 | `keystone_mcp_users_mutation_total` | `operation`, `outcome` | Admin mutation attempts |
 | `keystone_mcp_admin_refusals_total` | `operation`, `reason` | Built-in administration refusals (`reason` includes `service_account`) |

@@ -1098,3 +1098,109 @@ def test_same_variable_name_still_refused(tmp_path: Path, monkeypatch, permissiv
     }
     with pytest.raises(ValueError, match="reuses the signing secret"):
         parse_upstream_entries(document["entries"], policy=permissive_policy)
+
+
+def test_limits_valid(permissive_policy):
+    document = {
+        "schema_version": 1,
+        "entries": [
+            {
+                "name": "billing",
+                "url": "http://127.0.0.1/mcp",
+                "namespace": "billing",
+                "limits": {
+                    "concurrency": 4,
+                    "rate": 600,
+                    "window": 60,
+                    "breaker_failures": 5,
+                    "breaker_recovery_seconds": 30,
+                },
+            },
+        ],
+    }
+    assert_valid_upstream_registry(document, policy=permissive_policy)
+    cfg = parse_upstream_entry(document["entries"][0], policy=permissive_policy)
+    assert cfg.limits is not None
+    assert cfg.limits.concurrency == 4
+    assert cfg.limits.rate == 600
+
+
+def test_limits_unknown_key_rejected(permissive_policy):
+    document = {
+        "schema_version": 1,
+        "entries": [
+            {
+                "name": "billing",
+                "url": "http://127.0.0.1/mcp",
+                "namespace": "billing",
+                "limits": {"concurrency": 2, "burst": 1},
+            },
+        ],
+    }
+    with pytest.raises(ValidationError) as exc:
+        assert_valid_upstream_registry(document, policy=permissive_policy)
+    assert any("limits.burst is not supported" in message for message in exc.value.messages)
+
+
+def test_limits_non_positive_rejected(permissive_policy):
+    document = {
+        "schema_version": 1,
+        "entries": [
+            {
+                "name": "billing",
+                "url": "http://127.0.0.1/mcp",
+                "namespace": "billing",
+                "limits": {"rate": 0},
+            },
+        ],
+    }
+    with pytest.raises(ValidationError) as exc:
+        assert_valid_upstream_registry(document, policy=permissive_policy)
+    assert any("limits.rate must be a positive integer" in message for message in exc.value.messages)
+
+
+def test_limits_in_upstreams_env_json(monkeypatch, permissive_policy):
+    monkeypatch.setenv("KEYSTONE_MCP_UPSTREAM_ALLOW_INSECURE_HTTP", "true")
+    monkeypatch.setenv("KEYSTONE_MCP_UPSTREAM_EGRESS_ALLOW_PRIVATE", "true")
+    monkeypatch.setenv(
+        "KEYSTONE_MCP_UPSTREAMS",
+        json.dumps(
+            [
+                {
+                    "name": "billing",
+                    "url": "http://127.0.0.1/mcp",
+                    "namespace": "billing",
+                    "limits": {"rate": 10, "window": 30},
+                }
+            ]
+        ),
+    )
+    payload = json.loads(
+        '{"name": "billing", "url": "http://127.0.0.1/mcp", "namespace": "billing", '
+        '"limits": {"rate": 10, "window": 30}}'
+    )
+    upstreams = parse_upstream_entries([payload], policy=permissive_policy)
+    assert len(upstreams) == 1
+    assert upstreams[0].limits is not None
+    assert upstreams[0].limits.rate == 10
+    assert upstreams[0].limits.window_seconds == 30.0
+
+def test_upstream_validate_cli_reports_limits_error(tmp_path: Path):
+    from keystone_mcp.cli import main
+
+    path = tmp_path / "upstreams.yaml"
+    path.write_text(
+        textwrap.dedent(
+            """
+            schema_version: 1
+            entries:
+              - name: billing
+                url: http://127.0.0.1/mcp
+                namespace: billing
+                limits:
+                  rate: -1
+            """
+        ),
+        encoding="utf-8",
+    )
+    assert main(["upstream", "validate", "--path", str(path)]) == 1

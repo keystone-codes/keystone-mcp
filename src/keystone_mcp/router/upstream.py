@@ -27,6 +27,8 @@ from keystone_mcp.adapters.mcp_proxy import (
     McpProxyAdapter,
     _http_client_factory,
 )
+from keystone_mcp.auth.rate_window import InMemorySlidingWindow, SlidingWindow
+from keystone_mcp.config import UpstreamLimits
 from keystone_mcp.identity_assertion import (
     IdentityAssertionSigner,
     ec_public_key_jwk_thumbprint,
@@ -63,6 +65,11 @@ from keystone_mcp.router.upstream_content import (
     UpstreamTemplateSpec,
     namespaced_uri,
     normalize_resource_uri,
+)
+from keystone_mcp.router.upstream_guard import (
+    UpstreamGuard,
+    build_upstream_guard,
+    limits_are_effective,
 )
 
 if TYPE_CHECKING:
@@ -843,6 +850,7 @@ class UpstreamRegistry:
     # inject an in-process ASGI factory to reach a test upstream without a
     # real port.
     http_client_factory: HttpClientFactoryBuilder | None = None
+    sliding_window: SlidingWindow | None = None
     # Retries per upstream at startup discovery; upstreams are discovered in
     # parallel, so this bounds one upstream's attempts, not the overall budget.
     discovery_retries: int = 0
@@ -885,8 +893,11 @@ class UpstreamRegistry:
     _namespace_up_hook: Callable[[str], None] | None = field(default=None, repr=False)
     _stdio_discovery_tasks: dict[str, asyncio.Task[None]] = field(default_factory=dict, repr=False)
     _resource_filter_hint_logged: set[str] = field(default_factory=set, repr=False)
+    _guards: dict[str, UpstreamGuard] = field(default_factory=dict, repr=False)
 
     def __post_init__(self) -> None:
+        if self.sliding_window is None:
+            self.sliding_window = InMemorySlidingWindow()
         pem = self._identity_signing_key_pem.strip()
         if pem:
             private_key = load_ec_p256_private_key(pem)
@@ -935,6 +946,7 @@ class UpstreamRegistry:
         cwd: str | None = None,
         publish_resources: bool = True,
         resource_filter: ToolFilter | None = None,
+        limits: UpstreamLimits | None = None,
     ) -> UpstreamConfig:
         """Register an upstream MCP API and mount its namespace sub-server.
 
@@ -1069,6 +1081,19 @@ class UpstreamRegistry:
                 upstream_host_for_log(cfg.url),
             )
         self._connections[namespace] = connection
+        guard: UpstreamGuard | None = None
+        if limits is not None and limits_are_effective(limits):
+            if self.sliding_window is None:
+                raise RuntimeError(
+                    "UpstreamRegistry.sliding_window is required when upstream limits are set"
+                )
+            guard = build_upstream_guard(
+                namespace,
+                limits,
+                window=self.sliding_window,
+                observability=self.observability,
+            )
+            self._guards[namespace] = guard
         self._adapters[namespace] = McpProxyAdapter(
             connection,
             tool_timeout_seconds=resolved_tool_timeout,
@@ -1079,6 +1104,7 @@ class UpstreamRegistry:
             extra_headers=self._auth_headers.get(namespace),
             identity_signer=identity_signer,
             max_response_bytes=self.upstream_max_response_bytes,
+            guard=guard,
         )
         self._status[namespace] = UpstreamStatus(
             available=False, catalog_known=False, last_error="not discovered yet"
@@ -1092,6 +1118,9 @@ class UpstreamRegistry:
             return self._connections[namespace]
         except KeyError:
             raise KeyError(f"unknown upstream namespace: {namespace}") from None
+
+    def upstream_guard(self, namespace: str) -> UpstreamGuard | None:
+        return self._guards.get(namespace)
 
     def set_namespace_up_hook(self, hook: Callable[[str], None] | None) -> None:
         """Register a callback when a stdio process reaches ``running``."""
@@ -1179,11 +1208,15 @@ class UpstreamRegistry:
                 conn = self._connections[cfg.namespace]
                 if isinstance(conn, StdioUpstreamConnection):
                     process_state = conn.process.state
-            snapshot[cfg.namespace] = {
+            entry: dict[str, object] = {
                 "transport": cfg.transport,
                 "available": available,
                 "process": process_state,
             }
+            guard = self._guards.get(cfg.namespace)
+            if guard is not None:
+                entry.update(guard.state())
+            snapshot[cfg.namespace] = entry
         return snapshot
 
     def mark_available(self, namespace: str) -> bool:

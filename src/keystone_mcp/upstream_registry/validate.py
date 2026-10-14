@@ -240,6 +240,46 @@ def auth_field_errors(auth: Any) -> list[str]:
     return errors
 
 
+_LIMITS_KEYS = frozenset(
+    {
+        "concurrency",
+        "rate",
+        "window",
+        "breaker_failures",
+        "breaker_recovery_seconds",
+    }
+)
+
+
+def limits_field_errors(limits: Any) -> list[str]:
+    """Structural errors for one entry's optional ``limits`` field."""
+    if limits is None:
+        return []
+    if not isinstance(limits, dict):
+        return ["limits must be an object"]
+
+    errors: list[str] = []
+    for key in limits:
+        if key not in _LIMITS_KEYS:
+            errors.append(f"limits.{key} is not supported")
+
+    for key in ("concurrency", "rate", "breaker_failures"):
+        raw = limits.get(key)
+        if raw is None:
+            continue
+        if isinstance(raw, bool) or not isinstance(raw, int) or raw <= 0:
+            errors.append(f"limits.{key} must be a positive integer")
+
+    for key in ("window", "breaker_recovery_seconds"):
+        raw = limits.get(key)
+        if raw is None:
+            continue
+        if isinstance(raw, bool) or not isinstance(raw, (int, float)) or raw <= 0:
+            errors.append(f"limits.{key} must be a positive number")
+
+    return errors
+
+
 def _auth_env_name_errors(auth: dict[str, Any], key: str) -> list[str]:
     """Structural errors for one optional ``auth.<key>`` environment-variable name.
 
@@ -563,6 +603,9 @@ def validate_upstream_registry(
                 errors.append(f"{prefix}.url: {message}")
 
         for message in auth_field_errors(item.get("auth")):
+            errors.append(f"{prefix}.{message}")
+
+        for message in limits_field_errors(item.get("limits")):
             errors.append(f"{prefix}.{message}")
 
         route_mode = item.get("route_mode", "live")

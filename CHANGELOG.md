@@ -10,6 +10,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ### Added
 
+- Upstream registry `limits`: concurrent calls per replica (`concurrency`), calls per window for the whole service (`rate`, `window`; shared across replicas with `KEYSTONE_MCP_THROTTLE_BACKEND=redis`), and a circuit breaker with a half-open probe (`breaker_failures`, `breaker_recovery_seconds`). Metrics `keystone_mcp_upstream_limit_rejections_total`, `keystone_mcp_upstream_circuit_state`, `keystone_mcp_upstream_inflight`.
 - CI: daily canary against the newest fastmcp/mcp and against the lowest allowed dependency versions; a sentinel test lists every private fastmcp/mcp API Keystone relies on.
 - Helm chart `charts/keystone-mcp`: replicas, probes, policy, upstream registry and sign-in providers from ConfigMaps, secrets from an existing Secret, optional Ingress with TLS, HPA, PodDisruptionBudget, NetworkPolicy and ServiceMonitor; built-in Redis and Postgres for demos. CI lints and renders the chart.
 - Developers: CI signs in with the official MCP Python SDK OAuth client against the demo stack (both protocol eras) and checks tools, token refresh, `list_changed`, progress, cancellation and elicitation.
