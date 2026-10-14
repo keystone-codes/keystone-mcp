@@ -6,6 +6,7 @@ import logging
 from pathlib import Path
 from types import SimpleNamespace
 
+import jwt
 import pytest
 from asgi_lifespan import LifespanManager
 from fastmcp import Client, FastMCP
@@ -73,6 +74,10 @@ def _metric_value(namespace: str, kind: str, reason: str) -> float:
     )
 
 
+_OBSERVE_RESOURCE_IDENTITY_SECRET = "observe-resource-rbac-secret-" + "k" * 8
+_OBSERVE_RESOURCE_IDENTITY_ENV = "KEYSTONE_MCP_UPSTREAM_HELLO_OBSERVE_IDENTITY_SECRET"
+
+
 async def _build_enforce_stack(
     router_app,
     *,
@@ -81,11 +86,13 @@ async def _build_enforce_stack(
     evil_first: bool = True,
     inject_evil_poison: bool = False,
     register_evil: bool = True,
+    rbac_mode: str = "enforce",
+    identity_secret_env: str | None = None,
 ):
     policy_path.write_text(policy_yaml, encoding="utf-8")
     settings = Settings(
         base_url="http://localhost:8080",
-        rbac_mode="enforce",
+        rbac_mode=rbac_mode,
         rbac_policy_path=str(policy_path),
         users_service_url="http://users:8000",
         users_service_token="token",
@@ -104,9 +111,19 @@ async def _build_enforce_stack(
     if evil_first:
         if register_evil:
             upstreams.add_upstream("evil-upstream", EVIL_UPSTREAM_MCP_URL, namespace="evil")
-        upstreams.add_upstream("hello-upstream", HELLO_UPSTREAM_MCP_URL, namespace="hello")
+        hello_kw: dict = {}
+        if identity_secret_env is not None:
+            hello_kw["identity_secret_env"] = identity_secret_env
+        upstreams.add_upstream(
+            "hello-upstream", HELLO_UPSTREAM_MCP_URL, namespace="hello", **hello_kw
+        )
     else:
-        upstreams.add_upstream("hello-upstream", HELLO_UPSTREAM_MCP_URL, namespace="hello")
+        hello_kw: dict = {}
+        if identity_secret_env is not None:
+            hello_kw["identity_secret_env"] = identity_secret_env
+        upstreams.add_upstream(
+            "hello-upstream", HELLO_UPSTREAM_MCP_URL, namespace="hello", **hello_kw
+        )
         if register_evil:
             upstreams.add_upstream("evil-upstream", EVIL_UPSTREAM_MCP_URL, namespace="evil")
 
@@ -437,6 +454,83 @@ async def test_listing_hides_resource_unless_every_name_allowed(tmp_path: Path, 
             async with asgi_server(main, path=settings.http_path) as running:
                 async with running.client() as client:
                     await _assert_hidden(client)
+
+
+async def test_observe_multi_name_resource_signs_deny_when_any_name_denied(
+    tmp_path: Path, monkeypatch
+):
+    observed: dict = {}
+    hello_app = build_resource_upstream_app(
+        resources=[],
+        templates=[
+            types.ResourceTemplate(
+                uri_template="docs://{path*}",
+                name="pub",
+                description="public",
+                mime_type="text/plain",
+            ),
+            types.ResourceTemplate(
+                uri_template="docs://secret/{id}",
+                name="secret",
+                description="secret",
+                mime_type="text/plain",
+            ),
+        ],
+        read_text=lambda uri: f"content:{uri}",
+        observed=observed,
+    )
+    empty_evil = build_resource_upstream_app(resources=[], templates=[])
+    router = mount_resource_upstream_apps({"hello": hello_app, "evil": empty_evil})
+    secret_uri = published_uri_for_namespace("hello", "docs://secret/{id}").replace("{id}", "42")
+    policy_yaml = """\
+version: "1.0.0"
+default_deny: true
+roles:
+  secret_only:
+    allow: ["hello_secret"]
+"""
+    monkeypatch.setenv(_OBSERVE_RESOURCE_IDENTITY_ENV, _OBSERVE_RESOURCE_IDENTITY_SECRET)
+    async with LifespanManager(router):
+        main, settings, upstreams, *_rest = await _build_enforce_stack(
+            router,
+            policy_yaml=policy_yaml,
+            policy_path=tmp_path / "policy.yaml",
+            evil_first=True,
+            rbac_mode="observe",
+            identity_secret_env=_OBSERVE_RESOURCE_IDENTITY_ENV,
+        )
+        backend = _rest[-1]
+        backend.seed(ANN.email, roles=("secret_only",))
+        _rest[-2]._cache.clear()
+
+        async with Client(main) as client:
+            blocks = await client.read_resource(secret_uri)
+        assert blocks[0].text.startswith("content:docs://")
+
+        decoded = jwt.decode(
+            observed["resource_headers"]["x-keystone-identity"],
+            _OBSERVE_RESOURCE_IDENTITY_SECRET,
+            algorithms=["HS256"],
+            audience="hello-upstream",
+            issuer=settings.base_url.rstrip("/"),
+        )
+        assert decoded["roles"] == []
+        assert decoded["rbac_decision"] == "deny"
+        assert decoded["rbac"] == "observe"
+
+        main_enforce, _settings_enforce, *_enforce_rest = await _build_enforce_stack(
+            router,
+            policy_yaml=policy_yaml,
+            policy_path=tmp_path / "policy-enforce.yaml",
+            evil_first=True,
+        )
+        enforce_backend = _enforce_rest[-1]
+        enforce_backend.seed(ANN.email, roles=("secret_only",))
+        _enforce_rest[-2]._cache.clear()
+
+        async with Client(main_enforce) as client:
+            with pytest.raises(MCPError, match="access denied"):
+                await client.read_resource(secret_uri)
 
 
 def test_rbac_names_for_uri_looks_only_in_own_namespace():
