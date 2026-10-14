@@ -58,15 +58,28 @@ async def _ok(_request):
     return PlainTextResponse("ok")
 
 
-def _guarded_app(allowed_hosts: tuple[str, ...]) -> HostGuardMiddleware:
+def _guarded_app(
+    allowed_hosts: tuple[str, ...],
+    *,
+    internal_paths: tuple[str, ...] = (),
+    internal_prefixes: tuple[str, ...] = (),
+) -> HostGuardMiddleware:
     base = Starlette(
         routes=[
             Route("/hello", _ok),
             Route("/healthz", _ok),
             Route("/readyz", _ok),
+            Route("/metrics", _ok),
+            Route("/token", _ok),
+            Route("/internal/live-published-names", _ok),
         ]
     )
-    return HostGuardMiddleware(base, allowed_hosts=allowed_hosts)
+    return HostGuardMiddleware(
+        base,
+        allowed_hosts=allowed_hosts,
+        internal_paths=internal_paths,
+        internal_prefixes=internal_prefixes,
+    )
 
 
 def test_allowed_host_passes() -> None:
@@ -200,6 +213,45 @@ def test_effective_allowed_hosts_includes_extra_names(monkeypatch) -> None:
     assert "edge.example.com:8443" in hosts
 
 
+@pytest.mark.parametrize(
+    "host_header",
+    ["10.1.2.3:8080", "10.1.2.3", "[fd00::1]:8080"],
+)
+def test_ip_literal_host_allowed_on_metrics_path(host_header: str) -> None:
+    app = _guarded_app(("example.com:8080",), internal_paths=("/metrics",))
+    with TestClient(app, base_url="http://testserver") as client:
+        response = client.get("/metrics", headers={"Host": host_header})
+    assert response.status_code == 200
+
+
+def test_hostname_still_refused_on_metrics_path() -> None:
+    app = _guarded_app(("example.com:8080",), internal_paths=("/metrics",))
+    with TestClient(app, base_url="http://example.com:8080") as client:
+        response = client.get("/metrics", headers={"Host": "evil.example:8080"})
+    assert response.status_code == 421
+
+
+@pytest.mark.parametrize("path", ["/hello", "/token"])
+def test_ip_literal_refused_on_other_paths(path: str) -> None:
+    app = _guarded_app(("example.com:8080",), internal_paths=("/metrics",))
+    with TestClient(app, base_url="http://example.com:8080") as client:
+        response = client.get(path, headers={"Host": "10.1.2.3:8080"})
+    assert response.status_code == 421
+
+
+def test_internal_prefix_accepts_ip_literal() -> None:
+    app = _guarded_app(
+        ("example.com:8080",),
+        internal_prefixes=("/internal/",),
+    )
+    with TestClient(app, base_url="http://testserver") as client:
+        response = client.get(
+            "/internal/live-published-names",
+            headers={"Host": "10.1.2.3:8080"},
+        )
+    assert response.status_code == 200
+
+
 def test_allowed_hosts_env_parsing_refuses_scheme_or_path(monkeypatch) -> None:
     from keystone_mcp.config import ConfigError
 
@@ -210,3 +262,49 @@ def test_allowed_hosts_env_parsing_refuses_scheme_or_path(monkeypatch) -> None:
     monkeypatch.setenv("KEYSTONE_MCP_ALLOWED_HOSTS", "lb.internal/path")
     with pytest.raises(ConfigError, match="KEYSTONE_MCP_ALLOWED_HOSTS"):
         Settings(base_url="https://mcp.example.com")
+
+
+# ── Metrics path: Host guard vs source CIDR ───────────────────────────────────
+
+
+async def _metrics_get(settings, *, client_host: str, headers=None):
+    import httpx
+    from asgi_lifespan import LifespanManager
+
+    from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
+    from keystone_mcp.server import build_server
+    from support.login import dev_token_login
+
+    mcp, *_rest = build_server(
+        login_providers=[dev_token_login({"token"})],
+        settings=settings,
+        oauth_store=InMemoryOAuthStore(),
+        register_builtin_catalog=False,
+    )
+    app = mcp.http_app(path=settings.http_path)
+    async with LifespanManager(app):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app, client=(client_host, 12345)),
+            base_url="http://localhost:8080",
+        ) as client:
+            return await client.get("/metrics", headers=headers)
+
+
+async def test_ip_literal_on_metrics_still_needs_cidr():
+    settings = Settings(base_url="http://localhost:8080", metrics_enabled=True)
+    response = await _metrics_get(
+        settings,
+        client_host="203.0.113.1",
+        headers={"Host": "10.1.2.3:8080"},
+    )
+    assert response.status_code == 403
+
+
+async def test_ip_literal_on_metrics_refused_with_x_forwarded_for():
+    settings = Settings(base_url="http://localhost:8080", metrics_enabled=True)
+    response = await _metrics_get(
+        settings,
+        client_host="127.0.0.1",
+        headers={"Host": "10.1.2.3:8080", "X-Forwarded-For": "203.0.113.1"},
+    )
+    assert response.status_code == 403

@@ -17,6 +17,7 @@ from keystone_mcp.plugins import (
     entry_point_label,
     load_factory,
 )
+from keystone_mcp.redis_client import redis_from_url
 from keystone_mcp.user_directory.backend_config import load_users_backend_config
 from keystone_mcp.user_directory.cache import ApiKeyVerificationCache, ResolutionCache
 from keystone_mcp.user_directory.circuit_breaker import CircuitBreaker
@@ -139,7 +140,7 @@ def build_user_directory_resolver(
                 key=settings.users_redis_revision_key,
             )
         elif settings.redis_url.strip():
-            client = Redis.from_url(settings.redis_url, decode_responses=True)
+            client = redis_from_url(settings.redis_url)
             resolved_revision = RedisRevisionReader(
                 client,
                 key=settings.users_redis_revision_key,

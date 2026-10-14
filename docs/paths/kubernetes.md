@@ -98,13 +98,26 @@ one, is not part of this check — see [observability-logging.md](../observabili
 it on, a scrape must pass two checks: its source address must be in
 `KEYSTONE_MCP_INTERNAL_ALLOWED_CIDRS` (default loopback only — add your
 Prometheus pod network), and its `Host` must be allowed. Unlike `/healthz`
-and `/readyz`, `/metrics` is not exempt from the Host check, and by default
-only `KEYSTONE_MCP_BASE_URL`'s host is allowed, so a scrape by pod IP (pod
-or endpoints discovery) or by Service name is refused with `421`. Scrape a
-fixed name and add it to `KEYSTONE_MCP_ALLOWED_HOSTS` (e.g.
-`keystone.keystone.svc.cluster.local:8080`); note that a scrape through the
-Service reaches a different replica each time. Pod IPs cannot be listed in
-advance.
+and `/readyz`, `/metrics` is not exempt from the Host check entirely, but
+it **does** accept a `Host` whose host part is a pod IP literal (for example
+`10.1.2.3:8080`), so Prometheus can scrape each pod by IP without listing
+every address in `KEYSTONE_MCP_ALLOWED_HOSTS`. Add the Prometheus pod CIDR to
+`KEYSTONE_MCP_INTERNAL_ALLOWED_CIDRS`. Example pod discovery:
+
+```yaml
+# prometheus.yml (fragment)
+scrape_configs:
+  - job_name: keystone-mcp
+    kubernetes_sd_configs:
+      - role: pod
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_label_app]
+        action: keep
+        regex: keystone-mcp
+```
+
+A scrape through a Service name still needs that name on the allowlist and
+load-balances across replicas; per-pod scraping keeps counters separate.
 
 ## Protecting an upstream from pod-to-pod spoofing
 

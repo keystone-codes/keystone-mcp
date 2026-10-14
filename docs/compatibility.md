@@ -64,6 +64,7 @@ in [environment.md](environment.md). This page names what is frozen.
 | `KEYSTONE_MCP_REDIS_KEY_PREFIX` | 0.5.0 | stable |
 | `KEYSTONE_MCP_REDIS_URL` | 0.5.0 | stable |
 | `KEYSTONE_MCP_REFRESH_INTERVAL_SECONDS` | 0.5.0 | stable |
+| `KEYSTONE_MCP_SHUTDOWN_GRACE_SECONDS` | 0.6.0 | stable |
 | `KEYSTONE_MCP_REFRESH_TOKEN_TTL` | 0.5.0 | stable |
 | `KEYSTONE_MCP_REQUIRE_RESOURCE_INDICATOR` | 0.5.0 | stable |
 | `KEYSTONE_MCP_SUPERADMIN_EMAIL` | 0.5.0 | stable |
@@ -233,7 +234,9 @@ Frozen since 0.5.0.
 **Host and Origin** (`HostGuardMiddleware`): every route except `/healthz` and
 `/readyz` checks `Host` and `Origin`. Allowed hosts are the host (and
 optional port) of `KEYSTONE_MCP_BASE_URL`, its loopback aliases, and
-`KEYSTONE_MCP_ALLOWED_HOSTS`. Wrong `Host` → `421`; wrong `Origin` → `400`;
+`KEYSTONE_MCP_ALLOWED_HOSTS`. On internal endpoint paths (`KEYSTONE_MCP_METRICS_PATH`
+when metrics are enabled, and `/internal/*` when internal endpoints are enabled),
+an IP-literal `Host` is also accepted. Wrong `Host` → `421`; wrong `Origin` → `400`;
 `Origin: null` is treated as absent.
 
 | Route | Method | Notes |
