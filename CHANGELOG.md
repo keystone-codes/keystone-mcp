@@ -19,6 +19,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 - Developers: CI signs in with the official MCP Python SDK OAuth client against the demo stack (both protocol eras) and checks tools, token refresh, `list_changed`, progress, cancellation and elicitation.
 - `KEYSTONE_MCP_THROTTLE_BACKEND=redis`: the per-identity tool-call limit and the sign-in, registration and OAuth endpoint IP limits are shared by all replicas through Redis. Metric `keystone_mcp_throttle_backend_errors_total`.
 - `users_delete` and `keystone-mcp users delete`: delete a person or anonymize the record (`KEYSTONE_MCP_USERS_DELETE_MODE`, default `anonymize`), after a confirmation code; sessions and API keys are revoked, references to the person in other records are replaced with the audit pseudonym. Only a full administrator may delete. Optional users-directory capability `delete` (`UserDeletionDirectory`); the built-in directory has it.
+- `users_export` and `keystone-mcp users export`: a JSON document with everything Keystone-MCP holds about a person (directory record, roles, API key metadata, open session count, audit pseudonym) and what it does not hold. Full administrators only.
 - OpenTelemetry tracing (`KEYSTONE_MCP_OTEL_ENABLED`, extra `otel`, standard `OTEL_*` variables): spans for the HTTP request, token check, RBAC decision, users directory, Redis and the upstream call; `traceparent` is accepted from clients and sent to upstreams; log lines and audit events carry `trace_id`. The image includes the `otel` extra. `examples/tracing` adds Jaeger to the demo. Tracing stays off unless `KEYSTONE_MCP_OTEL_ENABLED` is set.
 - Developers: hostile sign-in provider, users directory and upstream test suites; property-based fuzzing of RBAC, redirect checks, registry and policy parsing, with a daily long run in CI.
 - Developers: `tests/security/` — an attacker's checklist for sign-in, OAuth and RBAC with a test for every item; CI fails when an item has no test.
@@ -165,7 +166,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ### Migration
 
-- Roles that list administration tools by name (instead of `users_*`) need `users_delete` to remain full administrators.
+- Roles that list administration tools by name (instead of `users_*`) need `users_delete` and `users_export` to remain full administrators.
 - Log searches by the unsalted subject hash in session-revocation, throttle and directory-failure lines must use the salted pseudonym (the same value as in audit events).
 - Services that ran in `observe` and read `roles` from the assertion: a denied call now has `roles: []`; check `rbac_decision`. Code copied from the identity examples: pass `issuer` (your `KEYSTONE_MCP_BASE_URL` without a trailing slash).
 - Before upgrading, run `keystone-mcp config check` with the new version against your environment.

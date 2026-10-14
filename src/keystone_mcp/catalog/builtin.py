@@ -119,6 +119,12 @@ def register_catalog(
                 P("email_contains", str, required=False, default=None),
             ],
         ),
+        (
+            "users_export",
+            "Export a JSON document with everything Keystone holds about one person "
+            "(full administrators only; service accounts are refused).",
+            [P("email", str)],
+        ),
     ]
     _admin_tools: list[tuple[str, str, list[Param]]] = [
         (

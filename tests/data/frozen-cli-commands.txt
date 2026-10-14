@@ -9,6 +9,7 @@ users block
 users unblock
 users logout
 users delete
+users export
 users unbind-identity
 users admins
 keys issue

@@ -50,6 +50,7 @@ permissions are the union of each role's allow patterns.
 | End sessions only | `users_logout` | `{"email": "..."}` — revokes tokens; person can sign in again; directory entry not required |
 | Restore access | `users_unblock` | `{"email": "..."}` — does not restore old sessions |
 | Delete or anonymize a person | `users_delete` | `{"email": "..."}` — see below; irreversible |
+| Export everything Keystone holds about a person | `users_export` | `{"email": "..."}` — see below; full administrators only |
 
 ## Service accounts
 
@@ -79,6 +80,19 @@ Confirm before `api_keys_revoke`. On success the response includes
 `revoked_tokens` (session count). If the session store fails during revoke,
 you get `service_unavailable` with a retry message while the key is already
 revoked.
+
+## `users_export`
+
+Call this when someone asks **what data you store about them** (access /
+portability), not for routine directory browsing (`users_list` is broader and
+shows every person).
+
+Only a **full administrator** may call it; service accounts get `forbidden`.
+On success: `{"state": "done", "export": {...}}` with `format:
+keystone-person-export/1`. Share the `export` object with the requester: it
+lists directory fields, API key metadata (no secrets), open session count,
+audit pseudonym, and `not_held` (what Keystone does not store). Never paste
+raw OAuth tokens or API key secrets — they are not in the export.
 
 ## `users_delete`
 

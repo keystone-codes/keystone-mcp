@@ -134,6 +134,7 @@ before their own first sign-in.
 | Give access back | `users_unblock` |
 | End every OAuth session without blocking | `users_logout` |
 | Delete or anonymize a person | `users_delete` (full administrator only; two-step confirmation) |
+| Export everything Keystone holds about a person | `users_export` (full administrator only) |
 
 `users_block` and `users_logout` revoke all access and refresh tokens for
 that person immediately. On success the response includes `revoked_tokens`
@@ -143,6 +144,32 @@ call `users_block` again; `users_logout` returns `service_unavailable` without
 revoking. `users_unblock` does not restore old sessions; the person signs in
 again for new tokens. `users_logout` does not require the email to still
 exist in the directory.
+
+## Exporting what Keystone holds about a person
+
+Use `users_export` when someone asks what personal data Keystone stores about
+them (a GDPR-style access request). The tool returns a JSON document
+(`format: keystone-person-export/1`) with the directory record, roles, API key
+metadata (never secrets), an open-session count (refresh tokens only), the
+audit pseudonym, counters for records the person authored in the built-in
+directory, and a `not_held` list for data Keystone does not keep (upstream
+services, audit event bodies, refresh-token payloads, and fields the
+configured directory cannot report).
+
+Only a **full administrator** may call `users_export`; service accounts are
+refused even though the operation reads data. Successful exports are counted in
+`keystone_mcp_users_mutation_total{operation="export"}` alongside directory
+mutations.
+
+From the host:
+
+```bash
+keystone-mcp users export --email person@example.com
+keystone-mcp users export --email person@example.com --output /tmp/person.json
+```
+
+When `--output` is set, the file is written at mode `0600`. Exit codes: `0`
+success, `1` usage or directory error (including unknown email).
 
 ## Deleting a person
 
