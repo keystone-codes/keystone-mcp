@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from keystone_mcp.adapters.guards import require_human_actor
+from keystone_mcp.adapters.guards import check_management_authority, require_human_actor
 from keystone_mcp.user_directory.errors import UsersError
 from keystone_mcp.user_directory.protocol import ApiKeyDirectory, UserDirectory
 
 if TYPE_CHECKING:
     from keystone_mcp.observability.service import RbacObservability
+    from keystone_mcp.rbac.management import ManagementSource
     from keystone_mcp.router.context import RouteContext
     from keystone_mcp.router.route import Route
 
@@ -19,9 +20,11 @@ class ApiKeysAdminAdapter:
         self,
         *,
         directory: UserDirectory | None = None,
+        management_source: ManagementSource | None = None,
         observability: RbacObservability | None = None,
     ) -> None:
         self._directory = directory
+        self._management_source = management_source
         self._observability = observability
 
     @staticmethod
@@ -72,6 +75,30 @@ class ApiKeysAdminAdapter:
             self._record_mutation_audit(route, ctx, spec, validation_error)
             return validation_error
 
+        if name in ("api_keys_issue", "api_keys_revoke"):
+            try:
+                target_subject = await self._management_target_subject(directory, name, spec)
+            except UsersError:
+                result = self._error(
+                    route,
+                    ctx,
+                    code="service_unavailable",
+                    message="users directory is unavailable",
+                )
+                self._record_mutation_audit(route, ctx, spec, result)
+                return result
+            mgmt_refusal = await check_management_authority(
+                route,
+                ctx,
+                directory=directory,
+                management_source=self._management_source,
+                observability=self._observability,
+                target_subject=target_subject,
+            )
+            if mgmt_refusal is not None:
+                self._record_mutation_audit(route, ctx, spec, mgmt_refusal)
+                return mgmt_refusal
+
         actor = ctx.verified_identity.subject
         try:
             if name == "api_keys_issue":
@@ -114,6 +141,22 @@ class ApiKeysAdminAdapter:
 
         self._record_mutation_audit(route, ctx, spec, result)
         return result
+
+    async def _management_target_subject(
+        self,
+        directory: ApiKeyDirectory,
+        name: str,
+        spec: dict[str, Any],
+    ) -> str | None:
+        if name == "api_keys_issue":
+            return str(spec["subject"])
+        assert name == "api_keys_revoke"
+        rows = await directory.list_api_keys(subject=None, include_revoked=True)
+        key_id = str(spec["key_id"])
+        for row in rows:
+            if row.key_id == key_id:
+                return row.subject
+        return None
 
     @staticmethod
     def _validate_args(

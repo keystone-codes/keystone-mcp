@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 from redis.exceptions import RedisError
 
-from keystone_mcp.adapters.guards import require_human_actor
+from keystone_mcp.adapters.guards import check_management_authority, require_human_actor
 from keystone_mcp.user_directory.errors import UsersError
 from keystone_mcp.user_directory.protocol import UserDirectory, UserDirectoryAdmin
 from keystone_mcp.user_directory.util import normalize_email
@@ -24,6 +24,7 @@ from keystone_mcp.users.roles import check_role_name, normalize_roles
 if TYPE_CHECKING:
     from keystone_mcp.auth.sessions import SessionRevoker
     from keystone_mcp.observability.service import RbacObservability
+    from keystone_mcp.rbac.management import ManagementSource
     from keystone_mcp.router.context import RouteContext
     from keystone_mcp.router.route import Route
 
@@ -48,11 +49,13 @@ class UsersAdminAdapter:
         *,
         directory: UserDirectory | None = None,
         role_source: RoleSource | None = None,
+        management_source: ManagementSource | None = None,
         observability: RbacObservability | None = None,
         session_revoker: SessionRevoker | None = None,
     ) -> None:
         self._directory = directory
         self._role_source = role_source
+        self._management_source = management_source
         self._observability = observability
         self._session_revoker = session_revoker
 
@@ -135,9 +138,6 @@ class UsersAdminAdapter:
             self._record_mutation_audit(route, ctx, spec, validation_error)
             return validation_error
 
-        if name == "users_logout":
-            return await self._execute_logout(route, ctx, spec)
-
         allowed_roles: frozenset[str] | None = None
         if name in _ROLE_CHECKED_TOOLS:
             try:
@@ -151,6 +151,24 @@ class UsersAdminAdapter:
                 )
                 self._record_mutation_audit(route, ctx, spec, result)
                 return result
+
+        if name != "users_list":
+            target_subject, roles_touched = self._management_targets(name, spec)
+            mgmt_refusal = await check_management_authority(
+                route,
+                ctx,
+                directory=directory,
+                management_source=self._management_source,
+                observability=self._observability,
+                target_subject=target_subject,
+                roles_touched=roles_touched,
+            )
+            if mgmt_refusal is not None:
+                self._record_mutation_audit(route, ctx, spec, mgmt_refusal)
+                return mgmt_refusal
+
+        if name == "users_logout":
+            return await self._execute_logout(route, ctx, spec)
 
         actor_email = ctx.verified_identity.subject
         if ctx.verified_identity.email is not None:
@@ -281,6 +299,19 @@ class UsersAdminAdapter:
         result = self._done(route, ctx, email=email, revoked_tokens=revoked)
         self._record_mutation_audit(route, ctx, spec, result, operation_override="logout")
         return result
+
+    @staticmethod
+    def _management_targets(name: str, spec: dict[str, Any]) -> tuple[str | None, list[str]]:
+        if name == "users_add":
+            roles = spec.get("roles")
+            return None, list(roles) if isinstance(roles, list) else []
+        if name in ("users_update", "users_block", "users_unblock", "users_logout"):
+            return normalize_email(str(spec["email"])), []
+        if name == "users_set_roles":
+            return normalize_email(str(spec["email"])), list(spec.get("roles") or [])
+        if name in ("users_grant_role", "users_revoke_role"):
+            return normalize_email(str(spec["email"])), [str(spec["role"])]
+        return None, []
 
     @staticmethod
     def _validate_args(

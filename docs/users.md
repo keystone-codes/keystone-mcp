@@ -42,6 +42,14 @@ next call. A role removed from the file is **not** stripped from the people
 who hold it, but it stops granting anything; remove it from a person
 explicitly with `users_revoke_role` if you want it gone.
 
+Which roles count as *management* roles and who is a *full administrator* are
+defined only from this file ([§2.10](rbac-policy-format.md#210-management-roles-and-full-administrators)):
+only a full administrator may change someone who holds a management role or
+grant or revoke a management role; other changes follow ordinary RBAC. A role
+that only grants read-only administration tools (such as `users_list`) is not
+management, but `users_list` still exposes every person's email and roles —
+assign it deliberately.
+
 ## The first administrator
 
 Set `KEYSTONE_MCP_SUPERADMIN_EMAIL` to that person's email before the first
@@ -70,8 +78,20 @@ docker compose exec <service> keystone-mcp users grant-admin --email recovery@ex
 
 This command needs the same `KEYSTONE_MCP_USERS_DB_URL` the running server
 uses, and it prints which database it is about to write to before touching
-it. It creates the account if missing, grants `administrator`, and lifts any
-block.
+it. It creates the account if missing, grants a full-administration role, and
+lifts any block. When the policy defines `administrator`, that name is granted
+(as before). When it does not but exactly one role grants every administration
+tool, that role is granted instead. Use `--role <name>` to pick a specific
+full-administration role; if your deployment names that role something other
+than `administrator`, pass it explicitly. `KEYSTONE_MCP_SUPERADMIN_EMAIL` still
+seeds `administrator` at startup before the policy is loaded.
+
+Before upgrading or after changing the policy, run
+`keystone-mcp users admins` on the server host (built-in directory only). It
+lists active full administrators, management roles, and who holds each role.
+Exit code `0` when at least one active full administrator exists; `1` when
+none do (recover with `grant-admin` above). Add `--json` for machine-readable
+output.
 
 Two things are refused even for an administrator: blocking or demoting the
 last active administrator, and an administrator removing their own
@@ -149,7 +169,7 @@ directory declares about itself.
 | `validation_error` | A required argument is missing, or the role is not in the policy file. |
 | `last_administrator` | This would leave no active administrator. |
 | `self_admin_mutation_forbidden` | The signed-in administrator is removing their own administrator access. |
-| `forbidden` | The caller is not allowed to manage users. |
+| `forbidden` | You are not a full administrator and the change touches a management role or its holder (see [§2.10](rbac-policy-format.md#210-management-roles-and-full-administrators)), or the caller is a service account. |
 | `service_unconfigured` | Built-in directory: the store is not wired (report a bug). HTTP directory: `KEYSTONE_MCP_USERS_SERVICE_URL` or the token is empty. |
 | `service_timeout` | The request to an HTTP directory timed out. |
 | `service_unavailable` | The users database (or, with the HTTP directory, the service) did not answer. |

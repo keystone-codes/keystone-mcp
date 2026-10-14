@@ -344,8 +344,22 @@ class UsersStore:
     async def seed_superadmin(self, email: str) -> MutationResult:
         return await self._mutate(service.seed_superadmin, email=email)
 
-    async def ensure_administrator(self, email: str, *, created_by: str) -> MutationResult:
-        return await self._mutate(service.ensure_administrator, email=email, created_by=created_by)
+    async def ensure_administrator(
+        self,
+        email: str,
+        *,
+        created_by: str,
+        role: str | None = None,
+    ) -> MutationResult:
+        from keystone_mcp.users.roles import ROLE_ADMINISTRATOR
+
+        grant_role = ROLE_ADMINISTRATOR if role is None else role
+        return await self._mutate(
+            service.ensure_administrator,
+            email=email,
+            created_by=created_by,
+            role=grant_role,
+        )
 
     async def import_users(
         self,

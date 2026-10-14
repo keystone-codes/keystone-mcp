@@ -167,6 +167,32 @@ conventions, not a schema). Entries are evaluated **in file order** and the
 first matching label wins; a tool matching nothing is labelled `W`
 (`FALLBACK_DISPOSITION`).
 
+### 2.10 Management roles and full administrators
+
+A **management role** is any declared role that reaches at least one
+*mutating* built-in administration tool (`users_*`, `service_accounts_*`,
+`api_keys_*`, `policy_*`, excluding read-only tools such as `users_list`,
+`policy_read`, `policy_catalog`, and `policy_validate`). A role that only
+grants read-only administration tools is not a management role, but
+`users_list` exposes every person's email and roles and `api_keys_list`
+exposes key labels and expiry — grant those read tools deliberately.
+
+A **full administrator** is a person whose combined roles reach every
+built-in administration tool name except those blocked by the policy-wide
+`deny` list. The role name does not matter; `owner: ["*"]` and
+`administrator: ["*"]` are equivalent when both reach the full tool set.
+
+**Rule:** only a full administrator may perform a change after which someone
+would gain or lose a management role, or change any account that already
+holds a management role (including granting or revoking an ordinary role on
+such a person). Delegated roles such as `hr: ["users_*"]` may still create,
+block, or update people who hold only non-management roles.
+
+Use patterns that cover whole administration families (`api_keys_*`, not a
+hand-picked subset of key tools) so a full administrator is recognized
+reliably. Management checks use the stricter of the in-memory policy snapshot
+and the policy file on disk when they differ.
+
 ## 3. Catalog snapshot file
 
 ```yaml

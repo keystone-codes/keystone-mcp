@@ -524,12 +524,20 @@ def build_server(
             return Response(content=body, media_type="text/plain; charset=utf-8")
 
     if register_builtin_catalog:
+        from keystone_mcp.rbac.management import snapshot_and_file_management_source
+
+        mgmt_source = (
+            snapshot_and_file_management_source(policy_manager)
+            if policy_manager is not None
+            else None
+        )
         register_catalog(
             registry,
             settings,
             observability=rbac_observability,
             directory=directory,
             role_source=policy_role_source(policy_manager),
+            management_source=mgmt_source,
             policy_store=policy_store,
             session_revoker=session_revoker,
         )

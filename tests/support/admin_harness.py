@@ -10,6 +10,7 @@ from fastmcp import FastMCP
 from keystone_mcp.catalog.builtin import register_catalog
 from keystone_mcp.config import Settings
 from keystone_mcp.rbac.loader import RbacPolicyManager
+from keystone_mcp.rbac.management import snapshot_and_file_management_source
 from keystone_mcp.rbac.policy_store import PolicyStore
 from keystone_mcp.router.engine import RouterEngine
 from keystone_mcp.router.registry import RouterRegistry
@@ -17,7 +18,7 @@ from keystone_mcp.server import policy_role_source
 from keystone_mcp.user_directory.local import LocalUserDirectory
 from keystone_mcp.users.revision import NullRevisionWriter
 from keystone_mcp.users.store import UsersStore
-from support.test_env import require_redis_url
+from support.test_env import UNUSED_REDIS_URL
 from support.users_store import make_users_store
 
 DEFAULT_POLICY_YAML = """\
@@ -69,7 +70,7 @@ async def build_admin_harness(
         policy_tools="full",
         users_backend="local",
         users_db_url=f"sqlite:///{tmp_path}/keystone-users.db",
-        redis_url=require_redis_url(),
+        redis_url=UNUSED_REDIS_URL,
     )
     store, _revision = await make_users_store(tmp_path, revision=NullRevisionWriter())
     await store.create_user(
@@ -122,6 +123,7 @@ async def build_admin_harness(
         directory=directory,
         observability=observability,
         role_source=policy_role_source(manager),
+        management_source=snapshot_and_file_management_source(manager),
         policy_store=policy_store,
     )
     manager.reload(registry)
