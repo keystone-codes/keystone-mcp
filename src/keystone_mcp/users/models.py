@@ -48,6 +48,7 @@ class UserRow(Base):
     """A platform user account."""
 
     __tablename__ = "keystone_user"
+    __table_args__ = (UniqueConstraint("idp_issuer", "idp_subject", name="uq_keystone_user_idp"),)
 
     email: Mapped[str] = mapped_column(String(320), primary_key=True)
     full_name: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -56,6 +57,9 @@ class UserRow(Base):
     created_by: Mapped[str | None] = mapped_column(String(320), nullable=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow)
+    idp_issuer: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    idp_subject: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    idp_bound_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
 
     roles: Mapped[list[UserRoleRow]] = relationship(
         back_populates="user",

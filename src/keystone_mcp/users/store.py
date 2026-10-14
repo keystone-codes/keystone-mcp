@@ -24,6 +24,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from keystone_mcp.user_directory.types import (
     ApiKeyRecord,
     ApiKeyVerification,
+    IdentityBinding,
     IssuedApiKey,
     MutationResult,
     ServiceAccountMutation,
@@ -131,6 +132,17 @@ class UsersStore:
 
     async def resolve(self, subject: str) -> ResolvedUser:
         return await self._read(service.resolve_user, subject=subject)
+
+    async def get_identity_binding(self, email: str) -> IdentityBinding | None:
+        return await self._read(service.get_identity_binding, email=email)
+
+    async def bind_identity(self, *, email: str, issuer: str, subject: str) -> IdentityBinding:
+        return await self._commit_binding(
+            service.bind_identity, email=email, issuer=issuer, subject=subject
+        )
+
+    async def clear_identity_binding(self, *, email: str, actor: str) -> bool:
+        return await self._commit_binding(service.clear_identity_binding, email=email, actor=actor)
 
     async def list_service_accounts(
         self,
@@ -441,6 +453,24 @@ class UsersStore:
         def _call():  # noqa: ANN202
             with session_scope(self._session_factory) as session:
                 return fn(session, **kwargs)
+
+        try:
+            return await asyncio.to_thread(_call)
+        except Exception as exc:
+            raise _wrap_database_errors(exc) from exc
+
+    async def _commit_binding(self, fn, **kwargs):  # noqa: ANN001, ANN202
+        """Commit identity-binding writes without bumping the directory revision."""
+
+        def _call():  # noqa: ANN202
+            def _in_session():  # noqa: ANN202
+                with session_scope(self._session_factory) as session:
+                    return fn(session, **kwargs)
+
+            if self._write_lock is not None:
+                with self._write_lock:
+                    return _in_session()
+            return _in_session()
 
         try:
             return await asyncio.to_thread(_call)

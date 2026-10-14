@@ -179,6 +179,44 @@ class TestBroken(UserDirectoryContract):
     assert "demo plugin without admin contract suite" in result.stdout.str()
 
 
+def test_overwriting_identity_binding_fails_contract(pytester: pytest.Pytester) -> None:
+    pytester.makepyfile(
+        """
+from collections.abc import Awaitable, Callable
+import pytest
+from keystone_mcp.contract_tests import IdentityBindingDirectoryContract, seed_contract_dataset
+from keystone_mcp.user_directory.local import LocalUserDirectory
+from keystone_mcp.user_directory.protocol import UserDirectory
+from keystone_mcp.user_directory.types import IdentityBinding
+from datetime import UTC, datetime
+from support.users_store import make_users_store
+
+class OverwritingBinding(LocalUserDirectory):
+    async def bind_identity(self, *, email: str, issuer: str, subject: str) -> IdentityBinding:
+        return IdentityBinding(
+            issuer=issuer,
+            subject=subject,
+            bound_at=datetime.now(UTC),
+        )
+
+@pytest.fixture
+def keystone_directory_factory(tmp_path) -> Callable[[], Awaitable[UserDirectory]]:
+    async def factory() -> UserDirectory:
+        store, _revision = await make_users_store(tmp_path / "binding")
+        directory = OverwritingBinding(store)
+        await seed_contract_dataset(directory)
+        return directory
+    return factory
+
+class TestBroken(IdentityBindingDirectoryContract):
+    pass
+"""
+    )
+    pytester.makeconftest('pytest_plugins = ["keystone_mcp.contract_tests"]')
+    result = pytester.runpytest("-p", "keystone_mcp.contract_tests", "-q")
+    assert result.parseoutcomes().get("failed", 0) >= 1
+
+
 def test_lenient_marker_without_reason_fails(pytester: pytest.Pytester) -> None:
     pytester.makepyfile(
         """

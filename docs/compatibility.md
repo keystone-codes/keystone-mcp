@@ -33,6 +33,7 @@ without `/` or equal to the MCP path) are refused at startup.
 | `KEYSTONE_MCP_IDENTITY_SIGNING_KEY` | 0.5.0 | stable |
 | `KEYSTONE_MCP_INTERNAL_ALLOWED_CIDRS` | 0.5.0 | stable |
 | `KEYSTONE_MCP_INTERNAL_ENDPOINTS_ENABLED` | 0.5.0 | stable |
+| `KEYSTONE_MCP_LOGIN_IDENTITY_BINDING` | 0.6.0 | stable |
 | `KEYSTONE_MCP_LOGIN_BRAND` | 0.5.0 | stable |
 | `KEYSTONE_MCP_LOGIN_DEFAULT_LANG` | 0.5.0 | stable |
 | `KEYSTONE_MCP_LOGIN_PENDING_KEY_PREFIX` | 0.5.0 | stable |
@@ -283,7 +284,7 @@ Frozen since 0.5.0. Exit codes are part of the contract; command output text is 
 | `keystone-mcp catalog validate`, `keystone-mcp catalog diff` | `0` success; `1` validation error; `3` `--live-url` unreachable |
 | `keystone-mcp catalog export` | `0` success; `1` validation error |
 | `keystone-mcp upstream validate --path <file>` | `0` ok; `1` validation or I/O error |
-| `keystone-mcp users grant-admin`, `users import`, `users admins`, `users block`, `users unblock`, `users logout` | per `users/cli.py` (`0` success, non-zero documented failures; `users admins` exits `1` when no active full administrator) |
+| `keystone-mcp users grant-admin`, `users import`, `users admins`, `users block`, `users unblock`, `users logout`, `users unbind-identity` | per `users/cli.py` (`0` success, non-zero documented failures; `users admins` exits `1` when no active full administrator) |
 | `keystone-mcp keys issue`, `keys list`, `keys revoke` | `0` on success, non-zero on failure |
 | `keystone-mcp service-accounts add`, `service-accounts list`, `service-accounts update` | `0` on success, non-zero on failure |
 | `keystone-mcp upstream validate` | `0` ok; `1` validation or I/O error |
@@ -305,7 +306,7 @@ Frozen since 0.5.0 for the built-in SQL schema (SQLite or Postgres URL in
 
 | Table | Purpose |
 |---|---|
-| `keystone_user` | People: `email` PK, `full_name`, `is_blocked`, `note`, `created_by`, `created_at`, `updated_at` |
+| `keystone_user` | People: `email` PK, `full_name`, `is_blocked`, `note`, `created_by`, `created_at`, `updated_at`; optional `idp_issuer`, `idp_subject`, `idp_bound_at` (0.6.0); unique `(idp_issuer, idp_subject)` when set |
 | `keystone_user_role` | `id`, `email` FK, `role`, unique `(email, role)` |
 | `keystone_service_account` | Service accounts: `name` PK, `description`, `is_blocked`, `created_by`, `created_at`, `updated_at` |
 | `keystone_service_account_role` | `id`, `name` FK, `role`, unique `(name, role)` |
@@ -333,7 +334,8 @@ Frozen since 0.5.0.
 | Mechanism | Contract |
 |---|---|
 | `LoginProvider` protocols (`RedirectLoginProvider`, `FormLoginProvider`) | Module `keystone_mcp.login.protocol`; see [Plugin API](#plugin-api) |
-| `LoginIdentity` | `LoginIdentity` gained optional `key_id`, `key_expires_at` in 0.6.0 (additive; providers that do not set them are unaffected) |
+| `LoginIdentity` | `LoginIdentity` gained optional `key_id`, `key_expires_at`, `issuer`, `subject_id` in 0.6.0 (additive; providers that do not set them are unaffected) |
+| `IdentityBindingDirectory` | Optional users-directory protocol (capability `identity_binding`) since 0.6.0 |
 | `UserDirectory` and related protocols | Module `keystone_mcp.user_directory.protocol`; optional `ApiKeyIdIndex` (since 0.6.0) |
 | Entry point group `keystone_mcp.login_providers` | Built-in: `oidc`, `google`, `api_key` |
 | Entry point group `keystone_mcp.user_directories` | Built-in: `local`, `http` |
@@ -399,6 +401,7 @@ Frozen since 0.5.0. Metric names and label keys (not log message text):
 | `keystone_mcp_oauth_client_registrations_total` | `outcome` |
 | `keystone_mcp_oauth_client_evictions_total` | (counter, no labels) |
 | `keystone_mcp_oauth_token_exchange_total` | `grant_type`, `outcome` |
+| `keystone_mcp_login_identity_binding_total` | `outcome` |
 | `keystone_mcp_oauth_clients` | (gauge, no labels) |
 | `keystone_mcp_api_key_verifications_total` | `outcome` |
 | `keystone_mcp_api_key_cache_entries` | `cache` |
