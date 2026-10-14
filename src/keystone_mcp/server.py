@@ -45,7 +45,7 @@ from keystone_mcp.config import (
     load_settings,
     startup_warnings,
 )
-from keystone_mcp.env_file import load_env_file
+from keystone_mcp.env_file import EnvFileResult, load_env_file
 from keystone_mcp.http.access_log import AccessLogMiddleware
 from keystone_mcp.http.host_guard import HostGuardMiddleware, host_allowed, host_allowlist_sets
 from keystone_mcp.http.readiness import BootstrapState, ReadinessProbe
@@ -1215,9 +1215,9 @@ def _http_asgi_middleware(settings: Settings) -> list:
     return stack
 
 
-def main() -> None:
+def main(*, env_file_result: EnvFileResult | None = None) -> None:
     try:
-        env_result = load_env_file()
+        env_result = env_file_result if env_file_result is not None else load_env_file()
         settings = load_settings()
     except ConfigError as exc:
         # No logging configuration exists yet at this point (configure_logging
