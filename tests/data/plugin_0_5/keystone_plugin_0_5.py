@@ -181,16 +181,20 @@ class Plugin05Directory:
             updated_at=now,
         )
         self._users[normalized] = entry
-        return MutationResult(changed=True, created=True, user=UserRecord(
-            email=normalized,
-            full_name=entry.full_name,
-            roles=entry.roles,
-            is_blocked=False,
-            created_at=now,
-            updated_at=now,
-            created_by=actor,
-            note=note,
-        ))
+        return MutationResult(
+            changed=True,
+            created=True,
+            user=UserRecord(
+                email=normalized,
+                full_name=entry.full_name,
+                roles=entry.roles,
+                is_blocked=False,
+                created_at=now,
+                updated_at=now,
+                created_by=actor,
+                note=note,
+            ),
+        )
 
     async def update_user(
         self, *, email: str, full_name: str | None, note: str | None, actor: str
@@ -253,7 +257,11 @@ class Plugin05Directory:
         if entry is None:
             raise UserNotFoundError(email)
         new_roles = tuple(roles)
-        if _ROLE_ADMIN in entry.roles and _ROLE_ADMIN not in new_roles and self._active_admins() <= 1:
+        if (
+            _ROLE_ADMIN in entry.roles
+            and _ROLE_ADMIN not in new_roles
+            and self._active_admins() <= 1
+        ):
             raise LastAdministratorError()
         changed = entry.roles != new_roles
         entry.roles = new_roles
@@ -550,7 +558,9 @@ class Plugin05Directory:
             return None
         if entry.expires_at and entry.expires_at <= datetime.now(tz=UTC):
             return None
-        return ApiKeyVerification(subject=entry.subject, subject_type="human", key_id=key_id, expires_at=entry.expires_at)
+        return ApiKeyVerification(
+            subject=entry.subject, subject_type="human", key_id=key_id, expires_at=entry.expires_at
+        )
 
 
 class Plugin05FormProvider:
@@ -610,7 +620,9 @@ class Plugin05RedirectProvider:
         return None
 
     async def begin(self, *, state: str, callback_url: str) -> LoginRedirect:
-        return LoginRedirect(url=f"https://example.test/auth?state={state}", attempt={"state": state})
+        return LoginRedirect(
+            url=f"https://example.test/auth?state={state}", attempt={"state": state}
+        )
 
     async def complete(
         self, *, params: Mapping[str, str], callback_url: str, attempt: Mapping[str, str]
@@ -626,7 +638,9 @@ def create_directory(context: PluginContext, options: Mapping[str, object]) -> P
     return Plugin05Directory()
 
 
-def create_form_provider(config: LoginProviderConfig, context: PluginContext) -> Plugin05FormProvider:
+def create_form_provider(
+    config: LoginProviderConfig, context: PluginContext
+) -> Plugin05FormProvider:
     del config, context
     return Plugin05FormProvider()
 

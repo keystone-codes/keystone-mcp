@@ -7,6 +7,9 @@ import asyncio
 import json
 import sys
 
+from keystone_mcp.auth.oauth_store import build_shared_auth_stores
+from keystone_mcp.auth.sessions import SessionRevoker
+from keystone_mcp.user_directory.types import subject_type_of
 from keystone_mcp.users.cli import _open_store, _settings_for_users_cli
 from keystone_mcp.users.errors import UsersError
 
@@ -74,6 +77,27 @@ def _cmd_list(args: argparse.Namespace) -> int:
     return 0
 
 
+def _revoke_key_sessions(settings, record) -> int:
+    if subject_type_of(record.subject) != "human":
+        return 0
+    if not settings.redis_url.strip():
+        print(
+            "sessions not revoked: KEYSTONE_MCP_REDIS_URL is not set",
+            file=sys.stderr,
+        )
+        return 0
+
+    async def _run() -> int:
+        oauth_store, login_store = build_shared_auth_stores(settings)
+        revoker = SessionRevoker(oauth_store, login_store)
+        try:
+            return await revoker.revoke_api_key_sessions(record.subject, record.key_id)
+        finally:
+            await oauth_store.aclose()
+
+    return asyncio.run(_run())
+
+
 def _cmd_revoke(args: argparse.Namespace) -> int:
     settings = _settings_for_users_cli()
     store = _open_store(settings)
@@ -84,5 +108,7 @@ def _cmd_revoke(args: argparse.Namespace) -> int:
         return 3
     finally:
         store.dispose()
-    print(json.dumps(record.to_dict(), indent=2, sort_keys=True))
+    payload = record.to_dict()
+    payload["revoked_tokens"] = _revoke_key_sessions(settings, record)
+    print(json.dumps(payload, indent=2, sort_keys=True))
     return 0

@@ -257,6 +257,9 @@ same last-administrator rule as `users_block` applies. Re-running `users
 import` that re-applies a block from the source also revokes sessions; the
 import summary includes `revoked_sessions`.
 
+Blocking a person in an external (`http`) directory takes effect on that
+person's next token renewal — at most `KEYSTONE_MCP_TOKEN_TTL` later.
+
 ## Service accounts
 
 Machine callers (CI, schedulers, agents without a human at the keyboard) use a
@@ -292,8 +295,11 @@ An administrator issues keys with the `api_keys_issue` tool or with
 `keystone-mcp keys issue` on the server host. The full key string is shown
 **once** in the response or on the terminal; Keystone stores only a SHA-256
 hash of the secret. List and revoke through `api_keys_list` / `api_keys_revoke`
-or `keystone-mcp keys list|revoke`. Revocation takes effect on the next
-request — there is no separate token index for Bearer keys.
+or `keystone-mcp keys list|revoke`. Revoking a key ends at once both Bearer
+calls with it and the sign-in sessions opened with it; the response reports
+`revoked_tokens`. Sessions opened before 0.6.0 do not record which key they
+used: revoking any key of that person ends all of that person's sessions. A
+session opened with a key never outlives the key's expiry.
 
 Default lifetime is 90 days; the maximum is 365 days. For a key with no
 expiry, use the CLI only: `keystone-mcp keys issue --no-expiry …`.

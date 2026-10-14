@@ -796,6 +796,7 @@ async def test_directory_is_fsynced_after_replace(
     )
     dir_fsynced = False
     real_fsync = os.fsync
+
     def track_fsync(fd: int) -> None:
         nonlocal dir_fsynced
         if not dir_fsynced:
