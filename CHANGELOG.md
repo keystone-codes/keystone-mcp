@@ -59,6 +59,8 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 - `KEYSTONE_MCP_LOGIN_IDENTITY_BINDING=bind` binds a person to the identity provider account (`iss`, `sub`) they first sign in with; optional users-directory capability `identity_binding` (`IdentityBindingDirectory`); `keystone-mcp users unbind-identity`; `LoginIdentity.issuer`, `LoginIdentity.subject_id`.
 - `KEYSTONE_MCP_IDENTITY_SIGNING_KEY_PREVIOUS`: publish the previous ES256 public key in the JWKS during a key rotation.
 - Claim `rbac_decision` in `X-Keystone-Identity`.
+- `docs/upgrading.md`: what to check before upgrading and how to roll back.
+- Alert rule examples for the behaviour added in 0.6.0 (administration refusals, refresh replays, API-key and DCR limits, upstream limits) in `docs/observability-rbac.md`.
 
 ### Changed
 
