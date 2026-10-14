@@ -14,6 +14,7 @@ from fastmcp import Client, FastMCP
 from fastmcp.utilities.tests import asgi_server
 from mcp.shared.exceptions import MCPError
 
+import keystone_mcp.router.upstream as upstream_module
 import keystone_mcp.surface.reconciler as reconciler_module
 from keystone_mcp.config import Settings
 from keystone_mcp.identity import VerifiedIdentity
@@ -227,8 +228,8 @@ async def test_prompt_added_upstream_is_published_and_notified(monkeypatch):
 
             app2 = build_lowlevel_upstream_app(tools=["greet"], prompts=True)
             async with LifespanManager(app2):
-                real_fetch = reconciler_module.fetch_upstream_tools
-                real_prompts = reconciler_module.fetch_upstream_prompts
+                real_fetch = upstream_module.fetch_upstream_tools
+                real_prompts = upstream_module.fetch_upstream_prompts
                 factory = asgi_http_client_factory(app2)
 
                 async def fake_fetch(url, **kwargs):
@@ -239,13 +240,13 @@ async def test_prompt_added_upstream_is_published_and_notified(monkeypatch):
                     kwargs["httpx_client_factory"] = factory(kwargs.get("timeout_seconds", 5.0))
                     return await real_prompts(url, **kwargs)
 
-                reconciler_module.fetch_upstream_tools = fake_fetch
-                reconciler_module.fetch_upstream_prompts = fake_prompts
+                upstream_module.fetch_upstream_tools = fake_fetch
+                upstream_module.fetch_upstream_prompts = fake_prompts
                 try:
                     await reconciler.tick()
                 finally:
-                    reconciler_module.fetch_upstream_tools = real_fetch
-                    reconciler_module.fetch_upstream_prompts = real_prompts
+                    upstream_module.fetch_upstream_tools = real_fetch
+                    upstream_module.fetch_upstream_prompts = real_prompts
 
             await asyncio.sleep(0)
             assert any(m.method == "notifications/prompts/list_changed" for m in received)
@@ -283,7 +284,7 @@ async def test_prompts_failure_keeps_tools(monkeypatch, caplog: pytest.LogCaptur
         assert upstreams.unavailable_namespaces() == {}
 
         monkeypatch.setattr(
-            "keystone_mcp.surface.reconciler.fetch_upstream_prompts",
+            "keystone_mcp.router.upstream.fetch_upstream_prompts",
             AsyncMock(side_effect=UpstreamListToolsError("list_prompts exploded")),
         )
 

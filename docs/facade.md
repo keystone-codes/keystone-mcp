@@ -79,7 +79,9 @@ warning and its tools appear on the next refresh
 ## Prompts and resources
 
 Upstream prompts, resources and resource templates are published like tools:
-the client sees prompts as `<namespace>_<name>`; resource URIs receive the
+the client sees prompts as `<namespace>_<upstream prompt name>` (``strip_prefix``
+and ``tool_prefix`` trim tool names only, not prompts; ``include_prefixes`` /
+``exclude_prefixes`` still apply to prompts by upstream name). Resource URIs receive the
 namespace (`scheme://<namespace>/...`, e.g. upstream `file:///handbook.md` becomes
 `file://hello//handbook.md`). RBAC uses the same allow patterns as tools —
 `<namespace>_<resource.name>` for both static resources and templates (the policy
@@ -148,8 +150,10 @@ upstreams" in [`docs/rbac-policy-format.md`](rbac-policy-format.md#4-validation-
 While the process runs, **live discovery** re-reads each mounted upstream on a
 timer (`KEYSTONE_MCP_REFRESH_INTERVAL_SECONDS`, default 300). A tool added,
 removed, or changed on a service is picked up without restarting Keystone-MCP.
-A failed read for one namespace keeps the previous tool list for that namespace.
-An empty list must repeat on the next tick before proxy tools are removed.
+A failed read for one namespace keeps the previous tool list for that namespace,
+and the same rule applies to prompts, resources and resource templates.
+An empty list must repeat on the next successful read before proxy tools (or
+prompts, resources, templates) are removed.
 If the refresh task itself fails, it is restarted after a delay (5 s, doubling
 up to 5 min) and the failure is logged at ERROR. `SIGHUP` reloads the policy
 inline when the task is not running.

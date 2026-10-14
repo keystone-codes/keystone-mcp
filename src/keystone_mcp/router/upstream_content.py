@@ -68,6 +68,7 @@ class UpstreamContentCatalog:
     _templates: dict[str, dict[str, UpstreamTemplateSpec]] = field(default_factory=dict)
     _resource_owners: dict[str, str] = field(default_factory=dict)
     _template_owners: dict[str, str] = field(default_factory=dict)
+    _legacy_prompt_rbac: dict[str, frozenset[str]] = field(default_factory=dict)
 
     def prompts(self, namespace: str) -> dict[str, UpstreamPromptSpec]:
         return dict(self._prompts.get(namespace, {}))
@@ -152,6 +153,15 @@ class UpstreamContentCatalog:
                 if spec.published_uri_template == published_uri_template:
                     return spec.rbac_name
         return None
+
+    def set_legacy_prompt_rbac_names(self, namespace: str, names: frozenset[str]) -> None:
+        self._legacy_prompt_rbac[namespace] = names
+
+    def legacy_rbac_names(self) -> frozenset[str]:
+        names: set[str] = set()
+        for ns_names in self._legacy_prompt_rbac.values():
+            names.update(ns_names)
+        return frozenset(names)
 
     def rbac_names(self) -> frozenset[str]:
         names: set[str] = set()

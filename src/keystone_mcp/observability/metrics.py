@@ -102,6 +102,11 @@ _UPSTREAM_ELICITATIONS = Counter(
     "Upstream elicitation rounds forwarded to the Keystone client",
     ["namespace", "action"],
 )
+_UPSTREAM_ITEMS_REJECTED = Counter(
+    "keystone_mcp_upstream_items_rejected_total",
+    "Upstream catalog items or answers keystone-mcp refused to publish or pass on",
+    ["namespace", "kind", "reason"],
+)
 _OAUTH_CLIENT_REGISTRATIONS = Counter(
     "keystone_mcp_oauth_client_registrations_total",
     "Dynamic client registration (POST /register) outcomes",
@@ -332,3 +337,14 @@ def record_upstream_elicitation(*, namespace: str, action: str) -> None:
 def count_directory_response_issue(field: str, issue: str) -> None:
     """Count a lenient parse of an HTTP directory ``resolve`` response field."""
     _DIRECTORY_RESPONSE_ISSUES.labels(field=field, issue=issue).inc()
+
+
+def record_upstream_item_rejected(*, namespace: str, kind: str, reason: str) -> None:
+    """Count a refused publish or pass-through without an observability handle.
+
+    ``kind`` is one of ``tool``, ``prompt``, ``resource``, ``template``,
+    ``catalog``, or ``response``. ``reason`` is one of ``name_collision`` or
+    ``unpublishable_schema`` (more may be added later). The counter increments
+    on every reconciliation attempt while the condition persists.
+    """
+    _UPSTREAM_ITEMS_REJECTED.labels(namespace=namespace, kind=kind, reason=reason).inc()
