@@ -30,8 +30,8 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from typing import Any
 
@@ -70,6 +70,80 @@ HELLO_IDENTITY_SECRET = os.environ.get("HELLO_IDENTITY_SECRET", "").strip()
 #: This upstream's own registry entry name -- the assertion's ``aud``.
 HELLO_IDENTITY_AUDIENCE = os.environ.get("HELLO_IDENTITY_AUDIENCE", "hello").strip()
 HELLO_IDENTITY_ISSUER = os.environ.get("HELLO_IDENTITY_ISSUER", "").strip()
+
+
+def _otel_export_configured() -> bool:
+    return bool(os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", "").strip())
+
+
+def _configure_otel_provider_once() -> None:
+    if not _otel_export_configured():
+        return
+    try:
+        from opentelemetry import trace
+        from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+        from opentelemetry.sdk.resources import Resource
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import BatchSpanProcessor
+    except ImportError:
+        return
+    existing = trace.get_tracer_provider()
+    if isinstance(existing, TracerProvider):
+        return
+    service_name = os.environ.get("OTEL_SERVICE_NAME", "hello-upstream")
+    provider = TracerProvider(resource=Resource.create({"service.name": service_name}))
+    provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
+    trace.set_tracer_provider(provider)
+
+
+@contextmanager
+def _hello_tool_span(tool_name: str, headers: dict[str, str] | None = None):
+    if not _otel_export_configured():
+        yield
+        return
+    try:
+        from opentelemetry import context as otel_context
+        from opentelemetry import trace
+        from opentelemetry.propagate import extract
+    except ImportError:
+        yield
+        return
+    tracer = trace.get_tracer("hello-upstream")
+    carrier = dict(headers or {})
+    token = otel_context.attach(extract(carrier))
+    try:
+        with tracer.start_as_current_span(f"hello.{tool_name}"):
+            yield
+    finally:
+        otel_context.detach(token)
+
+
+class _HelloTracingMiddleware:
+    """Extract W3C trace context from inbound HTTP (when OTLP export is configured)."""
+
+    def __init__(self, app: Callable) -> None:
+        self.app = app
+
+    async def __call__(self, scope: dict, receive: Callable, send: Callable) -> None:
+        if scope.get("type") != "http" or not _otel_export_configured():
+            await self.app(scope, receive, send)
+            return
+        try:
+            from opentelemetry import context as otel_context
+            from opentelemetry.propagate import extract
+        except ImportError:
+            await self.app(scope, receive, send)
+            return
+        headers = {
+            name.decode("latin-1").lower(): value.decode("latin-1")
+            for name, value in scope.get("headers") or []
+        }
+        token = otel_context.attach(extract(headers))
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            otel_context.detach(token)
+
 
 GREET_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -403,7 +477,8 @@ def _build_server() -> Server:
             request = server.request_context.request
             headers = _headers_from_request(request)
             tool_ctx = _tool_ctx_from_server_request(server, headers)
-            result = await _run_tool(name, arguments, headers, ctx=tool_ctx)
+            with _hello_tool_span(name, headers):
+                result = await _run_tool(name, arguments, headers, ctx=tool_ctx)
             if isinstance(result, types.InputRequiredResult):
                 raise ValueError("elicitation not available in this SDK")
             return result
@@ -423,7 +498,8 @@ def _build_server() -> Server:
         headers = _headers_from_request(getattr(ctx, "request", None))
         tool_ctx = _tool_ctx_from_handler(ctx, headers, params)
         try:
-            result = await _run_tool(params.name, params.arguments or {}, headers, ctx=tool_ctx)
+            with _hello_tool_span(params.name, headers):
+                result = await _run_tool(params.name, params.arguments or {}, headers, ctx=tool_ctx)
         except Exception as exc:  # noqa: BLE001 -- mirrors SDK 1.x's auto-wrap
             return types.CallToolResult(
                 content=[types.TextContent(type="text", text=str(exc))],
@@ -463,12 +539,18 @@ async def _lifespan(_app: Starlette) -> AsyncIterator[None]:
         yield
 
 
-app = Starlette(
+_starlette_app = Starlette(
     routes=[
         Route("/mcp", endpoint=_McpEndpoint(), methods=["GET", "POST", "DELETE"]),
         Route("/healthz", endpoint=_healthz, methods=["GET"]),
     ],
     lifespan=_lifespan,
+)
+_configure_otel_provider_once()
+app = (
+    _HelloTracingMiddleware(_starlette_app)
+    if _otel_export_configured()
+    else _starlette_app
 )
 
 

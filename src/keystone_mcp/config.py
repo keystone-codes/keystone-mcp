@@ -114,6 +114,7 @@ BOOL_VARIABLES: tuple[str, ...] = (
     "KEYSTONE_MCP_UPSTREAM_ALLOW_INSECURE_HTTP",
     "KEYSTONE_MCP_UPSTREAM_EGRESS_ALLOW_PRIVATE",
     "KEYSTONE_MCP_USERS_SERVICE_ALLOW_INSECURE_HTTP",
+    "KEYSTONE_MCP_OTEL_ENABLED",
 )
 
 LOGGING_VARIABLES = frozenset(
@@ -1153,6 +1154,9 @@ class Settings:
     )
     metrics_enabled: bool = field(
         default_factory=lambda: _env_bool("KEYSTONE_MCP_METRICS_ENABLED", False)
+    )
+    otel_enabled: bool = field(
+        default_factory=lambda: _env_bool("KEYSTONE_MCP_OTEL_ENABLED", False)
     )
     metrics_path: str = field(default_factory=lambda: _env("KEYSTONE_MCP_METRICS_PATH", "/metrics"))
     metrics_tool_name: str = field(

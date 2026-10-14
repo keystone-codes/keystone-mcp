@@ -11,7 +11,8 @@ from typing import Protocol, runtime_checkable
 
 import httpx
 
-from keystone_mcp.observability.subject import normalize_subject
+from keystone_mcp.observability.subject import normalize_subject, subject_pseudonym
+from keystone_mcp.observability.tracing import traced
 from keystone_mcp.user_directory.cache import ApiKeyVerificationCache, ResolutionCache
 from keystone_mcp.user_directory.circuit_breaker import CircuitBreaker
 from keystone_mcp.user_directory.errors import UserDirectoryUnavailableError
@@ -74,8 +75,10 @@ class CachedUserDirectoryResolver:
         cache: ResolutionCache,
         circuit_breaker: CircuitBreaker,
         api_key_cache: ApiKeyVerificationCache | None = None,
+        backend_label: str = "unknown",
     ) -> None:
         self._backend = backend
+        self._backend_label = backend_label
         self._revision_reader = revision_reader
         self._cache = cache
         self._api_key_cache = api_key_cache or ApiKeyVerificationCache(
@@ -122,7 +125,13 @@ class CachedUserDirectoryResolver:
             bypass_allow_cache=critical,
         )
         if cached is not None:
-            return cached
+            with traced(
+                "keystone.directory.resolve",
+                keystone_directory_backend=self._backend_label,
+                keystone_directory_cache_hit=True,
+                keystone_subject=subject_pseudonym(normalized),
+            ):
+                return cached
 
         if self._circuit.is_open():
             raise UserDirectoryUnavailableError(
@@ -130,29 +139,35 @@ class CachedUserDirectoryResolver:
                 code="circuit_open",
             )
 
-        try:
-            result = await self._backend.resolve_user(normalized)
-        except UserDirectoryUnavailableError:
-            self._circuit.record_failure()
-            raise
-        except (httpx.HTTPError, OSError) as exc:
-            self._circuit.record_failure()
-            raise UserDirectoryUnavailableError(
-                "users directory is unavailable",
-                code="catalog_unavailable",
-            ) from exc
+        with traced(
+            "keystone.directory.resolve",
+            keystone_directory_backend=self._backend_label,
+            keystone_directory_cache_hit=False,
+            keystone_subject=subject_pseudonym(normalized),
+        ):
+            try:
+                result = await self._backend.resolve_user(normalized)
+            except UserDirectoryUnavailableError:
+                self._circuit.record_failure()
+                raise
+            except (httpx.HTTPError, OSError) as exc:
+                self._circuit.record_failure()
+                raise UserDirectoryUnavailableError(
+                    "users directory is unavailable",
+                    code="catalog_unavailable",
+                ) from exc
 
-        self._circuit.record_success()
-        fresh = UserResolveResult(
-            exists=result.exists,
-            roles=result.roles,
-            is_blocked=result.is_blocked,
-            subject_type=result.subject_type,
-            from_cache=False,
-            revision=revision,
-        )
-        self._cache.put(normalized, fresh, revision=revision)
-        return fresh
+            self._circuit.record_success()
+            fresh = UserResolveResult(
+                exists=result.exists,
+                roles=result.roles,
+                is_blocked=result.is_blocked,
+                subject_type=result.subject_type,
+                from_cache=False,
+                revision=revision,
+            )
+            self._cache.put(normalized, fresh, revision=revision)
+            return fresh
 
     async def _sync_revision(self, revision: int) -> None:
         if self._seen_revision is None:

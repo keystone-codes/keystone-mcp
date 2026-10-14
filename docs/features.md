@@ -104,9 +104,12 @@ full rule table is in
 
 Prometheus metrics (RBAC decisions, tool calls, catalog refresh, users
 mutations) and structured audit events for every authorization decision
-and every `users_*` mutation ship with the process. Details:
-[observability-rbac.md](observability-rbac.md) and
-[observability-logging.md](observability-logging.md).
+and every `users_*` mutation ship with the process. Optional OpenTelemetry
+tracing (`KEYSTONE_MCP_OTEL_ENABLED`, extra `otel`) adds end-to-end spans
+when you configure standard `OTEL_*` export variables. Details:
+[observability-rbac.md](observability-rbac.md),
+[observability-logging.md](observability-logging.md), and
+[observability-tracing.md](observability-tracing.md).
 
 ## One image, two architectures
 

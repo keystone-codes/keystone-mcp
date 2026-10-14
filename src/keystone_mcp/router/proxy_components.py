@@ -123,6 +123,10 @@ class UpstreamProxyPrompt(ProxyPrompt):
             raise ToolError("no verified identity")
 
         headers = {**self._extra_headers}
+        if self._transport == "http":
+            from keystone_mcp.observability.tracing import inject_trace_headers
+
+            inject_trace_headers(headers)
         call_meta: dict[str, str] | None = None
         if self._identity_signer is not None:
             token = self._identity_signer.sign(
@@ -244,6 +248,10 @@ class _UpstreamProxyClientMixin:
 
         mcp_target = _template_read_backend_uri.get() or self._backend_uri
         headers = {**self._extra_headers}
+        if self._transport == "http":
+            from keystone_mcp.observability.tracing import inject_trace_headers
+
+            inject_trace_headers(headers)
         call_meta: dict[str, str] | None = None
         if self._identity_signer is not None:
             token = self._identity_signer.sign(

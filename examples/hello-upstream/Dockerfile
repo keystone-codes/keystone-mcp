@@ -8,7 +8,11 @@ FROM python:3.12-slim
 # exercise the older handshake protocol through Keystone-MCP's proxy.
 # pyjwt verifies X-Keystone-Identity (see keystone_identity.py); pinned to
 # the same version Keystone-MCP itself uses (../../uv.lock).
-RUN pip install --no-cache-dir mcp==1.28.1 pyjwt==2.15.1
+RUN pip install --no-cache-dir \
+    mcp==1.28.1 \
+    pyjwt==2.15.1 \
+    opentelemetry-sdk==1.45.1 \
+    opentelemetry-exporter-otlp-proto-http==1.45.1
 
 RUN groupadd --system --gid 10001 hello \
     && useradd --system --uid 10001 --gid hello \
