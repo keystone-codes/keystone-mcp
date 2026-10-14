@@ -1,0 +1,95 @@
+name: Upgrade report
+description: Tell us how a version upgrade went (success or problems)
+title: "[upgrade]: "
+labels:
+  - upgrade
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Share what happened when you moved Keystone-MCP to a newer version.
+        Do **not** paste API keys, OAuth client secrets, JWTs, or production URLs
+        with credentials.
+
+  - type: input
+    id: upgraded_from
+    attributes:
+      label: Upgraded from
+      description: Version or image tag you were running before the upgrade.
+      placeholder: e.g. 0.5.0
+    validations:
+      required: true
+
+  - type: input
+    id: upgraded_to
+    attributes:
+      label: Upgraded to
+      description: Version or image tag you upgraded to.
+      placeholder: e.g. 0.6.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: how
+    attributes:
+      label: How
+      description: How did you perform the upgrade?
+      options:
+        - Stop / start (single instance)
+        - Rolling (multiple replicas)
+        - Helm upgrade
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: config_check
+    attributes:
+      label: Did you run `keystone-mcp config check` first?
+      options:
+        - "Yes"
+        - "No"
+        - "Not sure"
+    validations:
+      required: true
+
+  - type: textarea
+    id: what_broke
+    attributes:
+      label: What broke
+      description: Leave blank if nothing broke.
+      placeholder: Errors, failed checks, clients that stopped working, ...
+    validations:
+      required: false
+
+  - type: dropdown
+    id: rolled_back
+    attributes:
+      label: Rolled back?
+      options:
+        - "No"
+        - "Yes — to the previous version"
+        - "Yes — partially (describe below)"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: users_directory
+    attributes:
+      label: Users directory
+      description: Which users backend were you using?
+      options:
+        - local SQLite
+        - local Postgres
+        - http
+        - plugin
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Confirmation
+      options:
+        - label: I have removed tokens, passwords, and private URLs from this report.
+          required: true
