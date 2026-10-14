@@ -8,6 +8,8 @@ depends on — or pollutes — the real process environment or a developer's own
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from cryptography.hazmat.primitives.serialization import load_pem_private_key
 
@@ -162,12 +164,12 @@ def test_foreign_line_without_equals_is_skipped_with_warning(tmp_path, monkeypat
     # A shared .env may carry lines that are not ours at all — for example a
     # continuation line of a multi-line PEM block pasted in by another tool.
     # Those must not blow up loading, and their content must never surface.
+    foreign_block = (
+        Path(__file__).parent / "data" / "test-keys" / "env-file-foreign-block.txt"
+    ).read_text(encoding="utf-8")
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".env").write_text(
-        "KEYSTONE_MCP_PORT=9123\n"
-        "-----BEGIN PRIVATE KEY-----\n"
-        "super-secret-key-material-ABCDEF\n"
-        "-----END PRIVATE KEY-----\n",
+        "KEYSTONE_MCP_PORT=9123\n" + foreign_block,
         encoding="utf-8",
     )
 

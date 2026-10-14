@@ -47,12 +47,10 @@ from support.lowlevel_upstream import (
 REPO_ROOT = Path(__file__).resolve().parents[1]
 REFERENCE_PATH = REPO_ROOT / "examples" / "keystone-identity" / "python" / "keystone_identity.py"
 ES256_VECTOR_PATH = REPO_ROOT / "examples" / "keystone-identity" / "test-vector-es256.json"
+_TEST_KEYS = Path(__file__).parent / "data" / "test-keys"
 
-FIXED_ES256_PEM = """-----BEGIN PRIVATE KEY-----
-MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgAAASNFZ4kKvN7xI0
-VniQq83vEjRWeJCrze8SNFZ4kKuhRANCAASz4IlGK3RL3RBRnQF+nI0mGeh5oUm9
-0Nw9WnsV7MhcHuDOfAtt6zB8ntgq44aZEiUDMF99mUUG5VgYkbtTBVOC
------END PRIVATE KEY-----"""
+FIXED_ES256_PEM = (_TEST_KEYS / "es256-test-vector.pem").read_text(encoding="utf-8")
+_TRUNCATED_RSA_PEM = (_TEST_KEYS / "truncated-rsa.pem").read_text(encoding="utf-8").strip()
 
 FIXED_ES256_KID = "-qn2Lrjkz9irbI5rft_XNCtt_5gGTKtzmhEGzVokNWA"
 
@@ -204,7 +202,7 @@ async def test_jwks_404_without_key():
     "pem",
     [
         "not-a-pem",
-        "-----BEGIN RSA PRIVATE KEY-----\nMIIBogIBAAJBALRiMLAHudeSA\n-----END RSA PRIVATE KEY-----",
+        _TRUNCATED_RSA_PEM,
     ],
 )
 def test_bad_signing_key_is_refused(pem):

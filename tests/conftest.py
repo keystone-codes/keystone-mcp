@@ -23,7 +23,7 @@ from fastmcp.utilities.tests import ASGIServer, asgi_server
 
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import Settings
-from keystone_mcp.server import build_server
+from keystone_mcp.server import _http_asgi_middleware, build_server
 from support.login import dev_token_login
 from support.test_env import (
     RUN_KEY_ROOT,
@@ -222,6 +222,33 @@ async def obtain_access_token(
         "body": r.json() if r.content else {},
         "client_id": client_id,
     }
+
+
+@pytest_asyncio.fixture
+async def production_http_harness():
+    settings = Settings(
+        base_url=BASE_URL,
+        refresh_interval_seconds=0,
+        deployment_profile="local",
+        log_access_enabled=True,
+    )
+    store = InMemoryOAuthStore()
+    mcp, registry, oauth, _upstreams, _policy_manager, _observability, _reconciler = build_server(
+        settings=settings,
+        oauth_store=store,
+        login_providers=[dev_token_login({VALID_TOKEN})],
+    )
+    async with asgi_server(
+        mcp,
+        path=settings.http_path,
+        middleware=_http_asgi_middleware(settings),
+    ) as running:
+        async with httpx2.AsyncClient(
+            transport=httpx2.ASGITransport(app=running.app), base_url=BASE_URL
+        ) as client:
+            yield Harness(
+                running=running, registry=registry, oauth=oauth, settings=settings, client=client
+            )
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
