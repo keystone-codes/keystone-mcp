@@ -26,11 +26,13 @@ import logging
 
 from keystone_mcp.adapters.api_keys_admin import ApiKeysAdminAdapter
 from keystone_mcp.adapters.base import Pattern
+from keystone_mcp.adapters.guards import CatalogNamesSource
 from keystone_mcp.adapters.policy_admin import PolicyAdminAdapter
 from keystone_mcp.adapters.service_accounts_admin import ServiceAccountsAdminAdapter
 from keystone_mcp.adapters.users_admin import RoleSource, UsersAdminAdapter
 from keystone_mcp.catalog.names import BUILTIN_TOOL_NAMES  # noqa: F401 — re-export
 from keystone_mcp.config import Settings
+from keystone_mcp.rbac.catalog import collect_live_tool_names
 from keystone_mcp.rbac.management import ManagementSource, file_management_source
 from keystone_mcp.router.registry import Param, RouterRegistry
 from keystone_mcp.user_directory.protocol import UserDirectory
@@ -48,6 +50,7 @@ def register_catalog(
     directory: UserDirectory | None = None,
     role_source: RoleSource | None = None,
     management_source: ManagementSource | None = None,
+    catalog_names_source: CatalogNamesSource | None = None,
     policy_store: object | None = None,
     session_revoker: object | None = None,
 ) -> None:
@@ -59,11 +62,20 @@ def register_catalog(
             resolved_management = file_management_source(policy_path)
         else:
             logger.warning("management-role checks are off: no RBAC policy path")
+    if catalog_names_source is None:
+
+        def _default_catalog_names() -> frozenset[str]:
+            return frozenset(collect_live_tool_names(registry))
+
+        resolved_catalog_names: CatalogNamesSource = _default_catalog_names
+    else:
+        resolved_catalog_names = catalog_names_source
     users_admin = UsersAdminAdapter(
         directory=directory,
         observability=observability,
         role_source=role_source,
         management_source=resolved_management,
+        catalog_names_source=resolved_catalog_names,
         session_revoker=session_revoker,
     )
     service_accounts_admin = ServiceAccountsAdminAdapter(
@@ -71,6 +83,7 @@ def register_catalog(
         observability=observability,
         role_source=role_source,
         management_source=resolved_management,
+        catalog_names_source=resolved_catalog_names,
     )
     api_keys_admin = ApiKeysAdminAdapter(
         directory=directory,

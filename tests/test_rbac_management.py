@@ -12,6 +12,7 @@ from keystone_mcp.rbac.management import (
     is_full_administrator,
     is_management_role,
     management_change_reasons,
+    role_exceeds_actor,
 )
 from keystone_mcp.rbac.policy import parse_policy_yaml
 from keystone_mcp.user_directory.types import ServiceAccountRecord, UserRecord
@@ -408,3 +409,120 @@ roles:
     assert "hr" in report.management_roles
     assert "hr@example.com (blocked)" in report.holders["hr"]
     assert "svc:ci" in report.holders["hr"]
+
+
+_CATALOG = frozenset(
+    {
+        "docs_read",
+        "docs_search",
+        "finance_report",
+        "users_add",
+        "users_list",
+    }
+)
+
+
+def test_role_exceeds_actor_within_actor_rights() -> None:
+    policy = parse_policy_yaml(
+        _policy(
+            """\
+version: "t"
+default_deny: true
+roles:
+  hr: {allow: ["users_*", "docs_read"]}
+  reader: {allow: ["docs_read"]}
+"""
+        )
+    )
+    assert not role_exceeds_actor(policy, "reader", frozenset({"hr"}), _CATALOG)
+
+
+def test_role_exceeds_actor_extra_published_name() -> None:
+    policy = parse_policy_yaml(
+        _policy(
+            """\
+version: "t"
+default_deny: true
+roles:
+  hr: {allow: ["users_*", "docs_read"]}
+  finance: {allow: ["finance_*"]}
+"""
+        )
+    )
+    assert role_exceeds_actor(policy, "finance", frozenset({"hr"}), _CATALOG)
+
+
+def test_role_exceeds_actor_unpublished_crm_pattern() -> None:
+    policy = parse_policy_yaml(
+        _policy(
+            """\
+version: "t"
+default_deny: true
+roles:
+  hr: {allow: ["users_*", "docs_read"]}
+  crmhr: {allow: ["users_*", "crm_*"]}
+  crm: {allow: ["crm_*"]}
+  wildcard: {allow: ["*"]}
+"""
+        )
+    )
+    catalog = frozenset({"docs_read", "users_add"})
+    assert role_exceeds_actor(policy, "crm", frozenset({"hr"}), catalog)
+    assert not role_exceeds_actor(policy, "crm", frozenset({"crmhr"}), catalog)
+    assert not role_exceeds_actor(policy, "crm", frozenset({"wildcard"}), catalog)
+
+
+def test_role_exceeds_actor_unknown_role_in_policy() -> None:
+    policy = parse_policy_yaml(
+        _policy(
+            """\
+version: "t"
+default_deny: true
+roles:
+  hr: {allow: ["users_*"]}
+"""
+        )
+    )
+    assert not role_exceeds_actor(policy, "missing", frozenset({"hr"}), _CATALOG)
+
+
+def test_role_exceeds_actor_actor_already_holds_role() -> None:
+    policy = parse_policy_yaml(
+        _policy(
+            """\
+version: "t"
+default_deny: true
+roles:
+  hr: {allow: ["users_*", "docs_read"]}
+  finance: {allow: ["finance_*"]}
+"""
+        )
+    )
+    assert not role_exceeds_actor(policy, "finance", frozenset({"hr", "finance"}), _CATALOG)
+
+
+def test_view_role_exceeds_actor_is_strict_across_policies() -> None:
+    snap = parse_policy_yaml(
+        _policy(
+            """\
+version: "t"
+default_deny: true
+roles:
+  hr: {allow: ["users_*", "docs_read"]}
+  finance: {allow: ["finance_*"]}
+"""
+        )
+    )
+    disk = parse_policy_yaml(
+        _policy(
+            """\
+version: "t"
+default_deny: true
+roles:
+  hr: {allow: ["users_*", "finance_*"]}
+  finance: {allow: ["finance_*"]}
+"""
+        )
+    )
+    view = ManagementView((snap, disk))
+    assert view.role_exceeds_actor("finance", frozenset({"hr"}), _CATALOG)

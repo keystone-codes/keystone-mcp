@@ -552,10 +552,16 @@ def build_server(
             return Response(content=body, media_type="text/plain; charset=utf-8")
 
     if register_builtin_catalog:
+        from keystone_mcp.rbac.loader import delegation_catalog_names
         from keystone_mcp.rbac.management import snapshot_and_file_management_source
 
         mgmt_source = (
             snapshot_and_file_management_source(policy_manager)
+            if policy_manager is not None
+            else None
+        )
+        catalog_names_source = (
+            (lambda: delegation_catalog_names(policy_manager, registry))
             if policy_manager is not None
             else None
         )
@@ -566,6 +572,7 @@ def build_server(
             directory=directory,
             role_source=policy_role_source(policy_manager),
             management_source=mgmt_source,
+            catalog_names_source=catalog_names_source,
             policy_store=policy_store,
             session_revoker=session_revoker,
         )

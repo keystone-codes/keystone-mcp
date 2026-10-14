@@ -7,7 +7,11 @@ from typing import TYPE_CHECKING, Any
 
 from redis.exceptions import RedisError
 
-from keystone_mcp.adapters.guards import check_management_authority, require_human_actor
+from keystone_mcp.adapters.guards import (
+    check_management_authority,
+    require_human_actor,
+    resolve_admin_call,
+)
 from keystone_mcp.plugins import missing_members
 from keystone_mcp.user_directory.errors import UsersError
 from keystone_mcp.user_directory.protocol import ApiKeyDirectory, UserDirectory
@@ -105,7 +109,7 @@ class ApiKeysAdminAdapter:
             self._record_mutation_audit(route, ctx, spec, validation_error)
             return validation_error
 
-        if name in ("api_keys_issue", "api_keys_revoke"):
+        if name in ("api_keys_issue", "api_keys_revoke") and self._management_source is not None:
             try:
                 target_subject = await self._management_target_subject(directory, name, spec)
             except UsersError:
@@ -117,13 +121,21 @@ class ApiKeysAdminAdapter:
                 )
                 self._record_mutation_audit(route, ctx, spec, result)
                 return result
-            mgmt_refusal = await check_management_authority(
+            admin_call = await resolve_admin_call(
                 route,
                 ctx,
                 directory=directory,
                 management_source=self._management_source,
-                observability=self._observability,
                 target_subject=target_subject,
+            )
+            if isinstance(admin_call, dict):
+                self._record_mutation_audit(route, ctx, spec, admin_call)
+                return admin_call
+            mgmt_refusal = check_management_authority(
+                route,
+                ctx,
+                call=admin_call,
+                observability=self._observability,
             )
             if mgmt_refusal is not None:
                 self._record_mutation_audit(route, ctx, spec, mgmt_refusal)
