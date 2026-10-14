@@ -10,7 +10,7 @@ import sys
 from keystone_mcp.auth.oauth_store import build_shared_auth_stores
 from keystone_mcp.auth.sessions import SessionRevoker
 from keystone_mcp.user_directory.types import subject_type_of
-from keystone_mcp.users.cli import _open_store, _settings_for_users_cli
+from keystone_mcp.users.cli import _CliExit, _open_store, _settings_for_users_cli
 from keystone_mcp.users.errors import UsersError
 
 
@@ -37,10 +37,14 @@ def add_api_keys_commands(subparsers: argparse._SubParsersAction) -> None:
 
 
 def _cmd_issue(args: argparse.Namespace) -> int:
-    settings = _settings_for_users_cli()
-    store = _open_store(settings)
+    try:
+        settings = _settings_for_users_cli()
+    except _CliExit as exc:
+        return exc.code
+    store = None
     expires_in_days = None if args.no_expiry else args.days
     try:
+        store = _open_store(settings)
         issued = asyncio.run(
             store.issue_api_key(
                 subject=args.subject,
@@ -49,11 +53,14 @@ def _cmd_issue(args: argparse.Namespace) -> int:
                 created_by="system:cli",
             )
         )
+    except _CliExit as exc:
+        return exc.code
     except UsersError as exc:
         print(str(exc), file=sys.stderr)
         return 3
     finally:
-        store.dispose()
+        if store is not None:
+            store.dispose()
     payload = issued.record.to_dict()
     payload["key"] = issued.key
     print(json.dumps(payload, indent=2, sort_keys=True))
@@ -61,17 +68,24 @@ def _cmd_issue(args: argparse.Namespace) -> int:
 
 
 def _cmd_list(args: argparse.Namespace) -> int:
-    settings = _settings_for_users_cli()
-    store = _open_store(settings)
     try:
+        settings = _settings_for_users_cli()
+    except _CliExit as exc:
+        return exc.code
+    store = None
+    try:
+        store = _open_store(settings)
         rows = asyncio.run(
             store.list_api_keys(subject=args.subject, include_revoked=bool(args.all))
         )
+    except _CliExit as exc:
+        return exc.code
     except UsersError as exc:
         print(str(exc), file=sys.stderr)
         return 3
     finally:
-        store.dispose()
+        if store is not None:
+            store.dispose()
     payload = {"api_keys": [row.to_dict() for row in rows], "total": len(rows)}
     print(json.dumps(payload, indent=2, sort_keys=True))
     return 0
@@ -99,15 +113,22 @@ def _revoke_key_sessions(settings, record) -> int:
 
 
 def _cmd_revoke(args: argparse.Namespace) -> int:
-    settings = _settings_for_users_cli()
-    store = _open_store(settings)
     try:
+        settings = _settings_for_users_cli()
+    except _CliExit as exc:
+        return exc.code
+    store = None
+    try:
+        store = _open_store(settings)
         record, _changed = asyncio.run(store.revoke_api_key(key_id=args.key_id, actor="system:cli"))
+    except _CliExit as exc:
+        return exc.code
     except UsersError as exc:
         print(str(exc), file=sys.stderr)
         return 3
     finally:
-        store.dispose()
+        if store is not None:
+            store.dispose()
     payload = record.to_dict()
     payload["revoked_tokens"] = _revoke_key_sessions(settings, record)
     print(json.dumps(payload, indent=2, sort_keys=True))

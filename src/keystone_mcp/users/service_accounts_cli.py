@@ -55,11 +55,15 @@ def _policy_roles(settings) -> frozenset[str] | None:
 
 
 def _cmd_add(args: argparse.Namespace) -> int:
-    settings = _settings_for_users_cli()
-    store = _open_store(settings)
-    allowed = _policy_roles(settings)
-    roles = normalize_roles(args.roles or [], allowed=allowed)
     try:
+        settings = _settings_for_users_cli()
+    except _CliExit as exc:
+        return exc.code
+    store = None
+    try:
+        allowed = _policy_roles(settings)
+        roles = normalize_roles(args.roles or [], allowed=allowed)
+        store = _open_store(settings)
         mutation = asyncio.run(
             store.create_service_account(
                 name=args.name,
@@ -68,49 +72,63 @@ def _cmd_add(args: argparse.Namespace) -> int:
                 created_by="system:cli",
             )
         )
+    except _CliExit as exc:
+        return exc.code
     except UsersError as exc:
         print(str(exc), file=sys.stderr)
         return 3
     finally:
-        store.dispose()
+        if store is not None:
+            store.dispose()
     print(json.dumps(mutation.account.to_dict(), indent=2, sort_keys=True))
     return 0
 
 
 def _cmd_list(args: argparse.Namespace) -> int:
-    settings = _settings_for_users_cli()
-    store = _open_store(settings)
     try:
+        settings = _settings_for_users_cli()
+    except _CliExit as exc:
+        return exc.code
+    store = None
+    try:
+        store = _open_store(settings)
         rows = asyncio.run(store.list_service_accounts(is_blocked=True if args.blocked else False))
+    except _CliExit as exc:
+        return exc.code
     except UsersError as exc:
         print(str(exc), file=sys.stderr)
         return 3
     finally:
-        store.dispose()
+        if store is not None:
+            store.dispose()
     payload = {"service_accounts": [row.to_dict() for row in rows], "total": len(rows)}
     print(json.dumps(payload, indent=2, sort_keys=True))
     return 0
 
 
 def _cmd_update(args: argparse.Namespace) -> int:
-    settings = _settings_for_users_cli()
-    store = _open_store(settings)
-    allowed = _policy_roles(settings)
-    roles = None
-    if args.roles is not None:
-        roles = normalize_roles(args.roles, allowed=allowed)
+    try:
+        settings = _settings_for_users_cli()
+    except _CliExit as exc:
+        return exc.code
     is_blocked = None
     if args.block:
         is_blocked = True
     elif args.unblock:
         is_blocked = False
-    if args.description is None and roles is None and is_blocked is None:
+    if args.description is None and args.roles is None and is_blocked is None:
         print(
             "at least one of --description, --role, --block or --unblock is required",
             file=sys.stderr,
         )
         return 1
+    store = None
     try:
+        allowed = _policy_roles(settings)
+        roles = None
+        if args.roles is not None:
+            roles = normalize_roles(args.roles, allowed=allowed)
+        store = _open_store(settings)
         mutation = asyncio.run(
             store.update_service_account(
                 name=args.name,
@@ -120,10 +138,13 @@ def _cmd_update(args: argparse.Namespace) -> int:
                 actor="system:cli",
             )
         )
+    except _CliExit as exc:
+        return exc.code
     except UsersError as exc:
         print(str(exc), file=sys.stderr)
         return 3
     finally:
-        store.dispose()
+        if store is not None:
+            store.dispose()
     print(json.dumps(mutation.account.to_dict(), indent=2, sort_keys=True))
     return 0

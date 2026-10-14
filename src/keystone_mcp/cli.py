@@ -12,6 +12,7 @@ from typing import Sequence
 import yaml
 
 from keystone_mcp.config import USERS_CLI_VARIABLES, ConfigError, settings_for_command
+from keystone_mcp.config_check_cli import add_config_commands
 from keystone_mcp.env_file import load_env_file
 from keystone_mcp.observability.logging import configure_logging
 from keystone_mcp.plugins_cli import add_plugins_commands
@@ -305,8 +306,11 @@ def main(argv: list[str] | None = None) -> int:
     add_api_keys_commands(subparsers)
     add_service_accounts_commands(subparsers)
     add_plugins_commands(subparsers)
+    add_config_commands(subparsers)
 
     args = parser.parse_args(argv)
+    if args.command == "config":
+        return args.handler(args)
     try:
         load_env_file()
     except ConfigError as exc:

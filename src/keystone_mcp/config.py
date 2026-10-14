@@ -22,7 +22,7 @@ import os
 import re
 import socket
 import sys
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, MutableMapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
@@ -2103,6 +2103,145 @@ def startup_warnings(settings: Settings, *, environ: Mapping[str, str] | None = 
     warnings.extend(_warn_empty_bool_variables(env_map))
 
     return warnings
+
+
+@dataclass(frozen=True)
+class ConfigReport:
+    env_file: str | None
+    errors: tuple[str, ...]
+    warnings: tuple[str, ...]
+
+
+def _build_settings_for_check(
+    environ: MutableMapping[str, str],
+) -> tuple[Settings | None, list[str], bool]:
+    """Parse ``Settings`` from ``environ``, collecting one error per bad variable.
+
+    Returns ``(settings, errors, incomplete)``. When ``incomplete`` is true,
+    ``settings`` is ``None`` and steps that need a parsed ``Settings`` must be
+    skipped (fatal parse failure, typically ``variable is None``).
+    """
+    errors: list[str] = []
+    env = dict(environ)
+    process_backup = dict(os.environ)
+    try:
+        os.environ.clear()
+        os.environ.update(env)
+        while True:
+            try:
+                return Settings(), errors, False
+            except ConfigError as exc:
+                if exc.variable is None:
+                    if exc.problems:
+                        errors.extend(exc.problems)
+                    else:
+                        errors.append(str(exc))
+                    return None, errors, True
+                message = exc.problems[0] if exc.problems else str(exc)
+                errors.append(message)
+                env.pop(exc.variable, None)
+                os.environ.clear()
+                os.environ.update(env)
+    finally:
+        os.environ.clear()
+        os.environ.update(process_backup)
+
+
+def check_configuration(
+    environ: MutableMapping[str, str] | None = None,
+    *,
+    env_file: str | None = None,
+    env_file_ignored_forwarded: bool = False,
+) -> ConfigReport:
+    """Collect startup refusals and warnings without logging or raising.
+
+    Operates on a copy of the environment: callers should load ``.env`` into
+    ``environ`` first (see :func:`keystone_mcp.env_file.load_env_file`). Does
+    not connect to Redis, Postgres, upstreams, or OIDC discovery endpoints;
+    provider assembly uses ``resolver=None`` like the server's pre-warm check.
+    """
+    env_map: dict[str, str] = dict(os.environ if environ is None else environ)
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    for name, removed in removed_variables_set(env_map):
+        if removed.fatal:
+            errors.append(
+                f"{name} was removed in {removed.removed_in} and is no longer read. "
+                f"{removed.replacement} Remove the variable to start."
+            )
+        else:
+            warnings.append(
+                f"{name} was removed in {removed.removed_in} and has no effect. "
+                f"{removed.replacement}"
+            )
+
+    settings, parse_errors, incomplete = _build_settings_for_check(env_map)
+    errors.extend(parse_errors)
+    if incomplete or settings is None:
+        return ConfigReport(env_file=env_file, errors=tuple(errors), warnings=tuple(warnings))
+
+    refusal_lines = _settings_refusals(settings)
+    errors.extend(refusal_lines)
+    refusal_set = set(refusal_lines)
+
+    try:
+        validate_settings(settings)
+    except ConfigError as exc:
+        for problem in exc.problems:
+            if problem not in refusal_set:
+                errors.append(problem)
+                refusal_set.add(problem)
+
+    try:
+        _ = settings.upstreams
+    except ValueError as exc:
+        errors.append(f"upstream registry: {exc}")
+
+    from keystone_mcp.login.factory import (
+        build_login_providers,
+        check_login_providers_for_profile,
+        validate_login_providers,
+    )
+
+    try:
+        providers = build_login_providers(settings, resolver=None)
+        validate_login_providers(providers)
+        check_login_providers_for_profile(settings, providers)
+    except (ConfigError, ValueError) as exc:
+        errors.append(str(exc))
+
+    if settings.rbac_enabled:
+        policy_path = settings.rbac_policy_path.strip()
+        if policy_path and Path(policy_path).is_file():
+            from keystone_mcp.rbac.policy import PolicyContractError, load_policy_file
+
+            try:
+                load_policy_file(policy_path)
+            except PolicyContractError as exc:
+                errors.append(f"policy: {exc}")
+
+    warnings.extend(startup_warnings(settings, environ=env_map))
+    if env_file_ignored_forwarded and env_file:
+        warnings.append(
+            f"FORWARDED_ALLOW_IPS in {env_file} is ignored: it is read by uvicorn from the "
+            "process environment, not from .env; set it in the service environment "
+            "(systemd Environment=, docker -e, Kubernetes env)"
+        )
+
+    deduped_warnings: list[str] = []
+    seen: set[str] = set()
+    for line in warnings:
+        if line in seen:
+            continue
+        seen.add(line)
+        deduped_warnings.append(line)
+
+    return ConfigReport(
+        env_file=env_file,
+        errors=tuple(errors),
+        warnings=tuple(deduped_warnings),
+    )
 
 
 def load_settings() -> Settings:

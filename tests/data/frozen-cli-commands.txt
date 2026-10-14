@@ -17,4 +17,5 @@ service-accounts add
 service-accounts list
 service-accounts update
 plugins list
+config check
 serve
