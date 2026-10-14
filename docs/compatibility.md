@@ -98,6 +98,7 @@ without `/` or equal to the MCP path) are refused at startup.
 | `KEYSTONE_MCP_USERS_CIRCUIT_RECOVERY_SECONDS` | 0.5.0 | stable |
 | `KEYSTONE_MCP_USERS_DB_URL` | 0.5.0 | stable |
 | `KEYSTONE_MCP_USERS_REDIS_REVISION_KEY` | 0.5.0 | stable |
+| `KEYSTONE_MCP_POLICY_REDIS_REVISION_KEY` | 0.6.0 | stable |
 | `KEYSTONE_MCP_USERS_SERVICE_ALLOW_INSECURE_HTTP` | 0.6.0 | stable |
 | `KEYSTONE_MCP_USERS_SERVICE_TIMEOUT_SECONDS` | 0.5.0 | stable |
 | `KEYSTONE_MCP_USERS_SERVICE_TOKEN` | 0.5.0 | stable |
@@ -267,7 +268,7 @@ an IP-literal `Host` is also accepted. Wrong `Host` â†’ `421`; wrong `Origin` â†
 | `/login/redirect-not-allowed` | GET | Error page when the client's redirect host is not allowed |
 | `/login/<provider>/callback` | GET | Redirect provider callback; Google uses `/login/google/callback` when the provider name is `google` |
 | `/healthz` | GET | Liveness: `{"status": "ok"}`, always `200` |
-| `/readyz` | GET | Readiness: `{"status": "ok"|"degraded"}`, `200` or `503` |
+| `/readyz` | GET | Readiness: `{"status": "ok"|"degraded"}`, `200` or `503`. Trusted internal callers also see `checks`, `upstreams`, `policy_content_hash`, and `policy_in_sync`. |
 | `KEYSTONE_MCP_METRICS_PATH` | GET | Prometheus when `KEYSTONE_MCP_METRICS_ENABLED=true` |
 | `/internal/live-published-names` | GET | When `KEYSTONE_MCP_INTERNAL_ENDPOINTS_ENABLED=true` |
 
@@ -319,8 +320,9 @@ applications in the same database are not modified.
 
 Keystone-MCP writes only under `KEYSTONE_MCP_REDIS_KEY_PREFIX` (default
 `km:oauth:`), `KEYSTONE_MCP_LOGIN_PENDING_KEY_PREFIX` (default `km:login:`),
-and the single key `KEYSTONE_MCP_USERS_REDIS_REVISION_KEY` (default
-`km:users:revision`). The layout under those prefixes is internal, but minor
+`KEYSTONE_MCP_USERS_REDIS_REVISION_KEY` (default `km:users:revision`), and
+`KEYSTONE_MCP_POLICY_REDIS_REVISION_KEY` (default `km:rbac:policy:revision`).
+The layout under those prefixes is internal, but minor
 version upgrades are expected to keep existing OAuth sessions and in-flight
 login transactions valid.
 
@@ -351,6 +353,9 @@ Frozen since 0.5.0. Metric names and label keys (not log message text):
 | `keystone_mcp_rbac_directory_resolve_total` | `outcome` |
 | `keystone_mcp_rbac_directory_resolve_seconds` | (histogram) |
 | `keystone_mcp_rbac_policy_reload_total` | `success` |
+| `keystone_mcp_rbac_policy_info` | `content_hash` |
+| `keystone_mcp_rbac_policy_in_sync` | (gauge, no labels) |
+| `keystone_mcp_rbac_policy_revision_checks_total` | `outcome` |
 | `keystone_mcp_users_mutation_total` | `operation`, `outcome` |
 | `keystone_mcp_policy_mutation_total` | `operation`, `outcome` |
 | `keystone_mcp_admin_refusals_total` | `operation`, `reason` |

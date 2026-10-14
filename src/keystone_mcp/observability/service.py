@@ -162,6 +162,32 @@ class RbacObservability:
 
             logging.getLogger(__name__).warning("rbac policy reload metric failed", exc_info=True)
 
+    def record_policy_identity(self, identity: PolicyIdentity) -> None:
+        try:
+            self.metrics.record_policy_identity(content_hash=identity.content_hash)
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).warning("rbac policy info metric failed", exc_info=True)
+
+    def set_policy_in_sync(self, value: bool | None) -> None:
+        try:
+            self.metrics.set_policy_in_sync(value)
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).warning("rbac policy in_sync metric failed", exc_info=True)
+
+    def record_policy_revision_check(self, *, outcome: str) -> None:
+        try:
+            self.metrics.record_policy_revision_check(outcome=outcome)
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "rbac policy revision check metric failed", exc_info=True
+            )
+
     def record_catalog_refresh(
         self,
         *,
