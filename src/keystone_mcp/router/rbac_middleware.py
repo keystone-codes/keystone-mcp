@@ -352,7 +352,7 @@ class RbacMiddleware(Middleware):
             finally:
                 current_call_decision.reset(token)
 
-        last_decision = None
+        signing_decision = None
         for rbac_name in rbac_names:
             decision = await self._evaluate(
                 context,
@@ -362,9 +362,12 @@ class RbacMiddleware(Middleware):
             )
             if not decision.allowed and self._enforce:
                 raise ResourceError(CLIENT_DENIAL_MESSAGE)
-            last_decision = decision
-        assert last_decision is not None
-        token = current_call_decision.set(_decision_for_signing(last_decision))
+            if not decision.allowed:
+                signing_decision = decision
+            elif signing_decision is None or signing_decision.allowed:
+                signing_decision = decision
+        assert signing_decision is not None
+        token = current_call_decision.set(_decision_for_signing(signing_decision))
         try:
             return await call_next(context)
         finally:
