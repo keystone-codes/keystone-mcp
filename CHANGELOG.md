@@ -8,6 +8,10 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ## [Unreleased]
 
+### Fixed
+
+- OAuth refresh now keeps the access token ``subject_type`` aligned with the session subject.
+
 ### Added
 
 - `keystone-mcp users admins` lists full administrators, management roles and their holders; exits 1 when there is no active full administrator.
