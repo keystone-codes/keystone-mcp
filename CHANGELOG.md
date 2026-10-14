@@ -18,6 +18,8 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
   progress tool and an elicitation tool.
 - `KEYSTONE_MCP_USERS_SERVICE_ALLOW_INSECURE_HTTP`; production warning for an `http://` users directory; metric `keystone_mcp_users_directory_response_issues_total`; OIDC option `email_verified_claim`.
 - Production startup warning when dynamic client registration is open and no redirect hosts are listed; metric `keystone_mcp_oauth_client_evictions_total`.
+- Metrics `keystone_mcp_api_key_verifications_total`, `keystone_mcp_api_key_cache_entries`, `keystone_mcp_api_key_cache_evictions_total`, `keystone_mcp_users_revision_bump_failed_total`.
+- Optional directory protocol `ApiKeyIdIndex`.
 
 ### Changed
 
@@ -34,6 +36,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 - `service_accounts_list`, `service_accounts_add` and `service_accounts_update` work when called over MCP.
 - The HTTP port opens right after the users-directory migrations; upstream discovery, login provider warm-up (now in parallel) and policy loading run in the background, so a hanging upstream no longer keeps the port closed long enough for a liveness probe to restart the pod.
+- A replica that changes a user or service account forgets its own cached decisions at once, even when Redis could not record the change.
 
 - Host install (`docs/deploy.md`, `scripts/deploy.sh`): install straight into `/opt` without editable mode; `deploy.sh` deploys a tag (`DEPLOY_REF`), refuses a directory without git and waits for `/readyz`.
 

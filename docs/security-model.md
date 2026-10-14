@@ -56,6 +56,15 @@ account, are in [users.md](users.md).
   <key>`. Human OAuth Bearer tokens are not accepted as API keys. Revocation
   is immediate via the directory revision, not a Redis token index.
 
+### Unauthenticated API-key traffic
+
+Bearer tokens that look like `ksk_…` are checked for format before any cache
+or directory access. With the built-in directory, unknown `key_id` values are
+compared against the active-key index and refused without touching the
+database. Verified keys live in a bounded positive cache that random guesses
+cannot evict; directories without the index use a separate negative cache and
+a per-replica rate limit instead of caching refusals by `key_id` alone.
+
 ### What they may call: the policy file
 
 [`KEYSTONE_MCP_RBAC_POLICY_PATH`](rbac-policy-format.md) lists roles and the

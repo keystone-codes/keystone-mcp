@@ -37,6 +37,7 @@ from keystone_mcp.user_directory.errors import (
     UsersStoreUnavailableError,
 )
 from keystone_mcp.user_directory.protocol import (
+    ApiKeyIdIndex,
     Capability,
     UserDirectory,
     UserDirectoryAdmin,
@@ -47,6 +48,7 @@ from keystone_mcp.user_directory.types import MutationResult, UserRecord, UserRe
 
 __all__ = [
     "ActorEmailRequiredError",
+    "ApiKeyIdIndex",
     "CORE_CRITICAL_PATTERNS",
     "CachedUserDirectoryResolver",
     "Capability",

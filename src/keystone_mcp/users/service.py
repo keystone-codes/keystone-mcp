@@ -891,6 +891,15 @@ def revoke_api_key(session: Session, *, key_id: str, actor: str) -> ApiKeyMutati
     return ApiKeyMutation(row=row, changed=True)
 
 
+def active_api_key_ids(session: Session) -> frozenset[str]:
+    now = utcnow()
+    stmt = select(ApiKeyRow.key_id).where(
+        ApiKeyRow.revoked_at.is_(None),
+        (ApiKeyRow.expires_at.is_(None)) | (ApiKeyRow.expires_at > now),
+    )
+    return frozenset(session.scalars(stmt).all())
+
+
 def verify_api_key(session: Session, key: str) -> ApiKeyVerification | None:
     parsed = parse_api_key(key)
     if parsed is None:

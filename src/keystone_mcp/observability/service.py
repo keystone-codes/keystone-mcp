@@ -357,5 +357,49 @@ class RbacObservability:
                 exc_info=True,
             )
 
+    def record_api_key_verification(self, outcome: str) -> None:
+        try:
+            self.metrics.record_api_key_verification(outcome=outcome)
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "api key verification metric failed",
+                exc_info=True,
+            )
+
+    def set_api_key_cache_size(self, cache: str, size: int) -> None:
+        try:
+            self.metrics.set_api_key_cache_size(cache=cache, size=size)
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "api key cache size metric failed",
+                exc_info=True,
+            )
+
+    def record_api_key_cache_evictions(self, cache: str, count: int) -> None:
+        try:
+            self.metrics.record_api_key_cache_evictions(cache=cache, count=count)
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "api key cache eviction metric failed",
+                exc_info=True,
+            )
+
+    def record_users_revision_bump_failed(self) -> None:
+        try:
+            self.metrics.record_users_revision_bump_failed()
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "users revision bump failed metric failed",
+                exc_info=True,
+            )
+
     def metrics_response(self) -> tuple[bytes, str]:
         return self.metrics.scrape()
