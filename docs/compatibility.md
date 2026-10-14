@@ -446,6 +446,7 @@ Frozen since 0.5.0.
 | Artifact | Frozen name |
 |---|---|
 | Container image | `ghcr.io/keystone-codes/keystone-mcp:<version>` (multi-arch `linux/amd64`, `linux/arm64`; tag `latest` points at the highest released version) |
+| Helm chart | `charts/keystone-mcp` (source); OCI publication — see F13 |
 | Container port | `8080` |
 | Runtime user | uid/gid `10001` (`keystone`) |
 | Writable volume | `/data` with default `KEYSTONE_MCP_USERS_DB_URL=sqlite:////data/keystone-users.db` in the image |
@@ -459,7 +460,8 @@ Frozen since 0.5.0.
 Python API except the protocols above (including `RouterRegistry`, `Adapter`,
 `Pattern`, `Settings`, and internal modules); all of `keystone_mcp.contrib` and
 `KEYSTONE_MCP_CONTRIB_*`; log, startup error and HTML texts; Redis key layout
-under the prefixes; files under `examples/` and `docker-compose.demo.yml`;
+under the prefixes; the Helm chart values (until 1.0); files under `examples/`
+and `docker-compose.demo.yml`;
 behaviour of `KEYSTONE_MCP_DEPLOYMENT_PROFILE=local` beyond what
 [environment.md](environment.md) documents.
 

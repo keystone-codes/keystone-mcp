@@ -1,0 +1,46 @@
+baseUrl: https://mcp.example.com
+existingSecret: keystone-secrets
+ingress:
+  enabled: true
+  className: nginx
+  host: mcp.example.com
+  tls:
+    secretName: keystone-tls
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+autoscaling:
+  enabled: true
+podDisruptionBudget:
+  enabled: true
+networkPolicy:
+  enabled: true
+  upstream:
+    podSelector:
+      matchLabels:
+        app: your-service
+    port: 8081
+metrics:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+loginProviders: |
+  version: 1
+  providers:
+    - name: google
+      type: google
+      client_id: CHANGE_ME.apps.googleusercontent.com
+      client_secret_env: KEYSTONE_MCP_LOGIN_GOOGLE_SECRET
+upstreams:
+  registry:
+    schema_version: 1
+    entries:
+      - name: service-a
+        url: http://service-a:8081/mcp
+        namespace: service_a
+        enabled: true
+      - name: service-b
+        url: http://service-b:8081/mcp
+        namespace: service_b
+        enabled: true
+secretsAsFilesExtraKeys:
+  - KEYSTONE_MCP_LOGIN_GOOGLE_SECRET

@@ -23,11 +23,21 @@ check_version = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(check_version)
 
 
+def _write_chart(tmp_path: Path, *, version: str = "0.4.0") -> None:
+    chart_dir = tmp_path / "charts" / "keystone-mcp"
+    chart_dir.mkdir(parents=True)
+    (chart_dir / "Chart.yaml").write_text(
+        f'apiVersion: v2\nname: keystone-mcp\nversion: "{version}"\nappVersion: "{version}"\n',
+        encoding="utf-8",
+    )
+
+
 def _write_project(
     tmp_path: Path,
     *,
     pyproject_version: str = "0.4.0",
     dunder_version: str = "0.4.0",
+    chart_version: str | None = None,
     changelog_heading: str = "## [Unreleased]\n\n## [0.4.0] - 2026-10-10\n",
 ) -> Path:
     (tmp_path / "pyproject.toml").write_text(
@@ -44,6 +54,7 @@ def _write_project(
         f"# Changelog\n\n{changelog_heading}",
         encoding="utf-8",
     )
+    _write_chart(tmp_path, version=chart_version if chart_version is not None else pyproject_version)
     return tmp_path
 
 
@@ -232,6 +243,17 @@ def test_dunder_version_mismatch_reported(tmp_path: Path) -> None:
     assert "src/keystone_mcp/__init__.py" in joined
     assert "0.4.1" in joined
     assert "0.4.0" in joined
+    assert check_version.main(["--root", str(root)]) == 1
+
+
+def test_chart_version_mismatch_reported(tmp_path: Path) -> None:
+    root = _write_project(tmp_path, chart_version="0.4.1")
+
+    errors = check_version.check(root, None)
+    assert errors
+    joined = " ".join(errors)
+    assert "Chart.yaml" in joined
+    assert "0.4.1" in joined
     assert check_version.main(["--root", str(root)]) == 1
 
 

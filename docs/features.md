@@ -112,6 +112,8 @@ and every `users_*` mutation ship with the process. Details:
 
 The published container image is multi-arch: `linux/amd64` and
 `linux/arm64`, so it runs the same on a cloud VM and on Apple Silicon.
+A Helm chart installs it in Kubernetes (`charts/keystone-mcp`; see
+[paths/kubernetes.md](paths/kubernetes.md)).
 
 ## A demo in about 15 minutes
 
