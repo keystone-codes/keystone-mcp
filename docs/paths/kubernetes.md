@@ -1,10 +1,45 @@
-# Run Keystone-MCP on Kubernetes (example)
+# Run Keystone-MCP on Kubernetes
 
-This is an example, not a supported Helm chart. Read
-[production-docker.md](production-docker.md) first — every setting below is
-the same, only the packaging differs.
+Read [production-docker.md](production-docker.md) first — cluster settings match
+that path; only the packaging differs.
 
-## What the example contains
+## Install with Helm
+
+```bash
+helm install keystone ./charts/keystone-mcp -f my-values.yaml
+```
+
+**Required values:** `baseUrl` (`KEYSTONE_MCP_BASE_URL`) and either
+`existingSecret` (name of a Secret you create) or `secret.create: true` with
+`secret.values` for demo/kind only.
+
+**Secret keys** (same as the kustomize example): `KEYSTONE_MCP_REDIS_URL`,
+`KEYSTONE_MCP_USERS_DB_URL`, `KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT`, plus any
+`client_secret_env` names from your `loginProviders` file and upstream
+`auth.bearer_env` tokens. Alternatively set `secretsAsFiles: true` to mount
+the Secret under `/run/secrets/keystone` and use `KEYSTONE_MCP_*_FILE` (see
+[environment.md#secrets-from-files](../environment.md#secrets-from-files)).
+
+**Ingress and TLS:** set `ingress.enabled`, `ingress.className`,
+`ingress.host` (must match the host in `baseUrl`), and `ingress.tls.secretName`.
+
+**Several replicas:** use external or chart demo Postgres
+(`postgresql.enabled` is demo-only); SQLite (`profile: local`) cannot run on
+more than one pod.
+
+**Policy from ConfigMap:** default `rbac.policyTools: read-only` so
+`policy_*` mutations are refused when the policy file is read-only. For
+`policy_*` writes, mount a ReadWriteMany PVC and set `rbac.existingPolicyClaim`
+with `rbac.policyTools: full`.
+
+Chart reference: [`charts/keystone-mcp/README.md`](../../charts/keystone-mcp/README.md).
+
+## Without Helm (kustomize example)
+
+Plain YAML under `examples/kubernetes/` — copy and edit; there is no
+templating in this example.
+
+### What the example contains
 
 `examples/kubernetes/`:
 
@@ -176,8 +211,8 @@ relaxes it, still leaves `auth.bearer_env` standing.
 
 ## What is not covered
 
-- **Helm** — no chart, no templating; copy and edit the plain YAML instead.
-- **Autoscaling** — no `HorizontalPodAutoscaler`; add your own if you need one.
+- **Autoscaling in the kustomize example** — no `HorizontalPodAutoscaler`; use
+  the Helm chart's `autoscaling.enabled` or add your own.
 - **NetworkPolicy** for Keystone's own pods — nothing here restricts traffic
   *into* Keystone itself (only the example above, which protects an
   *upstream*); add policies that fit your cluster's network model.

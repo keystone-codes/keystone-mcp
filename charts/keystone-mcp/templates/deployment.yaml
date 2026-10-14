@@ -1,0 +1,187 @@
+{{- include "keystone-mcp.validate" . }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "keystone-mcp.fullname" . }}
+  labels:
+    {{- include "keystone-mcp.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "keystone-mcp.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        {{- if .Values.loginProviders }}
+        # Only login providers require a restart when changed; policy and registry reload live.
+        checksum/login-providers: {{ include "keystone-mcp.loginProvidersChecksum" . }}
+        {{- end }}
+      labels:
+        {{- include "keystone-mcp.selectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "keystone-mcp.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: keystone
+          image: {{ include "keystone-mcp.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            {{- if .Values.secretsAsFiles }}
+            - name: KEYSTONE_MCP_REDIS_URL_FILE
+              value: /run/secrets/keystone/KEYSTONE_MCP_REDIS_URL
+            - name: KEYSTONE_MCP_USERS_DB_URL_FILE
+              value: /run/secrets/keystone/KEYSTONE_MCP_USERS_DB_URL
+            - name: KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT_FILE
+              value: /run/secrets/keystone/KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT
+            {{- range .Values.secretsAsFilesExtraKeys }}
+            - name: {{ . }}_FILE
+              value: {{ printf "/run/secrets/keystone/%s" . | quote }}
+            {{- end }}
+            {{- end }}
+            - name: KEYSTONE_MCP_DEPLOYMENT_PROFILE
+              value: {{ .Values.profile | quote }}
+            - name: KEYSTONE_MCP_BASE_URL
+              value: {{ .Values.baseUrl | quote }}
+            - name: KEYSTONE_MCP_HOST
+              value: "0.0.0.0"
+            - name: KEYSTONE_MCP_RBAC_MODE
+              value: {{ .Values.rbac.mode | quote }}
+            {{- if .Values.rbac.existingPolicyClaim }}
+            - name: KEYSTONE_MCP_RBAC_POLICY_PATH
+              value: "/etc/keystone-mcp/policy/rbac-policy.yaml"
+            {{- else }}
+            - name: KEYSTONE_MCP_RBAC_POLICY_PATH
+              value: "/etc/keystone-mcp/policy/rbac-policy.yaml"
+            {{- end }}
+            - name: KEYSTONE_MCP_UPSTREAMS_PATH
+              value: "/etc/keystone-mcp/registry/upstreams.yaml"
+            {{- if .Values.loginProviders }}
+            - name: KEYSTONE_MCP_LOGIN_PROVIDERS_PATH
+              value: "/etc/keystone-mcp/login-providers.yaml"
+            {{- end }}
+            - name: KEYSTONE_MCP_POLICY_TOOLS
+              value: {{ .Values.rbac.policyTools | quote }}
+            - name: KEYSTONE_MCP_SHUTDOWN_GRACE_SECONDS
+              value: {{ .Values.shutdownGraceSeconds | quote }}
+            - name: KEYSTONE_MCP_SUPERADMIN_EMAIL
+              value: {{ .Values.superadminEmail | quote }}
+            - name: FORWARDED_ALLOW_IPS
+              value: {{ .Values.forwardedAllowIps | quote }}
+            {{- if .Values.metrics.enabled }}
+            - name: KEYSTONE_MCP_METRICS_ENABLED
+              value: "true"
+            {{- end }}
+            {{- range $key, $value := .Values.env }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- if or (not .Values.secretsAsFiles) .Values.extraEnvFrom }}
+          envFrom:
+            {{- if not .Values.secretsAsFiles }}
+            - secretRef:
+                name: {{ include "keystone-mcp.secretName" . }}
+            {{- end }}
+            {{- with .Values.extraEnvFrom }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- end }}
+          volumeMounts:
+            {{- if not .Values.rbac.existingPolicyClaim }}
+            # Mount policy as a directory (not subPath) so kubelet updates files for hot reload.
+            - name: config-policy
+              mountPath: /etc/keystone-mcp/policy
+              readOnly: true
+            {{- else }}
+            - name: policy-pvc
+              mountPath: /etc/keystone-mcp/policy
+            {{- end }}
+            # Mount registry as a directory (not subPath) for live registry reload.
+            - name: config-registry
+              mountPath: /etc/keystone-mcp/registry
+              readOnly: true
+            {{- if .Values.loginProviders }}
+            - name: config-login-providers
+              mountPath: /etc/keystone-mcp/login-providers.yaml
+              subPath: login-providers.yaml
+              readOnly: true
+            {{- end }}
+            - name: tmp
+              mountPath: /tmp
+            {{- if .Values.secretsAsFiles }}
+            - name: keystone-secrets
+              mountPath: /run/secrets/keystone
+              readOnly: true
+            {{- end }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sleep", "5"]
+          startupProbe:
+            {{- toYaml .Values.probes.startupProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.probes.readinessProbe | nindent 12 }}
+          livenessProbe:
+            {{- toYaml .Values.probes.livenessProbe | nindent 12 }}
+      volumes:
+        {{- if not .Values.rbac.existingPolicyClaim }}
+        - name: config-policy
+          configMap:
+            name: {{ include "keystone-mcp.fullname" . }}-config
+            items:
+              - key: rbac-policy.yaml
+                path: rbac-policy.yaml
+        {{- else }}
+        - name: policy-pvc
+          persistentVolumeClaim:
+            claimName: {{ .Values.rbac.existingPolicyClaim }}
+        {{- end }}
+        - name: config-registry
+          configMap:
+            name: {{ include "keystone-mcp.fullname" . }}-config
+            items:
+              - key: upstreams.yaml
+                path: upstreams.yaml
+        {{- if .Values.loginProviders }}
+        - name: config-login-providers
+          configMap:
+            name: {{ include "keystone-mcp.fullname" . }}-config
+        {{- end }}
+        - name: tmp
+          emptyDir: {}
+        {{- if .Values.secretsAsFiles }}
+        - name: keystone-secrets
+          secret:
+            secretName: {{ include "keystone-mcp.secretName" . }}
+        {{- end }}

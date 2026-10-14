@@ -1,4 +1,5 @@
-# Example manifests, not a Helm chart. Apply with:
+# Example manifests (no templating). For Helm, see charts/keystone-mcp/ and
+# docs/paths/kubernetes.md#install-with-helm. Apply with:
 #
 #   kubectl apply -k examples/kubernetes/
 #
