@@ -212,7 +212,10 @@ forwarded).
 
 Published only when `KEYSTONE_MCP_RBAC_MODE=enforce` unless noted.
 
-**Users directory** (`users_*`): `users_list` for every configured directory;
+**Users directory** (`users_*`): `users_list` and `users_export` for every
+configured directory; `users_export` is limited to full administrators and is
+refused to service accounts. The export document carries
+`format: keystone-person-export/1`; fields may be added in minor releases.
 `users_add`, `users_update`,
 `users_block`, `users_unblock`, `users_set_roles`, `users_grant_role`,
 `users_revoke_role`, and `users_logout` require the `admin` capability.
@@ -313,7 +316,7 @@ Frozen since 0.5.0. Exit codes are part of the contract; command output text is 
 | `keystone-mcp catalog validate`, `keystone-mcp catalog diff` | `0` success; `1` validation error; `3` `--live-url` unreachable |
 | `keystone-mcp catalog export` | `0` success; `1` validation error |
 | `keystone-mcp upstream validate --path <file>` | `0` ok; `1` validation or I/O error |
-| `keystone-mcp users grant-admin`, `users import`, `users admins`, `users block`, `users unblock`, `users logout`, `users delete`, `users unbind-identity` | per `users/cli.py` (`0` success, non-zero documented failures; `users admins` and `users delete` on the last administrator exit `1`; `users delete` exits `2` when confirmation is refused, `3` when the person was removed but sessions were not revoked) |
+| `keystone-mcp users grant-admin`, `users import`, `users admins`, `users block`, `users unblock`, `users logout`, `users export`, `users delete`, `users unbind-identity` | per `users/cli.py` (`0` success, non-zero documented failures; `users admins` and `users delete` on the last administrator exit `1`; `users delete` exits `2` when confirmation is refused, `3` when the person was removed but sessions were not revoked) |
 | `keystone-mcp keys issue`, `keys list`, `keys revoke` | `0` on success, non-zero on failure |
 | `keystone-mcp service-accounts add`, `service-accounts list`, `service-accounts update` | `0` on success, non-zero on failure |
 | `keystone-mcp upstream validate` | `0` ok; `1` validation or I/O error |

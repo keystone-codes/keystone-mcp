@@ -1059,6 +1059,39 @@ def count_person_references(session: Session, email: str) -> int:
     return total
 
 
+def person_authored_records(session: Session, email: str) -> dict[str, int]:
+    normalized = normalize_email(email)
+    users_created = (
+        session.scalar(
+            select(func.count())
+            .select_from(UserRow)
+            .where(UserRow.created_by == normalized)
+        )
+        or 0
+    )
+    service_accounts_created = (
+        session.scalar(
+            select(func.count())
+            .select_from(ServiceAccountRow)
+            .where(ServiceAccountRow.created_by == normalized)
+        )
+        or 0
+    )
+    api_keys_revoked = (
+        session.scalar(
+            select(func.count())
+            .select_from(ApiKeyRow)
+            .where(ApiKeyRow.revoked_by == normalized)
+        )
+        or 0
+    )
+    return {
+        "users_created": users_created,
+        "service_accounts_created": service_accounts_created,
+        "api_keys_revoked": api_keys_revoked,
+    }
+
+
 def delete_user(
     session: Session,
     *,

@@ -22,6 +22,7 @@ _BUILTIN_TOOL_ARGS: dict[str, dict] = {
     "users_grant_role": {"email": "u@example.com", "role": "member"},
     "users_revoke_role": {"email": "u@example.com", "role": "member"},
     "users_logout": {"email": "u@example.com"},
+    "users_export": {"email": "u@example.com"},
     "users_delete": {"email": "u@example.com"},
     "service_accounts_list": {},
     "service_accounts_add": {"name": "helper", "roles": ["member"]},
