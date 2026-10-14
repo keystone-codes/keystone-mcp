@@ -108,13 +108,26 @@ def identity_signing_key_from_env() -> EllipticCurvePrivateKey | None:
     return load_ec_p256_private_key(raw)
 
 
-def build_identity_jwks(private_key: EllipticCurvePrivateKey) -> dict[str, Any]:
-    """Build the JWKS payload served at :data:`IDENTITY_JWKS_PATH`."""
+def _ec_private_key_to_jwk(private_key: EllipticCurvePrivateKey) -> dict[str, Any]:
     public_key = private_key.public_key()
     jwk_dict = json.loads(jwt.algorithms.ECAlgorithm.to_jwk(public_key))
     kid = ec_public_key_jwk_thumbprint(public_key)
     jwk_dict.update({"kid": kid, "alg": "ES256", "use": "sig"})
-    return {"keys": [jwk_dict]}
+    return jwk_dict
+
+
+def build_identity_jwks(
+    private_key: EllipticCurvePrivateKey,
+    *,
+    previous_key: EllipticCurvePrivateKey | None = None,
+) -> dict[str, Any]:
+    """Build the JWKS payload served at :data:`IDENTITY_JWKS_PATH`."""
+    keys = [_ec_private_key_to_jwk(private_key)]
+    if previous_key is not None:
+        previous_jwk = _ec_private_key_to_jwk(previous_key)
+        if previous_jwk["kid"] != keys[0]["kid"]:
+            keys.append(previous_jwk)
+    return {"keys": keys}
 
 
 def resolve_identity_secret(name: str, var: str) -> bytes:
@@ -154,6 +167,7 @@ def build_identity_claims(
     mcp_target: str,
     timeout_seconds: float,
     now: float | None = None,
+    rbac_decision: str | None = None,
 ) -> dict[str, Any]:
     """Build the claim set for ``X-Keystone-Identity``, per the 0.5.0 contract.
 
@@ -208,6 +222,9 @@ def build_identity_claims(
     if client_id:
         claims["client_id"] = client_id
 
+    if rbac_decision is not None:
+        claims["rbac_decision"] = rbac_decision
+
     return claims
 
 
@@ -248,6 +265,9 @@ class IdentityAssertionSigner:
 
         decision = current_call_decision.get()
         roles = sorted(decision.roles) if decision is not None else []
+        rbac_decision = None
+        if decision is not None:
+            rbac_decision = "allow" if decision.allowed else "deny"
         claims = build_identity_claims(
             issuer=self.issuer,
             audience=self.audience,
@@ -259,6 +279,7 @@ class IdentityAssertionSigner:
             mcp_target=mcp_target,
             timeout_seconds=timeout_seconds,
             now=now,
+            rbac_decision=rbac_decision,
         )
         headers: dict[str, str] = {"typ": IDENTITY_TYP}
         if self.private_key is not None:

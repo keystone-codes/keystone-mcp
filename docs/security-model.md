@@ -223,7 +223,7 @@ unsigned `X-Author-Email` is not sent on stdio. See
 | `KEYSTONE_MCP_RBAC_MODE` | Tool calls | Catalog |
 |---|---|---|
 | `off` | No RBAC deny | All published tools visible |
-| `observe` | Allowed; denials logged | Filtered as in `enforce` |
+| `observe` | Allowed and logged; the identity assertion carries no roles and `rbac_decision: "deny"` for a call enforce would refuse | Catalog: not filtered |
 | `enforce` | Denied when the policy or the user's roles say so | Filtered per role |
 
 Production profile requires **`enforce`** (below). Built-in `users_*` admin

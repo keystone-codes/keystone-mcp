@@ -11,12 +11,14 @@
 //   const identity = await verifyKeystoneIdentity(header, {
 //     secrets: [process.env.MYSVC_IDENTITY_SECRET!],
 //     audience: "mysvc-mcp",
+//     issuer: process.env.KEYSTONE_MCP_BASE_URL!.replace(/\/$/, ""),
 //   });
 //
 // Usage (ES256, Keystone JWKS):
 //   const identity = await verifyKeystoneIdentity(header, {
 //     jwksUrl: "https://keystone.example/.well-known/keystone-identity-jwks.json",
 //     audience: "mysvc-mcp",
+//     issuer: "https://keystone.example",
 //     algorithms: ["ES256"],
 //   });
 
@@ -28,6 +30,8 @@ const IDENTITY_TYP = "keystone-identity+jwt";
 const HS256_ALGORITHMS = ["HS256"];
 const ES256_ALGORITHMS = ["ES256"];
 
+const remoteJwkSets = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
+
 export class IdentityError extends Error {}
 
 export interface KeystoneIdentity {
@@ -36,6 +40,7 @@ export interface KeystoneIdentity {
   email?: string;
   roles: string[];
   rbac: string;
+  rbacDecision?: string;
   authMethod: string;
   interactive: boolean;
   clientId?: string;
@@ -52,11 +57,22 @@ export interface VerifyKeystoneIdentityOptions {
   jwksUrl?: string;
   /** Required: this upstream's own registry entry `name` (not `namespace`). */
   audience: string;
-  /** Checked only when given. */
-  issuer?: string;
+  /** Required: Keystone `KEYSTONE_MCP_BASE_URL` without a trailing slash. */
+  issuer: string;
   leewaySeconds?: number;
   /** Pin allowed algorithms; never read from the token. */
   algorithms?: string[];
+  /** When true, accept assertions with `rbac_decision: "deny"` (observe dry-runs). */
+  acceptObserveDenials?: boolean;
+}
+
+function remoteJwkSet(jwksUrl: string): ReturnType<typeof createRemoteJWKSet> {
+  let set = remoteJwkSets.get(jwksUrl);
+  if (!set) {
+    set = createRemoteJWKSet(new URL(jwksUrl));
+    remoteJwkSets.set(jwksUrl, set);
+  }
+  return set;
 }
 
 export async function verifyKeystoneIdentity(
@@ -68,6 +84,7 @@ export async function verifyKeystoneIdentity(
     issuer,
     leewaySeconds = 30,
     algorithms,
+    acceptObserveDenials = false,
   }: VerifyKeystoneIdentityOptions,
 ): Promise<KeystoneIdentity> {
   if (!token) {
@@ -75,6 +92,9 @@ export async function verifyKeystoneIdentity(
   }
   if (!audience) {
     throw new IdentityError("audience is required");
+  }
+  if (!issuer?.trim()) {
+    throw new IdentityError("issuer is required");
   }
   if (secrets?.length && jwksUrl) {
     throw new IdentityError("pass either secrets (HS256) or jwksUrl (ES256), not both");
@@ -86,7 +106,7 @@ export async function verifyKeystoneIdentity(
   if (jwksUrl) {
     const allowed = algorithms ?? ES256_ALGORITHMS;
     try {
-      const { payload, protectedHeader } = await jwtVerify(token, createRemoteJWKSet(new URL(jwksUrl)), {
+      const { payload, protectedHeader } = await jwtVerify(token, remoteJwkSet(jwksUrl), {
         algorithms: allowed,
         audience,
         issuer,
@@ -96,7 +116,7 @@ export async function verifyKeystoneIdentity(
       if (protectedHeader.typ !== IDENTITY_TYP) {
         throw new IdentityError(`unexpected typ: ${String(protectedHeader.typ)}`);
       }
-      return claimsToIdentity(payload as Record<string, unknown>);
+      return claimsToIdentity(payload as Record<string, unknown>, acceptObserveDenials);
     } catch (err) {
       if (err instanceof IdentityError) {
         throw err;
@@ -123,7 +143,7 @@ export async function verifyKeystoneIdentity(
       if (protectedHeader.typ !== IDENTITY_TYP) {
         throw new IdentityError(`unexpected typ: ${String(protectedHeader.typ)}`);
       }
-      return claimsToIdentity(payload as Record<string, unknown>);
+      return claimsToIdentity(payload as Record<string, unknown>, acceptObserveDenials);
     } catch (err) {
       if (err instanceof IdentityError) {
         throw err;
@@ -134,13 +154,21 @@ export async function verifyKeystoneIdentity(
   throw new IdentityError(`signature or claims rejected: ${String(lastError)}`);
 }
 
-function claimsToIdentity(payload: Record<string, unknown>): KeystoneIdentity {
+function claimsToIdentity(
+  payload: Record<string, unknown>,
+  acceptObserveDenials: boolean,
+): KeystoneIdentity {
+  const rbacDecision = payload.rbac_decision as string | undefined;
+  if (rbacDecision === "deny" && !acceptObserveDenials) {
+    throw new IdentityError("Keystone RBAC would deny this call");
+  }
   return {
     sub: payload.sub as string,
     subType: (payload.sub_type as string) ?? "human",
     email: payload.email as string | undefined,
     roles: (payload.roles as string[]) ?? [],
     rbac: (payload.rbac as string) ?? "off",
+    rbacDecision,
     authMethod: (payload.auth_method as string) ?? "unknown",
     interactive: Boolean(payload.interactive),
     clientId: payload.client_id as string | undefined,

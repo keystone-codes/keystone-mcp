@@ -8,6 +8,7 @@ contract.
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import time
 from dataclasses import dataclass
@@ -89,6 +90,11 @@ class RbacDecision:
     # token store. ``None`` when there is no verified identity at all.
     login_provider: str | None = None
     subject_type: str | None = None
+
+
+def _decision_for_signing(decision: RbacDecision) -> RbacDecision:
+    """What a signer may see: a denied decision carries no roles."""
+    return decision if decision.allowed else dataclasses.replace(decision, roles=frozenset())
 
 
 def _request_correlation_id() -> str | None:
@@ -194,7 +200,7 @@ class RbacMiddleware(Middleware):
         # exactly the roles RBAC used to allow it. Not set at all when the
         # decision denied the call in enforce mode, since execution never
         # reaches `call_next`.
-        token = current_call_decision.set(decision)
+        token = current_call_decision.set(_decision_for_signing(decision))
         try:
             return await call_next(context)
         finally:
@@ -240,7 +246,7 @@ class RbacMiddleware(Middleware):
         )
         if not decision.allowed and self._enforce:
             raise PromptError(CLIENT_DENIAL_MESSAGE)
-        token = current_call_decision.set(decision)
+        token = current_call_decision.set(_decision_for_signing(decision))
         try:
             return await call_next(context)
         finally:
@@ -330,7 +336,11 @@ class RbacMiddleware(Middleware):
             self._record_decision(decision, operation="read_resource")
             if self._enforce:
                 raise ResourceError(CLIENT_DENIAL_MESSAGE)
-            return await call_next(context)
+            token = current_call_decision.set(_decision_for_signing(decision))
+            try:
+                return await call_next(context)
+            finally:
+                current_call_decision.reset(token)
 
         last_decision = None
         for rbac_name in rbac_names:
@@ -343,7 +353,8 @@ class RbacMiddleware(Middleware):
             if not decision.allowed and self._enforce:
                 raise ResourceError(CLIENT_DENIAL_MESSAGE)
             last_decision = decision
-        token = current_call_decision.set(last_decision)
+        assert last_decision is not None
+        token = current_call_decision.set(_decision_for_signing(last_decision))
         try:
             return await call_next(context)
         finally:

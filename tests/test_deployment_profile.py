@@ -472,14 +472,18 @@ def test_stage_like_production_configuration_is_accepted(monkeypatch, tmp_path: 
     # matters is that https + enforce + Google-only sign-in produce no
     # *other* warning (e.g. no plain-http-base-url or DEV-token warning).
     warnings = startup_warnings(settings)
-    assert all(
-        "UPSTREAM_ALLOW_INSECURE_HTTP" in w
-        or "UPSTREAM_EGRESS_ALLOW_PRIVATE" in w
-        or "KEYSTONE_MCP_USERS_SERVICE_URL uses http" in w
-        or "deprecated since 0.5.0" in w
-        or "KEYSTONE_MCP_OAUTH_ALLOWED_REDIRECT_HOSTS is empty" in w
-        for w in warnings
+    allowed_fragments = (
+        "UPSTREAM_ALLOW_INSECURE_HTTP",
+        "UPSTREAM_EGRESS_ALLOW_PRIVATE",
+        "KEYSTONE_MCP_USERS_SERVICE_URL uses http",
+        "deprecated since 0.5.0",
+        "KEYSTONE_MCP_OAUTH_ALLOWED_REDIRECT_HOSTS is empty",
+        "same HS256 signing secret value",
+        "KEYSTONE_MCP_REDIS_URL",
+        "auth.identity_secret_env",
+        "runs local command",
     )
+    assert all(any(fragment in w for fragment in allowed_fragments) for w in warnings)
     for warning in warnings:
         assert "KEYSTONE_MCP_DEV_TOKENS" not in warning
         assert "uses http on a non-public host" not in warning

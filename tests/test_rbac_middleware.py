@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import jwt
 import pytest
-from fastmcp import FastMCP
+from asgi_lifespan import LifespanManager
+from fastmcp import Client, FastMCP
 from fastmcp.exceptions import ToolError
 from fastmcp.server.middleware import MiddlewareContext
 
@@ -22,6 +24,9 @@ from keystone_mcp.router.rbac_middleware import (
     RbacMiddleware,
 )
 from keystone_mcp.router.registry import RouterRegistry
+from keystone_mcp.router.upstream import UpstreamRegistry
+from keystone_mcp.router.upstream_content import published_uri_for_namespace
+from keystone_mcp.router.upstream_uri_middleware import UpstreamResourceUriMiddleware
 from keystone_mcp.server import build_server
 from keystone_mcp.user_directory import (
     CORE_CRITICAL_PATTERNS,
@@ -30,6 +35,11 @@ from keystone_mcp.user_directory import (
     is_critical_tool,
 )
 from support.login import dev_token_login
+from support.lowlevel_upstream import (
+    UPSTREAM_MCP_URL,
+    asgi_http_client_factory,
+    build_lowlevel_upstream_app,
+)
 from support.test_env import UNUSED_REDIS_URL
 
 MOUNTED_TEST_POLICY = """\
@@ -734,3 +744,252 @@ critical_tools: []
     assert {item.name for item in tools} == {"users_list"}
     prompts = await middleware.on_list_prompts(MiddlewareContext(message=object()), list_prompts)
     assert {item.name for item in prompts} == {"users_list"}
+
+
+# --- signed identity assertion in observe (D04) --------------------------------
+
+_OBSERVE_IDENTITY_SECRET = "observe-test-identity-secret--" + "k" * 10
+_OBSERVE_IDENTITY_ENV = "KEYSTONE_MCP_UPSTREAM_OBSERVE_IDENTITY_SECRET"
+_OBSERVE_SUBJECT = VerifiedIdentity(email="blocked@example.com")
+
+_OBSERVE_HELLO_POLICY = """\
+version: "test-observe-identity"
+default_deny: true
+roles:
+  administrator:
+    description: admin
+    allow: ["hello_*"]
+  member:
+    description: member
+    allow: ["hello_*"]
+  viewer:
+    description: viewer
+    allow: ["hello_greet"]
+"""
+
+
+async def _identity_proxy_stack(
+    app,
+    tmp_path: Path,
+    *,
+    rbac_mode: str,
+    policy_yaml: str,
+    email: str,
+    roles: tuple[str, ...],
+    is_blocked: bool = False,
+    with_identity_secret: bool = True,
+    prompts: bool = False,
+    resources: bool = False,
+):
+    policy_path = tmp_path / "rbac-policy.yaml"
+    policy_path.write_text(policy_yaml, encoding="utf-8")
+    settings = Settings(
+        base_url="http://localhost:8080",
+        rbac_mode=rbac_mode,
+        rbac_policy_path=str(policy_path),
+        users_service_url="http://users:8000",
+        users_service_token="token",
+        redis_url=UNUSED_REDIS_URL,
+    )
+    main = FastMCP("keystone-rbac-identity")
+    registry = RouterRegistry(RouterEngine(settings), main)
+    upstreams = UpstreamRegistry(
+        main_mcp=main,
+        registry=registry,
+        http_client_factory=asgi_http_client_factory(app),
+        identity_issuer=settings.base_url.rstrip("/"),
+        rbac_mode=rbac_mode,
+    )
+    upstream_kw: dict = {}
+    if with_identity_secret:
+        upstream_kw["identity_secret_env"] = _OBSERVE_IDENTITY_ENV
+    upstreams.add_upstream("hello-upstream", UPSTREAM_MCP_URL, namespace="hello", **upstream_kw)
+    await upstreams.discover_all()
+    resolver, backend, _revision = build_in_memory_user_directory_resolver()
+    backend.seed(email, roles=roles, is_blocked=is_blocked)
+    manager = RbacPolicyManager(
+        settings,
+        extra_catalog_names=lambda: upstreams.content.rbac_names(),
+    )
+    if settings.rbac_enabled:
+        middleware = RbacMiddleware(
+            manager,
+            resolver,
+            settings=settings,
+            content_catalog=upstreams.content,
+        )
+        main.add_middleware(middleware)
+        if resources or prompts:
+            main.add_middleware(UpstreamResourceUriMiddleware(upstreams.content))
+        manager.load_initial(registry)
+    return main, settings, upstreams
+
+
+def _decode_identity(token: str, issuer: str) -> dict:
+    return jwt.decode(
+        token,
+        _OBSERVE_IDENTITY_SECRET,
+        algorithms=["HS256"],
+        audience="hello-upstream",
+        issuer=issuer,
+    )
+
+
+@pytest.fixture
+def observe_identity_env(monkeypatch):
+    monkeypatch.setenv(_OBSERVE_IDENTITY_ENV, _OBSERVE_IDENTITY_SECRET)
+    monkeypatch.setattr("keystone_mcp.identity.resolve_verified_identity", lambda: _OBSERVE_SUBJECT)
+    monkeypatch.setattr(
+        "keystone_mcp.router.rbac_middleware.resolve_verified_identity",
+        lambda: _OBSERVE_SUBJECT,
+    )
+
+
+async def test_observe_blocked_user_assertion_has_no_roles(
+    tmp_path: Path, observe_identity_env, monkeypatch
+):
+    observed: dict = {}
+    app = build_lowlevel_upstream_app(tools=["whoami", "greet"], observed=observed)
+    async with LifespanManager(app):
+        main, settings, _upstreams = await _identity_proxy_stack(
+            app,
+            tmp_path,
+            rbac_mode="observe",
+            policy_yaml=_OBSERVE_HELLO_POLICY,
+            email=_OBSERVE_SUBJECT.email,
+            roles=("administrator",),
+            is_blocked=True,
+        )
+        async with Client(main) as client:
+            await client.call_tool_mcp("hello_whoami", {})
+        decoded = _decode_identity(
+            observed["headers"]["x-keystone-identity"], settings.base_url.rstrip("/")
+        )
+        assert decoded["roles"] == []
+        assert decoded["rbac_decision"] == "deny"
+        assert decoded["rbac"] == "observe"
+
+
+async def test_observe_not_permitted_assertion_has_no_roles(
+    tmp_path: Path, observe_identity_env, monkeypatch
+):
+    observed: dict = {}
+    app = build_lowlevel_upstream_app(tools=["whoami", "greet"], observed=observed)
+    async with LifespanManager(app):
+        main, settings, _upstreams = await _identity_proxy_stack(
+            app,
+            tmp_path,
+            rbac_mode="observe",
+            policy_yaml=_OBSERVE_HELLO_POLICY,
+            email=_OBSERVE_SUBJECT.email,
+            roles=("viewer",),
+        )
+        async with Client(main) as client:
+            await client.call_tool_mcp("hello_whoami", {})
+        decoded = _decode_identity(
+            observed["headers"]["x-keystone-identity"], settings.base_url.rstrip("/")
+        )
+        assert decoded["roles"] == []
+        assert decoded["rbac_decision"] == "deny"
+        assert decoded["rbac"] == "observe"
+
+
+async def test_observe_allowed_call_keeps_roles(tmp_path: Path, observe_identity_env):
+    observed: dict = {}
+    app = build_lowlevel_upstream_app(tools=["whoami", "greet"], observed=observed)
+    async with LifespanManager(app):
+        main, settings, _upstreams = await _identity_proxy_stack(
+            app,
+            tmp_path,
+            rbac_mode="observe",
+            policy_yaml=_OBSERVE_HELLO_POLICY,
+            email=_OBSERVE_SUBJECT.email,
+            roles=("member",),
+        )
+        async with Client(main) as client:
+            await client.call_tool_mcp("hello_whoami", {})
+        decoded = _decode_identity(
+            observed["headers"]["x-keystone-identity"], settings.base_url.rstrip("/")
+        )
+        assert decoded["roles"] == ["member"]
+        assert decoded["rbac_decision"] == "allow"
+        assert decoded["rbac"] == "observe"
+
+
+async def test_enforce_assertion_says_allow(tmp_path: Path, observe_identity_env):
+    observed: dict = {}
+    app = build_lowlevel_upstream_app(tools=["whoami", "greet"], observed=observed)
+    async with LifespanManager(app):
+        main, settings, _upstreams = await _identity_proxy_stack(
+            app,
+            tmp_path,
+            rbac_mode="enforce",
+            policy_yaml=_OBSERVE_HELLO_POLICY,
+            email=_OBSERVE_SUBJECT.email,
+            roles=("member",),
+        )
+        async with Client(main) as client:
+            await client.call_tool_mcp("hello_whoami", {})
+        decoded = _decode_identity(
+            observed["headers"]["x-keystone-identity"], settings.base_url.rstrip("/")
+        )
+        assert decoded["roles"] == ["member"]
+        assert decoded["rbac_decision"] == "allow"
+        assert decoded["rbac"] == "enforce"
+
+
+async def test_off_assertion_has_no_rbac_decision(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv(_OBSERVE_IDENTITY_ENV, _OBSERVE_IDENTITY_SECRET)
+    monkeypatch.setattr("keystone_mcp.identity.resolve_verified_identity", lambda: _OBSERVE_SUBJECT)
+    observed: dict = {}
+    app = build_lowlevel_upstream_app(tools=["whoami", "greet"], observed=observed)
+    async with LifespanManager(app):
+        main, settings, _upstreams = await _identity_proxy_stack(
+            app,
+            tmp_path,
+            rbac_mode="off",
+            policy_yaml=_OBSERVE_HELLO_POLICY,
+            email=_OBSERVE_SUBJECT.email,
+            roles=("member",),
+        )
+        async with Client(main) as client:
+            await client.call_tool_mcp("hello_whoami", {})
+        decoded = _decode_identity(
+            observed["headers"]["x-keystone-identity"], settings.base_url.rstrip("/")
+        )
+        assert "rbac_decision" not in decoded
+        assert decoded["rbac"] == "off"
+
+
+async def test_observe_denied_prompt_and_resource_assertion_has_no_roles(
+    tmp_path: Path, observe_identity_env
+):
+    observed: dict = {}
+    app = build_lowlevel_upstream_app(
+        tools=["greet"], prompts=True, resources=True, observed=observed
+    )
+    async with LifespanManager(app):
+        main, settings, _upstreams = await _identity_proxy_stack(
+            app,
+            tmp_path,
+            rbac_mode="observe",
+            policy_yaml=_OBSERVE_HELLO_POLICY,
+            email=_OBSERVE_SUBJECT.email,
+            roles=("viewer",),
+            prompts=True,
+            resources=True,
+        )
+        async with Client(main) as client:
+            await client.get_prompt("hello_summarize", {"topic": "x"})
+            handbook_uri = published_uri_for_namespace("hello", "file:///handbook.md")
+            await client.read_resource(handbook_uri)
+        prompt_decoded = _decode_identity(
+            observed["prompt_headers"]["x-keystone-identity"], settings.base_url.rstrip("/")
+        )
+        resource_decoded = _decode_identity(
+            observed["resource_headers"]["x-keystone-identity"], settings.base_url.rstrip("/")
+        )
+        for decoded in (prompt_decoded, resource_decoded):
+            assert decoded["roles"] == []
+            assert decoded["rbac_decision"] == "deny"
+            assert decoded["rbac"] == "observe"
