@@ -4,6 +4,11 @@ This package shows how to ship a **users directory** and a **sign-in provider** 
 installable entry points, and how to keep them honest with Keystone's contract
 tests.
 
+Depend on `keystone-mcp-gateway>=0.5,<2` (the plugin API is frozen until 2.0; see
+`docs/compatibility.md#plugin-api` in Keystone). For every capability your directory
+declares (`admin`, `service_accounts`, `api_keys`), subclass the matching contract
+class from `keystone_mcp.contract_tests` in your tests (see `docs/plugins.md`).
+
 ## Rename the package
 
 1. Pick a distribution name (`keystone-mcp-<yourname>` is recommended).

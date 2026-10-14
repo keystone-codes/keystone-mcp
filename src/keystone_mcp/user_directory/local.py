@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+from keystone_mcp.user_directory.base import UserDirectoryAdminBase
 from keystone_mcp.user_directory.errors import UserDirectoryUnavailableError
 from keystone_mcp.user_directory.types import (
     ApiKeyRecord,
@@ -36,7 +37,7 @@ from keystone_mcp.users.errors import UsersStoreUnavailableError
 from keystone_mcp.users.store import UsersStore
 
 
-class LocalUserDirectory:
+class LocalUserDirectory(UserDirectoryAdminBase):
     """``UserDirectory`` + ``UserDirectoryAdmin`` over the built-in ``UsersStore``."""
 
     def __init__(self, store: UsersStore) -> None:

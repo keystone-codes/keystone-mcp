@@ -16,6 +16,7 @@ import httpx
 import jwt
 from jwt import PyJWKSet
 
+from keystone_mcp.login.base import RedirectLoginProviderBase
 from keystone_mcp.login.protocol import LoginIdentity, LoginRedirect, LoginRejected
 from keystone_mcp.user_directory.util import email_folds_to_ascii
 
@@ -202,7 +203,7 @@ def _append_query(url: str, params: Mapping[str, str]) -> str:
     return f"{url}{sep}{encoded}"
 
 
-class OidcLoginProvider:
+class OidcLoginProvider(RedirectLoginProviderBase):
     """Redirect-kind login via OIDC discovery, PKCE, and id_token verification."""
 
     def __init__(
@@ -543,6 +544,8 @@ class OidcLoginProvider:
                 response.status_code,
                 error_code,
             )
+            if response.status_code >= 500:
+                raise LoginRejected("provider_unavailable", "token endpoint error")
             raise LoginRejected("identity_invalid", "token endpoint error")
 
         try:

@@ -18,16 +18,80 @@ from __future__ import annotations
 
 import functools
 import importlib.metadata
+import inspect
+import logging
 import os
+import warnings
 from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass
-from importlib.metadata import EntryPoint
+from importlib.metadata import EntryPoint, requires, version
 from typing import Any, Literal, Protocol
 
 from keystone_mcp.config import ConfigError
-from keystone_mcp.login.protocol import LoginProvider
-from keystone_mcp.user_directory.protocol import UserDirectory
+from keystone_mcp.login.protocol import FormLoginProvider, LoginProvider, RedirectLoginProvider
+from keystone_mcp.user_directory.protocol import (
+    ApiKeyDirectory,
+    ServiceAccountDirectory,
+    UserDirectory,
+    UserDirectoryAdmin,
+)
+
+logger = logging.getLogger(__name__)
+
+_LOGIN_PROVIDER_MEMBERS = frozenset({"name", "kind", "title", "interactive", "warm_up", "aclose"})
+_USER_DIRECTORY_MEMBERS = frozenset(
+    {"name", "capabilities", "resolve_user", "list_users", "ping", "aclose"}
+)
+_USER_DIRECTORY_ADMIN_MEMBERS = _USER_DIRECTORY_MEMBERS | frozenset(
+    {
+        "create_user",
+        "update_user",
+        "set_blocked",
+        "replace_roles",
+        "grant_role",
+        "revoke_role",
+    }
+)
+_SERVICE_ACCOUNT_MEMBERS = _USER_DIRECTORY_MEMBERS | frozenset(
+    {"list_service_accounts", "create_service_account", "update_service_account"}
+)
+_API_KEY_MEMBERS = _USER_DIRECTORY_MEMBERS | frozenset(
+    {"issue_api_key", "list_api_keys", "revoke_api_key", "verify_api_key"}
+)
+
+PROTOCOL_MEMBERS_0_5: Mapping[type, frozenset[str]] = {
+    LoginProvider: _LOGIN_PROVIDER_MEMBERS,
+    RedirectLoginProvider: _LOGIN_PROVIDER_MEMBERS | frozenset({"begin", "complete"}),
+    FormLoginProvider: _LOGIN_PROVIDER_MEMBERS | frozenset({"form_fields", "verify"}),
+    UserDirectory: _USER_DIRECTORY_MEMBERS,
+    UserDirectoryAdmin: _USER_DIRECTORY_ADMIN_MEMBERS,
+    ServiceAccountDirectory: _SERVICE_ACCOUNT_MEMBERS,
+    ApiKeyDirectory: _API_KEY_MEMBERS,
+}
+
+
+def missing_members(obj: object, protocol: type) -> tuple[str, ...]:
+    """Return sorted names of frozen 0.5 protocol members absent on ``obj``."""
+    expected = PROTOCOL_MEMBERS_0_5.get(protocol)
+    if expected is None:
+        raise ValueError(f"no frozen 0.5 member list for {protocol!r}")
+    missing: list[str] = []
+    for name in sorted(expected):
+        try:
+            attr = inspect.getattr_static(obj, name)
+        except AttributeError:
+            missing.append(name)
+            continue
+        if isinstance(attr, property):
+            try:
+                getattr(obj, name)
+            except Exception:
+                missing.append(name)
+        elif not callable(attr):
+            missing.append(name)
+    return tuple(missing)
+
 
 LOGIN_PROVIDERS_GROUP = "keystone_mcp.login_providers"
 USER_DIRECTORIES_GROUP = "keystone_mcp.user_directories"
@@ -171,6 +235,36 @@ def _reset_cache() -> None:
         discover.cache_clear()
 
 
+def _warn_plugin_keystone_version(ep: EntryPoint) -> None:
+    if ep.dist is None:
+        return
+    dist_name = ep.dist.metadata["Name"]
+    try:
+        from packaging.requirements import Requirement
+    except ImportError:
+        return
+    try:
+        ks_version = version(keystone_distribution())
+    except ConfigError:
+        return
+    for req_line in requires(dist_name) or ():
+        try:
+            req = Requirement(req_line)
+        except ValueError:
+            continue
+        if req.name != "keystone-mcp-gateway":
+            continue
+        if req.specifier.contains(ks_version, prereleases=True):
+            return
+        message = (
+            f"plugin {dist_name} {ep.dist.version} declares keystone-mcp-gateway"
+            f"{req.specifier}; this is {ks_version}"
+        )
+        warnings.warn(message, stacklevel=4)
+        logger.warning(message)
+        return
+
+
 def load_factory(group: str, name: str) -> object:
     """Load and return the callable behind an entry point ``name`` in ``group``."""
     try:
@@ -186,6 +280,8 @@ def load_factory(group: str, name: str) -> object:
             "run `uv sync` so entry points are registered"
         )
     dist = _entry_dist_name(ep)
+    if not is_builtin_entry(group, name, ep):
+        _warn_plugin_keystone_version(ep)
     try:
         return ep.load()
     except ImportError as exc:

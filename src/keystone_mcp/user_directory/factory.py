@@ -16,6 +16,7 @@ from keystone_mcp.plugins import (
     discover,
     entry_point_label,
     load_factory,
+    missing_members,
 )
 from keystone_mcp.redis_client import redis_from_url
 from keystone_mcp.user_directory.backend_config import load_users_backend_config
@@ -41,25 +42,28 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _require_protocol(
+    directory: UserDirectory,
+    capability: str,
+    protocol: type,
+) -> None:
+    missing = missing_members(directory, protocol)
+    if missing:
+        joined = ", ".join(missing)
+        raise ConfigError(
+            f"users directory {directory.name!r} declares {capability!r} but is missing: "
+            f"{joined} (see docs/plugins.md)"
+        )
+
+
 def validate_directory_capabilities(directory: UserDirectory) -> UserDirectory:
     """Refuse a directory that declares ``"admin"`` without implementing it."""
-    if "admin" in directory.capabilities and not isinstance(directory, UserDirectoryAdmin):
-        raise ConfigError(
-            f"users directory {directory.name!r} declares 'admin' but does not "
-            "implement UserDirectoryAdmin"
-        )
-    if "service_accounts" in directory.capabilities and not isinstance(
-        directory, ServiceAccountDirectory
-    ):
-        raise ConfigError(
-            f"users directory {directory.name!r} declares 'service_accounts' but does not "
-            "implement ServiceAccountDirectory"
-        )
-    if "api_keys" in directory.capabilities and not isinstance(directory, ApiKeyDirectory):
-        raise ConfigError(
-            f"users directory {directory.name!r} declares 'api_keys' but does not "
-            "implement ApiKeyDirectory"
-        )
+    if "admin" in directory.capabilities:
+        _require_protocol(directory, "admin", UserDirectoryAdmin)
+    if "service_accounts" in directory.capabilities:
+        _require_protocol(directory, "service_accounts", ServiceAccountDirectory)
+    if "api_keys" in directory.capabilities:
+        _require_protocol(directory, "api_keys", ApiKeyDirectory)
     return directory
 
 
