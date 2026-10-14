@@ -147,16 +147,15 @@ class CachedUserDirectoryResolver:
         ):
             try:
                 result = await self._backend.resolve_user(normalized)
-            except BaseException as exc:
+            except UserDirectoryUnavailableError:
                 self._circuit.record_failure()
-                if isinstance(exc, UserDirectoryUnavailableError):
-                    raise
-                if isinstance(exc, (httpx.HTTPError, OSError)):
-                    raise UserDirectoryUnavailableError(
-                        "users directory is unavailable",
-                        code="catalog_unavailable",
-                    ) from exc
                 raise
+            except (httpx.HTTPError, OSError) as exc:
+                self._circuit.record_failure()
+                raise UserDirectoryUnavailableError(
+                    "users directory is unavailable",
+                    code="catalog_unavailable",
+                ) from exc
 
             self._circuit.record_success()
             fresh = UserResolveResult(
@@ -327,17 +326,17 @@ class CachedUserDirectoryResolver:
 
         try:
             result = await self._backend.verify_api_key(key)
-        except BaseException as exc:
+        except UserDirectoryUnavailableError:
             self._circuit.record_failure()
             self._record_outcome("unavailable")
-            if isinstance(exc, UserDirectoryUnavailableError):
-                raise
-            if isinstance(exc, (httpx.HTTPError, OSError)):
-                raise UserDirectoryUnavailableError(
-                    "users directory is unavailable",
-                    code="catalog_unavailable",
-                ) from exc
             raise
+        except (httpx.HTTPError, OSError) as exc:
+            self._circuit.record_failure()
+            self._record_outcome("unavailable")
+            raise UserDirectoryUnavailableError(
+                "users directory is unavailable",
+                code="catalog_unavailable",
+            ) from exc
 
         self._circuit.record_success()
         if result is not None:
