@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING
 import mcp_types
 from fastmcp import FastMCP
 
+import keystone_mcp
 from keystone_mcp.adapters.users_admin import RoleSource
 from keystone_mcp.auth.keystone_oauth_provider import KeystoneOAuthProvider
 from keystone_mcp.auth.login_pending_store import (
@@ -55,7 +56,7 @@ from keystone_mcp.login.factory import (
 )
 from keystone_mcp.login.protocol import LoginProvider
 from keystone_mcp.observability import RbacObservability
-from keystone_mcp.observability.logging import configure_logging
+from keystone_mcp.observability.logging import configure_logging, reapply_logger_levels
 from keystone_mcp.rbac.catalog import (
     LIVE_PUBLISHED_NAMES_PATH,
     collect_live_tool_names,
@@ -120,6 +121,7 @@ _request_shutdown: Callable[[], None] = _default_request_shutdown
 
 @asynccontextmanager
 async def _keystone_lifespan(_server: FastMCP):
+    reapply_logger_levels()
     upstreams = _upstreams_holder.get("upstreams")
     reconciler = _reconciler_holder.get("reconciler")
     deferred_factory = _deferred_bootstrap_holder.get("factory")
@@ -390,7 +392,12 @@ def build_server(
         user_resolver=directory_resolver,
         observability=rbac_observability,
     )
-    mcp = FastMCP(name="keystone-mcp", auth=oauth, lifespan=_keystone_lifespan)
+    mcp = FastMCP(
+        name="keystone-mcp",
+        version=keystone_mcp.__version__,
+        auth=oauth,
+        lifespan=_keystone_lifespan,
+    )
 
     # Tracks open connections (handshake era) and ``subscriptions/listen``
     # streams (2026-07-28 era) so the surface reconciler can notify them of a
@@ -1065,6 +1072,13 @@ def main() -> None:
         logger.warning(warning)
     if env_result.path is not None:
         logger.info("loaded %d settings from %s", len(env_result.loaded), env_result.path)
+    if env_result.ignored_forwarded_allow_ips:
+        logger.warning(
+            "FORWARDED_ALLOW_IPS in %s is ignored: it is read by uvicorn from the "
+            "process environment, not from .env; set it in the service environment "
+            "(systemd Environment=, docker -e, Kubernetes env)",
+            env_result.path,
+        )
     if not settings.oauth_dcr_enabled:
         logger.info(
             "dynamic client registration is disabled; register OAuth clients "
@@ -1116,8 +1130,10 @@ def main() -> None:
         port=settings.port,
         path=settings.http_path,
         middleware=_http_asgi_middleware(settings) or None,
+        show_banner=False,
         uvicorn_config={
             "access_log": False,
+            "log_config": None,
             "timeout_graceful_shutdown": settings.shutdown_grace_seconds,
         },
     )

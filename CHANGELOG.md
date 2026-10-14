@@ -35,6 +35,9 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 - Upper bounds on the next major version of `starlette`, `pydantic`, `redis`, `sqlalchemy`, `alembic`.
 - Redis clients use 5 s connect and read timeouts and a 30 s health check; a hung Redis now fails requests instead of holding them.
 - The container healthcheck reads `.env` and `KEYSTONE_MCP_HOST`.
+- JSON log lines are compact (`"stream":"access"`, no spaces); field names are
+  unchanged.
+- A `FORWARDED_ALLOW_IPS` line in `.env` is reported as ignored.
 
 ### Fixed
 
@@ -43,6 +46,12 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 - A replica that changes a user or service account forgets its own cached decisions at once, even when Redis could not record the change.
 
 - Host install (`docs/deploy.md`, `scripts/deploy.sh`): install straight into `/opt` without editable mode; `deploy.sh` deploys a tag (`DEPLOY_REF`), refuses a directory without git and waits for `/readyz`.
+- With `KEYSTONE_MCP_LOG_FORMAT=json`, stderr contains only JSON lines: no
+  FastMCP banner, uvicorn and FastMCP messages and tracebacks go through the
+  Keystone formatter and redaction.
+- `initialize` reports the Keystone version in `serverInfo.version`.
+- `.env`: a quoted value followed by a comment no longer keeps its quotes; an
+  unterminated quote is refused with the line number.
 
 ### Security
 
@@ -64,6 +73,9 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 - An HTTP users directory that answers `exists`/`is_blocked` with strings stops working — return JSON booleans. A providers file with `email_claim` other than `email` and `require_email_verified` on fails to load until `email_verified_claim` is set (or `require_email_verified: false` with `allowed_domains`). Run `keystone-mcp config check` before upgrading.
 - A client that registered but did not sign in within 24 hours registers again on its next attempt (MCP clients do this on `invalid_client`). Client metadata fields other than the RFC 7591 ones Keystone uses (`logo_uri`, `tos_uri`, `policy_uri`, `contacts`, `jwks`, `jwks_uri`) are no longer stored.
 - Shutdown now waits up to 25 s: give the container at least 35 s to stop (`terminationGracePeriodSeconds`, `stop_grace_period`, `docker stop -t`).
+- If a log pipeline matched JSON text with spaces (`"stream": "access"`), match
+  the field instead (`jq`) or drop the space. A `.env` value with an
+  unterminated quote now stops startup.
 
 ## [0.5.0] - 2026-10-13
 

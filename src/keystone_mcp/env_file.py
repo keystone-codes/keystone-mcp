@@ -28,6 +28,7 @@ _ENV_FILE_VAR = "KEYSTONE_MCP_ENV_FILE"
 _DEFAULT_ENV_FILE = ".env"
 _KEY_PATTERN = re.compile(r"^KEYSTONE_MCP_[A-Z0-9_]+$")
 _OWN_PREFIX = "KEYSTONE_MCP_"
+_FORWARDED_ALLOW_IPS = "FORWARDED_ALLOW_IPS"
 
 
 @dataclass(frozen=True)
@@ -43,6 +44,7 @@ class EnvFileResult:
     path: Path | None
     loaded: tuple[str, ...]
     skipped: tuple[str, ...]
+    ignored_forwarded_allow_ips: bool = False
 
 
 def _strip_inline_comment(value: str) -> str:
@@ -58,14 +60,25 @@ def _strip_inline_comment(value: str) -> str:
     return value[:index]
 
 
-def _parse_value(raw: str) -> str:
+def _parse_value(raw: str, *, path: Path, line_number: int) -> str:
     value = raw.strip()
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
-        return value[1:-1]
+    if value and value[0] in ("'", '"'):
+        quote = value[0]
+        close = value.find(quote, 1)
+        if close == -1:
+            raise ConfigError(
+                f"{path}:{line_number}: unterminated or malformed quoted value"
+            )
+        rest = value[close + 1 :]
+        if rest and not (rest.startswith(" ") and "#" in rest):
+            raise ConfigError(
+                f"{path}:{line_number}: unterminated or malformed quoted value"
+            )
+        return value[1:close]
     return _strip_inline_comment(value).strip()
 
 
-def _parse_env_file(path: Path) -> dict[str, str]:
+def _parse_env_file(path: Path) -> tuple[dict[str, str], bool]:
     """Parse ``path`` into ``{name: value}`` for ``KEYSTONE_MCP_*`` names only.
 
     A line's raw text is never included in a log message or an exception: a
@@ -78,6 +91,7 @@ def _parse_env_file(path: Path) -> dict[str, str]:
     with a warning naming only the file and line number.
     """
     values: dict[str, str] = {}
+    forwarded_in_file = False
     text = path.read_text(encoding="utf-8")
     for line_number, raw_line in enumerate(text.splitlines(), start=1):
         line = raw_line.strip()
@@ -97,10 +111,13 @@ def _parse_env_file(path: Path) -> dict[str, str]:
             continue
         key, _, raw_value = line.partition("=")
         key = key.strip()
+        if key == _FORWARDED_ALLOW_IPS:
+            forwarded_in_file = True
+            continue
         if not _KEY_PATTERN.match(key):
             continue
-        values[key] = _parse_value(raw_value)
-    return values
+        values[key] = _parse_value(raw_value, path=path, line_number=line_number)
+    return values, forwarded_in_file
 
 
 def load_env_file(environ: MutableMapping[str, str] | None = None) -> EnvFileResult:
@@ -137,7 +154,8 @@ def load_env_file(environ: MutableMapping[str, str] | None = None) -> EnvFileRes
         if not path.is_file():
             return EnvFileResult(path=None, loaded=(), skipped=())
 
-    file_values = _parse_env_file(path)
+    file_values, forwarded_in_file = _parse_env_file(path)
+    ignored_forwarded = forwarded_in_file and _FORWARDED_ALLOW_IPS not in environ
 
     loaded: list[str] = []
     skipped: list[str] = []
@@ -148,4 +166,9 @@ def load_env_file(environ: MutableMapping[str, str] | None = None) -> EnvFileRes
         environ[key] = value
         loaded.append(key)
 
-    return EnvFileResult(path=path, loaded=tuple(loaded), skipped=tuple(skipped))
+    return EnvFileResult(
+        path=path,
+        loaded=tuple(loaded),
+        skipped=tuple(skipped),
+        ignored_forwarded_allow_ips=ignored_forwarded,
+    )

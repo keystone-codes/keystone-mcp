@@ -107,10 +107,17 @@ included, only the check name and the exception's class name.
 
 ## Operator smoke checks
 
+When `KEYSTONE_MCP_LOG_FORMAT=json`, stderr carries only NDJSON — including
+uvicorn and FastMCP messages and tracebacks (`exc_info` field) — through the
+Keystone formatter and redaction filter.
+
 After deploy, with JSON logging to a file or container logs:
 
 ```bash
-# Access lines without query strings
+# Access lines without query strings (works regardless of JSON spacing)
+jq -c 'select(.stream=="access")' /var/log/keystone-mcp.log | head
+
+# Compact JSON grep (matches Keystone's default JSON line shape)
 grep '"stream":"access"' /var/log/keystone-mcp.log | head
 
 # RBAC audit still present

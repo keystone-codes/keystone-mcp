@@ -50,7 +50,7 @@ Keystone-MCP.
 - [ ] Audit log destination configured if `KEYSTONE_MCP_RBAC_AUDIT_ENABLED=true`.
 - [ ] `KEYSTONE_MCP_LOG_FORMAT=json` and logs collected from stderr (see [observability-logging.md](observability-logging.md)).
 - [ ] `KEYSTONE_MCP_LOG_REDACT=true` in production.
-- [ ] Smoke: `grep '"stream":"access"'` shows paths without query strings; `grep 'rbac audit'` still emits; no `Bearer` tokens in recent lines.
+- [ ] Smoke: `jq -c 'select(.stream=="access")'` (or `grep '"stream":"access"'`) shows paths without query strings; `grep 'rbac audit'` still emits; no `Bearer` tokens in recent lines.
 
 ## Smoke after deploy
 

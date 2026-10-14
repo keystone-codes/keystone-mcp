@@ -9,9 +9,11 @@ depends on — or pollutes — the real process environment or a developer's own
 from __future__ import annotations
 
 import pytest
+from cryptography.hazmat.primitives.serialization import load_pem_private_key
 
 from keystone_mcp.config import ConfigError
 from keystone_mcp.env_file import load_env_file
+from keystone_mcp.identity_assertion import normalize_pem_env_value
 
 
 def test_default_reads_dotenv_in_cwd(tmp_path, monkeypatch):
@@ -196,3 +198,88 @@ def test_secret_in_own_broken_line_never_appears_in_exception(tmp_path, monkeypa
     with pytest.raises(ConfigError) as exc_info:
         load_env_file(environ)
     assert "top-secret-token-XYZ" not in str(exc_info.value)
+
+
+def test_quoted_value_with_trailing_comment(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text(
+        "KEYSTONE_MCP_X=\"value\" # comment\nKEYSTONE_MCP_Y='single' # note\n",
+        encoding="utf-8",
+    )
+    environ: dict[str, str] = {}
+    load_env_file(environ)
+    assert environ["KEYSTONE_MCP_X"] == "value"
+    assert environ["KEYSTONE_MCP_Y"] == "single"
+
+
+def test_hash_inside_quotes_is_kept(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text('KEYSTONE_MCP_X="pa # ss"\n', encoding="utf-8")
+    environ: dict[str, str] = {}
+    load_env_file(environ)
+    assert environ["KEYSTONE_MCP_X"] == "pa # ss"
+
+
+def test_unterminated_quote_is_refused(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text('KEYSTONE_MCP_X="value\n', encoding="utf-8")
+    environ: dict[str, str] = {}
+    with pytest.raises(ConfigError, match=r"\.env:1") as exc_info:
+        load_env_file(environ)
+    assert "KEYSTONE_MCP_X" not in str(exc_info.value)
+
+
+def test_text_after_closing_quote_is_refused(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text('KEYSTONE_MCP_X="a"b\n', encoding="utf-8")
+    environ: dict[str, str] = {}
+    with pytest.raises(ConfigError, match=r"\.env:1"):
+        load_env_file(environ)
+
+
+def test_pem_with_escaped_newlines_round_trips(tmp_path, monkeypatch):
+    import subprocess
+
+    monkeypatch.chdir(tmp_path)
+    proc = subprocess.run(
+        [
+            "openssl",
+            "ecparam",
+            "-name",
+            "prime256v1",
+            "-genkey",
+            "-noout",
+        ],
+        capture_output=True,
+        check=True,
+    )
+    pem = proc.stdout.decode("utf-8")
+    one_line = pem.replace("\n", "\\n")
+    (tmp_path / ".env").write_text(
+        f"KEYSTONE_MCP_IDENTITY_SIGNING_KEY={one_line}\n",
+        encoding="utf-8",
+    )
+    environ: dict[str, str] = {}
+    load_env_file(environ)
+    normalized = normalize_pem_env_value(environ["KEYSTONE_MCP_IDENTITY_SIGNING_KEY"])
+    load_pem_private_key(normalized.encode("utf-8"), password=None)
+
+
+def test_forwarded_allow_ips_in_file_is_flagged(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text(
+        "KEYSTONE_MCP_PORT=9123\nFORWARDED_ALLOW_IPS=127.0.0.1\n",
+        encoding="utf-8",
+    )
+    environ: dict[str, str] = {}
+    result = load_env_file(environ)
+    assert result.ignored_forwarded_allow_ips is True
+    assert "FORWARDED_ALLOW_IPS" not in environ
+
+
+def test_forwarded_allow_ips_in_environment_is_not_flagged(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text("FORWARDED_ALLOW_IPS=127.0.0.1\n", encoding="utf-8")
+    environ = {"FORWARDED_ALLOW_IPS": "10.0.0.1"}
+    result = load_env_file(environ)
+    assert result.ignored_forwarded_allow_ips is False
