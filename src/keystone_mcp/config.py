@@ -40,6 +40,7 @@ LogFormat = Literal["json", "text"]
 UsersBackend = str
 DeploymentProfile = Literal["local", "production"]
 PolicyToolsMode = Literal["full", "read-only", "off"]
+ThrottleBackend = Literal["memory", "redis"]
 _VALID_LOG_FORMATS = frozenset({"json", "text"})
 _VALID_LOG_LEVELS = frozenset({"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"})
 _VALID_LOGIN_METHODS = frozenset({"google", "api_key"})
@@ -47,6 +48,7 @@ _VALID_RBAC_MODES = frozenset({"off", "observe", "enforce"})
 _USERS_BACKEND_NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 _VALID_DEPLOYMENT_PROFILES = frozenset({"local", "production"})
 _VALID_POLICY_TOOLS_MODES = frozenset({"full", "read-only", "off"})
+_VALID_THROTTLE_BACKENDS = frozenset({"memory", "redis"})
 
 # Languages the login page ships translations for. Kept here (rather than
 # imported from the auth layer) so settings validation stays free of an import
@@ -333,6 +335,18 @@ def _parse_rbac_mode(raw: str, *, field_name: str = "KEYSTONE_MCP_RBAC_MODE") ->
     if value not in _VALID_RBAC_MODES:
         raise ConfigError(
             f"{field_name} must be one of {sorted(_VALID_RBAC_MODES)}; got {raw!r}",
+            variable=field_name,
+        )
+    return value  # type: ignore[return-value]
+
+
+def _parse_throttle_backend(
+    raw: str, *, field_name: str = "KEYSTONE_MCP_THROTTLE_BACKEND"
+) -> ThrottleBackend:
+    value = raw.strip().lower()
+    if value not in _VALID_THROTTLE_BACKENDS:
+        raise ConfigError(
+            f"{field_name} must be one of {sorted(_VALID_THROTTLE_BACKENDS)}; got {raw!r}",
             variable=field_name,
         )
     return value  # type: ignore[return-value]
@@ -1186,6 +1200,11 @@ class Settings:
     throttle_window_seconds: int = field(
         default_factory=lambda: _env_int("KEYSTONE_MCP_THROTTLE_WINDOW", 60)
     )
+    throttle_backend: ThrottleBackend = field(
+        default_factory=lambda: _parse_throttle_backend(
+            _env("KEYSTONE_MCP_THROTTLE_BACKEND", "memory")
+        )
+    )
 
     # ── Login attempt throttle (IP per POST, email on failed login only) ──
     login_throttle_ip_max: int = field(
@@ -1930,6 +1949,12 @@ def validate_settings(settings: Settings) -> None:
             f"(got {settings.refresh_interval_seconds})"
         )
 
+    if settings.throttle_backend == "redis" and not settings.redis_url.strip():
+        raise ConfigError(
+            "KEYSTONE_MCP_THROTTLE_BACKEND=redis requires KEYSTONE_MCP_REDIS_URL",
+            variable="KEYSTONE_MCP_THROTTLE_BACKEND",
+        )
+
 
 def startup_warnings(settings: Settings, *, environ: Mapping[str, str] | None = None) -> list[str]:
     """Operator-facing warnings for a configuration that starts but is risky.
@@ -1955,6 +1980,11 @@ def startup_warnings(settings: Settings, *, environ: Mapping[str, str] | None = 
     base_scheme = (urlparse(settings.base_url).scheme or "").lower()
 
     if settings.deployment_profile == "production":
+        if settings.throttle_backend == "memory":
+            warnings.append(
+                "KEYSTONE_MCP_THROTTLE_BACKEND=memory: tool-call and sign-in limits "
+                "are counted per replica; set redis when running more than one replica"
+            )
         # W1
         if base_scheme == "http" and not _is_public_host(base_host):
             warnings.append(
