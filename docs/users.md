@@ -258,9 +258,12 @@ when `KEYSTONE_MCP_REDIS_URL` is set; without Redis the block still applies,
 but existing tokens live until they expire (the command prints a warning).
 `logout` revokes sessions only and requires Redis. `unblock` lifts the block
 without restoring old tokens — the person signs in again for new ones. The
-same last-administrator rule as `users_block` applies. Re-running `users
-import` that re-applies a block from the source also revokes sessions; the
-import summary includes `revoked_sessions`.
+same last-administrator rule as `users_block` applies. If Redis is unreachable,
+the block or import is still written, the command prints which sessions were
+not revoked and exits with `3`; run it again (or `users logout`) when Redis is
+back. `users import` revokes the sessions of every user blocked in the source
+on every run, so a re-run finishes an interrupted revocation; the import
+summary includes `revoked_sessions`, `revoke_attempted`, and `revoke_failed`.
 
 Blocking a person in an external (`http`) directory takes effect on that
 person's next token renewal — at most `KEYSTONE_MCP_TOKEN_TTL` later.
