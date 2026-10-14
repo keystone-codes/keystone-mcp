@@ -196,6 +196,22 @@ def api_key_login_configured(settings: Settings) -> bool:
     return settings.api_key_login_enabled
 
 
+def check_login_providers_for_profile(
+    settings: Settings, providers: Sequence[LoginProvider]
+) -> None:
+    """Refuse api_key next to an interactive provider in production."""
+    if settings.deployment_profile != "production":
+        return
+    has_api_key = any(p.name == "api_key" for p in providers)
+    has_interactive = any(getattr(p, "interactive", False) for p in providers)
+    if has_api_key and has_interactive:
+        raise ConfigError(
+            "api_key sign-in for people is not available in the production profile "
+            "when an interactive provider is configured; people sign in through the "
+            "provider, machines use Bearer keys"
+        )
+
+
 def validate_login_providers(providers: Sequence[LoginProvider]) -> None:
     """Check the configured provider set for the invariants Keystone relies on."""
     seen: set[str] = set()

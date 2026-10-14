@@ -25,6 +25,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 - Metric `keystone_mcp_upstream_items_rejected_total{namespace,kind,reason}`.
 - Metric `keystone_mcp_upstream_input_rounds_exceeded_total{namespace}`.
 - CI: the contract freeze gate now compares the public surface generated from the code — environment variables (found by AST), policy keys, CLI commands, plugin protocol signatures, built-in tool arguments, metrics and their labels — with a baseline generated from the `v0.5.0` tag.
+- Startup warnings W8–W19 (`docs/environment.md#startup-warnings`).
 
 ### Changed
 
@@ -38,6 +39,8 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 - Upper bounds on the next major version of `starlette`, `pydantic`, `redis`, `sqlalchemy`, `alembic`.
 - Redis clients use 5 s connect and read timeouts and a 30 s health check; a hung Redis now fails requests instead of holding them.
 - The container healthcheck reads `.env` and `KEYSTONE_MCP_HOST`.
+- Startup errors (settings, upstream registry, policy file, users directory) are reported in one line.
+- CLI commands ignore invalid settings they do not use and say so.
 
 ### Deprecated
 
@@ -75,6 +78,8 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 - Dynamic client registration limits client metadata (request ≤ 16 KB, `client_name` ≤ 100 characters, ≤ 10 `redirect_uris` of ≤ 2 KB, unlisted RFC 7591 fields dropped); a client that never completes a sign-in expires after 24 hours; at `KEYSTONE_MCP_OAUTH_MAX_CLIENTS` the oldest unused client is evicted instead of refusing everyone; IPv6 registration attempts are counted per /64.
 - `/readyz` shows per-check details only when the caller's address is internal and its `Host` header is allowed.
 - An upstream that keeps asking for input can no longer hold a tool call (and keystone-mcp's CPU) forever: at most 10 rounds per call, all within the tool timeout.
+- Boolean settings accept `1/true/yes/on` and `0/false/no/off` in any case; any other non-empty value refuses startup instead of being read as false.
+- In `production`, an API-key sign-in provider is refused next to any interactive sign-in provider, including one from a plugin.
 
 ### Migration
 
@@ -93,6 +98,10 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 - Policy validation now knows a prompt of an upstream with `strip_prefix` by the name clients see (`hello_summarize`), so an exact allow rule for that name works. The stripped form 0.5.0 validated (`hello_marize`) is still accepted by validation but, as before, grants nothing — replace it with the visible name.
 - An upstream that asks more than 10 questions in one tool call now gets `cancel` (handshake protocol) or the call fails (`kept requesting input`, MCP 2026-07-28).
 - If you keyed `KEYSTONE_MCP_UPSTREAM_TOOL_TIMEOUTS` by the upstream's tool name, it keeps working; a startup warning names the published key to switch to.
+- `KEYSTONE_MCP_*` booleans: replace values other than 1/true/yes/on/0/false/no/off; an empty value still means false but is now reported.
+- Startup refuses a non-positive `KEYSTONE_MCP_TOKEN_TTL`, `_AUTH_CODE_TTL`, `_REFRESH_TOKEN_TTL`, `_LOGIN_PENDING_TXN_TTL`; a `KEYSTONE_MCP_PORT` outside 1–65535; a `KEYSTONE_MCP_BASE_URL` without an http(s) scheme or host; an empty or invalid `KEYSTONE_MCP_LOG_REQUEST_ID_HEADER`; with metrics on, a `KEYSTONE_MCP_METRICS_PATH` without a leading "/" or equal to `KEYSTONE_MCP_HTTP_PATH`. None of these worked before.
+- `KEYSTONE_MCP_REDIS_URL` is checked at settings time in every RBAC mode (it was already required to start).
+- A plugin sign-in provider with `interactive=True` next to `api_key` in `production`: move people to the interactive provider; machines keep Bearer keys.
 
 ## [0.5.0] - 2026-10-13
 

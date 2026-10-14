@@ -21,7 +21,8 @@ import logging
 import os
 import re
 import socket
-from collections.abc import Mapping
+import sys
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
@@ -58,6 +59,60 @@ def _env(name: str, default: str) -> str:
 
 class ConfigError(ValueError):
     """Raised when platform settings are missing or inconsistent at startup."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        variable: str | None = None,
+        problems: tuple[str, ...] = (),
+    ) -> None:
+        super().__init__(message)
+        self.variable = variable
+        self.problems = problems or (message,)
+
+
+_TRUE_BOOL = frozenset({"1", "true", "yes", "on"})
+_FALSE_BOOL = frozenset({"0", "false", "no", "off"})
+_HEADER_NAME_RE = re.compile(r"^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$")
+
+BOOL_VARIABLES: tuple[str, ...] = (
+    "KEYSTONE_MCP_OAUTH_DCR_ENABLED",
+    "KEYSTONE_MCP_LOG_REDACT",
+    "KEYSTONE_MCP_LOG_ACCESS_ENABLED",
+    "KEYSTONE_MCP_LOG_REQUEST_ID_RESPONSE",
+    "KEYSTONE_MCP_RBAC_AUDIT_ENABLED",
+    "KEYSTONE_MCP_REQUIRE_RESOURCE_INDICATOR",
+    "KEYSTONE_MCP_METRICS_ENABLED",
+    "KEYSTONE_MCP_INTERNAL_ENDPOINTS_ENABLED",
+    "KEYSTONE_MCP_UPSTREAM_REQUIRE_ALL",
+    "KEYSTONE_MCP_PROXY_STATUS_ENVELOPE",
+    "KEYSTONE_MCP_PROXY_ELICITATION",
+    "KEYSTONE_MCP_UPSTREAM_ALLOW_INSECURE_HTTP",
+    "KEYSTONE_MCP_UPSTREAM_EGRESS_ALLOW_PRIVATE",
+)
+
+LOGGING_VARIABLES = frozenset(
+    {
+        "KEYSTONE_MCP_LOG_LEVEL",
+        "KEYSTONE_MCP_LOG_FORMAT",
+        "KEYSTONE_MCP_LOG_REDACT",
+    }
+)
+
+USERS_CLI_VARIABLES = frozenset(
+    {
+        "KEYSTONE_MCP_USERS_BACKEND",
+        "KEYSTONE_MCP_USERS_DB_URL",
+        "KEYSTONE_MCP_REDIS_URL",
+        "KEYSTONE_MCP_USERS_REDIS_REVISION_KEY",
+        "KEYSTONE_MCP_REDIS_KEY_PREFIX",
+        "KEYSTONE_MCP_LOGIN_PENDING_KEY_PREFIX",
+        "KEYSTONE_MCP_RBAC_MODE",
+        "KEYSTONE_MCP_RBAC_POLICY_PATH",
+        "KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -177,7 +232,7 @@ def _env_int(name: str, default: int) -> int:
     try:
         return int(raw.strip())
     except ValueError as exc:
-        raise ConfigError(f"{name} must be an integer; got {raw!r}") from exc
+        raise ConfigError(f"{name} must be an integer; got {raw!r}", variable=name) from exc
 
 
 def _env_float(name: str, default: float) -> float:
@@ -188,21 +243,30 @@ def _env_float(name: str, default: float) -> float:
     try:
         return float(raw.strip())
     except ValueError as exc:
-        raise ConfigError(f"{name} must be a number; got {raw!r}") from exc
+        raise ConfigError(f"{name} must be a number; got {raw!r}", variable=name) from exc
 
 
 def _env_bool(name: str, default: bool) -> bool:
     raw = os.environ.get(name)
     if raw is None:
         return default
-    return raw.lower() in ("1", "true", "yes")
+    value = raw.strip().lower()
+    if value in _TRUE_BOOL:
+        return True
+    if value in _FALSE_BOOL or value == "":
+        return False
+    raise ConfigError(
+        f"{name} must be one of 1/true/yes/on or 0/false/no/off (any case); got {raw!r}",
+        variable=name,
+    )
 
 
 def _parse_login_method(raw: str, *, field_name: str) -> LoginMethod:
     value = raw.strip().lower()
     if value not in _VALID_LOGIN_METHODS:
         raise ConfigError(
-            f"{field_name} must be one of {sorted(_VALID_LOGIN_METHODS)}; got {raw!r}"
+            f"{field_name} must be one of {sorted(_VALID_LOGIN_METHODS)}; got {raw!r}",
+            variable=field_name,
         )
     return value  # type: ignore[return-value]
 
@@ -210,21 +274,30 @@ def _parse_login_method(raw: str, *, field_name: str) -> LoginMethod:
 def _parse_log_level(raw: str, *, field_name: str = "KEYSTONE_MCP_LOG_LEVEL") -> str:
     value = raw.strip().upper()
     if value not in _VALID_LOG_LEVELS:
-        raise ConfigError(f"{field_name} must be one of {sorted(_VALID_LOG_LEVELS)}; got {raw!r}")
+        raise ConfigError(
+            f"{field_name} must be one of {sorted(_VALID_LOG_LEVELS)}; got {raw!r}",
+            variable=field_name,
+        )
     return value
 
 
 def _parse_log_format(raw: str, *, field_name: str = "KEYSTONE_MCP_LOG_FORMAT") -> LogFormat:
     value = raw.strip().lower()
     if value not in _VALID_LOG_FORMATS:
-        raise ConfigError(f"{field_name} must be one of {sorted(_VALID_LOG_FORMATS)}; got {raw!r}")
+        raise ConfigError(
+            f"{field_name} must be one of {sorted(_VALID_LOG_FORMATS)}; got {raw!r}",
+            variable=field_name,
+        )
     return value  # type: ignore[return-value]
 
 
 def _parse_rbac_mode(raw: str, *, field_name: str = "KEYSTONE_MCP_RBAC_MODE") -> RbacMode:
     value = raw.strip().lower()
     if value not in _VALID_RBAC_MODES:
-        raise ConfigError(f"{field_name} must be one of {sorted(_VALID_RBAC_MODES)}; got {raw!r}")
+        raise ConfigError(
+            f"{field_name} must be one of {sorted(_VALID_RBAC_MODES)}; got {raw!r}",
+            variable=field_name,
+        )
     return value  # type: ignore[return-value]
 
 
@@ -234,7 +307,8 @@ def _parse_deployment_profile(
     value = raw.strip().lower()
     if value not in _VALID_DEPLOYMENT_PROFILES:
         raise ConfigError(
-            f"{field_name} must be one of {sorted(_VALID_DEPLOYMENT_PROFILES)}; got {raw!r}"
+            f"{field_name} must be one of {sorted(_VALID_DEPLOYMENT_PROFILES)}; got {raw!r}",
+            variable=field_name,
         )
     return value  # type: ignore[return-value]
 
@@ -244,7 +318,10 @@ def _parse_users_backend(
 ) -> UsersBackend:
     value = raw.strip().lower()
     if not _USERS_BACKEND_NAME_RE.fullmatch(value):
-        raise ConfigError(f"{field_name} must match ^[a-z][a-z0-9_-]{{0,31}}$; got {raw!r}")
+        raise ConfigError(
+            f"{field_name} must match ^[a-z][a-z0-9_-]{{0,31}}$; got {raw!r}",
+            variable=field_name,
+        )
     return value
 
 
@@ -253,7 +330,10 @@ def _parse_policy_tools(
 ) -> PolicyToolsMode:
     value = raw.strip().lower()
     if value not in _VALID_POLICY_TOOLS_MODES:
-        raise ConfigError(f"{field_name} must be one of: full, read-only, off")
+        raise ConfigError(
+            f"{field_name} must be one of: full, read-only, off",
+            variable=field_name,
+        )
     return value  # type: ignore[return-value]
 
 
@@ -490,7 +570,8 @@ def _parse_login_lang(raw: str) -> str:
     value = raw.strip().lower()
     if value not in LOGIN_LANGS:
         raise ConfigError(
-            f"KEYSTONE_MCP_LOGIN_DEFAULT_LANG must be one of {sorted(LOGIN_LANGS)}; got {raw!r}"
+            f"KEYSTONE_MCP_LOGIN_DEFAULT_LANG must be one of {sorted(LOGIN_LANGS)}; got {raw!r}",
+            variable="KEYSTONE_MCP_LOGIN_DEFAULT_LANG",
         )
     return value
 
@@ -530,7 +611,10 @@ def _parse_enabled_login_methods(raw: str) -> frozenset[LoginMethod]:
             continue
         methods.add(_parse_login_method(token, field_name="KEYSTONE_MCP_ENABLED_LOGIN_METHODS"))
     if not methods:
-        raise ConfigError("KEYSTONE_MCP_ENABLED_LOGIN_METHODS must not be empty")
+        raise ConfigError(
+            "KEYSTONE_MCP_ENABLED_LOGIN_METHODS must not be empty",
+            variable="KEYSTONE_MCP_ENABLED_LOGIN_METHODS",
+        )
     return frozenset(methods)
 
 
@@ -1196,8 +1280,267 @@ def effective_allowed_hosts(settings: Settings) -> tuple[str, ...]:
     return tuple(dict.fromkeys(hosts))  # de-duplicate, keep first occurrence's order
 
 
+def _refusal_base_url(settings: Settings) -> str | None:
+    parsed = urlparse(settings.base_url.strip())
+    scheme = (parsed.scheme or "").lower()
+    host = parsed.hostname or ""
+    if scheme not in ("http", "https") or not host:
+        return (
+            "KEYSTONE_MCP_BASE_URL must be an absolute http(s) URL such as https://mcp.example.com"
+        )
+    return None
+
+
+def _refusal_port(settings: Settings) -> str | None:
+    if settings.port < 1 or settings.port > 65535:
+        return "KEYSTONE_MCP_PORT must be between 1 and 65535"
+    return None
+
+
+def _refusal_token_ttls(settings: Settings) -> list[str]:
+    problems: list[str] = []
+    for name, value in (
+        ("KEYSTONE_MCP_TOKEN_TTL", settings.token_cache_ttl_seconds),
+        ("KEYSTONE_MCP_AUTH_CODE_TTL", settings.auth_code_ttl_seconds),
+        ("KEYSTONE_MCP_REFRESH_TOKEN_TTL", settings.refresh_token_ttl_seconds),
+        ("KEYSTONE_MCP_LOGIN_PENDING_TXN_TTL", settings.login_pending_txn_ttl_seconds),
+    ):
+        if value <= 0:
+            problems.append(f"{name} must be a positive number of seconds")
+    return problems
+
+
+def _refusal_log_request_id_header(settings: Settings) -> str | None:
+    header = settings.log_request_id_header.strip()
+    if not header or not _HEADER_NAME_RE.fullmatch(header):
+        return "KEYSTONE_MCP_LOG_REQUEST_ID_HEADER must be a header name such as X-Request-ID"
+    return None
+
+
+def _refusal_metrics_path(settings: Settings) -> str | None:
+    if not settings.metrics_enabled:
+        return None
+    path = settings.metrics_path.strip()
+    if not path.startswith("/"):
+        return (
+            'KEYSTONE_MCP_METRICS_PATH must start with "/" and differ from KEYSTONE_MCP_HTTP_PATH'
+        )
+    if normalize_http_path(path) == normalize_http_path(settings.http_path):
+        return (
+            'KEYSTONE_MCP_METRICS_PATH must start with "/" and differ from KEYSTONE_MCP_HTTP_PATH'
+        )
+    return None
+
+
+def _settings_refusals(settings: Settings) -> list[str]:
+    problems: list[str] = []
+    problems.extend(_refusal_token_ttls(settings))
+    port_problem = _refusal_port(settings)
+    if port_problem:
+        problems.append(port_problem)
+    base_problem = _refusal_base_url(settings)
+    if base_problem:
+        problems.append(base_problem)
+    header_problem = _refusal_log_request_id_header(settings)
+    if header_problem:
+        problems.append(header_problem)
+    metrics_problem = _refusal_metrics_path(settings)
+    if metrics_problem:
+        problems.append(metrics_problem)
+    if not settings.redis_url.strip():
+        problems.append("KEYSTONE_MCP_REDIS_URL is required (OAuth sessions are stored in Redis)")
+    return problems
+
+
+def _warn_base_url_path_query(settings: Settings) -> str | None:
+    parsed = urlparse(settings.base_url)
+    path = parsed.path or ""
+    has_path = path not in ("", "/")
+    has_query = bool(parsed.query)
+    has_fragment = bool(parsed.fragment)
+    if not (has_path or has_query or has_fragment):
+        return None
+    if settings.deployment_profile == "production":
+        return (
+            "KEYSTONE_MCP_BASE_URL includes a path, query, or fragment; OAuth "
+            "metadata and redirect URIs should use the site root only"
+        )
+    return (
+        "KEYSTONE_MCP_BASE_URL includes a path, query, or fragment; OAuth "
+        "metadata and redirect URIs should use the site root only"
+    )
+
+
+def _warn_token_ttl(settings: Settings) -> str | None:
+    if settings.token_cache_ttl_seconds > 86400:
+        return (
+            "KEYSTONE_MCP_TOKEN_TTL is longer than 86400 seconds (24 h); "
+            "shorter lifetimes limit exposure if a token leaks"
+        )
+    return None
+
+
+def _warn_auth_code_ttl(settings: Settings) -> str | None:
+    if settings.auth_code_ttl_seconds > 600:
+        return (
+            "KEYSTONE_MCP_AUTH_CODE_TTL is longer than 600 seconds; "
+            "authorization codes should be short-lived"
+        )
+    return None
+
+
+def _warn_audit_salt(settings: Settings) -> str | None:
+    if not settings.rbac_audit_enabled:
+        return None
+    salt = settings.rbac_audit_subject_salt
+    if settings.rbac_mode == "off" and not salt.strip():
+        return (
+            "KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT is empty while audit is enabled: "
+            "audit records are not pseudonymous"
+        )
+    if len(salt.encode("utf-8")) < 16:
+        return (
+            "KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT is shorter than 16 bytes; "
+            "use a longer random secret so audit subject hashes are not guessable"
+        )
+    return None
+
+
+def _warn_internal_cidr_any(settings: Settings) -> str | None:
+    for cidr in settings.internal_allowed_cidrs:
+        try:
+            network = ipaddress.ip_network(cidr, strict=False)
+        except ValueError:
+            continue
+        if network.prefixlen == 0:
+            return (
+                "KEYSTONE_MCP_INTERNAL_ALLOWED_CIDRS includes a /0 network "
+                "(0.0.0.0/0 or ::/0); that allows any address to reach internal endpoints"
+            )
+    return None
+
+
+def _warn_rbac_audit_disabled_production(settings: Settings) -> str | None:
+    if settings.deployment_profile == "production" and not settings.rbac_audit_enabled:
+        return (
+            "KEYSTONE_MCP_RBAC_AUDIT_ENABLED=false in production; "
+            "authorization decisions will not be recorded for compliance review"
+        )
+    return None
+
+
+def _warn_log_redact_production(settings: Settings) -> str | None:
+    if settings.deployment_profile == "production" and not settings.log_redact:
+        return "KEYSTONE_MCP_LOG_REDACT=false in production; tokens and secrets may appear in logs"
+    return None
+
+
+def _warn_log_level_debug_production(settings: Settings) -> str | None:
+    if settings.deployment_profile == "production" and settings.log_level == "DEBUG":
+        return (
+            "KEYSTONE_MCP_LOG_LEVEL=DEBUG in production; "
+            "verbose logs may include sensitive request details"
+        )
+    return None
+
+
+def _warn_redis_without_tls(settings: Settings) -> str | None:
+    if settings.deployment_profile != "production":
+        return None
+    raw = settings.redis_url.strip()
+    if not raw:
+        return None
+    parsed = urlparse(raw)
+    scheme = (parsed.scheme or "").lower()
+    if scheme != "redis":
+        return None
+    host = (parsed.hostname or "").lower()
+    if _is_loopback_host(host):
+        return None
+    from keystone_mcp.observability.logging.redact import redact_url_credentials
+
+    display = redact_url_credentials(raw)
+    return (
+        f"KEYSTONE_MCP_REDIS_URL ({display}) uses redis:// to a non-loopback host; "
+        "use rediss:// or a private network so Redis traffic is encrypted"
+    )
+
+
+def _warn_refresh_interval_off(settings: Settings) -> str | None:
+    if settings.rbac_mode != "off":
+        return None
+    if settings.refresh_interval_seconds < 0:
+        return (
+            "KEYSTONE_MCP_REFRESH_INTERVAL_SECONDS is negative while RBAC is off; "
+            "the reconciler does not run, but set a non-negative value to avoid confusion"
+        )
+    return None
+
+
+def _warn_forwarded_allow_ips(settings: Settings, environ: Mapping[str, str]) -> str | None:
+    if settings.deployment_profile != "production":
+        return None
+    if "FORWARDED_ALLOW_IPS" in environ and environ["FORWARDED_ALLOW_IPS"].strip():
+        return None
+    if settings.allowed_hosts_extra:
+        return (
+            "FORWARDED_ALLOW_IPS is not set while KEYSTONE_MCP_ALLOWED_HOSTS is configured; "
+            "set FORWARDED_ALLOW_IPS to the addresses of trusted reverse proxies"
+        )
+    if not _is_loopback_host(settings.host.strip()):
+        return (
+            "FORWARDED_ALLOW_IPS is not set while KEYSTONE_MCP_HOST is not loopback; "
+            "set FORWARDED_ALLOW_IPS to the addresses of trusted reverse proxies"
+        )
+    return None
+
+
+def _warn_empty_bool_variables(environ: Mapping[str, str]) -> list[str]:
+    warnings: list[str] = []
+    for name in BOOL_VARIABLES:
+        if name not in environ:
+            continue
+        if environ[name].strip() == "":
+            warnings.append(
+                f"{name} is set to an empty value and is read as false; "
+                "set it to true or false explicitly"
+            )
+    return warnings
+
+
+def settings_for_command(
+    required: frozenset[str] | set[str],
+    *,
+    environ: Mapping[str, str] | None = None,
+    report: Callable[[str], None] | None = None,
+) -> Settings:
+    """Build Settings for a CLI command, ignoring invalid unrelated variables."""
+    process_backup = dict(os.environ)
+    env = dict(process_backup if environ is None else environ)
+    report_fn = report or (lambda message: print(message, file=sys.stderr))
+    try:
+        while True:
+            os.environ.clear()
+            os.environ.update(env)
+            try:
+                return Settings()
+            except ConfigError as exc:
+                var = exc.variable
+                if var is None or var in required or var not in env:
+                    raise
+                report_fn(f"keystone-mcp: ignoring {var} for this command: {exc}")
+                env.pop(var, None)
+    finally:
+        os.environ.clear()
+        os.environ.update(process_backup)
+
+
 def validate_settings(settings: Settings) -> None:
     """Fail fast on missing or inconsistent login/RBAC configuration."""
+    refusals = _settings_refusals(settings)
+    if refusals:
+        raise ConfigError("; ".join(refusals), problems=tuple(refusals))
+
     if settings.metrics_tool_name not in ("full", "coarse"):
         raise ConfigError(
             "KEYSTONE_MCP_METRICS_TOOL_NAME must be 'full' or 'coarse' "
@@ -1435,12 +1778,6 @@ def validate_settings(settings: Settings) -> None:
     if settings.rbac_mode == "off":
         return
 
-    if not settings.redis_url.strip():
-        raise ConfigError(
-            "RBAC is enabled but required settings are missing: "
-            "KEYSTONE_MCP_REDIS_URL (shared revision marker for multi-replica cache)"
-        )
-
     if settings.rbac_audit_enabled and not settings.rbac_audit_subject_salt.strip():
         raise ConfigError(
             "RBAC audit is enabled but KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT is empty. "
@@ -1659,6 +1996,27 @@ def startup_warnings(settings: Settings, *, environ: Mapping[str, str] | None = 
             )
         else:
             warnings.append(base_msg)
+
+    env_map = os.environ if environ is None else environ
+    for rule in (
+        _warn_base_url_path_query,
+        _warn_token_ttl,
+        _warn_auth_code_ttl,
+        _warn_audit_salt,
+        _warn_internal_cidr_any,
+        _warn_rbac_audit_disabled_production,
+        _warn_log_redact_production,
+        _warn_log_level_debug_production,
+        _warn_redis_without_tls,
+        _warn_refresh_interval_off,
+    ):
+        line = rule(settings)
+        if line:
+            warnings.append(line)
+    forwarded = _warn_forwarded_allow_ips(settings, env_map)
+    if forwarded:
+        warnings.append(forwarded)
+    warnings.extend(_warn_empty_bool_variables(env_map))
 
     return warnings
 

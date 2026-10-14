@@ -55,6 +55,7 @@ def test_removed_non_fatal_variable_gives_startup_warning(monkeypatch):
         fatal=False,
     )
     monkeypatch.setitem(REMOVED_VARIABLES, "KEYSTONE_MCP_Z01_PROBE", probe)
+    monkeypatch.setenv("KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT", "a" * 32)
     settings = load_settings()
     warnings = startup_warnings(settings, environ={"KEYSTONE_MCP_Z01_PROBE": "x"})
     assert len(warnings) == 1
@@ -66,6 +67,7 @@ def test_removed_internal_call_url_gives_startup_warning(monkeypatch):
     from keystone_mcp.config import startup_warnings
 
     monkeypatch.setenv("KEYSTONE_MCP_DET_INTERNAL_URL", "http://localhost:8000")
+    monkeypatch.setenv("KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT", "a" * 32)
     settings = load_settings()
     warnings = startup_warnings(
         settings, environ={"KEYSTONE_MCP_DET_INTERNAL_URL": "http://localhost:8000"}
@@ -116,6 +118,7 @@ def test_webhook_variables_give_startup_warnings(monkeypatch):
     environ = {name: "x" for name in names}
     for name, value in environ.items():
         monkeypatch.setenv(name, value)
+    monkeypatch.setenv("KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT", "a" * 32)
 
     settings = load_settings()
     warnings = startup_warnings(settings, environ=environ)
