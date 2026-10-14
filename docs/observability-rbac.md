@@ -259,6 +259,69 @@ Timeout / unavailable from adapter (audit log code `service_timeout` /
 sum(rate(keystone_mcp_users_mutation_total{outcome="error"}[5m])) > 0.1
 ```
 
+### Administration, OAuth, and upstream limits
+
+Built-in administration refusals (for example a service account or a delegated
+administrator hitting a management-role rule):
+
+```promql
+sum by (reason) (increase(keystone_mcp_admin_refusals_total[15m])) > 0
+```
+
+OAuth refresh or authorization-code replay is covered under
+**OAuth refresh or code replay (possible token theft)** above.
+
+Elevated refresh grace reissues (many clients retrying inside the grace window):
+
+```promql
+sum(rate(keystone_mcp_oauth_token_exchange_total{outcome="grace_reissue"}[5m])) > 0.5
+```
+
+Refresh refused because the person is blocked or the directory is unavailable:
+
+```promql
+increase(keystone_mcp_oauth_token_exchange_total{outcome=~"user_denied|directory_unavailable"}[15m]) > 0
+```
+
+Probes with invalid API keys are covered under **Unauthenticated API-key traffic**
+above. LRU evictions from the verification caches (each cache holds at most
+10 000 entries):
+
+```promql
+increase(keystone_mcp_api_key_cache_evictions_total[15m]) > 0
+```
+
+Unused OAuth clients evicted at the registration cap:
+
+```promql
+increase(keystone_mcp_oauth_client_evictions_total[1h]) > 1000
+```
+
+Upstream stopped a tool call after too many input rounds, or catalog items were
+rejected:
+
+```promql
+sum(increase(keystone_mcp_upstream_input_rounds_exceeded_total[15m])) > 0
+```
+
+```promql
+sum(increase(keystone_mcp_upstream_items_rejected_total[1h])) > 0
+```
+
+HTTP users directory returned values that needed lenient parsing:
+
+```promql
+increase(keystone_mcp_users_directory_response_issues_total[1h]) > 0
+```
+
+Policy replicas out of sync are covered under **Policy replicas diverged** above.
+
+Calls to unpublished tool names (client or catalog mismatch):
+
+```promql
+sum(rate(keystone_mcp_tool_call_attempts_total{tool="unknown"}[5m])) > 1
+```
+
 ## Log-based investigation
 
 Grep application logs for structured audit lines:
