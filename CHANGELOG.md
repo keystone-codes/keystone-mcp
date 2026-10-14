@@ -106,6 +106,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ### Fixed
 
+- A half-open upstream probe that never reaches the service does not hold the only probe slot.
 - Docs no longer describe the `policy_*` tools and service-account subjects as future work; deprecation notes say "removed in 2.0" everywhere.
 - The release workflow no longer creates a GitHub Release when publishing to PyPI failed.
 - The users-directory circuit breaker lets one probe request through after the pause instead of all waiting requests.

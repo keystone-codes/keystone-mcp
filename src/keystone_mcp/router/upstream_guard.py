@@ -149,6 +149,7 @@ class UpstreamGuard:
             )
             if not decision.allowed:
                 self._record_rejection("rate")
+                self._release_half_open_probe(half_open_probe)
                 raise UpstreamLimitError(
                     f"upstream {self._namespace} is over its call limit; "
                     f"retry in {decision.retry_after}s",
@@ -163,6 +164,7 @@ class UpstreamGuard:
                 await asyncio.wait_for(self._semaphore.acquire(), timeout=wait_budget)
             except TimeoutError:
                 self._record_rejection("concurrency")
+                self._release_half_open_probe(half_open_probe)
                 raise UpstreamLimitError(
                     f"upstream {self._namespace} is busy; retry later",
                     reason="concurrency",
@@ -187,13 +189,22 @@ class UpstreamGuard:
                 self._breaker.record_success()
                 self._sync_circuit_gauge()
             elif self._breaker is not None and call_error is not None:
-                if call_error is not asyncio.CancelledError and is_upstream_failure(call_error):
+                if call_error is asyncio.CancelledError:
+                    pass
+                elif is_upstream_failure(call_error):
                     self._breaker.record_failure()
                     self._sync_circuit_gauge()
+                else:
+                    self._release_half_open_probe(half_open_probe)
             self._inflight -= 1
             self._set_inflight_gauge()
             if acquired and self._semaphore is not None:
                 self._semaphore.release()
+
+    def _release_half_open_probe(self, half_open_probe: bool) -> None:
+        if half_open_probe and self._breaker is not None:
+            self._breaker.release_half_open_probe()
+            self._sync_circuit_gauge()
 
     def _record_rejection(self, reason: LimitReason) -> None:
         if self._observability is None:

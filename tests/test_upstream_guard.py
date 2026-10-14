@@ -88,3 +88,53 @@ def test_is_upstream_failure_transport_and_timeout() -> None:
     assert not is_upstream_failure(asyncio.CancelledError())
     assert not is_upstream_failure(ToolError("upstream said no"))
     assert is_upstream_failure(RuntimeError("Client failed to connect to MCP server"))
+
+
+@pytest.mark.asyncio
+async def test_half_open_probe_rate_rejection_releases_slot() -> None:
+    window = InMemorySlidingWindow()
+    limits = UpstreamLimits(
+        rate=1,
+        window_seconds=60,
+        breaker_failures=1,
+        breaker_recovery_seconds=60,
+    )
+    breaker = CircuitBreaker(failure_threshold=1, recovery_seconds=0.001)
+    breaker.record_failure()
+    await asyncio.sleep(0.01)
+    assert breaker.state() == "half_open"
+
+    guard = UpstreamGuard("ns", limits, window=window, observability=None)
+    guard._breaker = breaker
+    await window.hit("upstream:ns", limit=1, window_seconds=60)
+    await window.hit("upstream:ns", limit=1, window_seconds=60)
+
+    with pytest.raises(UpstreamLimitError, match="over its call limit"):
+        async with guard.call(timeout=5.0):
+            pass
+
+    assert breaker.state() == "half_open"
+    assert breaker.allow_request() is True
+
+
+@pytest.mark.asyncio
+async def test_half_open_non_upstream_tool_error_releases_probe() -> None:
+    breaker = CircuitBreaker(failure_threshold=1, recovery_seconds=0.001)
+    breaker.record_failure()
+    await asyncio.sleep(0.01)
+    assert breaker.state() == "half_open"
+
+    limits = UpstreamLimits(breaker_failures=1, breaker_recovery_seconds=0.001)
+    guard = UpstreamGuard("ns", limits, window=InMemorySlidingWindow(), observability=None)
+    guard._breaker = breaker
+
+    err = ToolError("upstream ns is unavailable")
+    assert err.__cause__ is None
+    assert not is_upstream_failure(err)
+
+    with pytest.raises(ToolError, match="is unavailable"):
+        async with guard.call(timeout=5.0):
+            raise err
+
+    assert breaker.state() == "half_open"
+    assert breaker.allow_request() is True
