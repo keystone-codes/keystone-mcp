@@ -100,6 +100,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 - `KEYSTONE_MCP_UPSTREAM_TOOL_TIMEOUTS` keys are matched against the published tool name, as documented.
 - Tools whose `inputSchema` uses `x-mcp-header` can be called on MCP 2026-07-28 upstreams.
 - `docs/compatibility.md` matched to the code: `KEYSTONE_MCP_ENV_FILE` is listed; `KEYSTONE_MCP_USERS_SERVICE_*` are not deprecated; the policy `version` is any non-empty string; `/login/<provider>` and `/login/redirect-not-allowed` are listed; `users import` never had `--email`; `catalog export` has no `--live-url`.
+- `users block`, `users logout` and `users import` report sessions that could not be revoked because Redis was down and exit with `3` instead of a traceback or `0`; `users import` revokes the sessions of every user blocked in the source on each run.
 
 ### Security
 
@@ -122,6 +123,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ### Migration
 
+- An administrator who blocks or logs out a person, or imports a directory that blocks them, also ends their live sessions, and a Redis failure aborts the command instead of leaving the sessions up. Scripts that run `keystone-mcp users import` should treat exit code `3` as "written, but some sessions were not revoked — run again".
 - If you copied the 0.5 Kubernetes example: rename the secret key `KEYSTONE_MCP_GOOGLE_CLIENT_SECRET` to the variable named in your providers file, add the providers file, and set `KEYSTONE_MCP_POLICY_TOOLS=read-only` for a read-only policy mount. Old variables keep working with a deprecation warning.
 - Session lifetime defaults to 30 days (`KEYSTONE_MCP_SESSION_MAX_AGE_SECONDS=2592000`); set `0` for no limit. People sign in again that long after sign-in; sessions opened before you set or upgrade count from their first renewal afterwards. Revoking an API key of a person who still has a session opened before 0.6.0 ends all of that person's sessions. Run `keystone-mcp config check` before upgrading.
 - Nothing to do on a shared policy volume. Without one, a replica whose policy file differs from the last change made through `policy_*` reports `keystone_mcp_rbac_policy_in_sync 0`; copy the file to every replica and send `SIGHUP`.
