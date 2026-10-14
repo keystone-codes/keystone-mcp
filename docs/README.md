@@ -33,6 +33,7 @@ find there, not just the file name.
 - [Host install with systemd](deploy.md)
 - [Every `KEYSTONE_MCP_*` setting](environment.md)
 - [Before going live](production-checklist.md)
+- [Upgrading between releases](upgrading.md)
 - [Sign-in providers (Google, OIDC)](login-providers.md)
 - [Plugins (entry points)](plugins.md)
 - [Google sign-in (legacy page)](google-oauth.md)
