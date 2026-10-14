@@ -28,6 +28,7 @@ from support.lowlevel_upstream import (
     asgi_http_client_factory,
     build_lowlevel_upstream_app,
 )
+from support.test_env import require_redis_url
 
 SUBJECT = "metrics-user@example.com"
 
@@ -92,7 +93,7 @@ def _base_settings(policy_path: Path, *, metrics_tool_name: str = "full") -> Set
         rbac_policy_path=str(policy_path),
         throttle_max_requests=50_000,
         throttle_window_seconds=60,
-        redis_url="redis://localhost:6379/13",
+        redis_url=require_redis_url(),
         users_service_url="http://users:8000",
         users_service_token="token",
         rbac_audit_subject_salt="metric-label-salt",

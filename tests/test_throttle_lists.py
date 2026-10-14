@@ -30,6 +30,7 @@ from support.lowlevel_upstream import (
     asgi_http_client_factory,
     build_lowlevel_upstream_app,
 )
+from support.test_env import require_redis_url
 
 SUBJECT = "throttle-lists@example.com"
 THROTTLE_LIMIT = 3
@@ -68,7 +69,7 @@ def _settings(policy_path: Path) -> Settings:
         rbac_policy_path=str(policy_path),
         throttle_max_requests=THROTTLE_LIMIT,
         throttle_window_seconds=60,
-        redis_url="redis://localhost:6379/13",
+        redis_url=require_redis_url(),
         users_service_url="http://users:8000",
         users_service_token="token",
         rbac_audit_subject_salt="throttle-list-salt",
