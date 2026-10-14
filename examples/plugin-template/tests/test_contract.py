@@ -10,10 +10,31 @@ import yaml
 from keystone_plugin_example.directory import StaticFileUserDirectory
 from keystone_plugin_example.login import ExampleOidcProvider
 
-from keystone_mcp.contract_tests import OidcLoginProviderContract, UserDirectoryContract
+from keystone_mcp.contract_tests import (
+    OidcLoginProviderChecks06,
+    OidcLoginProviderContract,
+    UserDirectoryChecks06,
+    UserDirectoryContract,
+)
 from keystone_mcp.contract_tests.fake_oidc import FakeOidcIssuer
 from keystone_mcp.login.protocol import RedirectLoginProvider
+from keystone_mcp.user_directory.errors import UserDirectoryUnavailableError
 from keystone_mcp.user_directory.protocol import UserDirectory
+
+
+@pytest.fixture
+def keystone_unavailable_directory_factory() -> Callable[[], Awaitable[UserDirectory]]:
+    async def factory() -> UserDirectory:
+        directory = StaticFileUserDirectory([])
+
+        async def resolve_user(subject: str):
+            raise UserDirectoryUnavailableError("unavailable", code="catalog_unavailable")
+
+        directory.resolve_user = resolve_user  # type: ignore[method-assign]
+        directory.ping = resolve_user  # type: ignore[method-assign]
+        return directory
+
+    return factory
 
 
 @pytest.fixture
@@ -27,7 +48,7 @@ def keystone_directory_factory() -> Callable[[], Awaitable[UserDirectory]]:
     return factory
 
 
-class TestStaticFileDirectory(UserDirectoryContract):
+class TestStaticFileDirectory(UserDirectoryContract, UserDirectoryChecks06):
     pass
 
 
@@ -42,5 +63,5 @@ def keystone_oidc_provider_factory() -> Callable[[FakeOidcIssuer], RedirectLogin
     return factory
 
 
-class TestExampleOidc(OidcLoginProviderContract):
+class TestExampleOidc(OidcLoginProviderContract, OidcLoginProviderChecks06):
     pass
