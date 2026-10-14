@@ -207,6 +207,7 @@ class PolicyMutationAuditRecorder:
         content_hash_after: str | None,
         changes: tuple[str, ...],
         warnings_count: int,
+        actor_subject_type: str | None = None,
     ) -> None:
         if not self._enabled:
             return
@@ -224,6 +225,8 @@ class PolicyMutationAuditRecorder:
             "changes": list(changes),
             "warnings_count": warnings_count,
         }
+        if actor_subject_type is not None:
+            event["actor_subject_type"] = actor_subject_type
         try:
             logger.info(
                 "rbac audit %s",

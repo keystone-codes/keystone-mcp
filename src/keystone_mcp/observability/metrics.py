@@ -106,6 +106,11 @@ _OAUTH_CLIENTS = Gauge(
     "keystone_mcp_oauth_clients",
     "Live (non-expired) registered OAuth clients, as seen by this replica",
 )
+_ADMIN_REFUSALS = Counter(
+    "keystone_mcp_admin_refusals_total",
+    "Administration tool calls refused by a built-in rule (not by the policy file)",
+    ["operation", "reason"],
+)
 
 
 class RbacMetrics:
@@ -197,6 +202,16 @@ class RbacMetrics:
         if not self._enabled:
             return
         _POLICY_MUTATION.labels(operation=operation, outcome=outcome).inc()
+
+    def record_admin_refusal(self, *, operation: str, reason: str) -> None:
+        """Record a built-in administration refusal.
+
+        ``reason`` values include ``service_account``, ``management_role``, and
+        ``delegation`` (future cards).
+        """
+        if not self._enabled:
+            return
+        _ADMIN_REFUSALS.labels(operation=operation, reason=reason).inc()
 
     def record_catalog_refresh(
         self,

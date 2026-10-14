@@ -70,5 +70,5 @@ async def test_unknown_role_is_validation_error(tmp_path: Path):
     reg = RouterRegistry(RouterEngine(settings))
     route = reg.add_route("service_accounts_add", adapter, mode="live", params=[])
     ctx = type("Ctx", (), {"verified_identity": ADMIN, "task_id": "t1"})()
-    out = await adapter.execute(route, ctx, {"name": "ci", "roles": ["nope"]})
+    out = await adapter.execute(route, ctx, {"name": "ci", "roles": ["nope"]}, None)
     assert out["code"] == "validation_error"

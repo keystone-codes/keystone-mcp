@@ -29,43 +29,14 @@ from keystone_mcp.adapters.base import Pattern
 from keystone_mcp.adapters.policy_admin import PolicyAdminAdapter
 from keystone_mcp.adapters.service_accounts_admin import ServiceAccountsAdminAdapter
 from keystone_mcp.adapters.users_admin import RoleSource, UsersAdminAdapter
+from keystone_mcp.catalog.names import BUILTIN_TOOL_NAMES  # noqa: F401 — re-export
 from keystone_mcp.config import Settings
 from keystone_mcp.router.registry import Param, RouterRegistry
 from keystone_mcp.user_directory.protocol import UserDirectory
 
 logger = logging.getLogger(__name__)
 
-#: Every tool name the built-in catalog can register, whatever the settings.
-#: Used by upstream namespace validation (P09) to reject namespaces that
-#: would publish a colliding ``<namespace>_<tool>`` name.
-BUILTIN_TOOL_NAMES: frozenset[str] = frozenset(
-    {
-        "users_list",
-        "users_add",
-        "users_update",
-        "users_block",
-        "users_unblock",
-        "users_set_roles",
-        "users_grant_role",
-        "users_revoke_role",
-        "users_logout",
-        "service_accounts_list",
-        "service_accounts_add",
-        "service_accounts_update",
-        "api_keys_issue",
-        "api_keys_list",
-        "api_keys_revoke",
-        "policy_read",
-        "policy_catalog",
-        "policy_validate",
-        "policy_role_set",
-        "policy_role_delete",
-        "policy_allow_add",
-        "policy_allow_remove",
-        "policy_list_set",
-        "policy_rollback",
-    }
-)
+#: Re-exported from :mod:`keystone_mcp.catalog.names` for upstream validation (P09).
 
 
 def register_catalog(

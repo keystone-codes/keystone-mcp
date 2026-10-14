@@ -606,3 +606,130 @@ def test_policy_object_reports_only_its_own_critical_patterns():
     # Core built-ins are not in the policy; the matcher adds them.
     assert policy.is_critical_tool("users_add") is False
     assert is_critical_tool("users_add", policy.critical_tool_patterns) is True
+
+
+_HUMAN_LIST_POLICY = """\
+version: "human-list"
+default_deny: true
+roles:
+  administrator:
+    allow: ["*"]
+requires_human_identity: ["docs_read"]
+critical_tools: []
+"""
+
+
+@pytest.mark.asyncio
+async def test_list_hides_tools_requiring_human_identity_for_non_interactive_caller(
+    tmp_path: Path,
+    monkeypatch,
+):
+    policy_path = tmp_path / "rbac-policy.yaml"
+    policy_path.write_text(_HUMAN_LIST_POLICY, encoding="utf-8")
+    settings = Settings(
+        base_url="http://localhost:8080",
+        rbac_mode="enforce",
+        rbac_policy_path=str(policy_path),
+        users_service_url="http://users:8000",
+        users_service_token="token",
+        redis_url="redis://localhost:6379/0",
+    )
+    resolver, backend, _ = build_in_memory_user_directory_resolver()
+    backend.seed("human@example.com", roles=("administrator",))
+    registry = RouterRegistry(RouterEngine(settings), FastMCP("human-list"))
+    registry.add_route("docs_search", StubAdapter(), mode="live")
+    registry.add_route("docs_read", StubAdapter(), mode="live")
+    manager = RbacPolicyManager(settings)
+    manager.load_initial(registry)
+    middleware = RbacMiddleware(manager, resolver, enforce=True)
+
+    class _Tool:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+    async def call_next(_context):
+        return [_Tool("docs_search"), _Tool("docs_read")]
+
+    monkeypatch.setattr(
+        "keystone_mcp.router.rbac_middleware.resolve_verified_identity",
+        lambda: VerifiedIdentity(
+            email="human@example.com",
+            claims={"interactive": False},
+        ),
+    )
+    visible = await middleware.on_list_tools(MiddlewareContext(message=object()), call_next)
+    assert {tool.name for tool in visible} == {"docs_search"}
+
+    monkeypatch.setattr(
+        "keystone_mcp.router.rbac_middleware.resolve_verified_identity",
+        lambda: VerifiedIdentity(
+            email="human@example.com",
+            claims={"interactive": True},
+        ),
+    )
+    visible = await middleware.on_list_tools(MiddlewareContext(message=object()), call_next)
+    assert {tool.name for tool in visible} == {"docs_search", "docs_read"}
+
+
+@pytest.mark.asyncio
+async def test_list_hides_mutating_admin_tools_from_service_accounts(
+    tmp_path: Path,
+    monkeypatch,
+):
+    policy_path = tmp_path / "rbac-policy.yaml"
+    policy_path.write_text(
+        """\
+version: "svc-list"
+default_deny: true
+roles:
+  robot:
+    allow: ["*"]
+requires_human_identity: []
+critical_tools: []
+""",
+        encoding="utf-8",
+    )
+    settings = Settings(
+        base_url="http://localhost:8080",
+        rbac_mode="enforce",
+        rbac_policy_path=str(policy_path),
+        users_service_url="http://users:8000",
+        users_service_token="token",
+        redis_url="redis://localhost:6379/0",
+    )
+    resolver, backend, _ = build_in_memory_user_directory_resolver()
+    await backend.create_service_account(
+        name="ci",
+        description="CI",
+        roles=["robot"],
+        actor="test",
+    )
+    registry = RouterRegistry(RouterEngine(settings), FastMCP("svc-list"))
+    registry.add_route("users_list", StubAdapter(), mode="live")
+    registry.add_route("users_add", StubAdapter(), mode="live")
+    manager = RbacPolicyManager(settings)
+    manager.load_initial(registry)
+    middleware = RbacMiddleware(manager, resolver, enforce=True)
+
+    class _Named:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+    async def list_tools(_context):
+        return [_Named("users_list"), _Named("users_add")]
+
+    async def list_prompts(_context):
+        return [_Named("users_list"), _Named("users_add")]
+
+    monkeypatch.setattr(
+        "keystone_mcp.router.rbac_middleware.resolve_verified_identity",
+        lambda: VerifiedIdentity(
+            subject="svc:ci",
+            subject_type="service",
+            claims={"subject_type": "service"},
+        ),
+    )
+    tools = await middleware.on_list_tools(MiddlewareContext(message=object()), list_tools)
+    assert {item.name for item in tools} == {"users_list"}
+    prompts = await middleware.on_list_prompts(MiddlewareContext(message=object()), list_prompts)
+    assert {item.name for item in prompts} == {"users_list"}

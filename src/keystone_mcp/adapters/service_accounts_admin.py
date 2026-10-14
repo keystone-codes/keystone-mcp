@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from keystone_mcp.adapters.guards import require_human_actor
 from keystone_mcp.user_directory.errors import UsersError
 from keystone_mcp.user_directory.protocol import ServiceAccountDirectory, UserDirectory
 from keystone_mcp.user_directory.types import service_subject
@@ -52,9 +53,18 @@ class ServiceAccountsAdminAdapter:
         }
 
     async def execute(
-        self, route: Route, ctx: RouteContext, args: dict[str, Any]
+        self,
+        route: Route,
+        ctx: RouteContext,
+        args: dict[str, Any],
+        request: Any,
     ) -> dict[str, Any]:
+        spec = request if isinstance(request, dict) else dict(args)
         name = route.name
+        refusal = require_human_actor(route, ctx, observability=self._observability)
+        if refusal is not None:
+            self._record_mutation_audit(route, ctx, spec, refusal)
+            return refusal
         directory = self._directory
         if directory is None or not isinstance(directory, ServiceAccountDirectory):
             return self._error(
@@ -64,7 +74,6 @@ class ServiceAccountsAdminAdapter:
                 message="service accounts are not available",
             )
 
-        spec = dict(args)
         validation_error = self._validate_args(route, ctx, spec)
         if validation_error is not None:
             self._record_mutation_audit(route, ctx, spec, validation_error)
