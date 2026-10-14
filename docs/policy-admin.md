@@ -27,13 +27,20 @@ See [rbac-policy-format.md](rbac-policy-format.md) for file layout.
 
 1. The candidate document is validated like a hot-reload (catalog match,
    invariants, self-lockout checks).
-2. The previous bytes are copied to `.bak`, then the new YAML is written
-   atomically in the policy directory.
-3. The in-process policy manager reloads from disk; connected clients may
+2. Only one mutation runs at a time in a process (`asyncio` lock) and, on
+   platforms with `flock`, across processes on the same volume (lock file
+   `<policy-path>.lock` — do not delete it while the server runs; the policy
+   directory must be writable, same as for `.bak`). If another writer holds
+   the lock until the timeout, the call returns `policy_conflict`.
+3. The previous bytes are copied to `.bak` with the same permissions as the
+   live file (`copy2` via a unique temp file), then the new YAML is written
+   atomically as `.<policy-name>.*.tmp` in the policy directory; the
+   directory is `fsync`ed after replace when the OS allows it.
+4. The in-process policy manager reloads from disk; connected clients may
    receive `notifications/tools/list_changed` on the next refresh boundary.
-4. An audit event `rbac_policy_mutation` is emitted (actor, operation,
+5. An audit event `rbac_policy_mutation` is emitted (actor, operation,
    outcome — not allow patterns or email).
-5. Metrics record the mutation outcome on the `policy_*` tool series.
+6. Metrics record the mutation outcome on the `policy_*` tool series.
 
 Hand-written **comments in the policy file are not preserved** on tool writes
 (PyYAML round-trip). Keep explanatory text in a `README` next to the file, in
@@ -44,10 +51,14 @@ role `description` fields, or in your runbook.
 - **Shared volume:** every replica that mounts the same policy directory sees
   new bytes; each process reloads on its refresh timer
   (`KEYSTONE_MCP_REFRESH_INTERVAL_SECONDS`) or on `SIGHUP` when the content
-  hash changes.
+  hash changes. The file lock next to the policy coordinates writers when the
+  filesystem supports `flock` (local disk, most CSI volumes). On NFS, locking
+  only helps when the NFS server honours `flock`; otherwise keep
+  `KEYSTONE_MCP_POLICY_TOOLS=full` on a single replica that owns the volume.
 - **No shared volume:** only one replica should have `KEYSTONE_MCP_POLICY_TOOLS=full`
   and a writable mount; set `read-only` (or `off`) on the others so
   administrators do not get silent `policy_readonly` failures on random pods.
+- **Windows:** file locking is in-process only; use a single writer replica.
 
 ## Kubernetes
 
@@ -66,8 +77,10 @@ mv /path/to/rbac-policy.yaml.bak /path/to/rbac-policy.yaml
 kill -HUP <keystone-mcp-pid>
 ```
 
-Or call `policy_rollback {}` from the agent when `.bak` exists and the file
-is writable.
+Or call `policy_rollback {"expected_hash": "<file_hash from policy_read>"}`
+from the agent when `.bak` exists and the file is writable. Rollback runs the
+same validation as other mutations, including `role_in_use` when a role would
+disappear.
 
 ## Production recommendations
 

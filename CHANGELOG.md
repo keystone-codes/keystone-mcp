@@ -10,6 +10,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ### Added
 
+- `policy_rollback` accepts `expected_hash`. `policy_catalog` and policy changes see prompt and resource names, as a reload does.
 - Metric `keystone_mcp_admin_refusals_total`; audit field `actor_subject_type` on `rbac_policy_mutation`.
 - `LoginIdentity.key_id` and `LoginIdentity.key_expires_at` (optional) for form providers that sign people in with a Keystone API key.
 - `docs/clients.md` lists the client versions tested with this release and known
@@ -26,6 +27,8 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ### Fixed
 
+- Concurrent `policy_*` changes are applied one at a time (in-process lock plus a lock file next to the policy); a change can no longer overwrite another one made at the same time. A background reload can no longer bring back an older policy.
+- `policy_rollback` runs the same checks as other changes, including `role_in_use`, and keeps both file generations when the reload after it fails. A role name with surrounding spaces is trimmed. Refusals of `policy_*` calls are audited.
 - `service_accounts_list`, `service_accounts_add` and `service_accounts_update` work when called over MCP.
 
 ### Security
@@ -34,6 +37,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ### Migration
 
+- The policy directory gets a lock file `<policy>.lock`; do not delete it while the server runs. Temporary files are now named `.<policy>.*.tmp`.
 - Automation that changed users, service accounts or API keys through MCP with a service-account key now gets `forbidden`; do it from a person's session or with the `keystone-mcp` CLI on the host.
 - Sessions opened on 0.4.x/0.5.x keep working after the upgrade. Rolling back to 0.5.x keeps sessions opened on 0.6.0: 0.5.x ignores the new marker fields. While replicas of both versions run side by side, a session renewed by a 0.5.x replica loses the new fields again; session max-age and key checks apply once every replica runs 0.6.0.
 

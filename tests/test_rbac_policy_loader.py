@@ -1163,3 +1163,81 @@ def test_default_policy_loads_against_builtin_catalog_in_enforce(tmp_path: Path)
     bootstrap_rbac_policy(manager, registry)
 
     assert manager.identity is not None
+
+
+def test_reload_does_not_swap_in_a_snapshot_older_than_the_file(tmp_path: Path) -> None:
+    policy_path = tmp_path / "rbac-policy.yaml"
+    policy_a = 'version: "1"\ndefault_deny: true\nroles:\n  administrator: {allow: ["*"]}\n'
+    policy_b = (
+        'version: "2"\ndefault_deny: true\nroles:\n  administrator: {allow: ["*"]}\n'
+    )
+    policy_path.write_text(policy_a, encoding="utf-8")
+    settings = Settings(
+        base_url="http://localhost:8080",
+        rbac_mode="enforce",
+        rbac_policy_path=str(policy_path),
+        redis_url=UNUSED_REDIS_URL,
+    )
+    mcp = FastMCP("reload-race")
+    registry = RouterRegistry(RouterEngine(settings), mcp)
+    manager = RbacPolicyManager(settings)
+    manager.load_initial(registry)
+    assert manager.identity is not None
+    assert manager.identity.version == "1"
+
+    original_load = manager._load_and_validate
+    calls = {"n": 0}
+
+    def racing_load(reg: RouterRegistry):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            snapshot = original_load(reg)
+            policy_path.write_text(policy_b, encoding="utf-8")
+            return snapshot
+        return original_load(reg)
+
+    with patch.object(manager, "_load_and_validate", side_effect=racing_load):
+        result = manager.reload(registry)
+
+    assert result.success is True
+    assert manager.identity is not None
+    assert manager.identity.version == "2"
+
+
+def test_reload_gives_up_when_file_keeps_changing(tmp_path: Path) -> None:
+    policy_path = tmp_path / "rbac-policy.yaml"
+    policy_path.write_text(
+        'version: "1"\ndefault_deny: true\nroles:\n  administrator: {allow: ["*"]}\n',
+        encoding="utf-8",
+    )
+    settings = Settings(
+        base_url="http://localhost:8080",
+        rbac_mode="enforce",
+        rbac_policy_path=str(policy_path),
+        redis_url=UNUSED_REDIS_URL,
+    )
+    mcp = FastMCP("reload-churn")
+    registry = RouterRegistry(RouterEngine(settings), mcp)
+    manager = RbacPolicyManager(settings)
+    manager.load_initial(registry)
+    version_before = manager.identity.version if manager.identity else None
+
+    original_load = manager._load_and_validate
+
+    def churn_load(reg: RouterRegistry):
+        snapshot = original_load(reg)
+        next_version = int(snapshot.policy.version) + 1
+        policy_path.write_text(
+            f'version: "{next_version}"\ndefault_deny: true\nroles:\n'
+            '  administrator: {allow: ["*"]}\n',
+            encoding="utf-8",
+        )
+        return snapshot
+
+    with patch.object(manager, "_load_and_validate", side_effect=churn_load):
+        result = manager.reload(registry)
+
+    assert result.success is False
+    assert result.error == "policy file kept changing during reload"
+    assert manager.identity is not None
+    assert manager.identity.version == version_before
