@@ -128,6 +128,14 @@ discovery, the reconciler (or a one-shot discovery hook when refresh is
 disabled) refreshes that namespace immediately instead of waiting for the next
 tick.
 
+HTTP upstream discovery opens **one MCP session** per upstream per refresh:
+`tools/list`, `prompts/list`, `resources/list`, and `resources/templates/list`
+run on that session instead of four separate connections. The upstream's
+protocol era (MCP 2026-07-28 vs handshake) is learned on each discovery and
+remembered for proxied calls: a tool call to an MCP 2026-07-28 upstream is a
+single `tools/call` request; a handshake-era upstream gets one initialize
+handshake per call plus the call itself.
+
 Upstreams are discovered in parallel, each retried on its own
 (`KEYSTONE_MCP_UPSTREAM_DISCOVERY_RETRIES`, default 3). An upstream that stays
 unreachable does not block startup or the other upstreams: it is logged with
