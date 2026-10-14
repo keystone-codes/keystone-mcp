@@ -19,6 +19,7 @@ from keystone_mcp.rbac.policy_store import PolicyStore
 from keystone_mcp.router.engine import RouterEngine
 from keystone_mcp.router.registry import RouterRegistry
 from keystone_mcp.user_directory.memory import InMemoryUserDirectory
+from support.test_env import UNUSED_REDIS_URL
 
 TEST_POLICY = """\
 version: "1.0.0"
@@ -63,7 +64,7 @@ def settings(policy_path: Path) -> Settings:
         rbac_audit_enabled=True,
         rbac_audit_subject_salt="salt",
         policy_tools="full",
-        redis_url="redis://localhost:6379/0",
+        redis_url=UNUSED_REDIS_URL,
         metrics_enabled=True,
     )
 

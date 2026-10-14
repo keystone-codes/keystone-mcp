@@ -11,6 +11,7 @@ from keystone_mcp.config import ConfigError, Settings, load_settings, startup_wa
 from keystone_mcp.login.config import load_login_providers_file
 from keystone_mcp.login.factory import build_login_providers
 from keystone_mcp.login.oidc import OidcLoginProvider
+from support.test_env import require_redis_url
 
 
 def _write(tmp_path: Path, content: str) -> str:
@@ -294,7 +295,7 @@ def _production_providers_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -
         "postgresql+psycopg://u:p@db:5432/keystone",
     )
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT", "salt")
-    monkeypatch.setenv("KEYSTONE_MCP_REDIS_URL", "redis://localhost:6379/7")
+    monkeypatch.setenv("KEYSTONE_MCP_REDIS_URL", require_redis_url())
 
 
 def test_production_providers_file_api_key_with_interactive_refuses_despite_env_methods(
@@ -367,7 +368,7 @@ def test_production_providers_file_api_key_with_http_directory_refuses_despite_e
     monkeypatch.setenv("KEYSTONE_MCP_USERS_SERVICE_URL", "http://users:8080")
     monkeypatch.setenv("KEYSTONE_MCP_USERS_SERVICE_TOKEN", "token")
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT", "salt")
-    monkeypatch.setenv("KEYSTONE_MCP_REDIS_URL", "redis://localhost:6379/7")
+    monkeypatch.setenv("KEYSTONE_MCP_REDIS_URL", require_redis_url())
     monkeypatch.setenv("KEYSTONE_MCP_LOGIN_PROVIDERS_PATH", path)
     monkeypatch.setenv("KEYSTONE_MCP_ENABLED_LOGIN_METHODS", "google")
     monkeypatch.setenv("KEYSTONE_MCP_PRIMARY_LOGIN_METHOD", "google")

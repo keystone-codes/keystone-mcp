@@ -12,6 +12,7 @@ from keystone_mcp.config import (
     load_settings,
     validate_settings,
 )
+from support.test_env import UNUSED_REDIS_URL
 
 
 def test_default_settings_preserve_pre_r4_api_key_mode():
@@ -76,7 +77,7 @@ def test_rbac_enabled_without_changing_login_methods(monkeypatch, tmp_path: Path
     policy.write_text("default_deny: true\nroles: {}\n", encoding="utf-8")
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_MODE", "enforce")
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_POLICY_PATH", str(policy))
-    monkeypatch.setenv("KEYSTONE_MCP_REDIS_URL", "redis://localhost:6379/0")
+    monkeypatch.setenv("KEYSTONE_MCP_REDIS_URL", UNUSED_REDIS_URL)
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT", "test-salt")
     settings = load_settings()
     assert settings.rbac_mode == "enforce"
@@ -90,7 +91,7 @@ def test_rbac_mode_observe_requires_redis_and_policy(monkeypatch, tmp_path: Path
     policy.write_text("default_deny: true\nroles: {}\n", encoding="utf-8")
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_MODE", "observe")
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_POLICY_PATH", str(policy))
-    monkeypatch.setenv("KEYSTONE_MCP_REDIS_URL", "redis://localhost:6379/0")
+    monkeypatch.setenv("KEYSTONE_MCP_REDIS_URL", UNUSED_REDIS_URL)
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT", "test-salt")
     settings = load_settings()
     assert settings.rbac_mode == "observe"
@@ -162,7 +163,7 @@ def test_rbac_enabled_requires_users_and_policy(monkeypatch):
 
 def test_rbac_enabled_requires_existing_policy_file(monkeypatch):
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_MODE", "enforce")
-    monkeypatch.setenv("KEYSTONE_MCP_REDIS_URL", "redis://localhost:6379/0")
+    monkeypatch.setenv("KEYSTONE_MCP_REDIS_URL", UNUSED_REDIS_URL)
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT", "test-salt")
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_POLICY_PATH", "/no/such/rbac-policy.yaml")
     with pytest.raises(ConfigError, match="does not exist"):
@@ -204,7 +205,7 @@ def test_users_and_policy_settings_are_readable(monkeypatch, tmp_path: Path):
     )
     monkeypatch.setenv("KEYSTONE_MCP_USERS_SERVICE_TOKEN", "secret-token")
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_POLICY_PATH", str(policy))
-    monkeypatch.setenv("KEYSTONE_MCP_REDIS_URL", "redis://localhost:6379/0")
+    monkeypatch.setenv("KEYSTONE_MCP_REDIS_URL", UNUSED_REDIS_URL)
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT", "test-salt")
     monkeypatch.setenv("KEYSTONE_MCP_GOOGLE_ALLOWED_DOMAIN", "example.com")
     settings = load_settings()
@@ -228,7 +229,7 @@ def test_catalog_snapshot_path_read_from_env(monkeypatch, tmp_path: Path):
     )
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_MODE", "enforce")
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_POLICY_PATH", str(policy))
-    monkeypatch.setenv("KEYSTONE_MCP_REDIS_URL", "redis://localhost:6379/0")
+    monkeypatch.setenv("KEYSTONE_MCP_REDIS_URL", UNUSED_REDIS_URL)
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT", "test-salt")
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_CATALOG_SNAPSHOT", str(snapshot))
     settings = load_settings()
@@ -243,7 +244,7 @@ def test_missing_catalog_snapshot_file_is_refused(monkeypatch, tmp_path: Path):
     )
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_MODE", "enforce")
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_POLICY_PATH", str(policy))
-    monkeypatch.setenv("KEYSTONE_MCP_REDIS_URL", "redis://localhost:6379/0")
+    monkeypatch.setenv("KEYSTONE_MCP_REDIS_URL", UNUSED_REDIS_URL)
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT", "test-salt")
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_CATALOG_SNAPSHOT", str(tmp_path / "absent.yaml"))
     with pytest.raises(ConfigError, match="CATALOG_SNAPSHOT"):
@@ -368,7 +369,7 @@ def _rbac_env(monkeypatch, tmp_path: Path) -> None:
     policy.write_text("default_deny: true\nroles: {}\n", encoding="utf-8")
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_MODE", "enforce")
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_POLICY_PATH", str(policy))
-    monkeypatch.setenv("KEYSTONE_MCP_REDIS_URL", "redis://localhost:6379/0")
+    monkeypatch.setenv("KEYSTONE_MCP_REDIS_URL", UNUSED_REDIS_URL)
 
 
 @pytest.mark.parametrize("salt", ["", "   "])

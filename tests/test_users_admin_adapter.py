@@ -25,6 +25,7 @@ from keystone_mcp.user_directory import (
     build_user_directory,
 )
 from keystone_mcp.user_directory.http import ACTOR_EMAIL_HEADER, HttpUserDirectory
+from support.test_env import UNUSED_REDIS_URL
 
 ADMIN = VerifiedIdentity(email="admin@example.com")
 OPERATOR = VerifiedIdentity(email="operator@example.com")
@@ -56,7 +57,7 @@ def _settings(tmp_path: Path | None = None) -> Settings:
         **base,
         rbac_mode="enforce",
         rbac_policy_path=str(policy),
-        redis_url="redis://localhost:6379/0",
+        redis_url=UNUSED_REDIS_URL,
         rbac_audit_subject_salt="test-salt",
     )
 

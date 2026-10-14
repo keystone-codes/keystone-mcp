@@ -23,10 +23,8 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from uuid import uuid4
 
 import httpx2
-import pytest
 from asgi_lifespan import LifespanManager
 from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
@@ -39,6 +37,7 @@ from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import Settings
 from keystone_mcp.server import bootstrap_platform, build_server
 from support.login import dev_token_login
+from support.test_env import require_redis_url, users_revision_key
 
 VALID_TOKEN = "valid-test-token"
 ADMIN_EMAIL = "admin@example.com"
@@ -88,7 +87,7 @@ async def test_fresh_server_admin_adds_member_who_cannot_see_users_tools(
 ) -> None:
     redis_url = os.environ.get("KEYSTONE_MCP_REDIS_URL")
     if not redis_url:
-        pytest.skip("KEYSTONE_MCP_REDIS_URL is not set; skipping full-server e2e test")
+        require_redis_url()
 
     policy_path = tmp_path / "rbac-policy.yaml"
     policy_path.write_text(POLICY_YAML, encoding="utf-8")
@@ -103,7 +102,7 @@ async def test_fresh_server_admin_adds_member_who_cannot_see_users_tools(
         users_backend="local",
         users_db_url=f"sqlite:///{tmp_path}/keystone-users.db",
         superadmin_email=ADMIN_EMAIL,
-        users_redis_revision_key=f"km:users:revision:test:{uuid4().hex}",
+        users_redis_revision_key=users_revision_key("e2e"),
     )
 
     _login = dev_token_login({VALID_TOKEN})

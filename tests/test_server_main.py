@@ -12,6 +12,7 @@ import json
 from unittest.mock import MagicMock
 
 from keystone_mcp import server
+from support.test_env import UNUSED_REDIS_URL
 
 
 def test_main_loads_env_file_before_settings(tmp_path, monkeypatch):
@@ -55,7 +56,7 @@ def test_main_logs_deployment_profile_and_startup_warnings(monkeypatch, capsys, 
     monkeypatch.setenv("KEYSTONE_MCP_BASE_URL", "http://localhost:8080")
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_MODE", "enforce")
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_POLICY_PATH", str(policy))
-    monkeypatch.setenv("KEYSTONE_MCP_REDIS_URL", "redis://localhost:6379/0")
+    monkeypatch.setenv("KEYSTONE_MCP_REDIS_URL", UNUSED_REDIS_URL)
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_AUDIT_ENABLED", "false")
     monkeypatch.setenv("KEYSTONE_MCP_DEV_TOKENS", "local-dev-token")
 

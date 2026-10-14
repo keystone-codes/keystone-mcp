@@ -28,6 +28,7 @@ from keystone_mcp.config import Settings
 from keystone_mcp.server import bootstrap_rbac_policy, build_server
 from keystone_mcp.user_directory import build_in_memory_user_directory_resolver
 from support.login import dev_token_login
+from support.test_env import UNUSED_REDIS_URL
 
 VALID_TOKEN = "valid-test-token"
 VIEWER_EMAIL = "viewer@example.com"
@@ -106,7 +107,7 @@ async def enforce_harness(tmp_path: Path):
         rbac_mode="enforce",
         rbac_policy_path=str(policy_path),
         rbac_audit_subject_salt="e2e-salt",
-        redis_url="redis://localhost:6379/0",
+        redis_url=UNUSED_REDIS_URL,
     )
 
     resolver, backend, revision = build_in_memory_user_directory_resolver()

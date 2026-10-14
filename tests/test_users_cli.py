@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -34,8 +33,7 @@ from keystone_mcp.users.migrate import upgrade_to_head
 from keystone_mcp.users.records import UserRecord
 from keystone_mcp.users.revision import NullRevisionWriter
 from keystone_mcp.users.store import UsersStore
-
-_REAL_REDIS_URL = os.environ.get("KEYSTONE_MCP_REDIS_URL", "").strip()
+from support.test_env import redis_key_prefix, require_redis_url, users_revision_key
 
 _POLICY_YAML = """\
 version: "1.0.0"
@@ -270,21 +268,20 @@ def test_grant_admin_prints_redacted_target(monkeypatch, capsys) -> None:
 
 
 def test_grant_admin_bumps_revision_with_redis(tmp_path: Path, monkeypatch, capsys) -> None:
-    if not _REAL_REDIS_URL:
-        pytest.skip("KEYSTONE_MCP_REDIS_URL is not set")
+    redis_url = require_redis_url()
 
     from redis.asyncio import Redis
 
-    key = f"km:users:revision:test:{uuid.uuid4()}"
+    key = users_revision_key("cli-grant")
     monkeypatch.setenv("KEYSTONE_MCP_USERS_DB_URL", f"sqlite:///{tmp_path}/keystone-users.db")
-    monkeypatch.setenv("KEYSTONE_MCP_REDIS_URL", _REAL_REDIS_URL)
+    monkeypatch.setenv("KEYSTONE_MCP_REDIS_URL", redis_url)
     monkeypatch.setenv("KEYSTONE_MCP_USERS_REDIS_REVISION_KEY", key)
 
     exit_code = main(["users", "grant-admin", "--email", "admin@example.com", "--create"])
     assert exit_code == 0
 
     async def _read() -> str | None:
-        client = Redis.from_url(_REAL_REDIS_URL, decode_responses=True)
+        client = Redis.from_url(redis_url, decode_responses=True)
         try:
             return await client.get(key)
         finally:
@@ -406,15 +403,14 @@ def test_import_skips_roles_outside_policy_and_logs(
 
 
 def test_import_is_idempotent(tmp_path: Path, monkeypatch, capsys) -> None:
-    if not _REAL_REDIS_URL:
-        pytest.skip("KEYSTONE_MCP_REDIS_URL is not set")
+    redis_url = require_redis_url()
 
     from redis.asyncio import Redis
 
-    key = f"km:users:revision:test:{uuid.uuid4()}"
+    key = users_revision_key("cli-import")
     db_url = f"sqlite:///{tmp_path}/keystone-users.db"
     monkeypatch.setenv("KEYSTONE_MCP_USERS_DB_URL", db_url)
-    monkeypatch.setenv("KEYSTONE_MCP_REDIS_URL", _REAL_REDIS_URL)
+    monkeypatch.setenv("KEYSTONE_MCP_REDIS_URL", redis_url)
     monkeypatch.setenv("KEYSTONE_MCP_USERS_REDIS_REVISION_KEY", key)
     policy_path = _write_policy(tmp_path)
 
@@ -439,7 +435,7 @@ def test_import_is_idempotent(tmp_path: Path, monkeypatch, capsys) -> None:
     )
 
     async def _read() -> str | None:
-        client = Redis.from_url(_REAL_REDIS_URL, decode_responses=True)
+        client = Redis.from_url(redis_url, decode_responses=True)
         try:
             return await client.get(key)
         finally:
@@ -1031,7 +1027,6 @@ def test_import_on_fresh_database_warns_but_does_not_require_create(
 def _seed_oauth_pair(redis_url: str, *, email: str) -> tuple[str, str]:
     """Write one access+refresh pair for *email* into Redis; return (at, rt)."""
     import time
-    import uuid
 
     from mcp.server.auth.provider import AccessToken, RefreshToken
 
@@ -1039,6 +1034,7 @@ def _seed_oauth_pair(redis_url: str, *, email: str) -> tuple[str, str]:
 
     store = RedisOAuthStore(
         redis_url,
+        key_prefix=redis_key_prefix("oauth"),
         client_ttl_seconds=5000,
         refresh_ttl_seconds=3000,
         access_ttl_seconds=3600,
@@ -1076,14 +1072,13 @@ def _seed_oauth_pair(redis_url: str, *, email: str) -> tuple[str, str]:
 
 
 def test_cli_block_revokes_sessions(tmp_path: Path, monkeypatch, capsys) -> None:
-    if not _REAL_REDIS_URL:
-        pytest.skip("KEYSTONE_MCP_REDIS_URL is not set")
+    redis_url = require_redis_url()
 
     db_url = f"sqlite:///{tmp_path}/keystone-users.db"
     monkeypatch.setenv("KEYSTONE_MCP_USERS_DB_URL", db_url)
-    monkeypatch.setenv("KEYSTONE_MCP_REDIS_URL", _REAL_REDIS_URL)
+    monkeypatch.setenv("KEYSTONE_MCP_REDIS_URL", redis_url)
     _seed_user(db_path=tmp_path / "keystone-users.db", email="victim@example.com", roles=["member"])
-    _seed_oauth_pair(_REAL_REDIS_URL, email="victim@example.com")
+    _seed_oauth_pair(redis_url, email="victim@example.com")
 
     exit_code = main(["users", "block", "--email", "victim@example.com"])
 
@@ -1149,16 +1144,15 @@ def test_cli_block_last_admin_refused(tmp_path: Path, monkeypatch, capsys) -> No
 
 
 def test_import_block_revokes_sessions(tmp_path: Path, monkeypatch, capsys) -> None:
-    if not _REAL_REDIS_URL:
-        pytest.skip("KEYSTONE_MCP_REDIS_URL is not set")
+    redis_url = require_redis_url()
 
     db_path = tmp_path / "keystone-users.db"
     db_url = f"sqlite:///{db_path}"
     monkeypatch.setenv("KEYSTONE_MCP_USERS_DB_URL", db_url)
-    monkeypatch.setenv("KEYSTONE_MCP_REDIS_URL", _REAL_REDIS_URL)
+    monkeypatch.setenv("KEYSTONE_MCP_REDIS_URL", redis_url)
     policy_path = _write_policy(tmp_path)
     _seed_user(db_path, email="person@example.com", roles=["member"], is_blocked=False)
-    _seed_oauth_pair(_REAL_REDIS_URL, email="person@example.com")
+    _seed_oauth_pair(redis_url, email="person@example.com")
 
     blocked = [_user_payload("person@example.com", "Person", ["member"], True)]
     transport = _transport_for([], blocked)

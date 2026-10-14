@@ -7,33 +7,19 @@ cleans up its own keys in a finally block.
 
 from __future__ import annotations
 
-import os
 import time
-import uuid
 
-import pytest
 import pytest_asyncio
 from mcp.server.auth.provider import RefreshToken
 from mcp.shared.auth import OAuthClientInformationFull
 
 from keystone_mcp.auth.oauth_store import RedisOAuthStore
-
-
-def _redis_url() -> str:
-    return os.environ.get("KEYSTONE_MCP_REDIS_URL", "").strip()
-
-
-@pytest.fixture
-def redis_url() -> str:
-    url = _redis_url()
-    if not url:
-        pytest.skip("KEYSTONE_MCP_REDIS_URL not set")
-    return url
+from support.test_env import redis_key_prefix
 
 
 @pytest_asyncio.fixture
 async def store(redis_url: str):
-    prefix = f"km:oauth:ttltest:{uuid.uuid4().hex}:"
+    prefix = redis_key_prefix("ttltest")
     instance = RedisOAuthStore(
         redis_url,
         key_prefix=prefix,

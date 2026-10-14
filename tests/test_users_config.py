@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from keystone_mcp.config import ConfigError, Settings, load_settings
+from support.test_env import UNUSED_REDIS_URL
 
 
 def test_users_backend_defaults_to_local():
@@ -40,7 +41,7 @@ def test_local_backend_does_not_require_users_service(monkeypatch, tmp_path: Pat
     monkeypatch.setenv("KEYSTONE_MCP_USERS_BACKEND", "local")
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_MODE", "enforce")
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_POLICY_PATH", str(policy))
-    monkeypatch.setenv("KEYSTONE_MCP_REDIS_URL", "redis://localhost:6379/0")
+    monkeypatch.setenv("KEYSTONE_MCP_REDIS_URL", UNUSED_REDIS_URL)
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT", "test-salt")
     monkeypatch.delenv("KEYSTONE_MCP_USERS_SERVICE_URL", raising=False)
     monkeypatch.delenv("KEYSTONE_MCP_USERS_SERVICE_TOKEN", raising=False)

@@ -26,6 +26,7 @@ from keystone_mcp.router.engine import RouterEngine
 from keystone_mcp.router.rbac_middleware import RbacDenialReason, RbacMiddleware
 from keystone_mcp.router.registry import RouterRegistry
 from keystone_mcp.user_directory import build_in_memory_user_directory_resolver
+from support.test_env import UNUSED_REDIS_URL
 
 AUDIT_TEST_POLICY = """\
 version: "audit-v1"
@@ -66,7 +67,7 @@ def settings(policy_path: Path) -> Settings:
         users_backend="http",
         users_service_url="http://users:8000",
         users_service_token="token",
-        redis_url="redis://localhost:6379/0",
+        redis_url=UNUSED_REDIS_URL,
         rbac_audit_enabled=True,
         rbac_audit_list_tools_sample_rate=1.0,
         metrics_enabled=True,
@@ -211,7 +212,7 @@ async def test_human_identity_required_denial_records_login_provider(
         base_url="http://localhost:8080",
         rbac_mode="enforce",
         rbac_policy_path=str(policy_path),
-        redis_url="redis://localhost:6379/0",
+        redis_url=UNUSED_REDIS_URL,
         rbac_audit_enabled=True,
         rbac_audit_list_tools_sample_rate=1.0,
     )
