@@ -160,21 +160,27 @@ image unless all three (plus the tag itself) agree
    sync. Pre-release tags (`vX.Y.Z-rc1`) are not supported.
 
 Once the tag is pushed, the `release.yml` workflow (`version-gate` → `test` →
-`build-dist` → `wheel-smoke` → `image-scan` → `publish` → `pypi` →
-`github-release`) builds the image for both `linux/amd64` and `linux/arm64`,
-runs the same Trivy scan as the pull-request gate against it — a fixable
-HIGH or CRITICAL finding blocks `publish` — starts the `linux/amd64` build
-against Redis and checks it over HTTP (`scripts/smoke_image.sh`:
-`/healthz`, `/readyz`, the container `HEALTHCHECK` status, and the non-root
-uid) before publishing anything, pushes both platforms to GHCR, builds the
-wheel and sdist with `uv build`, checks them against the same version with
-`scripts/check_version.py --dist-dir` and installs the wheel into a clean
+`build-dist` → `wheel-smoke` → `image-build` → `image-scan` → `image-smoke`
+→ `publish` → `pypi` → `github-release`) builds a multi-arch image once,
+pushes it to GHCR by digest (no version tag yet), runs the same blocking
+Trivy scan as the pull-request gate on that digest for both `linux/amd64`
+and `linux/arm64`, pulls the amd64 digest and checks it over HTTP
+(`scripts/smoke_image.sh`: `/healthz`, `/readyz`, the container
+`HEALTHCHECK` status, and the non-root uid), then tags the digest with
+`docker buildx imagetools create` and verifies the tagged manifest still
+points at the scanned digest. A failed scan leaves an untagged digest in
+GHCR (safe to delete manually; users never pull it). The workflow builds
+the wheel and sdist with `uv build`, checks them against the same version
+with `scripts/check_version.py --dist-dir`, installs the wheel into a clean
 virtualenv for a second `/healthz`/`/readyz` smoke test
-(`scripts/smoke_wheel.sh`), publishes the
-package to PyPI as `keystone-mcp-gateway` via trusted publishing (no API
-token in secrets; `pypa/gh-action-pypi-publish`) once the image is
-published, and creates a GitHub Release whose notes are the matching
-`CHANGELOG.md` section (`scripts/extract_changelog.py`).
+(`scripts/smoke_wheel.sh`), publishes the package to PyPI as
+`keystone-mcp-gateway` via trusted publishing once the image is tagged,
+and creates a GitHub Release whose notes are the matching `CHANGELOG.md`
+section (`scripts/extract_changelog.py`). The `latest` tag is applied only
+when the released version is the highest semver tag in the repository.
+Base image digests in the `Dockerfile` are updated by Dependabot (`docker`
+ecosystem); refresh them from the multi-arch manifest digest, not a
+single-platform layer digest.
 
 The first release ever needs a one-time, outside-this-repo setup: on
 pypi.org, under the organization account, "Your projects → Publishing → Add
@@ -186,7 +192,8 @@ that publisher configured sets the repository variable
 `SKIP_PYPI_PUBLISH=true` to skip the `pypi` job without failing the release
 (the same pattern as `SKIP_GHCR_PUSH` for the image).
 
-`release.yml` also supports a manual `workflow_dispatch` run (`dry_run`
-input, default `true`) to exercise `version-gate` and `build-dist` without a
-release tag and without publishing anything — see the workflow file for
-exactly what it skips.
+A manual `workflow_dispatch` run always exercises the pipeline without
+publishing to GHCR or PyPI: the `image-dry-run` job builds both platforms,
+runs blocking Trivy scans, and smoke-tests amd64 locally. Tag pushes still
+require `github.event_name == 'push'` for `image-build`, `publish`, `pypi`,
+and `github-release`.

@@ -18,10 +18,15 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 - Service accounts get `forbidden` from every administration tool that changes state (`users_*`, `service_accounts_*`, `api_keys_*`, `policy_*`); reading stays available. `tools/list` no longer shows a caller the tools it will be refused for lack of an interactive sign-in.
 - A refresh token whose session marker is missing is refused with `invalid_grant` instead of being renewed as an `api_key` session. The marker is now written in the same Redis transaction as the token pair.
 - Access tokens of people carry `"subject_type": "human"`; a sign-in that resolves to a service-account subject is refused.
+- `latest` moves only when the released version is the highest one; a patch to an older line no longer moves it back.
 
 ### Fixed
 
 - `service_accounts_list`, `service_accounts_add` and `service_accounts_update` work when called over MCP.
+
+### Security
+
+- Release images are scanned by Trivy per platform (amd64 and arm64) on the exact digest that is then tagged; base images are pinned by digest and updated by Dependabot.
 
 ### Migration
 
