@@ -17,6 +17,7 @@ from keystone_mcp.server import policy_role_source
 from keystone_mcp.user_directory.local import LocalUserDirectory
 from keystone_mcp.users.revision import NullRevisionWriter
 from keystone_mcp.users.store import UsersStore
+from support.test_env import require_redis_url
 from support.users_store import make_users_store
 
 DEFAULT_POLICY_YAML = """\
@@ -68,7 +69,7 @@ async def build_admin_harness(
         policy_tools="full",
         users_backend="local",
         users_db_url=f"sqlite:///{tmp_path}/keystone-users.db",
-        redis_url="redis://localhost:6379/12",
+        redis_url=require_redis_url(),
     )
     store, _revision = await make_users_store(tmp_path, revision=NullRevisionWriter())
     await store.create_user(
