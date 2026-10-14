@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 from keystone_mcp.adapters.guards import require_human_actor
+from keystone_mcp.rbac.human_identity import has_interactive_human_identity
 from keystone_mcp.rbac.loader import PolicyLoadError, live_catalog_names
 from keystone_mcp.rbac.policy import PolicyContractError
 from keystone_mcp.rbac.policy_document import (
@@ -139,8 +140,10 @@ class PolicyAdminAdapter:
             if roles_error is not None:
                 self._record_refusal(route, ctx, code=str(roles_error["code"]))
                 return roles_error
+            actor_interactive = has_interactive_human_identity(ctx.verified_identity)
         else:
             actor_roles = frozenset()
+            actor_interactive = True
 
         actor = ctx.verified_identity.subject
         if ctx.verified_identity.email is not None:
@@ -206,6 +209,7 @@ class PolicyAdminAdapter:
                     expected_hash=spec.get("expected_hash"),
                     operation=name,
                     task_id=ctx.task_id,
+                    actor_interactive=actor_interactive,
                 )
                 role_name = str(spec["role"])
                 body = result.document.roles[role_name]
@@ -229,6 +233,7 @@ class PolicyAdminAdapter:
                     expected_hash=spec.get("expected_hash"),
                     operation=name,
                     task_id=ctx.task_id,
+                    actor_interactive=actor_interactive,
                 )
                 return self._done(
                     route,
@@ -244,6 +249,7 @@ class PolicyAdminAdapter:
                     expected_hash=spec.get("expected_hash"),
                     operation=name,
                     task_id=ctx.task_id,
+                    actor_interactive=actor_interactive,
                 )
                 role_name = str(spec["role"])
                 body = result.document.roles[role_name]
@@ -269,6 +275,7 @@ class PolicyAdminAdapter:
                     expected_hash=spec.get("expected_hash"),
                     operation=name,
                     task_id=ctx.task_id,
+                    actor_interactive=actor_interactive,
                 )
                 role_name = str(spec["role"])
                 body = result.document.roles[role_name]
@@ -294,6 +301,7 @@ class PolicyAdminAdapter:
                     expected_hash=spec.get("expected_hash"),
                     operation=name,
                     task_id=ctx.task_id,
+                    actor_interactive=actor_interactive,
                 )
                 list_name = str(spec["list"])
                 patterns = list(getattr(result.document, list_name))
@@ -312,6 +320,7 @@ class PolicyAdminAdapter:
                 actor_roles=actor_roles,
                 task_id=ctx.task_id,
                 expected_hash=spec.get("expected_hash"),
+                actor_interactive=actor_interactive,
             )
             return self._done(
                 route,

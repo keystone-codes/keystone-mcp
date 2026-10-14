@@ -532,6 +532,7 @@ def build_server(
             observability=rbac_observability,
             directory=directory,
             revision_watcher=policy_revision_watcher,
+            interactive_login_available=any(p.interactive for p in login_providers),
         )
         if policy_manager is not None and settings.rbac_enforcing and settings.policy_tools != "off"
         else None

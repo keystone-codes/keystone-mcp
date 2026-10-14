@@ -42,6 +42,22 @@ requires_human_identity: []
 critical_tools: []
 """
 
+OWNER_INVARIANTS_POLICY = """\
+version: "owner-invariants"
+default_deny: true
+roles:
+  owner:
+    allow: ["*"]
+  boss:
+    allow: ["*"]
+  member:
+    allow:
+      - docs_search
+      - docs_read
+requires_human_identity: []
+critical_tools: []
+"""
+
 DELEGATION_POLICY = """\
 version: "delegation-test"
 default_deny: true
@@ -240,11 +256,92 @@ async def build_delegation_harness(
 
 
 async def run_admin_tool(
-    harness: dict[str, Any],
+    harness: dict[str, Any] | AdminHarness,
     tool: str,
     args: dict[str, Any],
     identity: VerifiedIdentity,
 ) -> dict[str, Any]:
-    route = harness["registry"].get(tool)
+    if isinstance(harness, AdminHarness):
+        registry = harness.registry
+        engine = harness.engine
+    else:
+        registry = harness["registry"]
+        engine = harness["engine"]
+    route = registry.get(tool)
     assert route is not None
-    return await harness["engine"].execute(route, args, identity=identity)
+    return await engine.execute(route, args, identity=identity)
+
+
+async def build_owner_invariants_harness(
+    tmp_path: Path,
+    *,
+    policy_yaml: str = OWNER_INVARIANTS_POLICY,
+    observability: object | None = None,
+) -> AdminHarness:
+    policy_path = tmp_path / "rbac-policy.yaml"
+    policy_path.write_text(policy_yaml, encoding="utf-8")
+    settings = Settings(
+        base_url="http://localhost:8080",
+        deployment_profile="local",
+        rbac_mode="enforce",
+        rbac_policy_path=str(policy_path),
+        policy_tools="full",
+        users_backend="local",
+        users_db_url=f"sqlite:///{tmp_path}/keystone-users.db",
+        redis_url=UNUSED_REDIS_URL,
+    )
+    store, _revision = await make_users_store(tmp_path, revision=NullRevisionWriter())
+    for email, roles in [
+        ("o1@corp.example", ["owner"]),
+        ("o2@corp.example", ["owner"]),
+        ("member@corp.example", ["member"]),
+    ]:
+        await store.create_user(
+            email=email,
+            full_name=email,
+            roles=roles,
+            note=None,
+            created_by="system:test",
+            allowed_roles=None,
+        )
+    directory = LocalUserDirectory(store)
+    engine = RouterEngine(settings)
+    mcp = FastMCP("owner-invariants")
+    registry = RouterRegistry(engine, mcp)
+    stub = StubAdapter()
+    registry.add_route("docs_search", stub, mode="live")
+    registry.add_route("docs_read", stub, mode="live")
+    manager = RbacPolicyManager(settings)
+    manager.load_initial(registry)
+    policy_store = PolicyStore(
+        settings=settings,
+        policy_manager=manager,
+        registry=registry,
+        observability=observability,
+        directory=directory,
+    )
+    register_catalog(
+        registry,
+        settings,
+        directory=directory,
+        observability=observability,
+        role_source=policy_role_source(manager),
+        management_source=snapshot_and_file_management_source(manager),
+    )
+    manager.reload(registry)
+    issued = await store.issue_api_key(
+        subject="member@corp.example",
+        label="harness",
+        expires_in_days=30,
+        created_by="system:test",
+    )
+    return AdminHarness(
+        registry=registry,
+        engine=engine,
+        settings=settings,
+        directory=directory,
+        users_store=store,
+        policy_store=policy_store,
+        policy_manager=manager,
+        issued_key_id=issued.record.key_id,
+    )

@@ -45,7 +45,16 @@ requires a full administrator.
 
 1. The candidate document is validated like a hot-reload (catalog match,
    invariants, self-lockout checks, and the full-administrator gate above when
-   the change touches administration).
+   the change touches administration). Invariants take `requires_human_identity`
+   and whether an interactive login provider is configured into account: a
+   change that would leave an administering tool reachable only after an
+   interactive sign-in is refused when no such provider exists, and a caller
+   who is not signed in interactively cannot accept a change that would gate
+   their own `policy_*` access behind interactive login. A change that would
+   leave no active person with full administration (derived from the policy,
+   not a fixed role name) is refused. Deleting a role is refused while any
+   human or service account still holds it, including blocked accounts — revoke
+   the role from them first.
 2. Only one mutation runs at a time in a process (`asyncio` lock) and, on
    platforms with `flock`, across processes on the same volume (lock file
    `<policy-path>.lock` — do not delete it while the server runs; the policy
