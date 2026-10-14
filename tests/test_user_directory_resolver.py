@@ -518,4 +518,7 @@ async def test_cancelled_probe_counts_as_failure() -> None:
     with pytest.raises(asyncio.CancelledError):
         await task
 
-    assert resolver._circuit.is_open() is True  # noqa: SLF001
+    assert resolver._circuit.is_open() is False  # noqa: SLF001
+    assert resolver._circuit.allow_request() is False
+    await asyncio.sleep(0.06)
+    assert resolver._circuit.allow_request() is True
