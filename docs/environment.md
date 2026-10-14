@@ -9,6 +9,30 @@ to `.env` and fill in the secrets. Do not commit `.env`.
 Redis is required. The users directory is built in; the first administrator
 is created by `KEYSTONE_MCP_SUPERADMIN_EMAIL`. See [users.md](users.md).
 
+## Boolean values
+
+Every boolean `KEYSTONE_MCP_*` setting accepts `1`, `true`, `yes`, or `on`
+for enabled and `0`, `false`, `no`, or `off` for disabled. Matching is
+case-insensitive and ignores leading and trailing spaces. Any other
+**non-empty** value refuses startup. An empty value is read as `false` and
+logs [startup warning W19](#startup-warnings).
+
+## Refused at startup (all profiles)
+
+These checks run for every deployment profile before the server listens:
+
+| Variable | Refused when |
+|---|---|
+| `KEYSTONE_MCP_BASE_URL` | Not an absolute `http://` or `https://` URL with a host (for example `mcp.example.com`, `ftp://…`, or `https://` with no host). |
+| `KEYSTONE_MCP_PORT` | Outside 1–65535. |
+| `KEYSTONE_MCP_TOKEN_TTL`, `KEYSTONE_MCP_AUTH_CODE_TTL`, `KEYSTONE_MCP_REFRESH_TOKEN_TTL`, `KEYSTONE_MCP_LOGIN_PENDING_TXN_TTL` | Zero or negative. |
+| `KEYSTONE_MCP_LOG_REQUEST_ID_HEADER` | Empty after trimming, or not a valid HTTP header token (example: `X-Request-ID`). |
+| `KEYSTONE_MCP_METRICS_PATH` | When `KEYSTONE_MCP_METRICS_ENABLED=true`: does not start with `/`, or equals `KEYSTONE_MCP_HTTP_PATH` after path normalization. |
+| `KEYSTONE_MCP_REDIS_URL` | Empty (OAuth sessions are stored in Redis in every RBAC mode). |
+
+Profile rules (L1, P1–P5 below) and strict boolean parsing may refuse startup
+in addition to this list.
+
 ## Deployment profile
 
 | Variable | Default | Meaning |
@@ -54,6 +78,34 @@ reached from outside this machine. Two further rules are warnings — logged by
 | W4 | `local` | `KEYSTONE_MCP_RBAC_MODE=enforce` and `KEYSTONE_MCP_DEV_TOKENS` is non-empty: a DEV token then signs any directory member in, including administrators. |
 | W5 | `local` | `KEYSTONE_MCP_HOST` is unspecified (`0.0.0.0`, `::`) and `KEYSTONE_MCP_DEV_TOKENS` is non-empty. Not a refusal — the Docker demo's own container legitimately binds `0.0.0.0` internally, relying on its port mapping to restrict reachability — but anyone who *can* reach the port signs in as any directory member. |
 | W7 | both | RBAC is `enforce`, `KEYSTONE_MCP_POLICY_TOOLS=full` (the default) and the policy file is not writable (e.g. mounted `:ro`). Not a refusal — `policy_read`/`policy_validate` still work — but every mutating `policy_*` call refuses with `policy_readonly` until the mount is read-write or this replica is switched to `KEYSTONE_MCP_POLICY_TOOLS=read-only`. |
+
+## Startup warnings
+
+`server.main` logs every line returned by `startup_warnings()` at WARNING after
+logging is configured. Warnings do not stop startup. Later releases may add
+more rows (W20+).
+
+| # | Profile | Logged when | What to do |
+|---|---|---|---|
+| W1 | `production` | `KEYSTONE_MCP_BASE_URL` uses `http` on a non-public host. | Terminate TLS at a trusted proxy, or accept plain http only inside the private network. |
+| W2 | `production` | `KEYSTONE_MCP_UPSTREAM_ALLOW_INSECURE_HTTP=true`. | Keep upstreams on a private network or disable the flag. |
+| W3 | `production` | `KEYSTONE_MCP_UPSTREAM_EGRESS_ALLOW_PRIVATE=true`. | Restrict who can edit the upstream registry. |
+| W4 | `local` | `KEYSTONE_MCP_RBAC_MODE=enforce` and `KEYSTONE_MCP_DEV_TOKENS` is set. | Clear DEV tokens or use `local` only on loopback. |
+| W5 | `local` | `KEYSTONE_MCP_HOST` is all-interfaces and DEV tokens are set. | Bind to loopback or remove DEV tokens. |
+| W6 | `production` | An enabled upstream has no `auth.identity_secret_env` (or runs a local stdio command). | Configure identity verification for each upstream. |
+| W7 | both | Policy file not writable while `KEYSTONE_MCP_POLICY_TOOLS=full`. | Mount read-write or set `read-only`. |
+| W8 | both | `KEYSTONE_MCP_BASE_URL` has a non-root path, query, or fragment. | Use the site root only in `BASE_URL`. |
+| W9 | both | `KEYSTONE_MCP_TOKEN_TTL` > 86400 seconds. | Shorten access-token lifetime. |
+| W10 | both | `KEYSTONE_MCP_AUTH_CODE_TTL` > 600 seconds. | Shorten authorization-code lifetime. |
+| W11 | both | RBAC audit on and `KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT` is empty or shorter than 16 bytes. | Set a long random salt or disable audit. |
+| W12 | both | `KEYSTONE_MCP_INTERNAL_ALLOWED_CIDRS` includes `0.0.0.0/0` or `::/0`. | Narrow internal endpoint access. |
+| W13 | `production` | `KEYSTONE_MCP_RBAC_AUDIT_ENABLED=false`. | Enable audit for compliance, or accept no authorization audit trail. |
+| W14 | `production` | `KEYSTONE_MCP_LOG_REDACT=false`. | Enable log redaction. |
+| W15 | `production` | `KEYSTONE_MCP_LOG_LEVEL=DEBUG`. | Use `INFO` or higher in production. |
+| W16 | `production` | `KEYSTONE_MCP_REDIS_URL` uses `redis://` to a non-loopback host. | Use `rediss://` or a private network. |
+| W17 | both | `KEYSTONE_MCP_RBAC_MODE=off` and `KEYSTONE_MCP_REFRESH_INTERVAL_SECONDS` < 0. | Set a non-negative interval. |
+| W18 | `production` | `FORWARDED_ALLOW_IPS` unset while `KEYSTONE_MCP_ALLOWED_HOSTS` is set or `KEYSTONE_MCP_HOST` is not loopback. | Set `FORWARDED_ALLOW_IPS` to trusted proxy CIDRs. |
+| W19 | both | A boolean `KEYSTONE_MCP_*` variable is set to an empty string (read as `false`). | Set `true` or `false` explicitly. |
 
 ## Where settings come from
 

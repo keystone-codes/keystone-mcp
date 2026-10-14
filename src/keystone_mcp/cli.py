@@ -11,7 +11,7 @@ from typing import Sequence
 
 import yaml
 
-from keystone_mcp.config import ConfigError, settings_for_command
+from keystone_mcp.config import USERS_CLI_VARIABLES, ConfigError, settings_for_command
 from keystone_mcp.env_file import load_env_file
 from keystone_mcp.observability.logging import configure_logging
 from keystone_mcp.plugins_cli import add_plugins_commands
@@ -234,6 +234,14 @@ def _cmd_upstream_validate(path: Path) -> int:
 
 _EXIT_ENV = 2
 
+_USERS_CLI_COMMANDS = frozenset({"users", "keys", "service-accounts"})
+
+
+def _settings_required_for_cli(command: str) -> frozenset[str]:
+    if command in _USERS_CLI_COMMANDS:
+        return USERS_CLI_VARIABLES
+    return frozenset()
+
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="keystone-mcp")
@@ -304,7 +312,11 @@ def main(argv: list[str] | None = None) -> int:
     except ConfigError as exc:
         print(f"keystone-mcp: {exc}", file=sys.stderr)
         return _EXIT_ENV
-    configure_logging(settings_for_command(frozenset()))
+    try:
+        configure_logging(settings_for_command(_settings_required_for_cli(args.command)))
+    except ConfigError as exc:
+        print(f"keystone-mcp: {exc}", file=sys.stderr)
+        return _EXIT_VALIDATION
     if args.command == "catalog":
         return args.handler(args)
     if args.command == "upstream":

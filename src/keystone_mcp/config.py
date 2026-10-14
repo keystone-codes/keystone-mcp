@@ -1277,8 +1277,7 @@ def _refusal_base_url(settings: Settings) -> str | None:
     host = parsed.hostname or ""
     if scheme not in ("http", "https") or not host:
         return (
-            "KEYSTONE_MCP_BASE_URL must be an absolute http(s) URL such as "
-            "https://mcp.example.com"
+            "KEYSTONE_MCP_BASE_URL must be an absolute http(s) URL such as https://mcp.example.com"
         )
     return None
 
@@ -1315,13 +1314,11 @@ def _refusal_metrics_path(settings: Settings) -> str | None:
     path = settings.metrics_path.strip()
     if not path.startswith("/"):
         return (
-            'KEYSTONE_MCP_METRICS_PATH must start with "/" and differ from '
-            "KEYSTONE_MCP_HTTP_PATH"
+            'KEYSTONE_MCP_METRICS_PATH must start with "/" and differ from KEYSTONE_MCP_HTTP_PATH'
         )
     if normalize_http_path(path) == normalize_http_path(settings.http_path):
         return (
-            'KEYSTONE_MCP_METRICS_PATH must start with "/" and differ from '
-            "KEYSTONE_MCP_HTTP_PATH"
+            'KEYSTONE_MCP_METRICS_PATH must start with "/" and differ from KEYSTONE_MCP_HTTP_PATH'
         )
     return None
 
@@ -1342,9 +1339,7 @@ def _settings_refusals(settings: Settings) -> list[str]:
     if metrics_problem:
         problems.append(metrics_problem)
     if not settings.redis_url.strip():
-        problems.append(
-            "KEYSTONE_MCP_REDIS_URL is required (OAuth sessions are stored in Redis)"
-        )
+        problems.append("KEYSTONE_MCP_REDIS_URL is required (OAuth sessions are stored in Redis)")
     return problems
 
 
@@ -1427,10 +1422,7 @@ def _warn_rbac_audit_disabled_production(settings: Settings) -> str | None:
 
 def _warn_log_redact_production(settings: Settings) -> str | None:
     if settings.deployment_profile == "production" and not settings.log_redact:
-        return (
-            "KEYSTONE_MCP_LOG_REDACT=false in production; "
-            "tokens and secrets may appear in logs"
-        )
+        return "KEYSTONE_MCP_LOG_REDACT=false in production; tokens and secrets may appear in logs"
     return None
 
 
