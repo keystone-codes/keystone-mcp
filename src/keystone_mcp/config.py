@@ -144,6 +144,17 @@ USERS_CLI_VARIABLES = frozenset(
     }
 )
 
+OAUTH_CLI_VARIABLES = frozenset(
+    {
+        "KEYSTONE_MCP_REDIS_URL",
+        "KEYSTONE_MCP_REDIS_KEY_PREFIX",
+        "KEYSTONE_MCP_LOGIN_PENDING_KEY_PREFIX",
+        "KEYSTONE_MCP_TOKEN_TTL",
+        "KEYSTONE_MCP_REFRESH_TOKEN_TTL",
+        "KEYSTONE_MCP_OAUTH_ALLOWED_REDIRECT_HOSTS",
+    }
+)
+
 
 @dataclass(frozen=True)
 class RemovedVariable:

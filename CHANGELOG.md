@@ -10,6 +10,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ### Added
 
+- `keystone-mcp oauth register-client`: register a public OAuth client when self-registration is off, with the same redirect-host and metadata checks as `POST /register`.
 - ADR 0013 (management roles come from the policy) and ADR 0016 (machines never
   administer, enforced in code).
 - The upstream registry file is reloaded without a restart: on the next refresh tick after the file changes, or at once on `SIGHUP`. Added entries are discovered and published, removed ones disappear with their tools, prompts and resources, changed ones are rebuilt; an invalid file keeps the previous registry. `SIGHUP` also re-reads upstream secrets. Metrics `keystone_mcp_upstream_registry_reload_total`, `keystone_mcp_upstream_registry_info`.
