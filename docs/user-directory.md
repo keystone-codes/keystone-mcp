@@ -270,6 +270,13 @@ without a database round-trip. Directories without that protocol fall back to
 a per-process rate limit (20/s, burst 50) for `key_id` values that have never
 verified successfully on that replica.
 
+When the directory is unreachable, `CachedUserDirectoryResolver` opens a circuit
+breaker after `KEYSTONE_MCP_USERS_CIRCUIT_FAILURE_THRESHOLD` consecutive
+failures. While open, new calls fail closed with `circuit_open`. After
+`KEYSTONE_MCP_USERS_CIRCUIT_RECOVERY_SECONDS`, exactly one probe call is
+allowed; if it succeeds the circuit closes, if it fails the full pause starts
+again.
+
 ## Registering a directory from your own package
 
 See [plugins.md](plugins.md). Why: [ADR 0009](adr/0009-plugins-via-entry-points.md).
