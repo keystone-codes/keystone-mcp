@@ -41,6 +41,7 @@ Register that exact URI at the provider. Keystone logs each callback at startup.
 | `extra_authorize_params` | `oidc` | — | Extra query params (not `state`, `nonce`, PKCE, etc.). |
 | `additional_issuers` | `oidc` | — | Other accepted `iss` values in the id token. |
 | `token_auth_method` | `oidc` | from discovery | `client_secret_basic` or `client_secret_post`. |
+| `endpoint_hosts` | `oidc` | — | Extra hosts (no scheme or path) that may serve the provider's authorization, token and JWKS endpoints when they are not on the issuer's host. Same scheme as the issuer; never opens plain `http`. |
 | `allowed_domain` | `google` | — | Workspace domain (`hd` + email suffix). |
 
 See [examples/login-providers.example.yaml](../examples/login-providers.example.yaml).
@@ -49,7 +50,8 @@ See [examples/login-providers.example.yaml](../examples/login-providers.example.
 
 Use `type: google` with the same client id and secret you would previously set in
 `KEYSTONE_MCP_GOOGLE_*`. Redirect URI:
-`{KEYSTONE_MCP_BASE_URL}/login/google/callback`.
+`{KEYSTONE_MCP_BASE_URL}/login/google/callback`. Google's token and key endpoints
+live on `googleapis.com`; the built-in `google` type allows them.
 
 ## Okta
 
@@ -81,6 +83,8 @@ valid redirect URI as above. For local Keycloak on loopback HTTP, use
   must set `allowed_domains` or `hosted_domain`, or startup refuses the file.
 - **Domains** — use `allowed_domains` for Okta/Entra/Keycloak; `hosted_domain` is
   for Google Workspace (`hd`).
+- **Endpoint host** — the log names the discovery field and host; add that host to
+  `endpoint_hosts`.
 
 ## Deprecated environment variables
 

@@ -7,6 +7,7 @@ providers:
     client_id: 0oa1example
     client_secret_env: KEYSTONE_MCP_LOGIN_OKTA_SECRET
     allowed_domains: [example.com]
+    # endpoint_hosts: ["auth.example.net"]
   - name: google
     type: google
     client_id: 123.apps.googleusercontent.com
