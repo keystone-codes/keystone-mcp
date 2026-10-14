@@ -150,18 +150,19 @@ class RbacMetrics:
             operation=operation,
         ).inc()
 
-    def _tool_call_labels(self, tool_name: str) -> dict[str, str]:
+    def _tool_call_labels(self, tool_name: str, *, known: bool = True) -> dict[str, str]:
         labels = resolve_tool_call_metric_labels(
             tool_name,
             tool_name_mode=self._tool_name_mode,
+            known=known,
         ).as_dict()
         labels["oauth_client_id"] = self._client_id_limiter.label(labels["oauth_client_id"])
         return labels
 
-    def record_tool_call_attempt(self, *, tool_name: str) -> None:
+    def record_tool_call_attempt(self, *, tool_name: str, known: bool = True) -> None:
         if not self._enabled:
             return
-        _TOOL_CALL_ATTEMPTS.labels(**self._tool_call_labels(tool_name)).inc()
+        _TOOL_CALL_ATTEMPTS.labels(**self._tool_call_labels(tool_name, known=known)).inc()
 
     def record_tool_invocation(
         self,
@@ -169,10 +170,11 @@ class RbacMetrics:
         tool_name: str,
         outcome: str,
         duration_seconds: float,
+        known: bool = True,
     ) -> None:
         if not self._enabled:
             return
-        labels = {**self._tool_call_labels(tool_name), "outcome": outcome}
+        labels = {**self._tool_call_labels(tool_name, known=known), "outcome": outcome}
         _TOOL_INVOCATIONS.labels(**labels).inc()
         _TOOL_INVOCATION_SECONDS.labels(**labels).observe(duration_seconds)
 

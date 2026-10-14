@@ -10,6 +10,13 @@ enforce) and runs outermost, before authorization, so a throttled identity is
 rejected without touching the user directory. A call with no verified identity
 is passed through untouched — authentication and authorization decide that case,
 and an unauthenticated caller has no identity to aggregate on.
+
+List handlers raise :class:`mcp.shared.exceptions.MCPError` on refusal. FastMCP
+4.1 maps ``ToolError`` / ``PromptError`` / ``ResourceError`` from list
+middleware to a generic internal error on the modern protocol path, so the wire
+response carries ``THROTTLE_MESSAGE`` only when ``MCPError`` is raised.
+``on_call_tool``, ``on_get_prompt``, and ``on_read_resource`` keep the typed
+FastMCP exceptions.
 """
 
 from __future__ import annotations
@@ -17,15 +24,25 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from fastmcp.exceptions import ResourceError, ToolError
+from fastmcp.exceptions import PromptError, ResourceError, ToolError
 from fastmcp.server.middleware import Middleware, MiddlewareContext
+from mcp.shared.exceptions import MCPError
+from mcp_types import INTERNAL_ERROR
 
 from keystone_mcp.auth.throttle import PerIdentityThrottle
 from keystone_mcp.identity import resolve_verified_identity
 from keystone_mcp.observability.subject import hash_subject
 
 if TYPE_CHECKING:
-    from mcp.types import CallToolRequestParams, GetPromptRequestParams, ReadResourceRequestParams
+    from mcp.types import (
+        CallToolRequestParams,
+        GetPromptRequestParams,
+        ListPromptsRequest,
+        ListResourcesRequest,
+        ListResourceTemplatesRequest,
+        ListToolsRequest,
+        ReadResourceRequestParams,
+    )
 
     from keystone_mcp.observability.service import RbacObservability
 
@@ -62,8 +79,72 @@ class ThrottleMiddleware(Middleware):
         if self._throttle.check(identity.subject):
             return await call_next(context)
 
-        self._record_throttled(context.message.name, identity.subject)
+        self._record_throttled(
+            context.message.name,
+            identity.subject,
+            operation="call_tool",
+        )
         raise ToolError(THROTTLE_MESSAGE)
+
+    async def on_list_tools(
+        self,
+        context: MiddlewareContext[ListToolsRequest],
+        call_next,
+    ):
+        identity = resolve_verified_identity()
+        if identity is None:
+            return await call_next(context)
+
+        if self._throttle.check(identity.subject):
+            return await call_next(context)
+
+        self._record_throttled("", identity.subject, operation="list_tools")
+        raise MCPError(code=INTERNAL_ERROR, message=THROTTLE_MESSAGE)
+
+    async def on_list_prompts(
+        self,
+        context: MiddlewareContext[ListPromptsRequest],
+        call_next,
+    ):
+        identity = resolve_verified_identity()
+        if identity is None:
+            return await call_next(context)
+
+        if self._throttle.check(identity.subject):
+            return await call_next(context)
+
+        self._record_throttled("", identity.subject, operation="list_prompts")
+        raise MCPError(code=INTERNAL_ERROR, message=THROTTLE_MESSAGE)
+
+    async def on_list_resources(
+        self,
+        context: MiddlewareContext[ListResourcesRequest],
+        call_next,
+    ):
+        identity = resolve_verified_identity()
+        if identity is None:
+            return await call_next(context)
+
+        if self._throttle.check(identity.subject):
+            return await call_next(context)
+
+        self._record_throttled("", identity.subject, operation="list_resources")
+        raise MCPError(code=INTERNAL_ERROR, message=THROTTLE_MESSAGE)
+
+    async def on_list_resource_templates(
+        self,
+        context: MiddlewareContext[ListResourceTemplatesRequest],
+        call_next,
+    ):
+        identity = resolve_verified_identity()
+        if identity is None:
+            return await call_next(context)
+
+        if self._throttle.check(identity.subject):
+            return await call_next(context)
+
+        self._record_throttled("", identity.subject, operation="list_resource_templates")
+        raise MCPError(code=INTERNAL_ERROR, message=THROTTLE_MESSAGE)
 
     async def on_get_prompt(
         self,
@@ -77,8 +158,12 @@ class ThrottleMiddleware(Middleware):
         if self._throttle.check(identity.subject):
             return await call_next(context)
 
-        self._record_throttled(context.message.name, identity.subject)
-        raise ToolError(THROTTLE_MESSAGE)
+        self._record_throttled(
+            context.message.name,
+            identity.subject,
+            operation="get_prompt",
+        )
+        raise PromptError(THROTTLE_MESSAGE)
 
     async def on_read_resource(
         self,
@@ -92,10 +177,20 @@ class ThrottleMiddleware(Middleware):
         if self._throttle.check(identity.subject):
             return await call_next(context)
 
-        self._record_throttled(str(context.message.uri), identity.subject)
+        self._record_throttled(
+            str(context.message.uri),
+            identity.subject,
+            operation="read_resource",
+        )
         raise ResourceError(THROTTLE_MESSAGE)
 
-    def _record_throttled(self, tool_name: str, email: str) -> None:
+    def _record_throttled(
+        self,
+        tool_name: str,
+        email: str,
+        *,
+        operation: str,
+    ) -> None:
         # Imported here: rbac_middleware owns the denial-reason vocabulary and
         # importing it at module scope would couple throttling to RBAC loading.
         from keystone_mcp.router.rbac_middleware import (
@@ -111,7 +206,7 @@ class ThrottleMiddleware(Middleware):
                 reason=RbacDenialReason.THROTTLED,
                 roles=frozenset(),
                 cache_hit=None,
-                operation="call_tool",
+                operation=operation,
                 request_id=_request_correlation_id(),
             )
             return

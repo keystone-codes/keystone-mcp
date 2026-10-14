@@ -23,6 +23,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 - A refresh token whose session marker is missing is refused with `invalid_grant` instead of being renewed as an `api_key` session. The marker is now written in the same Redis transaction as the token pair.
 - Access tokens of people carry `"subject_type": "human"`; a sign-in that resolves to a service-account subject is refused.
 - `latest` moves only when the released version is the highest one; a patch to an older line no longer moves it back.
+- List requests (`tools/list`, `prompts/list`, `resources/list`, `resources/templates/list`) count toward the per-identity rate limit. A throttled `prompts/get` returns a prompt error.
 
 ### Fixed
 
@@ -36,6 +37,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 - Automation that changed users, service accounts or API keys through MCP with a service-account key now gets `forbidden`; do it from a person's session or with the `keystone-mcp` CLI on the host.
 - Sessions opened on 0.4.x/0.5.x keep working after the upgrade. Rolling back to 0.5.x keeps sessions opened on 0.6.0: 0.5.x ignores the new marker fields. While replicas of both versions run side by side, a session renewed by a 0.5.x replica loses the new fields again; session max-age and key checks apply once every replica runs 0.6.0.
+- Each list request now uses one slot of `KEYSTONE_MCP_THROTTLE_MAX` (default 120 per 60 s). If a client lists very often, raise the limit. Metric series for names that are not published are now reported as `tool="unknown"`.
 
 ## [0.5.0] - 2026-10-13
 

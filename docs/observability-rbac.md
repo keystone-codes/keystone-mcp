@@ -88,11 +88,17 @@ the store's client count right after each registration attempt on that
 replica, not a cluster-wide total, so two replicas can briefly report
 different values for the same shared Redis store.
 
-On tool-call series, `tool` is the full published name when
-`KEYSTONE_MCP_METRICS_TOOL_NAME=full` (default), or the namespace prefix when
-`coarse`. `auth_method` is the access-token claim (`google`, `api_key`, …) or
-`none`. `oauth_client_id` is the registered OAuth client id or `none` /
-`unknown`. Email never appears in labels.
+On tool-call series, `tool`, `tool_family`, and `namespace` are taken only from
+names published in the live tool, prompt, and resource catalogs; anything else
+is reported as `unknown` (including random tool names from the client). Do not
+publish a service whose namespace is `unknown`, or its metrics will mix with
+unpublished names.
+
+`tool` is the full published name when `KEYSTONE_MCP_METRICS_TOOL_NAME=full`
+(default), or the namespace prefix when `coarse`. `auth_method` is the
+access-token claim (`google`, `api_key`, …) or `none`. `oauth_client_id` is
+the registered OAuth client id or `none` / `unknown`. Email never appears in
+labels.
 
 To bound Prometheus time-series cardinality, each process keeps at most
 `KEYSTONE_MCP_METRICS_OAUTH_CLIENT_ID_LIMIT` (default 50) distinct
