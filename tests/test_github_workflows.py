@@ -100,6 +100,9 @@ def test_workflow_declares_a_restrictive_top_level_permissions_block(name: str):
 def test_release_job_permissions_are_not_widened_by_the_top_level_block():
     doc = _load("release.yml")
     jobs = doc["jobs"]
+    assert jobs["image-build"]["permissions"] == {"contents": "read", "packages": "write"}
+    assert jobs["image-scan"]["permissions"] == {"contents": "read", "packages": "read"}
+    assert jobs["image-smoke"]["permissions"] == {"contents": "read", "packages": "read"}
     assert jobs["publish"]["permissions"] == {"contents": "read", "packages": "write"}
     assert jobs["github-release"]["permissions"] == {"contents": "write"}
     # wheel-smoke only installs and probes the already-built wheel: no job
@@ -143,22 +146,112 @@ def test_trivy_scan_step_is_blocking(name: str):
     )
 
 
-def test_release_publish_depends_on_the_image_scan():
-    """release.yml must not be able to publish an image the PR gate would reject (Z10)."""
+def _job_needs(doc: dict, job_name: str) -> list[str]:
+    needs = doc["jobs"][job_name].get("needs")
+    if needs is None:
+        return []
+    return [needs] if isinstance(needs, str) else list(needs)
+
+
+def test_release_scans_the_pushed_digest_for_each_platform():
     doc = _load("release.yml")
-    jobs = doc["jobs"]
+    scan = doc["jobs"]["image-scan"]
+    platforms = scan["strategy"]["matrix"]["platform"]
+    assert platforms == ["linux/amd64", "linux/arm64"]
+    raw = (WORKFLOWS_DIR / "release.yml").read_text(encoding="utf-8")
+    assert "needs.image-build.outputs.digest" in raw
+    step = _find_trivy_step_in_job(scan)
+    assert "needs.image-build.outputs.digest" in str(step.get("with", {}))
 
-    def _needs(job_name: str) -> list[str]:
-        needs = jobs[job_name].get("needs")
-        if needs is None:
-            return []
-        return [needs] if isinstance(needs, str) else list(needs)
 
-    assert "image-scan" in _needs("publish"), (
-        "release.yml: 'publish' must declare 'image-scan' in its 'needs' so a "
-        "blocked scan blocks the release"
+def _find_trivy_step_in_job(job: dict) -> dict:
+    for step in job.get("steps") or []:
+        if str(step.get("uses", "")).startswith("aquasecurity/trivy-action@"):
+            return step
+    raise AssertionError("no aquasecurity/trivy-action step found in job")
+
+
+def test_release_publish_does_not_build():
+    """Tagged releases must tag an already-built digest, not rebuild the image."""
+    raw = (WORKFLOWS_DIR / "release.yml").read_text(encoding="utf-8")
+    publish_block = raw.split("  publish:", 1)[1].split("\n  pypi:", 1)[0]
+    assert "docker/build-push-action" not in publish_block
+    assert "imagetools create" in publish_block
+    assert "needs.image-build.outputs.digest" in publish_block
+    doc = _load("release.yml")
+    needs = _job_needs(doc, "publish")
+    assert "image-scan" in needs
+    assert "image-smoke" in needs
+
+
+def test_release_checks_published_digest():
+    raw = (WORKFLOWS_DIR / "release.yml").read_text(encoding="utf-8")
+    assert "imagetools inspect" in raw
+    assert "needs.image-build.outputs.digest" in raw
+
+
+def test_latest_tag_is_conditional():
+    raw = (WORKFLOWS_DIR / "release.yml").read_text(encoding="utf-8")
+    assert "type=raw,value=latest,enable=" in raw
+
+
+def test_workflow_dispatch_has_no_unused_inputs():
+    doc = _load("release.yml")
+    on_block = doc.get("on") or doc.get(True)  # yaml 1.1 'on' key
+    if isinstance(on_block, dict):
+        dispatch = on_block.get("workflow_dispatch")
+    else:
+        dispatch = None
+    if dispatch is None:
+        return
+    inputs = dispatch.get("inputs") or {}
+    raw = (WORKFLOWS_DIR / "release.yml").read_text(encoding="utf-8")
+    for name in inputs:
+        assert f"inputs.{name}" in raw or f"github.event.inputs.{name}" in raw, (
+            f"release.yml declares workflow_dispatch input {name!r} but never reads it"
+        )
+
+
+def test_every_setup_uv_step_pins_one_version():
+    versions: set[str] = set()
+    for path in WORKFLOW_FILES:
+        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+        for job in doc.get("jobs", {}).values():
+            for step in job.get("steps") or []:
+                uses = step.get("uses", "")
+                if not str(uses).startswith("astral-sh/setup-uv@"):
+                    continue
+                version = step.get("with", {}).get("version")
+                assert version, f"{path.name}: astral-sh/setup-uv must pin with.version"
+                versions.add(str(version))
+    assert len(versions) == 1, f"setup-uv version must match everywhere, got {versions!r}"
+
+
+def test_dependabot_watches_docker():
+    dependabot = yaml.safe_load(
+        (Path(__file__).resolve().parent.parent / ".github" / "dependabot.yml").read_text(
+            encoding="utf-8"
+        )
     )
-    # pypi and github-release only run once publish has succeeded, so they
-    # depend on the image scan transitively through it.
-    assert "publish" in _needs("pypi")
-    assert "publish" in _needs("github-release")
+    ecosystems = [entry["package-ecosystem"] for entry in dependabot["updates"]]
+    assert "docker" in ecosystems
+
+
+def test_pr_template_links_are_absolute():
+    template = (
+        Path(__file__).resolve().parent.parent / ".github" / "pull_request_template.md"
+    ).read_text(encoding="utf-8")
+    for match in re.finditer(r"\]\(([^)]+)\)", template):
+        url = match.group(1)
+        if url.startswith("#"):
+            continue
+        assert url.startswith("https://"), (
+            f"PR template link {url!r} must be absolute (https://...)"
+        )
+
+
+def test_release_publish_depends_on_the_image_scan():
+    """pypi and github-release only run once publish has succeeded."""
+    doc = _load("release.yml")
+    assert "publish" in _job_needs(doc, "pypi")
+    assert "publish" in _job_needs(doc, "github-release")

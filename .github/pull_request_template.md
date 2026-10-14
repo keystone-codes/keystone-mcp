@@ -13,8 +13,8 @@
 ## Checklist
 
 - [ ] `pytest -q` passes locally (or `uv run pytest -q`)
-- [ ] If `src/keystone_mcp/config.py` changed: [`.env.example`](.env.example) and [`docs/environment.md`](docs/environment.md) are updated
-- [ ] If RBAC policy format or built-in catalog changed: [`docs/rbac-policy-format.md`](docs/rbac-policy-format.md) and [`examples/`](examples/) are updated
+- [ ] If `src/keystone_mcp/config.py` changed: [`.env.example`](https://github.com/keystone-codes/keystone-mcp/blob/master/.env.example) and [`docs/environment.md`](https://github.com/keystone-codes/keystone-mcp/blob/master/docs/environment.md) are updated
+- [ ] If RBAC policy format or built-in catalog changed: [`docs/rbac-policy-format.md`](https://github.com/keystone-codes/keystone-mcp/blob/master/docs/rbac-policy-format.md) and [`examples/`](https://github.com/keystone-codes/keystone-mcp/tree/master/examples/) are updated
 - [ ] No secrets, credentials, or customer-specific data in the diff
 - [ ] Linked issue or discussion (if applicable)
 

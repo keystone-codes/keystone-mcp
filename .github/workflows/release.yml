@@ -4,16 +4,8 @@ on:
   push:
     tags:
       - "v*.*.*"
+  # Manual runs always exercise the pipeline without publishing to GHCR or PyPI.
   workflow_dispatch:
-    inputs:
-      dry_run:
-        description: >-
-          Exercise the release pipeline without publishing anything:
-          version-gate and build-dist run without --tag, the "already on
-          PyPI" check is skipped, and publish, pypi and github-release do
-          not run.
-        type: boolean
-        default: true
 
 env:
   IMAGE_PREFIX: ghcr.io/keystone-codes/keystone-mcp
@@ -29,11 +21,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.11.22"
 
       # On a real tag push, GITHUB_REF_NAME is the tag (vX.Y.Z) and must
-      # agree with the version sources. On a manual workflow_dispatch run
-      # (dry run), GITHUB_REF_NAME is just the branch name, so --tag is
-      # omitted and only the file sources are checked against each other.
+      # agree with the version sources. On workflow_dispatch, GITHUB_REF_NAME
+      # is the branch name, so --tag is omitted and only the file sources
+      # are checked against each other.
       - name: Check version consistency with tag
         run: |
           if [ "${{ github.event_name }}" = "push" ]; then
@@ -46,30 +40,6 @@ jobs:
     needs: version-gate
     uses: ./.github/workflows/test-gate.yml
 
-  image-scan:
-    name: Image scan
-    needs: version-gate
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-
-      - name: Build image
-        run: docker build -t keystone-mcp:scan .
-
-      # Same action, pin and parameters as .github/workflows/security.yml's
-      # image-scan job (see the comment there) — the release path must not be
-      # able to publish an image the PR gate would have rejected. A fixable
-      # CRITICAL or HIGH finding fails this job and blocks `publish` below.
-      - name: Scan image with Trivy
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          image-ref: keystone-mcp:scan
-          severity: CRITICAL,HIGH
-          ignore-unfixed: true
-          format: table
-          exit-code: "1"
-          trivyignores: .trivyignore
-
   build-dist:
     name: Build and check the PyPI distribution
     needs: version-gate
@@ -78,12 +48,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.11.22"
 
       - name: Build wheel and sdist
         run: uv build
 
-      # Same --tag rule as version-gate above: a dry run has no release tag
-      # to check the dist filenames and METADATA against.
       - name: Check the built wheel and sdist
         run: |
           if [ "${{ github.event_name }}" = "push" ]; then
@@ -132,39 +102,146 @@ jobs:
       - name: Smoke test the installed wheel
         run: bash scripts/smoke_wheel.sh /tmp/venv/bin/keystone-mcp
 
-  publish:
-    name: Build and publish image
-    needs: [version-gate, test, image-scan]
-    if: github.event_name == 'push'
+  image-build:
+    name: Build and push image digest
+    needs: version-gate
+    if: github.event_name == 'push' && vars.SKIP_GHCR_PUSH != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-
-      # GHCR push uses the workflow GITHUB_TOKEN (packages: write above).
-      # For forks or environments without registry access, set repository variable
-      # SKIP_GHCR_PUSH=true to build both platforms locally without pushing.
-      - name: Resolve publish mode
-        id: publish
-        run: |
-          if [ "${{ vars.SKIP_GHCR_PUSH }}" = "true" ]; then
-            echo "mode=smoke" >> "$GITHUB_OUTPUT"
-          else
-            echo "mode=push" >> "$GITHUB_OUTPUT"
-          fi
 
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4
 
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
 
-      # Multi-platform builds cannot be loaded into the local Docker engine
-      # (`load: true` only works for a single platform), so the image that is
-      # actually started and probed below is amd64-only. The arm64 build that
-      # follows reuses this build's cache (`cache-from/to: type=gha`) and is
-      # only checked for a successful build, never run (arm64 under QEMU is
-      # too slow to run tests against; see the task card).
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push multi-arch digest
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          outputs: type=image,name=${{ env.IMAGE_PREFIX }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: true
+          sbom: true
+
+  image-scan:
+    name: Image scan (${{ matrix.platform }})
+    needs: image-build
+    if: github.event_name == 'push' && vars.SKIP_GHCR_PUSH != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [linux/amd64, linux/arm64]
+    steps:
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Same action, pin and parameters as .github/workflows/security.yml's
+      # image-scan job (see the comment there) — the release path must not be
+      # able to tag an image the PR gate would have rejected.
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_PLATFORM: ${{ matrix.platform }}
+        with:
+          image-ref: ${{ env.IMAGE_PREFIX }}@${{ needs.image-build.outputs.digest }}
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          format: table
+          exit-code: "1"
+          trivyignores: .trivyignore
+
+      - name: Log scanned digest
+        run: |
+          echo "scanned ${{ needs.image-build.outputs.digest }} for ${{ matrix.platform }}"
+
+  image-smoke:
+    name: Image smoke test
+    needs: image-build
+    if: github.event_name == 'push' && vars.SKIP_GHCR_PUSH != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull amd64 image for smoke test
+        run: docker pull --platform linux/amd64 "${IMAGE_PREFIX}@${{ needs.image-build.outputs.digest }}"
+
+      - name: Smoke test amd64 image
+        run: bash scripts/smoke_image.sh "${IMAGE_PREFIX}@${{ needs.image-build.outputs.digest }}"
+
+  image-dry-run:
+    name: Image build and scan (no publish)
+    needs: version-gate
+    if: github.event_name != 'push' || vars.SKIP_GHCR_PUSH == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+
+      - name: Build OCI archive (linux/amd64, linux/arm64)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          outputs: type=oci,dest=/tmp/image.tar
+          cache-from: type=gha
+          provenance: true
+          sbom: true
+
+      - name: Scan OCI archive with Trivy (linux/amd64)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          input: /tmp/image.tar
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          format: table
+          exit-code: "1"
+          trivyignores: .trivyignore
+        env:
+          TRIVY_PLATFORM: linux/amd64
+
+      - name: Scan OCI archive with Trivy (linux/arm64)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          input: /tmp/image.tar
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          format: table
+          exit-code: "1"
+          trivyignores: .trivyignore
+        env:
+          TRIVY_PLATFORM: linux/arm64
+
       - name: Build amd64 image for smoke test
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
@@ -173,21 +250,39 @@ jobs:
           load: true
           tags: keystone-mcp:smoke
           cache-from: type=gha
-          cache-to: type=gha,mode=max
 
       - name: Smoke test amd64 image
         run: bash scripts/smoke_image.sh keystone-mcp:smoke
 
-      - name: Log in to GHCR
-        if: steps.publish.outputs.mode == 'push'
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+  publish:
+    name: Tag published image digest
+    needs: [version-gate, test, image-build, image-scan, image-smoke]
+    if: github.event_name == 'push' && vars.SKIP_GHCR_PUSH != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      digest: ${{ needs.image-build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+
+      - name: Decide whether this tag is the highest release
+        id: latest
+        run: |
+          git fetch --tags --force
+          highest="$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n1)"
+          if [ "${GITHUB_REF_NAME}" = "${highest}" ]; then
+            echo "is_latest=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_latest=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Docker metadata
-        if: steps.publish.outputs.mode == 'push'
         id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
         with:
@@ -195,47 +290,37 @@ jobs:
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest
+            type=raw,value=latest,enable=${{ steps.latest.outputs.is_latest == 'true' }}
 
-      - name: Build and push (linux/amd64, linux/arm64)
-        if: steps.publish.outputs.mode == 'push'
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
-        with:
-          context: .
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          provenance: true
-          sbom: true
+      - name: Tag the pushed digest
+        run: |
+          tags="${{ steps.meta.outputs.tags }}"
+          args=()
+          while IFS= read -r tag; do
+            [ -n "${tag}" ] || continue
+            args+=("-t" "${tag}")
+          done <<< "${tags}"
+          docker buildx imagetools create "${args[@]}" "${IMAGE_PREFIX}@${{ needs.image-build.outputs.digest }}"
 
-      # SKIP_GHCR_PUSH or no registry access (e.g. a fork): still prove that
-      # the arm64 build succeeds, just without publishing anything.
-      - name: Build-only smoke (linux/amd64, linux/arm64)
-        if: steps.publish.outputs.mode == 'smoke'
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
-        with:
-          context: .
-          platforms: linux/amd64,linux/arm64
-          push: false
-          cache-from: type=gha
-          provenance: true
-          sbom: true
+      - name: Verify published manifest digest
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          published="$(docker buildx imagetools inspect "${IMAGE_PREFIX}:${version}" --format '{{json .Manifest}}' | python3 -c 'import json,sys; print(json.load(sys.stdin)["digest"])')"
+          expected="${{ needs.image-build.outputs.digest }}"
+          if [ "${published}" != "${expected}" ]; then
+            echo "Published digest ${published} does not match built digest ${expected}"
+            exit 1
+          fi
 
   pypi:
     name: Publish to PyPI
     needs: [test, wheel-smoke, publish]
-    # Only on a real tag push (never a dry run), after the image is
-    # published, so the image and the package always carry the same
-    # version. SKIP_PYPI_PUBLISH=true (e.g. a fork without a trusted
-    # publisher configured) skips this job without failing it.
     if: github.event_name == 'push' && vars.SKIP_PYPI_PUBLISH != 'true'
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
       contents: read
-      id-token: write # trusted publishing; no API token in secrets
+      id-token: write
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -247,10 +332,7 @@ jobs:
 
   github-release:
     name: Create GitHub Release
-    needs: [publish, pypi]
-    # pypi may legitimately be skipped (SKIP_PYPI_PUBLISH=true, or this run
-    # is a dry run and publish itself was skipped); only a failed publish
-    # (the image) should block the GitHub Release.
+    needs: [publish, pypi, image-build]
     if: always() && needs.publish.result == 'success'
     runs-on: ubuntu-latest
     permissions:
@@ -262,7 +344,7 @@ jobs:
         run: |
           python3 scripts/extract_changelog.py "${GITHUB_REF_NAME#v}" > release-notes.md
           echo "" >> release-notes.md
-          echo "Image: ${IMAGE_PREFIX}:${GITHUB_REF_NAME#v} (linux/amd64, linux/arm64)" >> release-notes.md
+          echo "Image: ${IMAGE_PREFIX}:${GITHUB_REF_NAME#v} (linux/amd64, linux/arm64), digest ${{ needs.image-build.outputs.digest }}" >> release-notes.md
           if [ "${{ needs.pypi.result }}" = "success" ]; then
             echo "PyPI: https://pypi.org/project/keystone-mcp-gateway/${GITHUB_REF_NAME#v}/" >> release-notes.md
           fi
