@@ -11,6 +11,8 @@ users logout
 users delete
 users unbind-identity
 users admins
+users db current
+users db downgrade
 keys issue
 keys list
 keys revoke

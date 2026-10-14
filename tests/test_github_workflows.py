@@ -319,6 +319,25 @@ def test_skip_check_step_present():
     assert "Check skipped tests" in _job_step_names(doc, "test")
 
 
+def test_upgrade_workflow_permissions_and_timeout():
+    doc = _load("upgrade.yml")
+    assert doc.get("permissions") == {"contents": "read", "packages": "read"}
+    job = doc["jobs"]["upgrade"]
+    assert job.get("timeout-minutes") == 25
+    on_block = doc.get("on") or doc.get(True)
+    assert "workflow_dispatch" in (on_block or {})
+    assert "schedule" in (on_block or {})
+    pr = (on_block or {}).get("pull_request") or {}
+    paths = pr.get("paths") or []
+    assert "tests/upgrade/**" in paths
+    checkout = next(
+        step
+        for step in job.get("steps") or []
+        if str(step.get("uses", "")).startswith("actions/checkout@")
+    )
+    assert checkout.get("with", {}).get("fetch-depth") == 0
+
+
 def test_canary_runs_daily_with_latest_and_lowest():
     doc = _load("canary.yml")
     on_block = doc.get("on") or doc.get(True)

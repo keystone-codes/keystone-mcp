@@ -16,7 +16,13 @@ from keystone_mcp.users.db import (
     create_users_engine,
     redact_db_url,
 )
-from keystone_mcp.users.migrate import HEAD_REVISION, current_revision, upgrade_to_head
+from keystone_mcp.users.migrate import (
+    HEAD_REVISION,
+    current_revision,
+    downgrade_one_step,
+    ordered_revisions,
+    upgrade_to_head,
+)
 from support.users_db import POSTGRES_URL_ENV_VAR, reset_postgres_schema, sqlite_url
 
 
@@ -210,6 +216,73 @@ def test_upgrade_to_0003_from_0002(tmp_path: Path) -> None:
     inspector = inspect(engine)
     assert "keystone_api_key" in inspector.get_table_names()
     assert current_revision(engine) == HEAD_REVISION
+
+
+def _seed_keep_user(engine) -> None:
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO keystone_user "
+                "(email, full_name, is_blocked, created_at, updated_at) "
+                "VALUES ('keep@example.com', 'Keep', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+            )
+        )
+
+
+def _downgrade_each_revision_round_trip(engine_factory) -> None:
+    import alembic.command
+    import alembic.config
+
+    revisions = ordered_revisions()
+    assert revisions[-1] == HEAD_REVISION
+    for idx in range(1, len(revisions)):
+        parent = revisions[idx - 1]
+        engine = engine_factory()
+        try:
+            cfg = alembic.config.Config()
+            cfg.set_main_option("script_location", "keystone_mcp.users:migrations")
+            with engine.begin() as conn:
+                cfg.attributes["connection"] = conn
+                alembic.command.upgrade(cfg, parent)
+            _seed_keep_user(engine)
+            upgrade_to_head(engine)
+            downgrade_one_step(engine)
+            upgrade_to_head(engine)
+            with engine.connect() as conn:
+                row = conn.execute(
+                    text("SELECT email FROM keystone_user WHERE email = 'keep@example.com'")
+                ).first()
+            assert row is not None, revisions[idx]
+        finally:
+            engine.dispose()
+
+
+def test_downgrade_each_revision_round_trip_sqlite(tmp_path: Path) -> None:
+    counter = {"n": 0}
+
+    def _factory():
+        counter["n"] += 1
+        sub = tmp_path / f"roundtrip-{counter['n']}"
+        sub.mkdir()
+        return create_users_engine(sqlite_url(sub))
+
+    _downgrade_each_revision_round_trip(_factory)
+
+
+def test_downgrade_each_revision_round_trip_postgres() -> None:
+    postgres_url = os.environ.get(POSTGRES_URL_ENV_VAR)
+    if not postgres_url:
+        pytest.skip(f"{POSTGRES_URL_ENV_VAR} is not set; skipping Postgres migration test")
+
+    def _factory():
+        engine = create_users_engine(postgres_url)
+        reset_postgres_schema(engine)
+        return engine
+
+    _downgrade_each_revision_round_trip(_factory)
+    engine = create_users_engine(postgres_url)
+    reset_postgres_schema(engine)
+    engine.dispose()
 
 
 def test_postgres_is_configured_in_ci() -> None:
