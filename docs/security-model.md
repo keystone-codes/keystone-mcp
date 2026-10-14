@@ -361,6 +361,11 @@ the same Host/Origin guard and OAuth IP throttle as `/token`.
 - RBAC audit requires `KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT` to be set the
   moment audit is on; without it, subject identifiers in audit records would
   be guessable from an email and not actually pseudonymous.
+- Prefer mounting secrets as files (`KEYSTONE_MCP_<NAME>_FILE` or
+  `<NAME>_FILE` for registry and provider variables) over putting values in the
+  process environment: file contents are not copied into `os.environ`, so
+  child processes and `/proc/<pid>/environ` do not inherit them (see
+  [environment.md#secrets-from-files](environment.md#secrets-from-files)).
 - Sign-in attempts are rate-limited per IP and, for failures, per email
   (`KEYSTONE_MCP_LOGIN_THROTTLE_IP_MAX` / `_EMAIL_MAX`); `/authorize`,
   `/token`, and `/revoke` share a separate IP budget

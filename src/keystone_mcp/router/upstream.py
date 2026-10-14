@@ -11,7 +11,6 @@ import asyncio
 import copy
 import json
 import logging
-import os
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -526,7 +525,13 @@ async def fetch_upstream_resource_templates(
 
 def resolve_stdio_child_env(env_from: Sequence[tuple[str, str]]) -> dict[str, str]:
     """Map registry ``env`` entries to values read from this process's environment."""
-    return {child: os.environ[var] for child, var in env_from}
+    from keystone_mcp.secrets import read_secret
+
+    child_env: dict[str, str] = {}
+    for child, var in env_from:
+        value = read_secret(var)
+        child_env[child] = "" if value is None else value
+    return child_env
 
 
 def _normalize_input_schema(schema: dict[str, Any] | None) -> dict[str, Any]:
@@ -957,7 +962,9 @@ class UpstreamRegistry:
         resolved_url = url.rstrip("/")
 
         if bearer_env is not None:
-            token = os.environ.get(bearer_env, "").strip()
+            from keystone_mcp.secrets import read_secret
+
+            token = (read_secret(bearer_env) or "").strip()
             if not token:
                 raise ValueError(
                     f"upstream {name!r}: auth.bearer_env names {bearer_env}, "

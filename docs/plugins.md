@@ -34,7 +34,8 @@ Factories live in `keystone_mcp.plugins`:
 - `UserDirectoryFactory(context: PluginContext, options: Mapping[str, Any]) -> UserDirectory`
 
 `PluginContext` exposes `base_url`, `deployment_profile`,
-`http_timeout_seconds`, and `secret(env_name)`. Fields `settings` and
+`http_timeout_seconds`, and `secret(env_name)` (which also accepts
+`<env_name>_FILE` with the same rules as built-in secrets). Fields `settings` and
 `user_resolver` are **internal — do not use** in third-party plugins.
 
 Validate your `options` in the factory and raise `ValueError` with a clear

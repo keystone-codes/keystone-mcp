@@ -20,7 +20,6 @@ import functools
 import importlib.metadata
 import inspect
 import logging
-import os
 import warnings
 from collections import defaultdict
 from collections.abc import Mapping
@@ -123,7 +122,9 @@ class PluginContext:
 
     def secret(self, env_name: str) -> str:
         """Return an environment variable value or raise :class:`ConfigError`."""
-        value = os.environ.get(env_name, "").strip()
+        from keystone_mcp.secrets import read_secret
+
+        value = (read_secret(env_name) or "").strip()
         if not value:
             raise ConfigError(f"environment variable {env_name!r} is missing or empty")
         return value

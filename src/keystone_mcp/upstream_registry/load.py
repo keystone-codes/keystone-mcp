@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import shutil
 from pathlib import Path
 from typing import Any, Literal
@@ -12,6 +11,7 @@ import yaml
 
 from keystone_mcp.config import UpstreamConfig, _parse_prefix_list
 from keystone_mcp.identity_assertion import identity_signing_key_from_env, resolve_identity_secret
+from keystone_mcp.secrets import read_secret, secret_is_set
 from keystone_mcp.upstream_registry.policy import UpstreamSecurityPolicy
 from keystone_mcp.upstream_registry.validate import (
     _normalize_env_shorthand,
@@ -102,10 +102,13 @@ def _parse_auth(
             raise ValueError(
                 f"upstream {name!r}: auth.bearer_env is not supported with transport: stdio"
             )
-        if check_environment and not os.environ.get(bearer_env, "").strip():
-            raise ValueError(
-                f"upstream {name!r}: auth.bearer_env names {bearer_env}, which is not set or empty"
-            )
+        if check_environment:
+            token = (read_secret(bearer_env) or "").strip()
+            if not token:
+                raise ValueError(
+                    f"upstream {name!r}: auth.bearer_env names {bearer_env}, "
+                    "which is not set or empty"
+                )
 
     identity_secret_env: str | None = None
     if "identity_secret_env" in auth:
@@ -147,7 +150,7 @@ def _parse_env_from(
     pairs: list[tuple[str, str]] = []
     for child, value in mapping.items():
         var = str(value).strip()
-        if check_environment and var not in os.environ:
+        if check_environment and not secret_is_set(var):
             raise ValueError(f"upstream {name!r}: env.{child} names {var}, which is not set")
         pairs.append((str(child), var))
     return tuple(pairs)

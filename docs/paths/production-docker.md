@@ -69,6 +69,10 @@ for this deployment. Required:
 | `KEYSTONE_MCP_LOGIN_GOOGLE_SECRET` | Google client secret from step 2 (name must match `client_secret_env` in the providers file) |
 | `KEYSTONE_MCP_UPSTREAMS_PATH` | `/etc/keystone-mcp/upstreams.yaml` |
 
+Instead of putting Redis URL or audit salt in `.env`, you can mount Docker
+secrets and set `KEYSTONE_MCP_REDIS_URL_FILE` / `KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT_FILE`
+to the mounted paths (see [environment.md#secrets-from-files](../environment.md#secrets-from-files)).
+
 Edit `login-providers.yaml` with your Google `client_id` (and optional
 `allowed_domain`). Removed in 0.5.0: delete any `KEYSTONE_MCP_AUTH_SERVICE_*`
 lines from `.env` — startup refuses them.
