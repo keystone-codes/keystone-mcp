@@ -18,6 +18,7 @@ from keystone_mcp.users.emails import normalize_email
 from keystone_mcp.users.errors import (
     ActorEmailRequiredError,
     InvalidRoleError,
+    InvalidUserFieldError,
     LastAdministratorError,
     SelfAdminMutationError,
     UserAlreadyExistsError,
@@ -131,7 +132,7 @@ def test_create_then_duplicate_is_conflict(session_factory) -> None:  # noqa: AN
 
 def test_create_rejects_bad_email_and_empty_full_name(session_factory) -> None:  # noqa: ANN001
     with session_scope(session_factory) as session:
-        with pytest.raises(Exception) as exc_info:  # noqa: PT011 - InvalidUserFieldError
+        with pytest.raises(InvalidUserFieldError) as exc_info:
             service.create_user(
                 session,
                 email="not-an-email",
@@ -144,7 +145,7 @@ def test_create_rejects_bad_email_and_empty_full_name(session_factory) -> None: 
         assert exc_info.value.code == "validation_error"
 
     with session_scope(session_factory) as session:
-        with pytest.raises(Exception) as exc_info:  # noqa: PT011
+        with pytest.raises(InvalidUserFieldError) as exc_info:
             service.create_user(
                 session,
                 email="ok@example.com",

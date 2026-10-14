@@ -18,8 +18,6 @@ from keystone_mcp.user_directory.resolver import CachedUserDirectoryResolver
 from keystone_mcp.user_directory.revision import InMemoryRevisionReader
 from support.users_store import make_users_store
 
-pytest_plugins = ["keystone_mcp.contract_tests"]
-
 
 @pytest.fixture
 def keystone_form_provider_case(tmp_path) -> FormProviderCase:

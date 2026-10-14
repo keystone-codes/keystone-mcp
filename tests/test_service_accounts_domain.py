@@ -109,12 +109,51 @@ async def test_block_and_revision_bump(store: UsersStore) -> None:
     assert resolved.is_blocked is True
 
 
-def test_postgres_migration_from_0001(tmp_path: Path) -> None:
+def test_postgres_migration_from_0001() -> None:
     postgres_url = __import__("os").environ.get(POSTGRES_URL_ENV_VAR)
     if not postgres_url:
         pytest.skip(f"{POSTGRES_URL_ENV_VAR} is not set")
-    from keystone_mcp.users.db import create_users_engine
+
+    import alembic.command
+    import alembic.config
+    from sqlalchemy import inspect, text
+
+    from keystone_mcp.users.db import create_users_engine, make_session_factory, session_scope
+    from keystone_mcp.users.migrate import HEAD_REVISION, current_revision
+    from keystone_mcp.users.service import create_user
 
     engine = create_users_engine(postgres_url)
+    cfg = alembic.config.Config()
+    cfg.set_main_option("script_location", "keystone_mcp.users:migrations")
+    with engine.begin() as conn:
+        cfg.attributes["connection"] = conn
+        alembic.command.upgrade(cfg, "0001_initial")
+
+    factory = make_session_factory(engine)
+    with session_scope(factory) as session:
+        create_user(
+            session,
+            email="migrate@example.com",
+            full_name="Migrate",
+            roles=["member"],
+            note=None,
+            created_by="test",
+            allowed_roles=None,
+        )
+
     upgrade_to_head(engine)
+    inspector = inspect(engine)
+    for table in (
+        "keystone_user",
+        "keystone_service_account",
+        "keystone_service_account_role",
+        "keystone_api_key",
+    ):
+        assert table in inspector.get_table_names()
+    with engine.connect() as conn:
+        row = conn.execute(
+            text("SELECT email FROM keystone_user WHERE email = 'migrate@example.com'")
+        ).first()
+    assert row is not None
+    assert current_revision(engine) == HEAD_REVISION
     engine.dispose()

@@ -14,6 +14,7 @@ import pytest
 from asgi_lifespan import LifespanManager
 from fastmcp import Client
 from fastmcp.exceptions import ToolError
+from mcp.shared.exceptions import MCPError
 from prometheus_client import REGISTRY
 
 from keystone_mcp.adapters.stub import StubAdapter
@@ -279,10 +280,10 @@ async def test_unknown_prompt_and_resource_uri_are_unknown(
         _obs,
     ):
         for _ in range(200):
-            with pytest.raises(Exception):
+            with pytest.raises(MCPError):
                 await client.get_prompt(f"rand_{secrets.token_hex(6)}", {})
         for _ in range(200):
-            with pytest.raises(Exception):
+            with pytest.raises(MCPError):
                 await client.read_resource(f"file:///rand-{uuid.uuid4().hex}.md")
 
     after = _counter_snapshot("keystone_mcp_rbac_decisions")

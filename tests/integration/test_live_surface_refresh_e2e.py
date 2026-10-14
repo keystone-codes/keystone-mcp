@@ -1,17 +1,14 @@
 """Live surface refresh: dummy upstream + policy file on a real refresh timer.
 
 Runs the reconciler loop from FastMCP lifespan with
-KEYSTONE_MCP_REFRESH_INTERVAL_SECONDS=30 (not the default 300).
-
-Enable explicitly (slow, ~60–80s depending on reconciler jitter):
-  uv run pytest tests/integration/test_live_surface_refresh_e2e.py -m live_refresh -v
+``refresh_interval_seconds=1`` (not the default 300). The test is part of the
+default suite; the ``live_refresh`` marker describes the scenario.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
-import socket
 from pathlib import Path
 
 import pytest
@@ -25,8 +22,7 @@ from keystone_mcp.server import bootstrap_platform, build_server
 from keystone_mcp.user_directory import build_in_memory_user_directory_resolver
 from support.login import dev_token_login
 
-REFRESH_SECONDS = 30
-# First reconciler tick waits interval + jitter (up to interval / 4, capped at 15s).
+REFRESH_SECONDS = 1
 _TICK_JITTER_UPPER = min(15.0, REFRESH_SECONDS / 4)
 POLL_TIMEOUT_SECONDS = REFRESH_SECONDS + _TICK_JITTER_UPPER + 5
 
@@ -55,12 +51,6 @@ roles:
   administrator:
     allow: ["demo_*", "users_*"]
 """
-
-
-def _free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind(("127.0.0.1", 0))
-        return int(sock.getsockname()[1])
 
 
 def _register_downstream_v1(mcp: FastMCP) -> None:
@@ -93,18 +83,23 @@ def _mutate_downstream_v2(mcp: FastMCP) -> None:
 async def dummy_upstream_http():
     mcp = FastMCP("dummy-upstream")
     _register_downstream_v1(mcp)
-    port = _free_port()
     config = uvicorn.Config(
         mcp.http_app(path="/mcp"),
         host="127.0.0.1",
-        port=port,
+        port=0,
         log_level="warning",
     )
     server = uvicorn.Server(config)
     task = asyncio.create_task(server.serve())
-    await asyncio.sleep(0.3)
+    for _ in range(100):
+        if server.started and server.servers:
+            break
+        await asyncio.sleep(0.05)
+    assert server.started and server.servers, "dummy upstream did not start"
+    bound_port = server.servers[0].sockets[0].getsockname()[1]
+    upstream_url = f"http://127.0.0.1:{bound_port}/mcp"
     try:
-        yield f"http://127.0.0.1:{port}/mcp", mcp
+        yield upstream_url, mcp
     finally:
         server.should_exit = True
         await task

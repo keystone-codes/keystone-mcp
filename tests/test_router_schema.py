@@ -250,7 +250,7 @@ async def test_add_route_with_unpublishable_param_name_leaves_no_trace() -> None
     mcp = FastMCP("t")
     registry = RouterRegistry(RouterEngine(Settings(base_url="http://localhost:8080")), mcp)
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="from"):
         registry.add_route("bad", _StubAdapter(), params=schema_to_params(schema), mode="live")
 
     assert registry.get("bad") is None
@@ -293,7 +293,7 @@ async def test_add_route_update_failure_keeps_the_old_tool_published() -> None:
     old_route = registry.get("search")
     assert old_route is not None
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="from"):
         registry.add_route(
             "search", _StubAdapter(), params=schema_to_params(bad_schema), mode="live"
         )
