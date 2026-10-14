@@ -851,6 +851,9 @@ class Settings:
     refresh_token_ttl_seconds: int = field(
         default_factory=lambda: _env_int("KEYSTONE_MCP_REFRESH_TOKEN_TTL", 30 * 24 * 3600)
     )
+    oauth_refresh_grace_seconds: int = field(
+        default_factory=lambda: _env_int("KEYSTONE_MCP_OAUTH_REFRESH_GRACE_SECONDS", 10)
+    )
 
     # OAuth session store (shared platform Redis; required at runtime outside tests).
     redis_url: str = field(default_factory=lambda: _env("KEYSTONE_MCP_REDIS_URL", ""))
@@ -1199,6 +1202,12 @@ def validate_settings(settings: Settings) -> None:
         raise ConfigError(
             "KEYSTONE_MCP_METRICS_OAUTH_CLIENT_ID_LIMIT must be >= 0 "
             f"(got {settings.metrics_oauth_client_id_limit!r})"
+        )
+
+    grace = settings.oauth_refresh_grace_seconds
+    if grace < 0 or grace > 60:
+        raise ConfigError(
+            f"KEYSTONE_MCP_OAUTH_REFRESH_GRACE_SECONDS must be between 0 and 60 (got {grace!r})"
         )
 
     if settings.primary_login_method not in settings.enabled_login_methods:
