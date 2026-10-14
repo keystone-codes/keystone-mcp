@@ -6,8 +6,8 @@ through :func:`call_upstream_tool`. Most private fastmcp/mcp symbols live
 here (``Client._session_kwargs``, ``Client._await_with_session_monitoring``,
 ``Client._parse_call_tool_result``); others are in ``server.py``
 (``FastMCP._mcp_server``), ``router/upstream_content.py`` (``Namespace._transform_uri``),
-``router/proxy_components.py`` (``_stash_proxy_request_context``, ``forward_uri``,
-``ProxyResource._cached_content``), and ``surface/client_sessions.py``
+``router/proxy_components.py`` (``forward_uri``, ``ProxyResource._cached_content``),
+and ``surface/client_sessions.py``
 (``ServerSession._connection``). The full list and signatures are in
 ``tests/test_private_api_sentinels.py``.
 
@@ -342,6 +342,16 @@ def _wrap_upstream_input_required(
     declined_keys: list[str] = []
 
     for key, request in result.input_requests.items():
+        if not isinstance(request, types.ElicitRequest):
+            method = getattr(request, "method", type(request).__name__)
+            logger.info(
+                "upstream input request not forwarded namespace=%s method=%s",
+                namespace,
+                method,
+            )
+            raise ToolError(
+                f"upstream {namespace} asked for {method}, which keystone-mcp does not forward"
+            )
         params = request.params
         if isinstance(params, types.ElicitRequestURLParams):
             declined_keys.append(key)
