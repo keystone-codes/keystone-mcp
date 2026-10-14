@@ -48,9 +48,7 @@ def reapply_logger_levels(settings: Settings | None = None) -> None:
     except (AttributeError, ImportError):
         pass
 
-    noisy_level = (
-        logging.DEBUG if settings.log_level.upper() == "DEBUG" else logging.WARNING
-    )
+    noisy_level = logging.DEBUG if settings.log_level.upper() == "DEBUG" else logging.WARNING
 
     fastmcp_log = logging.getLogger(_FASTMCP_LOGGER)
     fastmcp_log.handlers.clear()

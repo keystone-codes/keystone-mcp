@@ -120,7 +120,9 @@ Upstreams are discovered in parallel, each retried on its own
 (`KEYSTONE_MCP_UPSTREAM_DISCOVERY_RETRIES`, default 3). An upstream that stays
 unreachable does not block startup or the other upstreams: it is logged with
 its namespace and reason, and retried on every refresh tick until it comes
-up. If `KEYSTONE_MCP_REFRESH_INTERVAL_SECONDS=0` (the background refresh task
+up. HTTP discovery does not follow redirects (same as proxied tool calls):
+point the registry `url` at the final MCP endpoint. If
+`KEYSTONE_MCP_REFRESH_INTERVAL_SECONDS=0` (the background refresh task
 disabled), there is no refresh tick to retry it: the WARNING says so
 ("will not be retried; refresh is disabled") and the upstream stays
 unreachable for the life of the process. Startup is refused only when every
@@ -178,7 +180,8 @@ Proxied tools are published with the upstream's own `inputSchema` (after
 `KEYSTONE_MCP_PROXY_SCHEMA_PATCHES`), `outputSchema` (only when
 `KEYSTONE_MCP_PROXY_STATUS_ENVELOPE=false`), `title` and `annotations`.
 Keystone-MCP does not validate arguments against that schema; the upstream
-does.
+does. It also does not re-validate a tool **answer** against the upstream's
+`outputSchema` — the answer is forwarded as returned.
 
 ## Built-in tools
 
@@ -243,6 +246,10 @@ not implemented yet or deliberately never forwarded.
 | `completion/complete` | no |
 | MCP tasks (`tasks/*`) | no |
 
+Tool and prompt results forward the upstream's `_meta` except connection stamps
+(`io.modelcontextprotocol/serverInfo`, `protocolVersion`, `clientInfo`,
+`clientCapabilities`); other keys pass through unchanged.
+
 Same rows apply to **stdio upstreams**, except `elicitation/create` (upstream →
 user), which is not forwarded for stdio either.
 
@@ -287,6 +294,17 @@ except `/healthz`/`/readyz`, by the `Host` allowlist
 
 ## Limits
 
+- Upstream HTTP response bodies are capped at
+  `KEYSTONE_MCP_UPSTREAM_MAX_RESPONSE_BYTES` (default 16 MiB); stdio upstreams
+  have no response cap. Each tool's `inputSchema` and `outputSchema` must fit
+  in `KEYSTONE_MCP_UPSTREAM_MAX_SCHEMA_BYTES` (default 64 KiB); additionally,
+  any JSON Schema `pattern` or `patternProperties` key longer than 512
+  characters, or nesting deeper than 64 levels, causes the tool to be skipped
+  (warning and metric). Catalog reads refuse more than
+  `KEYSTONE_MCP_UPSTREAM_MAX_CATALOG_ITEMS` (default 2000) tools, prompts,
+  resources, or templates per upstream per kind — a failed tools list marks
+  the upstream unavailable; a failed prompts/resources read keeps the previous
+  catalog for that kind.
 - The throttle, the users-directory cache and the circuit breaker are
   per-process; live discovery (the catalog of published tools) is
   per-process too. What that means with more than one replica:

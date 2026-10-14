@@ -298,7 +298,14 @@ class SurfaceReconciler:
         templates_raw = catalog.templates
 
         became_available = self.upstreams.mark_available(namespace)
-        specs = build_upstream_tool_specs(cfg, tools, schema_patches=self.upstreams.schema_patches)
+        specs, schema_rejected = build_upstream_tool_specs(
+            cfg,
+            tools,
+            schema_patches=self.upstreams.schema_patches,
+            max_schema_bytes=self.upstreams.upstream_max_schema_bytes,
+        )
+        for route_name in schema_rejected:
+            self.upstreams.mark_unpublishable(namespace, route_name)
         desired = {name: spec.fingerprint for name, spec in specs.items()}
 
         if not desired and previous:
