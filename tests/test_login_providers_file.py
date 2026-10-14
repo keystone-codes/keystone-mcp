@@ -10,6 +10,7 @@ import pytest
 from keystone_mcp.config import ConfigError, Settings, load_settings, startup_warnings
 from keystone_mcp.login.config import load_login_providers_file
 from keystone_mcp.login.factory import build_login_providers
+from keystone_mcp.login.file_options import parse_google_options, parse_oidc_options
 from keystone_mcp.login.oidc import OidcLoginProvider
 from support.test_env import require_redis_url
 
@@ -487,3 +488,49 @@ async def test_email_claim_email_unchanged(tmp_path, monkeypatch):
         params=params, callback_url="http://app/cb", attempt=redirect.attempt
     )
     assert identity.email == "alice@example.com"
+
+
+def test_oidc_endpoint_hosts_parsed():
+    cfg = parse_oidc_options(
+        {
+            "client_id": "c",
+            "client_secret_env": "KEYSTONE_MCP_LOGIN_X_SECRET",
+            "issuer": "https://idp.example.com",
+            "endpoint_hosts": ["Auth.Example.NET", "keys.example.net:8443"],
+        },
+        name="x",
+        title="X",
+        deployment_profile="production",
+        secret=lambda _: "sec",
+    )
+    assert cfg.endpoint_hosts == ("auth.example.net", "keys.example.net:8443")
+
+
+def test_oidc_endpoint_hosts_rejects_url():
+    with pytest.raises(ValueError, match="endpoint_hosts\\[0\\]"):
+        parse_oidc_options(
+            {
+                "client_id": "c",
+                "client_secret_env": "KEYSTONE_MCP_LOGIN_X_SECRET",
+                "issuer": "https://idp.example.com",
+                "endpoint_hosts": ["https://auth.example.net"],
+            },
+            name="x",
+            title="X",
+            deployment_profile="production",
+            secret=lambda _: "sec",
+        )
+
+
+def test_google_endpoint_hosts_not_configurable():
+    with pytest.raises(ValueError, match="endpoint_hosts is not configurable for type: google"):
+        parse_google_options(
+            {
+                "client_id": "c",
+                "client_secret_env": "KEYSTONE_MCP_LOGIN_GOOGLE_SECRET",
+                "endpoint_hosts": ["auth.example.net"],
+            },
+            name="google",
+            title="Google",
+            secret=lambda _: "sec",
+        )

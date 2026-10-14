@@ -56,6 +56,68 @@ async def test_discovery_endpoint_wrong_host_is_unavailable(field: str):
     assert exc.value.reason == "provider_unavailable"
 
 
+async def test_google_preset_accepts_googleapis_endpoints():
+    fake = FakeOidcIssuer(issuer="https://accounts.google.com")
+    fake.tamper.discovery_token_endpoint = "https://oauth2.googleapis.com/token"
+    fake.tamper.discovery_jwks_uri = "https://www.googleapis.com/jwks"
+    provider = OidcLoginProvider(
+        google_provider_config(client_id=fake.client_id, client_secret=fake.client_secret),
+        http_client_factory=fake.http_client,
+    )
+    redirect = await provider.begin(state="st", callback_url="http://app/cb")
+    fake.user.email = "alice@example.com"
+    params = await fake.authorize(redirect.url)
+    identity = await provider.complete(
+        params=params, callback_url="http://app/cb", attempt=redirect.attempt
+    )
+    assert identity.email == "alice@example.com"
+
+
+async def test_google_preset_still_refuses_other_hosts():
+    fake = FakeOidcIssuer(issuer="https://accounts.google.com")
+    fake.tamper.discovery_token_endpoint = "https://evil.test/token"
+    provider = OidcLoginProvider(
+        google_provider_config(client_id=fake.client_id, client_secret=fake.client_secret),
+        http_client_factory=fake.http_client,
+    )
+    with pytest.raises(LoginRejected) as exc:
+        await provider.begin(state="s", callback_url="http://app/cb")
+    assert exc.value.reason == "provider_unavailable"
+
+
+async def test_endpoint_hosts_option_allows_listed_host():
+    fake = FakeOidcIssuer()
+    fake.tamper.discovery_token_endpoint = "https://auth.example.net/token"
+    provider = _provider(fake, endpoint_hosts=("auth.example.net",))
+    redirect = await provider.begin(state="st", callback_url="http://app/cb")
+    params = await fake.authorize(redirect.url)
+    identity = await provider.complete(
+        params=params, callback_url="http://app/cb", attempt=redirect.attempt
+    )
+    assert identity.email == fake.user.email
+
+
+async def test_endpoint_hosts_never_allows_http():
+    fake = FakeOidcIssuer()
+    fake.tamper.discovery_token_endpoint = "http://auth.example.net/token"
+    provider = _provider(fake, endpoint_hosts=("auth.example.net",))
+    with pytest.raises(LoginRejected) as exc:
+        await provider.begin(state="s", callback_url="http://app/cb")
+    assert exc.value.reason == "provider_unavailable"
+
+
+async def test_origin_mismatch_log_names_field_and_host(caplog):
+    caplog.set_level(logging.ERROR)
+    fake = FakeOidcIssuer()
+    fake.tamper.discovery_token_endpoint = "https://evil.test/path"
+    provider = _provider(fake)
+    with pytest.raises(LoginRejected):
+        await provider.begin(state="s", callback_url="http://app/cb")
+    assert "token_endpoint" in caplog.text
+    assert "evil.test" in caplog.text
+    assert "/path" not in caplog.text
+
+
 async def test_discovery_endpoint_different_path_same_host_is_accepted():
     fake = FakeOidcIssuer()
     fake.tamper.discovery_authorization_endpoint = f"{fake.issuer}/custom/authorize"
