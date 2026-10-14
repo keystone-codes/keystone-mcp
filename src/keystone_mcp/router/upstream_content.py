@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 from fastmcp.resources.template import ResourceTemplate
 from pydantic import AnyUrl
+
+_URI_SCHEME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.\-]*://")
 
 
 def _template_matches(uri_template: str, uri: str) -> bool:
@@ -25,6 +28,20 @@ def published_uri_for_namespace(namespace: str, uri: str) -> str:
     from fastmcp.server.transforms.namespace import Namespace
 
     return Namespace(namespace)._transform_uri(uri)
+
+
+def reverse_uri_for_namespace(namespace: str, uri: str) -> str | None:
+    """Upstream-local URI for a published form (private fastmcp API)."""
+    from fastmcp.server.transforms.namespace import Namespace
+
+    return Namespace(namespace)._reverse_uri(uri)
+
+
+def namespaced_uri(namespace: str, uri: str) -> str | None:
+    """Published URI when *uri* has an RFC 3986 scheme, else ``None``."""
+    if _URI_SCHEME_RE.match(uri) is None:
+        return None
+    return published_uri_for_namespace(namespace, uri)
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,34 +135,45 @@ class UpstreamContentCatalog:
     def owner_of_template_rbac(self, rbac_name: str) -> str | None:
         return self._template_owners.get(rbac_name)
 
+    def namespace_of(self, published_uri: str) -> str | None:
+        for ns in set(self._resources) | set(self._templates):
+            if reverse_uri_for_namespace(ns, published_uri) is not None:
+                return ns
+        return None
+
     def resolve_published_uri(self, requested_uri: str) -> str:
         """Map a client-normalized URI back to the catalog's published form."""
         normalized = normalize_resource_uri(requested_uri)
-        for specs in self._resources.values():
-            for spec in specs.values():
-                if normalize_resource_uri(spec.published_uri) == normalized:
-                    return spec.published_uri
-        for specs in self._templates.values():
-            for spec in specs.values():
-                if _template_matches(spec.published_uri_template, requested_uri):
-                    return requested_uri
-                if _template_matches(spec.published_uri_template, normalized):
-                    return requested_uri
+        ns = self.namespace_of(requested_uri) or self.namespace_of(normalized)
+        if ns is None:
+            return requested_uri
+        for spec in self._resources.get(ns, {}).values():
+            if normalize_resource_uri(spec.published_uri) == normalized:
+                return spec.published_uri
+        for spec in self._templates.get(ns, {}).values():
+            if _template_matches(spec.published_uri_template, requested_uri):
+                return requested_uri
+            if _template_matches(spec.published_uri_template, normalized):
+                return requested_uri
         return requested_uri
 
-    def rbac_name_for_uri(self, published_uri: str) -> str | None:
+    def rbac_names_for_uri(self, published_uri: str) -> tuple[str, ...]:
         resolved = self.resolve_published_uri(published_uri)
-        for specs in self._resources.values():
-            for spec in specs.values():
-                if spec.published_uri == resolved:
-                    return spec.rbac_name
-                if normalize_resource_uri(spec.published_uri) == normalize_resource_uri(resolved):
-                    return spec.rbac_name
-        for specs in self._templates.values():
-            for spec in specs.values():
-                if _template_matches(spec.published_uri_template, resolved):
-                    return spec.rbac_name
-        return None
+        ns = self.namespace_of(resolved) or self.namespace_of(published_uri)
+        if ns is None:
+            return ()
+        names: set[str] = set()
+        for spec in self._resources.get(ns, {}).values():
+            if spec.published_uri == resolved:
+                names.add(spec.rbac_name)
+            elif normalize_resource_uri(spec.published_uri) == normalize_resource_uri(resolved):
+                names.add(spec.rbac_name)
+        for spec in self._templates.get(ns, {}).values():
+            if _template_matches(spec.published_uri_template, resolved):
+                names.add(spec.rbac_name)
+            elif _template_matches(spec.published_uri_template, published_uri):
+                names.add(spec.rbac_name)
+        return tuple(sorted(names))
 
     def rbac_name_for_template_listing(self, published_uri_template: str) -> str | None:
         for specs in self._templates.values():

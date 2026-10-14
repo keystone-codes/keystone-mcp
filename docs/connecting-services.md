@@ -15,7 +15,8 @@ working minimal service that meets this contract is
 `X-Author-Email` on every call.** Keystone-MCP discovers the service's tool catalog at startup and then on a
 live refresh timer (`list_tools()` and, when the service advertises prompts,
 `list_prompts()`), re-publishing each tool and prompt as
-`<namespace>_<tool>` / `<namespace>_<prompt>`.
+`<namespace>_<tool>` / `<namespace>_<prompt>`. Resource URIs and URI templates
+need a `scheme://` prefix; anything else is not published.
 
 ```
 Claude Desktop / Cursor
