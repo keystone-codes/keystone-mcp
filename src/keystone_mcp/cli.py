@@ -11,7 +11,7 @@ from typing import Sequence
 
 import yaml
 
-from keystone_mcp.config import Settings
+from keystone_mcp.config import ConfigError, settings_for_command
 from keystone_mcp.env_file import load_env_file
 from keystone_mcp.observability.logging import configure_logging
 from keystone_mcp.plugins_cli import add_plugins_commands
@@ -208,9 +208,15 @@ def _cmd_upstream_validate(path: Path) -> int:
     if not path.is_file():
         print(f"error: file not found: {path}", file=sys.stderr)
         return 1
+    try:
+        allow_insecure_http = _env_bool("KEYSTONE_MCP_UPSTREAM_ALLOW_INSECURE_HTTP", False)
+        egress_allow_private = _env_bool("KEYSTONE_MCP_UPSTREAM_EGRESS_ALLOW_PRIVATE", False)
+    except ConfigError as exc:
+        print(f"keystone-mcp: {exc}", file=sys.stderr)
+        return 1
     policy = UpstreamSecurityPolicy(
-        allow_insecure_http=_env_bool("KEYSTONE_MCP_UPSTREAM_ALLOW_INSECURE_HTTP", False),
-        egress_allow_private=_env_bool("KEYSTONE_MCP_UPSTREAM_EGRESS_ALLOW_PRIVATE", False),
+        allow_insecure_http=allow_insecure_http,
+        egress_allow_private=egress_allow_private,
     )
     try:
         document = read_registry_document(path)
@@ -226,9 +232,10 @@ def _cmd_upstream_validate(path: Path) -> int:
     return 0
 
 
+_EXIT_ENV = 2
+
+
 def main(argv: list[str] | None = None) -> int:
-    load_env_file()
-    configure_logging(Settings())
     parser = argparse.ArgumentParser(prog="keystone-mcp")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -292,6 +299,12 @@ def main(argv: list[str] | None = None) -> int:
     add_plugins_commands(subparsers)
 
     args = parser.parse_args(argv)
+    try:
+        load_env_file()
+    except ConfigError as exc:
+        print(f"keystone-mcp: {exc}", file=sys.stderr)
+        return _EXIT_ENV
+    configure_logging(settings_for_command(frozenset()))
     if args.command == "catalog":
         return args.handler(args)
     if args.command == "upstream":

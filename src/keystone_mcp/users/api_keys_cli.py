@@ -7,8 +7,7 @@ import asyncio
 import json
 import sys
 
-from keystone_mcp.config import Settings
-from keystone_mcp.users.cli import _open_store
+from keystone_mcp.users.cli import _open_store, _settings_for_users_cli
 from keystone_mcp.users.errors import UsersError
 
 
@@ -35,7 +34,7 @@ def add_api_keys_commands(subparsers: argparse._SubParsersAction) -> None:
 
 
 def _cmd_issue(args: argparse.Namespace) -> int:
-    settings = Settings()
+    settings = _settings_for_users_cli()
     store = _open_store(settings)
     expires_in_days = None if args.no_expiry else args.days
     try:
@@ -59,7 +58,7 @@ def _cmd_issue(args: argparse.Namespace) -> int:
 
 
 def _cmd_list(args: argparse.Namespace) -> int:
-    settings = Settings()
+    settings = _settings_for_users_cli()
     store = _open_store(settings)
     try:
         rows = asyncio.run(
@@ -76,7 +75,7 @@ def _cmd_list(args: argparse.Namespace) -> int:
 
 
 def _cmd_revoke(args: argparse.Namespace) -> int:
-    settings = Settings()
+    settings = _settings_for_users_cli()
     store = _open_store(settings)
     try:
         record, _changed = asyncio.run(store.revoke_api_key(key_id=args.key_id, actor="system:cli"))

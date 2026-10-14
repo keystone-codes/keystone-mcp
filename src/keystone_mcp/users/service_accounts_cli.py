@@ -7,9 +7,8 @@ import asyncio
 import json
 import sys
 
-from keystone_mcp.config import Settings
 from keystone_mcp.rbac.policy import PolicyContractError, load_policy_file
-from keystone_mcp.users.cli import _CliExit, _open_store
+from keystone_mcp.users.cli import _CliExit, _open_store, _settings_for_users_cli
 from keystone_mcp.users.errors import UsersError
 from keystone_mcp.users.roles import normalize_roles
 
@@ -41,7 +40,7 @@ def add_service_accounts_commands(subparsers: argparse._SubParsersAction) -> Non
     update_cmd.set_defaults(handler=_cmd_update)
 
 
-def _policy_roles(settings: Settings) -> frozenset[str] | None:
+def _policy_roles(settings) -> frozenset[str] | None:
     if not settings.rbac_enforcing:
         return None
     path = settings.rbac_policy_path
@@ -56,7 +55,7 @@ def _policy_roles(settings: Settings) -> frozenset[str] | None:
 
 
 def _cmd_add(args: argparse.Namespace) -> int:
-    settings = Settings()
+    settings = _settings_for_users_cli()
     store = _open_store(settings)
     allowed = _policy_roles(settings)
     roles = normalize_roles(args.roles or [], allowed=allowed)
@@ -79,7 +78,7 @@ def _cmd_add(args: argparse.Namespace) -> int:
 
 
 def _cmd_list(args: argparse.Namespace) -> int:
-    settings = Settings()
+    settings = _settings_for_users_cli()
     store = _open_store(settings)
     try:
         rows = asyncio.run(store.list_service_accounts(is_blocked=True if args.blocked else False))
@@ -94,7 +93,7 @@ def _cmd_list(args: argparse.Namespace) -> int:
 
 
 def _cmd_update(args: argparse.Namespace) -> int:
-    settings = Settings()
+    settings = _settings_for_users_cli()
     store = _open_store(settings)
     allowed = _policy_roles(settings)
     roles = None
