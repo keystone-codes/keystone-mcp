@@ -85,19 +85,26 @@ def resolve_tool_call_metric_labels(
     tool_name: str,
     *,
     tool_name_mode: str,
+    known: bool = True,
 ) -> ToolCallMetricLabels:
     """Build Prometheus labels for a call_tool attempt or invocation."""
-    family = tool_family(tool_name)
-    if tool_name_mode == "coarse":
-        tool_label = family
+    if not known:
+        family = "unknown"
+        tool_label = "unknown"
+        namespace = "unknown"
     else:
-        tool_label = tool_name.strip() if tool_name else "_"
+        family = tool_family(tool_name)
+        namespace = family
+        if tool_name_mode == "coarse":
+            tool_label = family
+        else:
+            tool_label = tool_name.strip() if tool_name else "_"
 
     identity = resolve_verified_identity()
     if identity is None:
         return ToolCallMetricLabels(
             tool_family=family,
-            namespace=family,
+            namespace=namespace,
             tool=tool_label,
             auth_method=_NONE_AUTH,
             oauth_client_id=_NONE_AUTH,
@@ -108,7 +115,7 @@ def resolve_tool_call_metric_labels(
     oauth_client_id = _resolve_oauth_client_id()
     return ToolCallMetricLabels(
         tool_family=family,
-        namespace=family,
+        namespace=namespace,
         tool=tool_label,
         auth_method=auth_method,
         oauth_client_id=oauth_client_id,

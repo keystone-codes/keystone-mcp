@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 from fastmcp import Client, FastMCP
-from fastmcp.exceptions import ToolError
+from fastmcp.exceptions import PromptError, ToolError
 from fastmcp.server.middleware import MiddlewareContext
 
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
@@ -63,7 +63,9 @@ def patch_verified_identity(monkeypatch):
 def _settings(**overrides) -> Settings:
     return Settings(
         base_url="http://localhost:8080",
-        throttle_max_requests=THROTTLE_LIMIT,
+        # FastMCP clients may issue tools/list during session setup; that
+        # request now shares the same per-identity budget as call_tool.
+        throttle_max_requests=THROTTLE_LIMIT + 1,
         throttle_window_seconds=60,
         **overrides,
     )
@@ -247,5 +249,5 @@ async def test_get_prompt_consumes_throttle(patch_verified_identity):
     context = MiddlewareContext(message=params, fastmcp_context=None)  # type: ignore[arg-type]
 
     await middleware.on_get_prompt(context, _noop)
-    with pytest.raises(ToolError, match=THROTTLE_MESSAGE):
+    with pytest.raises(PromptError, match=THROTTLE_MESSAGE):
         await middleware.on_get_prompt(context, _noop)

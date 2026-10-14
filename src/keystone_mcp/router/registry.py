@@ -38,6 +38,10 @@ class RouterRegistry:
         self._engine = engine
         self._mcp = mcp
         self._routes: dict[str, Route] = {}
+        self._published_names: dict[str, str] = {}
+
+    def has_published_name(self, published_name: str) -> bool:
+        return published_name in self._published_names
 
     @property
     def routes(self) -> dict[str, Route]:
@@ -56,10 +60,22 @@ class RouterRegistry:
         register a route under a name use this first to refuse the
         collision instead of silently shadowing the existing one.
         """
-        for route_key, route in self._routes.items():
-            if route.published_name == published_name:
-                return route_key
-        return None
+        return self._published_names.get(published_name)
+
+    def _index_published_name(self, route: Route) -> None:
+        published = route.published_name
+        if published not in self._published_names:
+            self._published_names[published] = route.route_key
+
+    def _unindex_published_name(self, route: Route) -> None:
+        published = route.published_name
+        if self._published_names.get(published) != route.route_key:
+            return
+        del self._published_names[published]
+        for route_key, candidate in self._routes.items():
+            if candidate.published_name == published:
+                self._published_names[published] = route_key
+                break
 
     def add_route(
         self,
@@ -119,11 +135,15 @@ class RouterRegistry:
         if target_mcp is not None:
             self._register_tool(route, target_mcp)
         self._routes[route.route_key] = route
+        self._index_published_name(route)
         return route
 
     def remove_route(self, route_key: str) -> Route | None:
         """Drop a route from the registry without touching FastMCP publication."""
-        return self._routes.pop(route_key, None)
+        route = self._routes.pop(route_key, None)
+        if route is not None:
+            self._unindex_published_name(route)
+        return route
 
     def set_mode(self, name: str, mode: Mode) -> None:
         """Flip a route stub<->live without touching the transport."""
