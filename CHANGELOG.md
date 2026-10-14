@@ -22,6 +22,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 - Optional directory protocol `ApiKeyIdIndex`.
 - `KEYSTONE_MCP_SHUTDOWN_GRACE_SECONDS` (default 25): in-flight requests get this long to finish after SIGTERM (was 2 s).
 - The metrics path and `/internal/*` accept a `Host` that is an IP literal, so Prometheus can scrape each pod by its IP.
+- Metric `keystone_mcp_upstream_items_rejected_total{namespace,kind,reason}`.
 
 ### Changed
 
@@ -52,6 +53,9 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 - `initialize` reports the Keystone version in `serverInfo.version`.
 - `.env`: a quoted value followed by a comment no longer keeps its quotes; an
   unterminated quote is refused with the line number.
+- A resource, resource template or prompt that an upstream renames, edits or removes after startup no longer makes the reconciler mark the whole namespace unavailable (which, with `KEYSTONE_MCP_UPSTREAM_REQUIRE_ALL=true`, failed `/readyz` on every replica).
+- A failed `prompts/list` or `resources/list` keeps the previous prompts or resources instead of counting as an empty list.
+- Policy validation of a prompt from an upstream with `strip_prefix` uses the name clients see; removing such a prompt upstream no longer crashes the refresh.
 
 ### Security
 
@@ -76,6 +80,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 - If a log pipeline matched JSON text with spaces (`"stream": "access"`), match
   the field instead (`jq`) or drop the space. A `.env` value with an
   unterminated quote now stops startup.
+- Policy validation now knows a prompt of an upstream with `strip_prefix` by the name clients see (`hello_summarize`), so an exact allow rule for that name works. The stripped form 0.5.0 validated (`hello_marize`) is still accepted by validation but, as before, grants nothing — replace it with the visible name.
 
 ## [0.5.0] - 2026-10-13
 
