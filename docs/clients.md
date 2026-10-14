@@ -228,7 +228,8 @@ Keystone-MCP publishes `/.well-known/oauth-protected-resource` and
 `/.well-known/oauth-authorization-server` for discovery, and accepts
 self-registration at `POST /register` unless the operator turned that off
 (`KEYSTONE_MCP_OAUTH_DCR_ENABLED=false`). If it is off, or your client
-cannot register itself, ask the operator to register it by hand — see
+cannot register itself, ask the operator to run
+`keystone-mcp oauth register-client` — see
 [Registering a client manually](environment.md#registering-a-client-manually).
 
 ### `KEYSTONE_MCP_OAUTH_ALLOWED_REDIRECT_HOSTS`
