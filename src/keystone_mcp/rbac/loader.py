@@ -410,7 +410,9 @@ class RbacPolicyManager:
             return PolicyReloadResult(success=True, active=candidate)
 
         logger.warning("rbac policy hot-reload rejected: %s", last_error)
-        return PolicyReloadResult(success=False, active=previous, error=last_error or "reload failed")
+        return PolicyReloadResult(
+            success=False, active=previous, error=last_error or "reload failed"
+        )
 
     def _load_and_validate(self, registry: RouterRegistry) -> PolicySnapshot:
         path = self.policy_path()

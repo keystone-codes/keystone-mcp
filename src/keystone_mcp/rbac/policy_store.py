@@ -54,6 +54,10 @@ from keystone_mcp.rbac.loader import (
     live_catalog_names,
     split_unverified_allow_patterns,
 )
+from keystone_mcp.rbac.management import (
+    ManagementView,
+    management_change_reasons,
+)
 from keystone_mcp.rbac.policy import (
     PolicyContractError,
     RbacPolicy,
@@ -255,8 +259,7 @@ class PolicyStore:
                         os.close(fd)
                         raise PolicyChangeError(
                             "policy_conflict",
-                            "another writer holds the policy file lock; "
-                            "call policy_read and retry",
+                            "another writer holds the policy file lock; call policy_read and retry",
                         )
                     time.sleep(0.05)
 
@@ -364,6 +367,7 @@ class PolicyStore:
                         actor=actor,
                         actor_roles=actor_roles,
                         expected_hash=expected_hash,
+                        operation=operation,
                     )
         except _WriteFailed as exc:
             self._audit(
@@ -535,6 +539,7 @@ class PolicyStore:
         actor: str,
         actor_roles: frozenset[str],
         expected_hash: str | None,
+        operation: str,
     ) -> PolicyChangeResult:
         raw_bytes = await asyncio.to_thread(path.read_bytes)
         file_hash = hash_policy_bytes(raw_bytes)
@@ -544,6 +549,7 @@ class PolicyStore:
                 "policy file changed since it was read; call policy_read and retry",
             )
         document = PolicyDocument.from_yaml(raw_bytes.decode("utf-8"))
+        before_policy = document.to_policy()
 
         candidate_document = document
         for change in changes:
@@ -560,6 +566,12 @@ class PolicyStore:
 
         candidate_policy, warnings = self._validate_candidate(candidate_document)
         self._check_invariants(candidate_policy, actor_roles)
+        self._check_management_authority(
+            before=before_policy,
+            candidate=candidate_policy,
+            actor_roles=actor_roles,
+            operation=operation,
+        )
         for change in changes:
             if isinstance(change, RoleDelete):
                 await check_role_in_use(change, self.directory)
@@ -580,9 +592,7 @@ class PolicyStore:
             raise _WriteFailed(f"policy file could not be written: {exc.strerror}") from exc
 
         try:
-            reload_result = await asyncio.to_thread(
-                self.policy_manager.reload, self.registry
-            )
+            reload_result = await asyncio.to_thread(self.policy_manager.reload, self.registry)
         except OSError as exc:
             with contextlib.suppress(OSError):
                 await asyncio.to_thread(_atomic_write, path, raw_bytes, mode_from=path)
@@ -598,9 +608,7 @@ class PolicyStore:
 
         identity = self.policy_manager.identity
         content_hash_after = (
-            identity.content_hash
-            if identity is not None
-            else hash_policy_bytes(new_bytes)
+            identity.content_hash if identity is not None else hash_policy_bytes(new_bytes)
         )
         return PolicyChangeResult(
             changed=True,
@@ -633,10 +641,17 @@ class PolicyStore:
 
         backup_bytes = await asyncio.to_thread(bak_path.read_bytes)
         current_document = PolicyDocument.from_yaml(current_bytes.decode("utf-8"))
+        before_policy = current_document.to_policy()
         candidate_document = PolicyDocument.from_yaml(backup_bytes.decode("utf-8"))
 
         candidate_policy, warnings = self._validate_candidate(candidate_document)
         self._check_invariants(candidate_policy, actor_roles)
+        self._check_management_authority(
+            before=before_policy,
+            candidate=candidate_policy,
+            actor_roles=actor_roles,
+            operation="policy_rollback",
+        )
         for role_name in sorted(set(current_document.roles) - set(candidate_document.roles)):
             await check_role_in_use(RoleDelete(role_name), self.directory)
 
@@ -655,9 +670,7 @@ class PolicyStore:
             raise _WriteFailed(f"policy file could not be written: {exc.strerror}") from exc
 
         try:
-            reload_result = await asyncio.to_thread(
-                self.policy_manager.reload, self.registry
-            )
+            reload_result = await asyncio.to_thread(self.policy_manager.reload, self.registry)
         except OSError as exc:
             with contextlib.suppress(OSError):
                 await asyncio.to_thread(_atomic_write, path, current_bytes, mode_from=path)
@@ -727,6 +740,31 @@ class PolicyStore:
         check_no_role_can_administer(candidate_policy, live_tools)
         check_self_lockout_forbidden(candidate_policy, actor_roles, live_tools)
 
+    def _check_management_authority(
+        self,
+        *,
+        before: RbacPolicy,
+        candidate: RbacPolicy,
+        actor_roles: frozenset[str],
+        operation: str,
+    ) -> None:
+        reasons = management_change_reasons(before, candidate)
+        if not reasons:
+            return
+        snapshot_policy = self.policy_manager.active_policy
+        if snapshot_policy is None:
+            view = ManagementView((before,))
+        else:
+            view = ManagementView((snapshot_policy, before))
+        if view.is_full_administrator(actor_roles):
+            return
+        if self.observability is not None:
+            self.observability.record_admin_refusal(operation=operation, reason="management_role")
+        raise PolicyChangeError(
+            "forbidden",
+            "only a full administrator can make this change: " + "; ".join(reasons),
+        )
+
     def _catalog_report(
         self, policy: RbacPolicy
     ) -> tuple[frozenset[str], dict[str, tuple[str, ...]]]:
@@ -784,9 +822,7 @@ class PolicyStore:
                 warnings_count=warnings_count,
             )
         except Exception:  # pragma: no cover - audit must never break a mutation
-            logger.warning(
-                "rbac policy mutation observability failed", exc_info=True
-            )
+            logger.warning("rbac policy mutation observability failed", exc_info=True)
 
 
 def _is_writable(path: Path) -> bool:

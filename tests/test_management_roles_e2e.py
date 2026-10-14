@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 from asgi_lifespan import LifespanManager
@@ -19,7 +20,6 @@ from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import Settings
 from keystone_mcp.server import bootstrap_platform, build_server
 from support.test_env import require_redis_url, users_revision_key
-from uuid import uuid4
 
 POLICY = """\
 version: "mgmt-e2e"

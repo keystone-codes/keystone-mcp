@@ -91,7 +91,7 @@ Failure is `{"state": "error", "code": "...", "message": "..."}`.
 | `role_in_use` | Role still on accounts | Reassign roles via `keystone-user-admin`, then retry |
 | `self_lockout_forbidden` | Would remove your own policy access | Refuse; another administrator must do it |
 | `policy_invariant` | Would leave no administering role | Refuse; explain |
-| `forbidden` | Service account called a mutation | Stop; a human must change policy |
+| `forbidden` | A service account called a change, or you are not a full administrator and the change touches administration (a management role, the deny list, or the interactive-sign-in list for administration tools). The message names the reason. Stop and report; do not retry. |
 | `validation_error` | Bad argument or empty pattern list | Fix arguments |
 | `role_not_found` | Unknown role on remove/delete | `policy_read` and correct the name |
 | `policy_invalid` | YAML or contract broken | Do not retry blindly; show the message |

@@ -1168,9 +1168,7 @@ def test_default_policy_loads_against_builtin_catalog_in_enforce(tmp_path: Path)
 def test_reload_does_not_swap_in_a_snapshot_older_than_the_file(tmp_path: Path) -> None:
     policy_path = tmp_path / "rbac-policy.yaml"
     policy_a = 'version: "1"\ndefault_deny: true\nroles:\n  administrator: {allow: ["*"]}\n'
-    policy_b = (
-        'version: "2"\ndefault_deny: true\nroles:\n  administrator: {allow: ["*"]}\n'
-    )
+    policy_b = 'version: "2"\ndefault_deny: true\nroles:\n  administrator: {allow: ["*"]}\n'
     policy_path.write_text(policy_a, encoding="utf-8")
     settings = Settings(
         base_url="http://localhost:8080",
