@@ -30,6 +30,9 @@ from starlette.requests import Request
 from starlette.responses import Response
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from keystone_mcp.config import normalize_http_path
+from keystone_mcp.observability.metrics import count_origin_null
+
 logger = logging.getLogger(__name__)
 
 # Docker HEALTHCHECK (`keystone_mcp.healthcheck`, scripts/smoke_image.sh) and
@@ -167,11 +170,13 @@ class HostGuardMiddleware:
         app: ASGIApp,
         allowed_hosts: tuple[str, ...],
         *,
+        mcp_path: str = "/",
         internal_paths: tuple[str, ...] = (),
         internal_prefixes: tuple[str, ...] = (),
     ) -> None:
         self.app = app
         self._allowed_hosts = allowed_hosts
+        self._mcp_path = normalize_http_path(mcp_path)
         self._internal_paths = frozenset(internal_paths)
         self._internal_prefixes = internal_prefixes
         self._any_port, self._exact = host_allowlist_sets(allowed_hosts)
@@ -188,6 +193,33 @@ class HostGuardMiddleware:
         if path in self._internal_paths:
             return True
         return any(path.startswith(prefix) for prefix in self._internal_prefixes)
+
+    def _origin_null_route_group(self, path: str) -> str:
+        if path == "/register":
+            return "register"
+        if path == "/token":
+            return "token"
+        if path == "/authorize":
+            return "authorize"
+        if path == "/revoke":
+            return "revoke"
+        if path == "/login":
+            return "login"
+        if path.startswith("/login/"):
+            return "login_provider"
+        normalized = path.rstrip("/") or "/"
+        mcp = self._mcp_path.rstrip("/") or "/"
+        if normalized == mcp:
+            return "mcp"
+        if mcp != "/" and normalized.startswith(f"{mcp}/"):
+            return "mcp"
+        return "other"
+
+    @staticmethod
+    def _user_agent_product(user_agent: str) -> str:
+        if not user_agent:
+            return ""
+        return user_agent.split("/", 1)[0][:40]
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope.get("type") != "http":
@@ -207,6 +239,17 @@ class HostGuardMiddleware:
             response = Response(status_code=421, content="Misdirected Request")
             await response(scope, receive, send)
             return
+
+        origin_header = request.headers.get("origin")
+        if origin_header == "null":
+            route_group = self._origin_null_route_group(path)
+            count_origin_null(route_group)
+            logger.debug(
+                "Origin: null on %s %s (user-agent product %s)",
+                request.method,
+                route_group,
+                self._user_agent_product(request.headers.get("user-agent", "")),
+            )
 
         refusal = cross_site_origin_refusal(request, self._allowed_hosts)
         if refusal is not None:

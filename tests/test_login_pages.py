@@ -12,12 +12,13 @@ from asgi_lifespan import LifespanManager
 from conftest import BASE_URL, VALID_TOKEN, authorize_to_login, make_pkce, register_client
 from keystone_mcp.auth.keystone_oauth_provider import TRANSLATIONS
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
-from keystone_mcp.config import Settings, load_settings
+from keystone_mcp.config import Settings
 from keystone_mcp.login.pages import (
     _PAGE_STYLES,
     LANG_SWITCHER_ORDER,
     FieldView,
     ProviderView,
+    _redirect_provider_html,
     render_consent_page,
     render_error_page,
 )
@@ -148,8 +149,9 @@ def test_translations_cover_new_keys() -> None:
 
 
 def _google_app(**settings_overrides):
+    base_url = settings_overrides.pop("base_url", BASE_URL)
     settings = Settings(
-        base_url=BASE_URL,
+        base_url=base_url,
         primary_login_method="google",
         enabled_login_methods=frozenset({"google", "api_key"}),
         google_client_id="test-google-client",
@@ -266,9 +268,51 @@ async def test_no_lang_cookie_without_explicit_choice() -> None:
             assert not any(c.startswith("km_lang=") for c in page.headers.get_list("set-cookie"))
 
 
-def test_brand_is_escaped(monkeypatch) -> None:
-    monkeypatch.setenv("KEYSTONE_MCP_LOGIN_BRAND", "<b>x</b>")
-    brand = load_settings().login_brand
+def test_provider_title_is_escaped_once() -> None:
+    t = TRANSLATIONS["en"]
+    provider = ProviderView("att", "redirect", "AT&T", ())
+    html = _redirect_provider_html(provider, t, txn="T", csrf="C")
+    assert "AT&amp;T" in html
+    assert "&amp;amp;" not in html
+
+
+@pytest.mark.asyncio
+async def test_lang_cookie_path_is_root_for_host_prefix() -> None:
+    app, settings, _oauth = _google_app(base_url="https://mcp.example.com")
+    async with LifespanManager(app):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="https://mcp.example.com"
+        ) as client:
+            client_id = await register_client(client)
+            verifier, challenge = make_pkce()
+            txn = await authorize_to_login(client, client_id, challenge, settings.resource_url)
+            page = await client.get("/login", params={"txn": txn, "lang": "he"})
+            assert page.status_code == 200
+            lang_cookie = next(
+                c for c in page.headers.get_list("set-cookie") if c.startswith("__Host-km_lang=")
+            )
+            assert "Path=/;" in lang_cookie.replace(" ", "")
+            assert "Secure" in lang_cookie
+
+
+@pytest.mark.asyncio
+async def test_lang_cookie_path_is_login_over_http() -> None:
+    app, settings, _oauth = _google_app(base_url="http://localhost:8080")
+    async with LifespanManager(app):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://localhost:8080"
+        ) as client:
+            client_id = await register_client(client)
+            verifier, challenge = make_pkce()
+            txn = await authorize_to_login(client, client_id, challenge, settings.resource_url)
+            page = await client.get("/login", params={"txn": txn, "lang": "he"})
+            assert page.status_code == 200
+            lang_cookie = next(c for c in page.headers.get_list("set-cookie") if c.startswith("km_lang="))
+            assert "Path=/login" in lang_cookie
+
+
+def test_brand_is_escaped() -> None:
+    brand = Settings(login_brand="<b>x</b>").login_brand
     t = TRANSLATIONS["en"]
     html = render_consent_page(
         lang="en",

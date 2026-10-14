@@ -1198,6 +1198,7 @@ def _http_asgi_middleware(settings: Settings) -> list:
         Middleware(
             HostGuardMiddleware,
             allowed_hosts=effective_allowed_hosts(settings),
+            mcp_path=settings.http_path,
             internal_paths=internal_paths,
             internal_prefixes=internal_prefixes,
         )

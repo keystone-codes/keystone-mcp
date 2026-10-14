@@ -310,7 +310,7 @@ ExecStart=/opt/keystone-mcp/.venv/bin/python -m keystone_mcp.server
 | `KEYSTONE_MCP_THROTTLE_WINDOW` | `60` | Throttle sliding-window length, seconds. |
 | `KEYSTONE_MCP_THROTTLE_BACKEND` | `memory` | `memory` (per-replica counters) or `redis` (shared tool-call and sign-in IP limits across replicas under `KEYSTONE_MCP_REDIS_KEY_PREFIX`; values are timestamps, key names are hashes). |
 | `KEYSTONE_MCP_LOGIN_THROTTLE_IP_MAX` | `30` | Max `POST /login`, `POST /login/google` and `POST /register` attempts per client IP in the login throttle window; `0` disables the IP limit. |
-| `KEYSTONE_MCP_LOGIN_THROTTLE_EMAIL_MAX` | `10` | Max failed `POST /login` attempts per email in the window; successful logins do not count; `0` disables the email limit. |
+| `KEYSTONE_MCP_LOGIN_THROTTLE_EMAIL_MAX` | `10` | Failed sign-in attempts per e-mail **and source network** (IPv6 /64) per window; counted in Redis, shared by all replicas. Successful logins do not count; `0` disables the email limit. |
 | `KEYSTONE_MCP_LOGIN_THROTTLE_WINDOW` | `300` | Login throttle sliding-window length, seconds. |
 | `KEYSTONE_MCP_OAUTH_DCR_ENABLED` | `true` | Dynamic client registration (RFC 7591). `false` removes `POST /register` and the `registration_endpoint` entry from `/.well-known/oauth-authorization-server`; register clients manually instead (see [Registering a client manually](#registering-a-client-manually) below). The `/register` IP throttle (`KEYSTONE_MCP_LOGIN_THROTTLE_IP_MAX`) is unaffected. When enabled, `POST /register` accepts at most 16 KB of JSON; `client_name` ≤ 100 characters; ≤ 10 `redirect_uris` of ≤ 2 KB each; unlisted RFC 7591 fields are dropped. A client that never completes sign-in expires after 24 hours. |
 | `KEYSTONE_MCP_OAUTH_THROTTLE_IP_MAX` | `120` | Max `GET`/`POST /authorize` and `POST /token` requests per client IP in the login throttle window; `0` disables. Each replica counts separately unless `KEYSTONE_MCP_THROTTLE_BACKEND=redis`. |
@@ -342,7 +342,7 @@ Keystone-MCP sits behind a reverse proxy or runs as more than one replica.
 |---|---|---|---|---|
 | Tool calls and MCP lists | person (verified email) | `KEYSTONE_MCP_THROTTLE_MAX` / `_WINDOW` | `120` / `60` s | no limit |
 | Login and registration attempts | client IP | `KEYSTONE_MCP_LOGIN_THROTTLE_IP_MAX` / `KEYSTONE_MCP_LOGIN_THROTTLE_WINDOW` | `30` / `300` s | no IP limit |
-| Failed login attempts | email | `KEYSTONE_MCP_LOGIN_THROTTLE_EMAIL_MAX` / same window | `10` | no email limit |
+| Failed login attempts | e-mail and source network (IPv6 /64) | `KEYSTONE_MCP_LOGIN_THROTTLE_EMAIL_MAX` / same window | `10` | no email limit |
 | `/authorize` and `/token` | client IP | `KEYSTONE_MCP_OAUTH_THROTTLE_IP_MAX` / same window as login | `120` | no limit |
 
 `.env.example` ships four presets for the first three rows (uncomment one
