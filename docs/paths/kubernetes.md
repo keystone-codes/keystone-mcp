@@ -32,6 +32,11 @@ more than one pod.
 `policy_*` writes, mount a ReadWriteMany PVC and set `rbac.existingPolicyClaim`
 with `rbac.policyTools: full`.
 
+**Upstream registry from ConfigMap:** kubelet refreshes mounted ConfigMap
+files on the order of one minute after you edit the ConfigMap. Keystone picks
+up the new registry on the next refresh tick after that, or immediately on
+`SIGHUP` — no rolling restart of the Deployment is required.
+
 Chart reference: [`charts/keystone-mcp/README.md`](../../charts/keystone-mcp/README.md).
 
 ## Without Helm (kustomize example)

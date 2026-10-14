@@ -230,6 +230,34 @@ class RbacObservability:
 
             logging.getLogger(__name__).warning("upstream available metric failed", exc_info=True)
 
+    def clear_upstream_available(self, *, namespace: str) -> None:
+        try:
+            self.metrics.clear_upstream_available(namespace=namespace)
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).warning("upstream available metric failed", exc_info=True)
+
+    def record_upstream_registry_reload(self, *, outcome: str) -> None:
+        try:
+            self.metrics.record_upstream_registry_reload(outcome=outcome)
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "upstream registry reload metric failed", exc_info=True
+            )
+
+    def set_upstream_registry_identity(self, *, content_hash: str | None) -> None:
+        try:
+            self.metrics.set_upstream_registry_identity(content_hash=content_hash)
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "upstream registry identity metric failed", exc_info=True
+            )
+
     def record_upstream_process_restart(self, *, namespace: str) -> None:
         try:
             self.metrics.record_upstream_process_restart(namespace=namespace)

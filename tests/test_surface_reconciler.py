@@ -641,7 +641,8 @@ async def test_refresh_interval_zero_skips_reconciler_creation():
         settings=settings,
         oauth_store=InMemoryOAuthStore(),
     )
-    assert reconciler is None
+    assert reconciler is not None
+    assert reconciler._task is None
 
 
 # --- per-upstream availability status (P05) ----------------------------------------
