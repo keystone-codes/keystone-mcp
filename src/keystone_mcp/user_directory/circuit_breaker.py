@@ -69,6 +69,12 @@ class CircuitBreaker:
             self._opened_at = None
             self._probe_started_at = None
 
+    def release_half_open_probe(self) -> None:
+        """Drop a taken half-open probe without changing open/recovery state."""
+        with self._lock:
+            if self._half_open_locked():
+                self._probe_started_at = None
+
     def record_failure(self) -> None:
         with self._lock:
             if self._half_open_locked():
