@@ -104,7 +104,10 @@ from datetime import datetime, UTC
 
 
 class StaticFileUserDirectory:
-    """Read-only: people and roles come from one YAML file, reloaded per call."""
+    """Read-only: people and roles come from one YAML file, reloaded per call.
+
+    You can also inherit ``UserDirectoryBase`` instead of implementing ``ping``/``aclose`` yourself.
+    """
 
     def __init__(self, path: str) -> None:
         self._path = path

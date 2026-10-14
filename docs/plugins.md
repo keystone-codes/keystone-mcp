@@ -79,7 +79,7 @@ Keystone's own tree).
 Install the optional extra:
 
 ```bash
-pip install "keystone-mcp-gateway[contract-tests]>=0.5,<0.6"
+pip install "keystone-mcp-gateway[contract-tests]>=0.5,<2"
 ```
 
 ### Fixtures you provide
@@ -96,6 +96,8 @@ provider; `keystone_oidc_provider` is derived from your factory.
 
 ### Contract classes
 
+- Optional base classes in `keystone_mcp.user_directory.base` and
+  `keystone_mcp.login.base` (inheritance is not required).
 - `UserDirectoryContract` — read path (`resolve_user`, `list_users`, `ping`, …).
 - `AdminDirectoryContract` — extends the read contract; requires `"admin"`.
 - `ServiceAccountDirectoryContract` — requires `"service_accounts"`.
@@ -140,8 +142,12 @@ Copy the tree, rename the module, and replace the example implementations.
 ## Publishing your plugin
 
 - Prefer distribution names `keystone-mcp-<name>` on PyPI.
-- Depend on `keystone-mcp-gateway>=0.5,<0.6` and pin the minor series you
-  tested against.
+- Depend on `keystone-mcp-gateway>=0.5,<2`: the plugin API is frozen until 2.0
+  (see [compatibility.md#plugin-api](compatibility.md#plugin-api)).
+- If your directory declares `admin`, `service_accounts`, or `api_keys`, your
+  test class must inherit the matching contract class; provide
+  `keystone_unavailable_directory_factory` or mark the class
+  `@pytest.mark.keystone_contract_lenient(reason=...)`.
 - Ship your own `CHANGELOG.md`; Keystone's compatibility promise covers the
   protocols and contract tests, not your plugin's feature set.
 - You are responsible for the security of your code and for how operators

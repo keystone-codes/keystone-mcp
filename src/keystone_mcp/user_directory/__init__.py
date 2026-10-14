@@ -17,6 +17,12 @@ from __future__ import annotations
 
 from typing import Any
 
+from keystone_mcp.user_directory.base import (
+    ApiKeyDirectoryBase,
+    ServiceAccountDirectoryBase,
+    UserDirectoryAdminBase,
+    UserDirectoryBase,
+)
 from keystone_mcp.user_directory.critical import (
     CORE_CRITICAL_PATTERNS,
     CriticalToolMatcher,
@@ -45,9 +51,11 @@ from keystone_mcp.user_directory.protocol import (
     UserDirectoryResolver,
 )
 from keystone_mcp.user_directory.types import MutationResult, UserRecord, UserResolveResult
+from keystone_mcp.user_directory.util import normalize_email
 
 __all__ = [
     "ActorEmailRequiredError",
+    "ApiKeyDirectoryBase",
     "ApiKeyIdIndex",
     "CORE_CRITICAL_PATTERNS",
     "CachedUserDirectoryResolver",
@@ -58,10 +66,14 @@ __all__ = [
     "InvalidUserFieldError",
     "LastAdministratorError",
     "MutationResult",
+    "normalize_email",
     "SelfAdminMutationError",
+    "ServiceAccountDirectoryBase",
     "UserAlreadyExistsError",
     "UserDirectory",
     "UserDirectoryAdmin",
+    "UserDirectoryAdminBase",
+    "UserDirectoryBase",
     "UserDirectoryBackend",
     "UserDirectoryError",
     "UserDirectoryResolver",

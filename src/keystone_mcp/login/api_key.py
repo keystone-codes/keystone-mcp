@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 
+from keystone_mcp.login.base import FormLoginProviderBase
 from keystone_mcp.login.protocol import FormField, LoginIdentity, LoginKind, LoginRejected
 from keystone_mcp.user_directory.errors import UserDirectoryUnavailableError
 from keystone_mcp.user_directory.protocol import UserDirectoryResolver
@@ -11,7 +12,7 @@ from keystone_mcp.user_directory.util import email_folds_to_ascii, normalize_ema
 from keystone_mcp.users.models import utcnow
 
 
-class ApiKeyLoginProvider:
+class ApiKeyLoginProvider(FormLoginProviderBase):
     """The api_token + email form as a ``form``-kind ``LoginProvider``."""
 
     def __init__(

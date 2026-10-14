@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 from redis.exceptions import RedisError
 
 from keystone_mcp.adapters.guards import check_management_authority, require_human_actor
+from keystone_mcp.plugins import missing_members
 from keystone_mcp.user_directory.errors import UsersError
 from keystone_mcp.user_directory.protocol import UserDirectory, UserDirectoryAdmin
 from keystone_mcp.user_directory.util import normalize_email
@@ -122,7 +123,7 @@ class UsersAdminAdapter:
             return result
 
         if name != "users_list" and not (
-            isinstance(directory, UserDirectoryAdmin) and "admin" in directory.capabilities
+            "admin" in directory.capabilities and not missing_members(directory, UserDirectoryAdmin)
         ):
             result = self._error(
                 route,

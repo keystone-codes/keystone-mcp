@@ -26,6 +26,7 @@ from urllib.parse import quote
 import httpx
 
 from keystone_mcp.observability.metrics import count_directory_response_issue
+from keystone_mcp.user_directory.base import UserDirectoryAdminBase
 from keystone_mcp.user_directory.errors import (
     DirectoryTimeoutError,
     UserDirectoryUnavailableError,
@@ -217,7 +218,7 @@ def _parse_user_response_body(body: Any) -> UserRecord:
         ) from exc
 
 
-class HttpUserDirectory:
+class HttpUserDirectory(UserDirectoryAdminBase):
     """Calls the HTTP users directory contract with a Bearer service token."""
 
     def __init__(

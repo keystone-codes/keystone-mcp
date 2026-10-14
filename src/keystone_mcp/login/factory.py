@@ -21,6 +21,7 @@ from keystone_mcp.plugins import (
     discover,
     entry_point_label,
     load_factory,
+    missing_members,
 )
 from keystone_mcp.user_directory.protocol import UserDirectoryResolver
 
@@ -231,16 +232,20 @@ def validate_login_providers(providers: Sequence[LoginProvider]) -> None:
         seen.add(name)
 
         if provider.kind == "redirect":
-            if not isinstance(provider, RedirectLoginProvider):
+            missing = missing_members(provider, RedirectLoginProvider)
+            if missing:
+                joined = ", ".join(missing)
                 raise ValueError(
-                    f"login provider {name!r} declares kind='redirect' but does not "
-                    "implement RedirectLoginProvider (begin/complete)"
+                    f"login provider {name!r} declares kind='redirect' but is missing: "
+                    f"{joined} (see docs/plugins.md)"
                 )
         elif provider.kind == "form":
-            if not isinstance(provider, FormLoginProvider):
+            missing = missing_members(provider, FormLoginProvider)
+            if missing:
+                joined = ", ".join(missing)
                 raise ValueError(
-                    f"login provider {name!r} declares kind='form' but does not "
-                    "implement FormLoginProvider (form_fields/verify)"
+                    f"login provider {name!r} declares kind='form' but is missing: "
+                    f"{joined} (see docs/plugins.md)"
                 )
             form_count += 1
             for field in provider.form_fields():

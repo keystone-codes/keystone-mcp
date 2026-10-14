@@ -38,6 +38,21 @@ def keystone_directory_factory(postgres_engine) -> Callable[[], Awaitable[UserDi
     return factory
 
 
+@pytest.fixture
+def keystone_unavailable_directory_factory(
+    postgres_engine,  # noqa: F811
+) -> Callable[[], Awaitable[UserDirectory]]:
+    async def factory() -> UserDirectory:
+        revision = InMemoryRevisionReader()
+        store = UsersStore(postgres_engine, revision=InProcessRevisionWriter(revision.bump))
+        directory = LocalUserDirectory(store)
+        await seed_contract_dataset(directory)
+        store.dispose()
+        return directory
+
+    return factory
+
+
 class TestLocalPostgres(
     AdminDirectoryContract, ServiceAccountDirectoryContract, ApiKeyDirectoryContract
 ):

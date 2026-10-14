@@ -24,9 +24,7 @@ def is_management_role(policy: RbacPolicy, role: str) -> bool:
 
 
 def management_role_names(policy: RbacPolicy) -> frozenset[str]:
-    return frozenset(
-        role.name for role in policy.roles if is_management_role(policy, role.name)
-    )
+    return frozenset(role.name for role in policy.roles if is_management_role(policy, role.name))
 
 
 def is_full_administrator(policy: RbacPolicy, roles: Iterable[str]) -> bool:
@@ -37,9 +35,7 @@ def is_full_administrator(policy: RbacPolicy, roles: Iterable[str]) -> bool:
 
 def full_administrator_roles(policy: RbacPolicy) -> frozenset[str]:
     return frozenset(
-        role.name
-        for role in policy.roles
-        if is_full_administrator(policy, (role.name,))
+        role.name for role in policy.roles if is_full_administrator(policy, (role.name,))
     )
 
 
@@ -70,9 +66,7 @@ def snapshot_and_file_management_source(policy_manager: RbacPolicyManager) -> Ma
             raise PolicyLoadError("RBAC policy has not been loaded")
         try:
             path = policy_manager.policy_path()
-            fresh_policy, content_hash = await asyncio.to_thread(
-                load_policy_file_with_hash, path
-            )
+            fresh_policy, content_hash = await asyncio.to_thread(load_policy_file_with_hash, path)
         except (PolicyLoadError, PolicyContractError, OSError) as exc:
             logger.warning("management check uses the loaded policy only: %s", exc)
             return ManagementView((snapshot.policy,))
@@ -129,12 +123,8 @@ def build_admins_report(
     for account in services:
         for role in account.roles:
             if role in holders:
-                holders[role].append(
-                    _holder_label(account.subject, is_blocked=account.is_blocked)
-                )
-    holders_sorted = {
-        role: tuple(sorted(holders[role])) for role in mgmt_roles
-    }
+                holders[role].append(_holder_label(account.subject, is_blocked=account.is_blocked))
+    holders_sorted = {role: tuple(sorted(holders[role])) for role in mgmt_roles}
     return AdminsReport(
         management_roles=mgmt_roles,
         full_administrator_roles=full_roles,

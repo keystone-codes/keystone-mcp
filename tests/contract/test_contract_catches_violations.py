@@ -112,3 +112,126 @@ class TestLenient(OidcLoginProviderContract):
     result = pytester.runpytest("-p", "keystone_mcp.contract_tests", "-q")
     assert result.ret != 0
     assert result.parseoutcomes().get("failed", 0) >= 1
+
+
+def test_admin_capability_without_admin_contract_fails(pytester: pytest.Pytester) -> None:
+    pytester.makepyfile(
+        """
+from collections.abc import Awaitable, Callable
+import pytest
+from keystone_mcp.contract_tests import UserDirectoryContract, seed_contract_dataset
+from keystone_mcp.user_directory.memory import InMemoryUserDirectory
+from keystone_mcp.user_directory.protocol import UserDirectory
+
+class Adminless(InMemoryUserDirectory):
+    @property
+    def capabilities(self):
+        return frozenset({"admin"})
+
+@pytest.fixture
+def keystone_directory_factory() -> Callable[[], Awaitable[UserDirectory]]:
+    async def factory() -> UserDirectory:
+        directory = Adminless()
+        await seed_contract_dataset(directory)
+        return directory
+    return factory
+
+class TestBroken(UserDirectoryContract):
+    pass
+"""
+    )
+    pytester.makeconftest('pytest_plugins = ["keystone_mcp.contract_tests"]')
+    result = pytester.runpytest("-p", "keystone_mcp.contract_tests", "-q")
+    assert result.parseoutcomes().get("failed", 0) >= 1
+    assert "inherit AdminDirectoryContract" in result.stdout.str()
+
+
+def test_lenient_marker_skips_capability_match_with_reason(pytester: pytest.Pytester) -> None:
+    pytester.makepyfile(
+        """
+from collections.abc import Awaitable, Callable
+import pytest
+from keystone_mcp.contract_tests import UserDirectoryContract, seed_contract_dataset
+from keystone_mcp.user_directory.memory import InMemoryUserDirectory
+from keystone_mcp.user_directory.protocol import UserDirectory
+
+class Adminless(InMemoryUserDirectory):
+    @property
+    def capabilities(self):
+        return frozenset({"admin"})
+
+@pytest.fixture
+def keystone_directory_factory():
+    async def factory():
+        directory = Adminless()
+        await seed_contract_dataset(directory)
+        return directory
+    return factory
+
+@pytest.mark.keystone_contract_lenient(reason="demo plugin without admin contract suite")
+class TestBroken(UserDirectoryContract):
+    pass
+"""
+    )
+    pytester.makeconftest('pytest_plugins = ["keystone_mcp.contract_tests"]')
+    result = pytester.runpytest("-p", "keystone_mcp.contract_tests", "-q", "-rs")
+    assert result.parseoutcomes().get("skipped", 0) >= 1
+    assert "demo plugin without admin contract suite" in result.stdout.str()
+
+
+def test_lenient_marker_without_reason_fails(pytester: pytest.Pytester) -> None:
+    pytester.makepyfile(
+        """
+from collections.abc import Awaitable, Callable
+import pytest
+from keystone_mcp.contract_tests import UserDirectoryContract, seed_contract_dataset
+from keystone_mcp.user_directory.memory import InMemoryUserDirectory
+
+class Adminless(InMemoryUserDirectory):
+    @property
+    def capabilities(self):
+        return frozenset({"admin"})
+
+@pytest.fixture
+def keystone_directory_factory():
+    async def factory():
+        directory = Adminless()
+        await seed_contract_dataset(directory)
+        return directory
+    return factory
+
+@pytest.mark.keystone_contract_lenient
+class TestBroken(UserDirectoryContract):
+    pass
+"""
+    )
+    pytester.makeconftest('pytest_plugins = ["keystone_mcp.contract_tests"]')
+    result = pytester.runpytest("-p", "keystone_mcp.contract_tests", "-q")
+    assert result.parseoutcomes().get("failed", 0) >= 1
+
+
+def test_missing_unavailable_fixture_fails(pytester: pytest.Pytester) -> None:
+    pytester.makepyfile(
+        """
+from collections.abc import Awaitable, Callable
+import pytest
+from keystone_mcp.contract_tests import UserDirectoryContract, seed_contract_dataset
+from keystone_mcp.user_directory.memory import InMemoryUserDirectory
+from keystone_mcp.user_directory.protocol import UserDirectory
+
+@pytest.fixture
+def keystone_directory_factory() -> Callable[[], Awaitable[UserDirectory]]:
+    async def factory() -> UserDirectory:
+        directory = InMemoryUserDirectory()
+        await seed_contract_dataset(directory)
+        return directory
+    return factory
+
+class TestBroken(UserDirectoryContract):
+    pass
+"""
+    )
+    pytester.makeconftest('pytest_plugins = ["keystone_mcp.contract_tests"]')
+    result = pytester.runpytest("-p", "keystone_mcp.contract_tests", "-q")
+    assert result.parseoutcomes().get("failed", 0) >= 1
+    assert "keystone_unavailable_directory_factory" in result.stdout.str()
