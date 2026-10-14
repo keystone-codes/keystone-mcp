@@ -433,12 +433,15 @@ the full list; in short:
 
 ## How this is tested
 
-Release 0.6.0 adds `tests/security/`: an outside-in checklist (SEC-01…SEC-15
+Release 0.6.0 adds `tests/security/`: an outside-in checklist (SEC-01…SEC-56
 in `tests/security/checklist.yaml`) with at least one HTTP or MCP test per
 item. `tests/security/test_checklist_complete.py` fails CI when a checklist
-entry has no test or points at a missing test name. To add a new attack
-scenario, extend `checklist.yaml`, add a test under `tests/security/`, and
-list both the new test and any existing regression test by id
+entry has no test or points at a missing test name. Hostile plugin and upstream
+implementations live beside the tests (`hostile_plugins.py`, `hostile_upstream.py`);
+Hypothesis fuzz targets (`test_fuzz_*.py`, marker `fuzz`) run on every PR with
+the `ci` profile and nightly in CI with `HYPOTHESIS_PROFILE=nightly`. To add a
+new attack scenario, extend `checklist.yaml`, add a test under `tests/security/`,
+and list both the new test and any existing regression test by id
 (`tests/...py::test_name`).
 
 ## Related docs

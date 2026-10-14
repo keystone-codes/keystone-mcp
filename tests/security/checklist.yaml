@@ -152,3 +152,221 @@
     - tests/test_oauth_hashed_keys.py::test_no_redis_key_or_value_contains_a_token
   status: closed
   finding: null
+
+- id: SEC-20
+  attack: "Users directory lies about exists, block state, or roles"
+  expected: "No privilege from bad types or unknown roles; enforce and login refuse"
+  tests:
+    - tests/security/test_hostile_plugins.py::test_hostile_directory_exists_string_does_not_grant_access
+    - tests/security/test_hostile_plugins.py::test_hostile_directory_wildcard_and_unknown_roles_denied_at_enforce
+    - tests/security/test_hostile_plugins.py::test_hostile_directory_blocked_user_denied
+    - tests/test_http_user_directory.py::test_resolve_invalid_responses_trip_circuit_breaker
+  status: closed
+  finding: null
+
+- id: SEC-21
+  attack: "Users directory throws or hangs"
+  expected: "Fail-closed resolve; circuit breaker; process stays healthy"
+  tests:
+    - tests/security/test_hostile_plugins.py::test_hostile_directory_non_directory_error_trips_breaker
+    - tests/security/test_hostile_plugins.py::test_hostile_directory_hang_does_not_kill_healthz
+    - tests/test_user_directory_resolver.py::test_fail_closed_on_unavailable_backend
+  status: closed
+  finding: null
+
+- id: SEC-22
+  attack: "Directory declares admin, delete, or identity_binding without methods"
+  expected: "Startup ConfigError"
+  tests:
+    - tests/security/test_hostile_plugins.py::test_hostile_directory_missing_capability_methods_refused
+    - tests/security/test_hostile_plugins.py::test_hostile_directory_delete_capability_without_methods_refused
+    - tests/test_user_directory_protocol.py::test_declared_admin_without_methods_is_refused
+  status: open
+  finding: SEC-22
+
+- id: SEC-23
+  attack: "Directory returns wrong or unnormalized email on resolve"
+  expected: "Mismatch refused; normalized email enforced"
+  tests:
+    - tests/security/test_hostile_plugins.py::test_hostile_http_directory_email_mismatch_refused
+    - tests/contract/test_contract_catches_violations.py::test_broken_directory_fails_resolve_contract
+  status: open
+  finding: SEC-23
+
+- id: SEC-24
+  attack: "Malicious login provider identity or behaviour"
+  expected: "Sign-in refused; no stack trace in HTTP body; process survives"
+  tests:
+    - tests/security/test_hostile_plugins.py::test_hostile_login_svc_robot_subject_refused
+    - tests/security/test_hostile_plugins.py::test_hostile_login_oversized_name_and_runtime_error
+    - tests/security/test_hostile_plugins.py::test_hostile_login_wrong_provider_name_refused
+    - tests/test_login_flow_generic.py::test_form_provider_claiming_another_name_is_refused
+  status: closed
+  finding: null
+
+- id: SEC-25
+  attack: "Redirect provider returns javascript: or data: URL"
+  expected: "Refused; no dangerous redirect"
+  tests:
+    - tests/security/test_hostile_plugins.py::test_hostile_redirect_provider_dangerous_url_refused
+  status: closed
+  finding: null
+
+- id: SEC-30
+  attack: "Upstream tool catalog name tricks and volume"
+  expected: "Built-ins not shadowed; bad names dropped; catalog capped"
+  tests:
+    - tests/security/test_hostile_upstream.py::test_hostile_upstream_catalog_attacks_keep_process_healthy
+    - tests/security/test_hostile_upstream.py::test_hostile_upstream_builtin_tools_not_shadowed
+    - tests/test_upstream_answer_limits.py::test_catalog_over_limit_keeps_previous_catalog
+    - tests/test_upstream_prefix_filters.py::test_resolve_mounted_tool_name_strips_prefix
+  status: closed
+  finding: null
+
+- id: SEC-31
+  attack: "Upstream schemas: ReDoS, depth, external refs"
+  expected: "Process responsive; no external schema fetch"
+  tests:
+    - tests/security/test_hostile_upstream.py::test_hostile_upstream_catalog_attacks_keep_process_healthy
+    - tests/test_upstream_answer_limits.py::test_pathological_output_schema_does_not_stall_event_loop
+  status: closed
+  finding: null
+
+- id: SEC-32
+  attack: "Huge upstream bodies and progress floods"
+  expected: "C09 limits; client error; stable memory"
+  tests:
+    - tests/security/test_hostile_upstream.py::test_hostile_upstream_giant_response_rejected
+    - tests/test_upstream_answer_limits.py::test_response_over_limit_fails_call_not_process
+  status: closed
+  finding: null
+
+- id: SEC-33
+  attack: "Infinite upstream input_required rounds"
+  expected: "Stopped at C08 round limit"
+  tests:
+    - tests/security/test_hostile_upstream.py::test_hostile_upstream_input_required_capped
+    - tests/test_proxy_call_limits.py::test_url_elicitation_loop_stops_after_max_rounds
+  status: closed
+  finding: null
+
+- id: SEC-34
+  attack: "Cross-service resource template or read hijack"
+  expected: "Cannot read another service's resources"
+  tests:
+    - tests/security/test_hostile_upstream.py::test_hostile_upstream_resource_template_hijack_blocked
+    - tests/test_upstream_resource_rbac_scope.py::test_other_namespace_cannot_decide_read_access
+    - tests/test_upstream_resources.py::test_template_published_and_read
+  status: closed
+  finding: null
+
+- id: SEC-35
+  attack: "Upstream sampling, roots, elicitation, notification pass-through"
+  expected: "Not forwarded to MCP client"
+  tests:
+    - tests/security/test_hostile_upstream.py::test_hostile_upstream_input_required_capped
+    - tests/test_stdio_upstream_e2e.py::test_client_meta_identity_is_not_forwarded_to_stdio
+    - tests/test_proxy_call_limits.py::test_url_elicitation_loop_stops_after_max_rounds
+  status: closed
+  finding: null
+
+- id: SEC-36
+  attack: "Upstream poisons tool result _meta or serverInfo"
+  expected: "Keystone meta keys not exposed to client"
+  tests:
+    - tests/security/test_hostile_upstream.py::test_hostile_upstream_meta_keys_stripped
+    - tests/test_upstream_answer_limits.py::test_upstream_server_info_does_not_reach_client
+  status: closed
+  finding: null
+
+- id: SEC-37
+  attack: "Upstream tries to read client Authorization, cookies, foreign identity"
+  expected: "Only upstream-scoped identity and headers"
+  tests:
+    - tests/security/test_hostile_upstream.py::test_hostile_upstream_does_not_see_client_secrets
+    - tests/security/test_identity_headers.py::test_forged_identity_headers_not_seen_by_upstream
+  status: closed
+  finding: null
+
+- id: SEC-38
+  attack: "Upstream list_changed flood"
+  expected: "Reconciler tick bounds client broadcasts"
+  tests:
+    - tests/security/test_hostile_upstream.py::test_hostile_upstream_list_changed_flood_keeps_healthz
+    - tests/test_surface_reconciler.py::test_parallel_refresh_announces_changes_once
+    - tests/test_list_changed.py::test_new_upstream_tool_sends_list_changed_modern_era
+  status: closed
+  finding: null
+
+- id: SEC-39
+  attack: "Hostile stdio upstream stderr, hang, child process"
+  expected: "Supervisor restarts; stderr bounded; children reaped"
+  tests:
+    - tests/security/test_hostile_upstream.py::test_hostile_stdio_giant_stderr_survives_supervision
+    - tests/test_stdio_process.py::test_oversized_stderr_line_does_not_crash_supervisor
+    - tests/test_stdio_process.py::test_crash_is_restarted
+  status: closed
+  finding: null
+
+- id: SEC-50
+  attack: "Fuzz RBAC allows() vs independent fnmatch reference"
+  expected: "Identical decisions; unpublished tools not granted"
+  tests:
+    - tests/security/test_fuzz_rbac.py::test_rbac_allows_matches_fnmatch_reference
+    - tests/security/test_fuzz_rbac.py::test_unpublished_tool_name_never_in_literal_catalog
+  status: closed
+  finding: null
+
+- id: SEC-51
+  attack: "Fuzz redirect URI allowlist"
+  expected: "Non-listed non-loopback hosts never allowed"
+  tests:
+    - tests/security/test_fuzz_redirect.py::test_redirect_uri_allowed_matches_host_rules
+    - tests/test_redirect_host_allowlist.py::test_ipv6_loopback_redirect_uri_allowed_for_http_and_https
+  status: closed
+  finding: null
+
+- id: SEC-52
+  attack: "Fuzz upstream registry documents"
+  expected: "validate never throws; parse only ValueError"
+  tests:
+    - tests/security/test_fuzz_registry.py::test_validate_upstream_registry_never_raises
+    - tests/security/test_fuzz_registry.py::test_parse_upstream_entries_only_value_error
+  status: closed
+  finding: null
+
+- id: SEC-53
+  attack: "Fuzz RBAC policy YAML"
+  expected: "Only PolicyLoadError / PolicyContractError"
+  tests:
+    - tests/security/test_fuzz_policy.py::test_parse_policy_yaml_only_contract_errors
+    - tests/security/test_fuzz_policy.py::test_preflight_policy_maps_to_policy_load_error
+  status: closed
+  finding: null
+
+- id: SEC-54
+  attack: "Fuzz keystone request_state decoder"
+  expected: "Never raises; garbage yields empty state"
+  tests:
+    - tests/security/test_fuzz_misc.py::test_decode_request_state_never_raises
+    - tests/test_proxy_call_limits.py::test_request_state_from_050_without_round_counter_still_works
+  status: closed
+  finding: null
+
+- id: SEC-55
+  attack: "Fuzz boolean env parsing"
+  expected: "Known values or ConfigError; no silent false for garbage"
+  tests:
+    - tests/security/test_fuzz_misc.py::test_env_bool_never_silent_false_for_unknown
+    - tests/test_config_hardening.py::test_env_bool_refuses_unknown
+  status: closed
+  finding: null
+
+- id: SEC-56
+  attack: "Fuzz POST /login field soup"
+  expected: "4xx/429 or HTML error; never 500"
+  tests:
+    - tests/security/test_fuzz_misc.py::test_login_post_random_fields_not_500
+    - tests/test_login_attempt_limit.py::test_login_post_returns_429_when_ip_limit_exceeded
+  status: closed
+  finding: null

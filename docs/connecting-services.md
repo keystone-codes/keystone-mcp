@@ -28,6 +28,15 @@ Keystone-MCP (public)
 mysvc-mcp (internal, mcp-upstreams network)   /mcp, /healthz
 ```
 
+## What Keystone does not accept from a service
+
+Upstream catalogs and answers are untrusted: tool names cannot replace
+built-in tools, cross-namespace resource URIs are not published, upstream
+`serverInfo` and Keystone `_meta` keys are stripped before results reach the
+client, and client `Authorization` / cookie headers are not forwarded.
+Sampling, roots, and unsolicited notification streams from the upstream are not
+passed through to MCP clients. See `tests/security/test_hostile_upstream.py`.
+
 ## Requirements
 
 1. Serve Streamable HTTP MCP on `/mcp`.

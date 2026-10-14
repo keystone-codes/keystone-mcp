@@ -140,6 +140,15 @@ class TestMyDirectory(UserDirectoryContract):
 
 Copy the tree, rename the module, and replace the example implementations.
 
+## What Keystone does not trust from a plugin
+
+Keystone treats directory and login plugins as untrusted input: email addresses
+are normalized before they become a token subject; role names are checked against
+the active RBAC policy (unknown roles do not grant access); malformed or
+contradictory directory responses fail closed rather than granting access; login
+providers cannot impersonate another provider name or return service-account
+subjects on human sign-in paths. See `tests/security/test_hostile_plugins.py`.
+
 ## Publishing your plugin
 
 - Prefer distribution names `keystone-mcp-<name>` on PyPI.
