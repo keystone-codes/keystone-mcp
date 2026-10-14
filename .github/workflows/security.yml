@@ -7,6 +7,8 @@ on:
     branches: [master]
   schedule:
     - cron: "17 5 * * 1" # weekly, Monday 05:17 UTC
+    - cron: "23 4 * * *" # daily fuzz run, 04:23 UTC
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -24,6 +26,45 @@ jobs:
 
       - name: uv audit
         run: uv audit --frozen
+
+  fuzz-nightly:
+    name: Fuzz (nightly profile)
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      KEYSTONE_MCP_REDIS_URL: redis://localhost:6379/0
+      HYPOTHESIS_PROFILE: nightly
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.11.22"
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: uv sync --locked --extra dev
+
+      - name: Fuzz security suite
+        run: |
+          set -o pipefail
+          uv run pytest -q tests/security -m fuzz --tb=short 2>&1 | tee hypothesis-fuzz.log
+
+      - name: Upload Hypothesis log on failure
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: hypothesis-fuzz-log
+          path: hypothesis-fuzz.log
 
   image-scan:
     name: Image scan
