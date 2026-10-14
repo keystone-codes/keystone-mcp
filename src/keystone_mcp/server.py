@@ -802,6 +802,22 @@ async def bootstrap_upstreams(
     for namespace in counts:
         upstreams.mark_available(namespace)  # idempotent; covers a replaced discover_all
 
+    overrides = settings.upstream_tool_timeouts
+    if overrides:
+        known: set[str] = set()
+        for route in upstreams.registry.routes.values():
+            if route.mode != "live" or route.namespace is None:
+                continue
+            known.add(route.published_name)
+            known.add(route.upstream_tool or route.name)
+        unknown = sorted(key for key in overrides if key not in known)
+        if unknown:
+            logger.warning(
+                "KEYSTONE_MCP_UPSTREAM_TOOL_TIMEOUTS keys match no published tool: %s "
+                "(an unavailable upstream's tools are not known yet)",
+                unknown,
+            )
+
     reasons = upstreams.unavailable_namespaces()
     unavailable = {
         namespace: reasons.get(namespace, "not discovered")

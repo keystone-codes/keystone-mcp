@@ -23,6 +23,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 - `KEYSTONE_MCP_SHUTDOWN_GRACE_SECONDS` (default 25): in-flight requests get this long to finish after SIGTERM (was 2 s).
 - The metrics path and `/internal/*` accept a `Host` that is an IP literal, so Prometheus can scrape each pod by its IP.
 - Metric `keystone_mcp_upstream_items_rejected_total{namespace,kind,reason}`.
+- Metric `keystone_mcp_upstream_input_rounds_exceeded_total{namespace}`.
 
 ### Changed
 
@@ -36,6 +37,10 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 - Upper bounds on the next major version of `starlette`, `pydantic`, `redis`, `sqlalchemy`, `alembic`.
 - Redis clients use 5 s connect and read timeouts and a 30 s health check; a hung Redis now fails requests instead of holding them.
 - The container healthcheck reads `.env` and `KEYSTONE_MCP_HOST`.
+
+### Deprecated
+
+- `KEYSTONE_MCP_UPSTREAM_TOOL_TIMEOUTS` keys that name the upstream's own tool name (deprecated since 0.6.0; use the published name).
 - JSON log lines are compact (`"stream":"access"`, no spaces); field names are
   unchanged.
 - A `FORWARDED_ALLOW_IPS` line in `.env` is reported as ignored.
@@ -56,6 +61,8 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 - A resource, resource template or prompt that an upstream renames, edits or removes after startup no longer makes the reconciler mark the whole namespace unavailable (which, with `KEYSTONE_MCP_UPSTREAM_REQUIRE_ALL=true`, failed `/readyz` on every replica).
 - A failed `prompts/list` or `resources/list` keeps the previous prompts or resources instead of counting as an empty list.
 - Policy validation of a prompt from an upstream with `strip_prefix` uses the name clients see; removing such a prompt upstream no longer crashes the refresh.
+- `KEYSTONE_MCP_UPSTREAM_TOOL_TIMEOUTS` keys are matched against the published tool name, as documented.
+- Tools whose `inputSchema` uses `x-mcp-header` can be called on MCP 2026-07-28 upstreams.
 
 ### Security
 
@@ -65,6 +72,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 - An OIDC provider with `email_claim` other than `email` must name the claim that confirms it (`email_verified_claim`) while `require_email_verified` is on.
 - Dynamic client registration limits client metadata (request ≤ 16 KB, `client_name` ≤ 100 characters, ≤ 10 `redirect_uris` of ≤ 2 KB, unlisted RFC 7591 fields dropped); a client that never completes a sign-in expires after 24 hours; at `KEYSTONE_MCP_OAUTH_MAX_CLIENTS` the oldest unused client is evicted instead of refusing everyone; IPv6 registration attempts are counted per /64.
 - `/readyz` shows per-check details only when the caller's address is internal and its `Host` header is allowed.
+- An upstream that keeps asking for input can no longer hold a tool call (and keystone-mcp's CPU) forever: at most 10 rounds per call, all within the tool timeout.
 
 ### Migration
 
@@ -81,6 +89,8 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
   the field instead (`jq`) or drop the space. A `.env` value with an
   unterminated quote now stops startup.
 - Policy validation now knows a prompt of an upstream with `strip_prefix` by the name clients see (`hello_summarize`), so an exact allow rule for that name works. The stripped form 0.5.0 validated (`hello_marize`) is still accepted by validation but, as before, grants nothing — replace it with the visible name.
+- An upstream that asks more than 10 questions in one tool call now gets `cancel` (handshake protocol) or the call fails (`kept requesting input`, MCP 2026-07-28).
+- If you keyed `KEYSTONE_MCP_UPSTREAM_TOOL_TIMEOUTS` by the upstream's tool name, it keeps working; a startup warning names the published key to switch to.
 
 ## [0.5.0] - 2026-10-13
 

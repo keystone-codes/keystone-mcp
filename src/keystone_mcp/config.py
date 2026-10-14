@@ -669,9 +669,11 @@ def _parse_upstream_tool_timeouts(raw: str) -> dict[str, float]:
     """Parse ``KEYSTONE_MCP_UPSTREAM_TOOL_TIMEOUTS`` (per-published-tool overrides).
 
     Format: a JSON object mapping a published tool name to a timeout in seconds,
-    e.g. ``{"reports_build": 30, "reports_publish": 30}``. An empty or
-    unset value means "no overrides" (every proxied call uses
-    ``KEYSTONE_MCP_UPSTREAM_TOOL_TIMEOUT_SECONDS``).
+    e.g. ``{"reports_build": 30, "reports_publish": 30}``. Keys should name the
+    published tool; the upstream's own tool name still works but is deprecated
+    since 0.6.0 (Keystone logs a warning). Unknown keys are logged after
+    discovery. An empty or unset value means "no overrides" (every proxied call
+    uses ``KEYSTONE_MCP_UPSTREAM_TOOL_TIMEOUT_SECONDS``).
     """
     if not raw.strip():
         return {}

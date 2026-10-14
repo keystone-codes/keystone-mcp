@@ -31,6 +31,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import anyio
+from fastmcp.exceptions import ToolError
 from fastmcp.server.dependencies import get_context
 from fastmcp.tools.base import InputRequiredToolResult
 from mcp import types
@@ -49,6 +50,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _KEYSTONE_REQUEST_STATE_VERSION = 1
+# Same default as mcp.client._input_required.DEFAULT_INPUT_REQUIRED_MAX_ROUNDS (10).
+_MAX_INPUT_ROUNDS = 10
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,12 +161,28 @@ def make_elicitation_callback(
     tool_name: str,
 ) -> ElicitationFnT:
     """Raw MCP SDK elicitation callback for an upstream client session."""
+    rounds = 0
 
     async def _callback(
         _context: ClientRequestContext,
         params: types.ElicitRequestParams,
     ) -> types.ElicitResult | types.ErrorData:
-        from keystone_mcp.observability.metrics import record_upstream_elicitation
+        from keystone_mcp.observability.metrics import (
+            record_upstream_elicitation,
+            record_upstream_input_rounds_exceeded,
+        )
+
+        nonlocal rounds
+        rounds += 1
+        if rounds > _MAX_INPUT_ROUNDS:
+            logger.warning(
+                "upstream elicitation round cap reached namespace=%s tool=%s after %d rounds",
+                namespace,
+                tool_name,
+                _MAX_INPUT_ROUNDS,
+            )
+            record_upstream_input_rounds_exceeded(namespace=namespace)
+            return types.ElicitResult(action="cancel")
 
         if isinstance(params, types.ElicitRequestURLParams):
             logger.info(
@@ -222,29 +241,37 @@ def make_elicitation_callback(
 def _encode_keystone_request_state(
     upstream_state: str | None,
     declined_keys: list[str],
+    rounds: int = 0,
 ) -> str:
-    return json.dumps(
-        {"v": _KEYSTONE_REQUEST_STATE_VERSION, "u": upstream_state, "d": declined_keys},
-        separators=(",", ":"),
-    )
+    payload: dict[str, Any] = {
+        "v": _KEYSTONE_REQUEST_STATE_VERSION,
+        "u": upstream_state,
+        "d": declined_keys,
+    }
+    if rounds:
+        payload["n"] = rounds
+    return json.dumps(payload, separators=(",", ":"))
 
 
 def _decode_keystone_request_state(
     request_state: str | None,
-) -> tuple[str | None, list[str]]:
+) -> tuple[str | None, list[str], int]:
     if not request_state:
-        return None, []
+        return None, [], 0
     try:
         parsed = json.loads(request_state)
     except json.JSONDecodeError:
-        return request_state, []
+        return request_state, [], 0
     if not isinstance(parsed, dict):
-        return request_state, []
+        return request_state, [], 0
     upstream = parsed.get("u")
     declined = parsed.get("d")
     if not isinstance(declined, list):
         declined = []
-    return upstream if isinstance(upstream, str) or upstream is None else request_state, declined
+    rounds_raw = parsed.get("n", 0)
+    rounds = rounds_raw if isinstance(rounds_raw, int) and rounds_raw >= 0 else 0
+    upstream_out = upstream if isinstance(upstream, str) or upstream is None else request_state
+    return upstream_out, declined, rounds
 
 
 def _merge_upstream_input_responses(
@@ -283,6 +310,7 @@ def _wrap_upstream_input_required(
     result: types.InputRequiredResult,
     *,
     namespace: str,
+    rounds: int,
 ) -> tuple[InputRequiredToolResult | None, types.InputResponses | None, str | None]:
     """Split an upstream ask into client-visible form asks vs auto-declines.
 
@@ -312,7 +340,11 @@ def _wrap_upstream_input_required(
 
     wrapped = types.InputRequiredResult(
         input_requests=client_requests,
-        request_state=_encode_keystone_request_state(result.request_state, declined_keys),
+        request_state=_encode_keystone_request_state(
+            result.request_state,
+            declined_keys,
+            rounds,
+        ),
     )
     return InputRequiredToolResult(wrapped), None, None
 
@@ -386,35 +418,59 @@ async def call_upstream_tool(
                     tool_name=name,
                     responses=input_responses,
                 )
-            upstream_state, declined_keys = _decode_keystone_request_state(request_state)
+            upstream_state, declined_keys, rounds = _decode_keystone_request_state(request_state)
             upstream_input_responses = _merge_upstream_input_responses(
                 input_responses,
                 declined_keys,
             )
-            while True:
-                result = await client._await_with_session_monitoring(
-                    client.session.call_tool(
-                        name,
-                        arguments,
-                        read_timeout_seconds=timeout,
-                        progress_callback=forward,
-                        meta=meta,
-                        input_responses=upstream_input_responses or None,
-                        request_state=upstream_state,
-                        allow_input_required=True,
-                    )
-                )
-                if isinstance(result, types.InputRequiredResult):
-                    wrapped, auto_responses, auto_state = _wrap_upstream_input_required(
-                        result,
-                        namespace=log_namespace or "",
-                    )
-                    if wrapped is not None:
-                        return wrapped
-                    upstream_input_responses = auto_responses
-                    upstream_state = auto_state
-                    continue
-                return result
+            namespace = log_namespace or ""
+            try:
+                with anyio.fail_after(timeout):
+                    while True:
+                        result = await client._await_with_session_monitoring(
+                            client.session.call_tool(
+                                name,
+                                arguments,
+                                read_timeout_seconds=timeout,
+                                progress_callback=forward,
+                                meta=meta,
+                                input_responses=upstream_input_responses or None,
+                                request_state=upstream_state,
+                                allow_input_required=True,
+                            )
+                        )
+                        if isinstance(result, types.InputRequiredResult):
+                            rounds += 1
+                            if rounds >= _MAX_INPUT_ROUNDS:
+                                from keystone_mcp.observability.metrics import (
+                                    record_upstream_input_rounds_exceeded,
+                                )
+
+                                logger.warning(
+                                    "upstream input round cap reached namespace=%s tool=%s "
+                                    "after %d rounds",
+                                    namespace,
+                                    name,
+                                    rounds,
+                                )
+                                record_upstream_input_rounds_exceeded(namespace=namespace)
+                                raise ToolError(
+                                    f"upstream {namespace} kept requesting input; "
+                                    f"stopped after {rounds} rounds"
+                                )
+                            wrapped, auto_responses, auto_state = _wrap_upstream_input_required(
+                                result,
+                                namespace=namespace,
+                                rounds=rounds,
+                            )
+                            if wrapped is not None:
+                                return wrapped
+                            upstream_input_responses = auto_responses
+                            upstream_state = auto_state
+                            continue
+                        return result
+            except TimeoutError as exc:
+                raise ToolError(f"upstream {namespace} did not answer within {timeout:g}s") from exc
 
         return await client.call_tool_mcp(
             name, arguments, progress_handler=forward, timeout=timeout, meta=meta
