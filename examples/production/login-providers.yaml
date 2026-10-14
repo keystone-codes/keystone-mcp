@@ -1,0 +1,7 @@
+version: 1
+providers:
+  - name: google
+    type: google
+    client_id: CHANGE_ME.apps.googleusercontent.com
+    client_secret_env: KEYSTONE_MCP_LOGIN_GOOGLE_SECRET
+    # allowed_domain: example.com

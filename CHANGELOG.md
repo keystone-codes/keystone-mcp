@@ -47,10 +47,13 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ### Migration
 
+- If you copied the 0.5 Kubernetes example: rename the secret key `KEYSTONE_MCP_GOOGLE_CLIENT_SECRET` to the variable named in your providers file, add the providers file, and set `KEYSTONE_MCP_POLICY_TOOLS=read-only` for a read-only policy mount. Old variables keep working with a deprecation warning.
 - A stdio upstream that blocks for more than ~35 s without answering pings is now restarted only after three missed pings (about a minute).
 
 ### Changed
 
+- Kubernetes and production-docker examples and `setup.sh` configure sign-in through a providers file (`KEYSTONE_MCP_LOGIN_PROVIDERS_PATH`) and no longer write deprecated or removed variables.
+- Kubernetes example: `startupProbe`, `preStop`, `terminationGracePeriodSeconds: 40`, `PodDisruptionBudget`, `automountServiceAccountToken: false`, `KEYSTONE_MCP_POLICY_TOOLS=read-only`, `ingressClassName`; policy ConfigMap kept identical to the production example by a test.
 - Management roles: a role that reaches any built-in administration tool is a management role, and a person whose roles reach all of them is a full administrator — both derived from the active policy, whatever the role names. Only a full administrator can give or take away a management role, or change, block, unblock, log out, or manage API keys of an account that holds one.
 - `resources/read` requires every RBAC name of the matching resources and templates in the URI's own namespace to be allowed.
 - Service accounts get `forbidden` from every administration tool that changes state (`users_*`, `service_accounts_*`, `api_keys_*`, `policy_*`); reading stays available. `tools/list` no longer shows a caller the tools it will be refused for lack of an interactive sign-in.

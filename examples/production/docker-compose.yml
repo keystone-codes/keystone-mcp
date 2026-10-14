@@ -57,6 +57,8 @@ services:
   keystone:
     # Pin the tag before you deploy; never run ":latest" in production.
     image: ghcr.io/keystone-codes/keystone-mcp:0.5.0
+    init: true
+    stop_grace_period: 35s
     restart: unless-stopped
     env_file: .env
     depends_on:
@@ -73,6 +75,7 @@ services:
     volumes:
       - ./policy:/etc/keystone-mcp/policy
       - ./upstreams.yaml:/etc/keystone-mcp/upstreams.yaml:ro
+      - ./login-providers.yaml:/etc/keystone-mcp/login-providers.yaml:ro
     healthcheck:
       test: ["CMD", "python", "-m", "keystone_mcp.healthcheck", "/readyz"]
       interval: 10s
