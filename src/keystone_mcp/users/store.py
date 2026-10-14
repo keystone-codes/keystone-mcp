@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 from redis.exceptions import RedisError
 from sqlalchemy import text
@@ -86,6 +86,26 @@ class UsersStore:
         # around every write closes that race. PostgreSQL's row lock does the
         # job on its own, so no lock is needed there.
         self._write_lock = threading.Lock() if engine.dialect.name == "sqlite" else None
+        self._change_listeners: list[Callable[[bool], None]] = []
+
+    def add_change_listener(self, listener: Callable[[bool], None]) -> None:
+        self._change_listeners.append(listener)
+
+    async def _after_change(self) -> None:
+        ok = True
+        try:
+            await self._revision.bump()
+        except _BUMP_FAILURE_TYPES:
+            logger.warning(
+                "users directory revision bump failed; other replicas will "
+                "notice the change after the cache TTL"
+            )
+            ok = False
+        for listener in self._change_listeners:
+            try:
+                listener(ok)
+            except Exception:
+                logger.warning("users change listener failed", exc_info=True)
 
     @property
     def db_url_redacted(self) -> str:
@@ -149,13 +169,7 @@ class UsersStore:
             mutation, full_key = await asyncio.to_thread(_call)
         except Exception as exc:
             raise _wrap_database_errors(exc) from exc
-        try:
-            await self._revision.bump()
-        except _BUMP_FAILURE_TYPES:
-            logger.warning(
-                "users directory revision bump failed; other replicas will "
-                "notice the change after the cache TTL"
-            )
+        await self._after_change()
         record = api_key_record_from_row(mutation.row)
         return IssuedApiKey(record=record, key=full_key)
 
@@ -186,17 +200,14 @@ class UsersStore:
         except Exception as exc:
             raise _wrap_database_errors(exc) from exc
         if mutation.changed:
-            try:
-                await self._revision.bump()
-            except _BUMP_FAILURE_TYPES:
-                logger.warning(
-                    "users directory revision bump failed; other replicas will "
-                    "notice the change after the cache TTL"
-                )
+            await self._after_change()
         return api_key_record_from_row(mutation.row), mutation.changed
 
     async def verify_api_key(self, key: str) -> ApiKeyVerification | None:
         return await self._read(service.verify_api_key, key=key)
+
+    async def active_api_key_ids(self) -> frozenset[str]:
+        return await self._read(service.active_api_key_ids)
 
     async def create_service_account(
         self,
@@ -406,13 +417,7 @@ class UsersStore:
             raise _wrap_database_errors(exc) from exc
 
         if not dry_run and any(outcome.status in ("created", "updated") for outcome in outcomes):
-            try:
-                await self._revision.bump()
-            except _BUMP_FAILURE_TYPES:
-                logger.warning(
-                    "users directory revision bump failed; other replicas will "
-                    "notice the change after the cache TTL"
-                )
+            await self._after_change()
         return outcomes
 
     def dispose(self) -> None:
@@ -453,17 +458,7 @@ class UsersStore:
 
         result = _mutation_result_from_mutation(mutation)
         if result.changed:
-            # Bumped after the transaction above has already committed (we are
-            # here only once asyncio.to_thread has returned): another request
-            # that observes the new revision is guaranteed to read the data
-            # this mutation just wrote, not a stale snapshot.
-            try:
-                await self._revision.bump()
-            except _BUMP_FAILURE_TYPES:
-                logger.warning(
-                    "users directory revision bump failed; other replicas will "
-                    "notice the change after the cache TTL"
-                )
+            await self._after_change()
         return result
 
     def _service_mutation_result(
@@ -497,11 +492,5 @@ class UsersStore:
 
         result = self._service_mutation_result(mutation)
         if result.changed:
-            try:
-                await self._revision.bump()
-            except _BUMP_FAILURE_TYPES:
-                logger.warning(
-                    "users directory revision bump failed; other replicas will "
-                    "notice the change after the cache TTL"
-                )
+            await self._after_change()
         return result

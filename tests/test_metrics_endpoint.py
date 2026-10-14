@@ -100,3 +100,18 @@ async def test_list_changed_metric_is_exposed():
             response = await client.get("/metrics")
             assert response.status_code == 200
             assert 'keystone_mcp_list_changed_sessions_total{kind="tools"} 2.0' in response.text
+
+
+@pytest.mark.asyncio
+async def test_api_key_metrics_are_exported(metrics_app: httpx.AsyncClient):
+    response = await metrics_app.get("/metrics")
+    assert response.status_code == 200
+    body = response.text
+    for name in (
+        "keystone_mcp_api_key_verifications_total",
+        "keystone_mcp_api_key_cache_entries",
+        "keystone_mcp_api_key_cache_evictions_total",
+        "keystone_mcp_users_revision_bump_failed_total",
+    ):
+        assert name in body
+    assert "keystone_mcp_api_key_cache_entries" in body

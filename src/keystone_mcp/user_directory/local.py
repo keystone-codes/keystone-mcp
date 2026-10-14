@@ -206,6 +206,9 @@ class LocalUserDirectory:
     async def verify_api_key(self, key: str) -> ApiKeyVerification | None:
         return await self._store.verify_api_key(key)
 
+    async def active_api_key_ids(self) -> frozenset[str]:
+        return await self._store.active_api_key_ids()
+
     async def aclose(self) -> None:
         # The store's engine is owned by whoever built it (the server), not
         # by this directory, so there is nothing to close here.

@@ -186,6 +186,17 @@ class ApiKeyDirectory(UserDirectory, Protocol):
 
 
 @runtime_checkable
+class ApiKeyIdIndex(Protocol):
+    """Optional: a directory that can list the key ids of its active API keys.
+
+    Lets the resolver refuse an unknown key id without calling the directory
+    and without caching anything for it.
+    """
+
+    async def active_api_key_ids(self) -> frozenset[str]: ...
+
+
+@runtime_checkable
 class UserDirectoryBackend(Protocol):
     """Deprecated: a read-only, single-method directory client (0.4.0).
 

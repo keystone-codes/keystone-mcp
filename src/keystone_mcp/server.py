@@ -341,6 +341,19 @@ def build_server(
         policy_manager=policy_manager,
     )
 
+    if users_store is not None and directory_resolver is not None:
+        from keystone_mcp.user_directory.resolver import CachedUserDirectoryResolver
+
+        if isinstance(directory_resolver, CachedUserDirectoryResolver):
+            directory_resolver.set_observer(rbac_observability)
+
+            def _on_users_change(bump_ok: bool) -> None:
+                directory_resolver.invalidate_local()
+                if not bump_ok:
+                    rbac_observability.record_users_revision_bump_failed()
+
+            users_store.add_change_listener(_on_users_change)
+
     session_revoker = SessionRevoker(store, pending_store)
     _session_revoker_holder["revoker"] = session_revoker
 

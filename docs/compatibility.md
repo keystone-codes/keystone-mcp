@@ -335,6 +335,10 @@ Frozen since 0.5.0. Metric names and label keys (not log message text):
 | `keystone_mcp_upstream_elicitations_total` | `namespace`, `action` |
 | `keystone_mcp_oauth_client_registrations_total` | `outcome` |
 | `keystone_mcp_oauth_clients` | (gauge, no labels) |
+| `keystone_mcp_api_key_verifications_total` | `outcome` |
+| `keystone_mcp_api_key_cache_entries` | `cache` |
+| `keystone_mcp_api_key_cache_evictions_total` | `cache` |
+| `keystone_mcp_users_revision_bump_failed_total` | — |
 
 Audit event types and field names (values are not frozen): `rbac_authz_decision`,
 `rbac_users_mutation`, `rbac_policy_mutation` — see
