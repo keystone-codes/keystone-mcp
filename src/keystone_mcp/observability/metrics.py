@@ -117,6 +117,11 @@ _OAUTH_CLIENT_REGISTRATIONS = Counter(
     "Dynamic client registration (POST /register) outcomes",
     ["outcome"],
 )
+_OAUTH_TOKEN_EXCHANGE = Counter(
+    "keystone_mcp_oauth_token_exchange_total",
+    "OAuth /token exchanges by grant type and outcome",
+    ["grant_type", "outcome"],
+)
 _OAUTH_CLIENTS = Gauge(
     "keystone_mcp_oauth_clients",
     "Live (non-expired) registered OAuth clients, as seen by this replica",
@@ -304,6 +309,11 @@ class RbacMetrics:
         if not self._enabled:
             return
         _OAUTH_CLIENT_REGISTRATIONS.labels(outcome=outcome).inc()
+
+    def record_token_exchange(self, *, grant_type: str, outcome: str) -> None:
+        if not self._enabled:
+            return
+        _OAUTH_TOKEN_EXCHANGE.labels(grant_type=grant_type, outcome=outcome).inc()
 
     def set_oauth_clients_gauge(self, count: int) -> None:
         if not self._enabled:

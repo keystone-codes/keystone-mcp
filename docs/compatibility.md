@@ -54,6 +54,7 @@ without `/` or equal to the MCP path) are refused at startup.
 | `KEYSTONE_MCP_OAUTH_ALLOWED_REDIRECT_HOSTS` | 0.5.0 | stable |
 | `KEYSTONE_MCP_OAUTH_DCR_ENABLED` | 0.5.0 | stable |
 | `KEYSTONE_MCP_OAUTH_MAX_CLIENTS` | 0.5.0 | stable |
+| `KEYSTONE_MCP_OAUTH_REFRESH_GRACE_SECONDS` | 0.6.0 | stable |
 | `KEYSTONE_MCP_OAUTH_THROTTLE_IP_MAX` | 0.5.0 | stable |
 | `KEYSTONE_MCP_POLICY_TOOLS` | 0.5.0 | stable |
 | `KEYSTONE_MCP_PORT` | 0.5.0 | stable |
@@ -355,6 +356,7 @@ Frozen since 0.5.0. Metric names and label keys (not log message text):
 | `keystone_mcp_upstream_elicitations_total` | `namespace`, `action` |
 | `keystone_mcp_oauth_client_registrations_total` | `outcome` (`created`, `rejected_limit`, `rejected_redirect_host`, `rejected_metadata`) |
 | `keystone_mcp_oauth_client_evictions_total` | (counter, no labels) |
+| `keystone_mcp_oauth_token_exchange_total` | `grant_type`, `outcome` |
 | `keystone_mcp_oauth_clients` | (gauge, no labels) |
 | `keystone_mcp_api_key_verifications_total` | `outcome` |
 | `keystone_mcp_api_key_cache_entries` | `cache` |
@@ -364,7 +366,7 @@ Frozen since 0.5.0. Metric names and label keys (not log message text):
 Label value `unknown` is reserved for names that are not published.
 
 Audit event types and field names (values are not frozen): `rbac_authz_decision`,
-`rbac_users_mutation`, `rbac_policy_mutation` — see
+`rbac_users_mutation`, `rbac_policy_mutation`, `oauth_session` — see
 [observability-rbac.md](observability-rbac.md) and `src/keystone_mcp/observability/audit.py`.
 NDJSON access-log field names are in
 [observability-logging.md](observability-logging.md).

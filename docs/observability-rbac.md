@@ -62,6 +62,13 @@ Emitted for every `policy_*` admin tool attempt. Includes `actor_subject_type`
 when the verified identity carries a subject type (for example `service` on a
 refusal).
 
+### `oauth_session`
+
+OAuth rotation and replay events. Fields: `action` (`grace_reissue`,
+`refresh_replay`, `code_replay`, …), hashed `subject`, `client_id`,
+`revoked_tokens` when tokens were dropped, optional `reason` and `delay_ms`
+(grace reissue only). Never includes raw tokens or email.
+
 ## Prometheus metrics
 
 | Metric | Labels | Meaning |
@@ -84,6 +91,7 @@ refusal).
 | `keystone_mcp_admin_refusals_total` | `operation`, `reason` | Built-in administration refusals (`reason` includes `service_account`) |
 | `keystone_mcp_oauth_client_registrations_total` | `outcome` | `POST /register` outcomes (`created`, `rejected_limit`, `rejected_redirect_host`, `rejected_metadata`) |
 | `keystone_mcp_oauth_client_evictions_total` | (counter) | Unused OAuth clients evicted to admit a new registration at `KEYSTONE_MCP_OAUTH_MAX_CLIENTS` |
+| `keystone_mcp_oauth_token_exchange_total` | `grant_type`, `outcome` | OAuth `/token` exchanges (`issued`, `grace_reissue`, `replay_revoked`, `code_replay`, …) |
 | `keystone_mcp_oauth_clients` | (gauge) | Live registered OAuth clients, refreshed on every registration attempt on this replica |
 | `keystone_mcp_api_key_verifications_total` | `outcome` | API key checks at the directory resolver (`valid`, `invalid`, `malformed`, `unknown_key_id`, `limited`, `unavailable`) |
 | `keystone_mcp_api_key_cache_entries` | `cache` | Entries in the positive/negative API key verification caches (`positive`, `negative`) |
@@ -130,6 +138,12 @@ sum(rate(keystone_mcp_api_key_verifications_total{outcome=~"unknown_key_id|malfo
 
 ```promql
 increase(keystone_mcp_users_revision_bump_failed_total[15m]) > 0
+```
+
+### OAuth refresh or code replay (possible token theft)
+
+```promql
+increase(keystone_mcp_oauth_token_exchange_total{outcome=~"replay_revoked|code_replay"}[15m]) > 0
 ```
 
 ### Mass RBAC denials (possible misconfiguration or attack)
