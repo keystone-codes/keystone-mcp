@@ -7,6 +7,7 @@ Production uses the deployment's Redis; tests inject
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import time
@@ -25,6 +26,21 @@ from keystone_mcp.user_directory.util import normalize_email
 
 _SUBJECT_INDEX_MAX_MEMBERS = 256
 _COMMIT_MAX_WATCH_RETRIES = 16
+
+
+@contextlib.contextmanager
+def _trace_redis_operation(operation: str):
+    from keystone_mcp.observability.tracing import (
+        DB_OPERATION_NAME,
+        DB_SYSTEM_NAME,
+        traced,
+    )
+
+    with traced(
+        f"keystone.redis.{operation}",
+        **{DB_SYSTEM_NAME: "redis", DB_OPERATION_NAME: operation},
+    ):
+        yield
 
 
 @dataclass(frozen=True, slots=True)
@@ -950,31 +966,34 @@ class RedisOAuthStore:
         return None
 
     async def get_access_token(self, token: str) -> AccessToken | None:
-        raw = await self._load_with_migration("access", token)
-        if raw is None:
-            return None
-        access = AccessToken.model_validate_json(raw)
-        ref = token_digest(token)
-        if access.expires_at is not None and access.expires_at < time.time():
-            await self.delete_access_token(token)
-            return None
-        if access.subject:
-            sub = _subject_key(access.subject)
-            iat = self._access_iat(access)
-            if await self._token_rejected_by_nbf(sub, iat):
+        with _trace_redis_operation("get_access_token"):
+            raw = await self._load_with_migration("access", token)
+            if raw is None:
+                return None
+            access = AccessToken.model_validate_json(raw)
+            ref = token_digest(token)
+            if access.expires_at is not None and access.expires_at < time.time():
                 await self.delete_access_token(token)
                 return None
-            claims = access.claims or {}
-            if "iat" not in claims and iat is not None:
-                claims = {**claims, "iat": iat}
-                access = access.model_copy(update={"claims": claims})
-                await self._redis.set(self._access_key(ref), access.model_dump_json(), keepttl=True)
-            idx = self._subject_index_key(sub)
-            async with self._redis.pipeline(transaction=True) as pipe:
-                pipe.sadd(idx, f"at:{ref}")
-                pipe.expire(idx, self._client_ttl_seconds)
-                await pipe.execute()
-        return access.model_copy(update={"token": token})
+            if access.subject:
+                sub = _subject_key(access.subject)
+                iat = self._access_iat(access)
+                if await self._token_rejected_by_nbf(sub, iat):
+                    await self.delete_access_token(token)
+                    return None
+                claims = access.claims or {}
+                if "iat" not in claims and iat is not None:
+                    claims = {**claims, "iat": iat}
+                    access = access.model_copy(update={"claims": claims})
+                    await self._redis.set(
+                        self._access_key(ref), access.model_dump_json(), keepttl=True
+                    )
+                idx = self._subject_index_key(sub)
+                async with self._redis.pipeline(transaction=True) as pipe:
+                    pipe.sadd(idx, f"at:{ref}")
+                    pipe.expire(idx, self._client_ttl_seconds)
+                    await pipe.execute()
+            return access.model_copy(update={"token": token})
 
     async def put_access_token(self, access: AccessToken) -> None:
         ref = token_digest(access.token)
@@ -1003,6 +1022,10 @@ class RedisOAuthStore:
         await self._delete_access_suffix(token)
 
     async def get_refresh_token(self, token: str) -> RefreshToken | None:
+        with _trace_redis_operation("get_refresh_token"):
+            return await self._get_refresh_token_inner(token)
+
+    async def _get_refresh_token_inner(self, token: str) -> RefreshToken | None:
         raw = await self._load_with_migration("refresh", token)
         if raw is None:
             return None
@@ -1059,6 +1082,10 @@ class RedisOAuthStore:
         await self._delete_refresh_suffix(token)
 
     async def revoke_subject(self, subject: str, *, now: int) -> RevokedTokens:
+        with _trace_redis_operation("revoke_subject"):
+            return await self._revoke_subject_inner(subject, now=now)
+
+    async def _revoke_subject_inner(self, subject: str, *, now: int) -> RevokedTokens:
         sub = _subject_key(subject)
         idx_key = self._subject_index_key(sub)
         nbf_key = self._subject_nbf_key(sub)
@@ -1082,6 +1109,10 @@ class RedisOAuthStore:
         return RevokedTokens(access=access_count, refresh_tokens=tuple(refresh_tokens))
 
     async def revoke_client_tokens(self, subject: str, client_id: str) -> int:
+        with _trace_redis_operation("revoke_client_tokens"):
+            return await self._revoke_client_tokens_inner(subject, client_id)
+
+    async def _revoke_client_tokens_inner(self, subject: str, client_id: str) -> int:
         sub = _subject_key(subject)
         idx_key = self._subject_index_key(sub)
         members = await self._redis.smembers(idx_key)
@@ -1220,6 +1251,28 @@ class RedisOAuthStore:
         pipe.set(key, payload, ex=ttl)
 
     async def commit_token_pair(
+        self,
+        *,
+        subject: str,
+        consumed_iat: int | None,
+        access: AccessToken,
+        refresh: RefreshToken,
+        replace_refresh_token: str | None = None,
+        refresh_meta: str | None = None,
+        rotation: RotationRecord | None = None,
+    ) -> None:
+        with _trace_redis_operation("commit_token_pair"):
+            await self._commit_token_pair_inner(
+                subject=subject,
+                consumed_iat=consumed_iat,
+                access=access,
+                refresh=refresh,
+                replace_refresh_token=replace_refresh_token,
+                refresh_meta=refresh_meta,
+                rotation=rotation,
+            )
+
+    async def _commit_token_pair_inner(
         self,
         *,
         subject: str,

@@ -595,6 +595,13 @@ then this script is the supported path.
 | `KEYSTONE_MCP_METRICS_PATH` | `/metrics` | Metrics route path. |
 | `KEYSTONE_MCP_METRICS_TOOL_NAME` | `full` | `full` — per-tool label on call metrics; `coarse` — `tool` label is the namespace prefix only (lower cardinality). |
 | `KEYSTONE_MCP_METRICS_OAUTH_CLIENT_ID_LIMIT` | `50` | Distinct `oauth_client_id` label values kept per process (first-seen wins); further client ids are reported as `other`. `0` reports every client as `other`. Must be `>= 0`. |
+| `KEYSTONE_MCP_OTEL_ENABLED` | `false` | Export OpenTelemetry traces (requires the `otel` extra). Export endpoint, service name, sampler, and OTLP headers use standard `OTEL_*` variables — see [observability-tracing.md](observability-tracing.md). |
+
+OpenTelemetry export is configured with standard SDK variables (not
+`KEYSTONE_MCP_*`): `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS`,
+`OTEL_SERVICE_NAME`, `OTEL_TRACES_SAMPLER`, `OTEL_TRACES_SAMPLER_ARG`, and
+`OTEL_RESOURCE_ATTRIBUTES`. Keystone reads only `KEYSTONE_MCP_OTEL_ENABLED`; the
+SDK reads the `OTEL_*` names at runtime.
 
 The policy file format is [rbac-policy-format.md](rbac-policy-format.md).
 Audit fields and example alerts are [observability-rbac.md](observability-rbac.md).

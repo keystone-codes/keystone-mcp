@@ -37,6 +37,7 @@ find there, not just the file name.
 - [Plugins (entry points)](plugins.md)
 - [Google sign-in (legacy page)](google-oauth.md)
 - [Logs](observability-logging.md)
+- [Tracing](observability-tracing.md)
 - [Metrics and audit](observability-rbac.md)
 - [Security model](security-model.md) — the three things that decide access
 

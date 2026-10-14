@@ -2078,28 +2078,60 @@ class KeystoneOAuthProvider(OAuthProvider):
         return await self._store.get_access_token(token)
 
     async def verify_token(self, token: str) -> AccessToken | None:
-        if token.startswith("ksk_"):
-            return await self._verify_service_api_key(token)
-        access = await self.load_access_token(token)
-        if access is None:
-            return None
-        # Resource Indicators (RFC 8707): reject a token minted for another
-        # audience.
-        if access.resource is None:
-            # A token with no bound audience could have been issued for any
-            # resource, so it cannot be shown to belong to this one. Accepted by
-            # default for clients that predate resource indicators; refused when
-            # the deployment requires one.
-            if self._settings.require_resource_indicator:
-                logger.info(
-                    "rejected access token with no bound resource "
-                    "(KEYSTONE_MCP_REQUIRE_RESOURCE_INDICATOR is on)"
+        from keystone_mcp.observability.tracing import traced
+
+        with traced("keystone.token.verify"):
+            if token.startswith("ksk_"):
+                access = await self._verify_service_api_key(token)
+            else:
+                access = await self.load_access_token(token)
+            if access is None:
+                self._set_token_verify_span(found=False, auth_method=None)
+                return None
+            # Resource Indicators (RFC 8707): reject a token minted for another
+            # audience.
+            if access.resource is None:
+                if self._settings.require_resource_indicator:
+                    logger.info(
+                        "rejected access token with no bound resource "
+                        "(KEYSTONE_MCP_REQUIRE_RESOURCE_INDICATOR is on)"
+                    )
+                    self._set_token_verify_span(
+                        found=True,
+                        auth_method=(access.claims or {}).get("auth_method"),
+                    )
+                    return None
+                self._set_token_verify_span(
+                    found=True,
+                    auth_method=(access.claims or {}).get("auth_method"),
+                )
+                return access
+            if not resources_equivalent(access.resource, self._settings.resource_url):
+                self._set_token_verify_span(
+                    found=True,
+                    auth_method=(access.claims or {}).get("auth_method"),
                 )
                 return None
+            self._set_token_verify_span(
+                found=True,
+                auth_method=(access.claims or {}).get("auth_method"),
+            )
             return access
-        if not resources_equivalent(access.resource, self._settings.resource_url):
-            return None
-        return access
+
+    @staticmethod
+    def _set_token_verify_span(*, found: bool, auth_method: str | None) -> None:
+        from opentelemetry import trace
+
+        from keystone_mcp.observability.tracing import is_tracing_active
+
+        if not is_tracing_active():
+            return
+        span = trace.get_current_span()
+        if not span.is_recording():
+            return
+        span.set_attribute("keystone.token.found", found)
+        if found and auth_method is not None:
+            span.set_attribute("keystone.auth_method", auth_method)
 
     async def _verify_service_api_key(self, token: str) -> AccessToken | None:
         if self._user_resolver is None:

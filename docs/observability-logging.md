@@ -77,7 +77,9 @@ embedded credentials.
 The access middleware sets a context-scoped `request_id` from
 `KEYSTONE_MCP_LOG_REQUEST_ID_HEADER` or a generated UUID. RBAC audit and
 middleware observability reuse that id when present, then fall back to OAuth
-session claims (`jti` / `sid`).
+session claims (`jti` / `sid`). When OpenTelemetry tracing is enabled
+(`KEYSTONE_MCP_OTEL_ENABLED`), structured logs also carry `trace_id` and
+`span_id` beside `request_id` — see [observability-tracing.md](observability-tracing.md).
 
 ## Readiness
 

@@ -22,12 +22,12 @@ from conftest import (
     register_client,
 )
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
+from keystone_mcp.cli import main as cli_main
 from keystone_mcp.config import ConfigError, Settings
 from keystone_mcp.contract_tests.fake_oidc import FakeOidcIssuer
 from keystone_mcp.login.oidc import OidcLoginProvider
 from keystone_mcp.server import build_server
 from keystone_mcp.user_directory.errors import UserDirectoryUnavailableError
-from keystone_mcp.cli import main as cli_main
 from keystone_mcp.users.db import create_users_engine
 from support.test_env import require_redis_url
 from support.users_db import sqlite_url

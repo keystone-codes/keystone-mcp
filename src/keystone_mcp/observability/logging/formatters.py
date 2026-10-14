@@ -9,6 +9,7 @@ from typing import Any
 
 from keystone_mcp.observability.logging.context import get_request_id
 from keystone_mcp.observability.logging.redact import redact_dict, redact_string, redact_value
+from keystone_mcp.observability.tracing import current_trace_ids
 
 _STRUCTURED_EXTRA_KEYS = frozenset(
     {
@@ -19,6 +20,8 @@ _STRUCTURED_EXTRA_KEYS = frozenset(
         "duration_ms",
         "client_ip",
         "request_id",
+        "trace_id",
+        "span_id",
     }
 )
 
@@ -55,6 +58,9 @@ def _structured_fields(record: logging.LogRecord) -> dict[str, Any]:
     rid = _record_request_id(record)
     if rid:
         fields["request_id"] = rid
+    trace_ids = current_trace_ids()
+    if trace_ids is not None:
+        fields["trace_id"], fields["span_id"] = trace_ids
     return fields
 
 

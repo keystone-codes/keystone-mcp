@@ -11,12 +11,21 @@ from typing import TYPE_CHECKING, Any
 from keystone_mcp.observability.logging.context import get_request_id
 from keystone_mcp.observability.subject import hash_subject, roles_label
 from keystone_mcp.observability.tool_family import tool_family
+from keystone_mcp.observability.tracing import current_trace_ids
 
 if TYPE_CHECKING:
     from keystone_mcp.rbac.loader import PolicyIdentity
     from keystone_mcp.router.rbac_middleware import RbacDenialReason
 
 logger = logging.getLogger(__name__)
+
+
+def _audit_trace_fields() -> dict[str, str]:
+    ids = current_trace_ids()
+    if ids is None:
+        return {}
+    trace_id, _span_id = ids
+    return {"trace_id": trace_id}
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,9 +121,10 @@ class AuthzAuditRecorder:
 
     def _emit(self, event: dict[str, Any]) -> None:
         try:
+            payload = {**event, **_audit_trace_fields()}
             logger.info(
                 "rbac audit %s",
-                json.dumps(event, sort_keys=True, separators=(",", ":")),
+                json.dumps(payload, sort_keys=True, separators=(",", ":")),
                 extra={"stream": "audit"},
             )
         except Exception:

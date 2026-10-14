@@ -138,13 +138,15 @@ class RbacMiddleware(Middleware):
         self._observability = observability
         self._policy_revision_watcher = policy_revision_watcher
         self._route_lookup = route_lookup
+        self._rbac_mode = "off"
         if enforce is not None:
             self._enforce = enforce
         elif settings is not None:
             self._enforce = settings.rbac_enforcing
+            self._rbac_mode = settings.rbac_mode
         else:
             self._enforce = True
-
+            self._rbac_mode = "off"
     @staticmethod
     def _visible(
         policy: RbacPolicy,
@@ -422,6 +424,30 @@ class RbacMiddleware(Middleware):
         roles_only: bool,
         operation: str,
     ) -> RbacDecision:
+        from keystone_mcp.observability.tracing import traced
+
+        with traced(
+            "keystone.rbac.decide",
+            keystone_rbac_mode=self._rbac_mode,
+            keystone_mcp_operation=operation,
+        ):
+            decision = await self._evaluate_inner(
+                context,
+                name=name,
+                roles_only=roles_only,
+                operation=operation,
+            )
+            self._annotate_rbac_span(decision, name=name, operation=operation)
+            return decision
+
+    async def _evaluate_inner(
+        self,
+        context: MiddlewareContext,
+        *,
+        name: str | None,
+        roles_only: bool,
+        operation: str,
+    ) -> RbacDecision:
         if self._policy_revision_watcher is not None:
             try:
                 await self._policy_revision_watcher.ensure_current()
@@ -627,6 +653,34 @@ class RbacMiddleware(Middleware):
         message = context.message
         args: dict[str, Any] = getattr(message, "arguments", None) or {}
         return make_task_id(identity, route.name, args, namespace=route.namespace)
+
+    def _annotate_rbac_span(
+        self,
+        decision: RbacDecision,
+        *,
+        name: str | None,
+        operation: str,
+    ) -> None:
+        from keystone_mcp.observability.tracing import is_tracing_active
+
+        if not is_tracing_active():
+            return
+        from opentelemetry import trace
+
+        span = trace.get_current_span()
+        if not span.is_recording():
+            return
+        tool_name = name or decision.tool_name or ""
+        if operation == "call_tool" and tool_name and self._route_lookup is not None:
+            tool_attr = tool_name if self._route_lookup(tool_name) is not None else "unknown"
+        else:
+            tool_attr = tool_name or "unknown"
+        span.set_attribute("keystone.rbac.decision", "allow" if decision.allowed else "deny")
+        span.set_attribute(
+            "keystone.rbac.reason",
+            decision.reason.value if decision.reason is not None else "",
+        )
+        span.set_attribute("keystone.tool", tool_attr)
 
     def _record_decision(self, decision: RbacDecision, *, operation: str) -> None:
         if self._observability is not None:
