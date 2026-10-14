@@ -293,6 +293,16 @@ def test_grant_admin_bumps_revision_with_redis(tmp_path: Path, monkeypatch, caps
 # --- import: fetch_source_users (direct, no CLI) ----------------------------
 
 
+def test_import_accepts_uppercase_scheme() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"users": [], "total": 0})
+
+    users = fetch_source_users(
+        "HTTPS://source.example", "t0k", transport=httpx.MockTransport(handler)
+    )
+    assert users == []
+
+
 def test_fetch_sends_bearer_and_both_filters() -> None:
     seen: list[httpx.Request] = []
 

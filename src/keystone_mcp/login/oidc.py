@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import logging
+import re
 import secrets
 import time
 from collections.abc import Callable, Mapping
@@ -21,6 +22,15 @@ from keystone_mcp.login.protocol import LoginIdentity, LoginRedirect, LoginRejec
 from keystone_mcp.user_directory.util import email_folds_to_ascii
 
 logger = logging.getLogger(__name__)
+
+_LOGGABLE_PROVIDER_ERROR = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
+
+
+def _loggable_error_code(raw: object) -> str:
+    if not isinstance(raw, str) or not _LOGGABLE_PROVIDER_ERROR.fullmatch(raw):
+        return "unrecognized"
+    return raw
+
 
 _RESERVED_AUTHORIZE_PARAMS = frozenset(
     {
@@ -537,7 +547,7 @@ class OidcLoginProvider(RedirectLoginProviderBase):
             try:
                 err_body = response.json()
                 if isinstance(err_body, dict) and err_body.get("error") is not None:
-                    error_code = str(err_body["error"])
+                    error_code = _loggable_error_code(err_body["error"])
             except ValueError:
                 pass
             logger.warning(

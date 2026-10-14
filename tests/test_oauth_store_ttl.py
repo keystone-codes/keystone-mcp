@@ -12,6 +12,7 @@ import time
 import pytest_asyncio
 from mcp.server.auth.provider import RefreshToken
 from mcp.shared.auth import OAuthClientInformationFull
+from redis.exceptions import RedisError
 
 from keystone_mcp.auth.oauth_store import RedisOAuthStore, token_digest
 from support.test_env import redis_key_prefix
@@ -176,6 +177,63 @@ async def test_count_clients_drops_expired_entries(store: RedisOAuthStore):
 
     assert await store.count_clients() == 0
     assert await store.redis.zscore(index_key, "c6") is None
+
+
+async def test_legacy_clients_are_counted_after_backfill(store: RedisOAuthStore):
+    for legacy_id in ("leg-a", "leg-b", "leg-c"):
+        key = store._client_key(legacy_id)
+        await store.redis.set(key, _client(legacy_id).model_dump_json())
+    await store.put_client(_client("new-d"))
+
+    assert await store.count_clients() == 4
+    for legacy_id in ("leg-a", "leg-b", "leg-c"):
+        assert await store.redis.ttl(store._client_key(legacy_id)) > 0
+
+    original_index = store.index_legacy_clients
+    calls = 0
+
+    async def counting_index() -> int:
+        nonlocal calls
+        calls += 1
+        return await original_index()
+
+    store.index_legacy_clients = counting_index  # type: ignore[method-assign]
+    assert await store.count_clients() == 4
+    assert calls == 0
+
+
+async def test_legacy_backfill_does_not_mark_clients_unused(store: RedisOAuthStore):
+    legacy_id = "leg-unused"
+    await store.redis.set(store._client_key(legacy_id), _client(legacy_id).model_dump_json())
+    await store.count_clients()
+    assert await store.redis.zscore(store._client_unused_key(), legacy_id) is None
+
+
+async def test_backfill_failure_does_not_break_counting(store: RedisOAuthStore, caplog):
+    await store.put_client(_client("indexed-only"))
+    assert await store.count_clients() == 1
+
+    async def failing_index() -> int:
+        raise RedisError("scan failed")
+
+    store.index_legacy_clients = failing_index  # type: ignore[method-assign]
+    store._legacy_clients_indexed = False
+
+    with caplog.at_level("WARNING"):
+        assert await store.count_clients() == 1
+    assert any("backfill" in r.message.lower() for r in caplog.records)
+
+    calls = 0
+
+    async def succeed_index() -> int:
+        nonlocal calls
+        calls += 1
+        return 0
+
+    store.index_legacy_clients = succeed_index  # type: ignore[method-assign]
+    store._legacy_clients_indexed = False
+    await store.count_clients()
+    assert calls == 1
 
 
 async def test_legacy_client_is_added_to_index_on_read(store: RedisOAuthStore):
