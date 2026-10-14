@@ -472,6 +472,7 @@ def test_stage_like_production_configuration_is_accepted(monkeypatch, tmp_path: 
     assert all(
         "UPSTREAM_ALLOW_INSECURE_HTTP" in w
         or "UPSTREAM_EGRESS_ALLOW_PRIVATE" in w
+        or "KEYSTONE_MCP_USERS_SERVICE_URL uses http" in w
         or "deprecated since 0.5.0" in w
         for w in warnings
     )

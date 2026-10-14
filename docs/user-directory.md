@@ -188,7 +188,18 @@ this actor is itself allowed to manage users.
 
 | Method | Path | Body | Response |
 |---|---|---|---|
-| `GET` | `/v1/users/resolve?email=` | — | `{"exists": bool, "roles": [...], "is_blocked": bool}` |
+| `GET` | `/v1/users/resolve?email=` | — | Resolve payload (see below). |
+
+**Resolve response fields**
+
+| Field | Type | Notes |
+|---|---|---|
+| `exists` | bool, required | Whether the subject is in the directory. |
+| `is_blocked` | bool | Missing is read as `false` with a startup-time warning on the Keystone side — send it. |
+| `roles` | list of strings | Empty or omitted means no roles. |
+| `subject_type` | optional string | `"human"` or `"service"`; must match the subject (`svc:…` is service). Omitted defaults from the subject. |
+
+JSON booleans are required for `exists` and `is_blocked`. Integer `0`/`1` are still accepted with a warning; any other type (including strings) is treated as the directory being unavailable.
 | `GET` | `/v1/users?is_blocked=&role=&email_contains=` | — | `{"users": [...], "total": N}` |
 | `POST` | `/v1/users` | `{"email", "full_name", "roles": [...], "created_by", "note"?}` | user object |
 | `PATCH` | `/v1/users/{email}` | `{"full_name"?, "note"?}` | user object |

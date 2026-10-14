@@ -7,7 +7,7 @@ from collections.abc import Mapping, Sequence
 from keystone_mcp.login.protocol import FormField, LoginIdentity, LoginKind, LoginRejected
 from keystone_mcp.user_directory.errors import UserDirectoryUnavailableError
 from keystone_mcp.user_directory.protocol import UserDirectoryResolver
-from keystone_mcp.user_directory.util import normalize_email
+from keystone_mcp.user_directory.util import email_folds_to_ascii, normalize_email
 from keystone_mcp.users.models import utcnow
 
 
@@ -60,7 +60,10 @@ class ApiKeyLoginProvider:
         )
 
     async def verify(self, form: Mapping[str, str]) -> LoginIdentity:
-        email = normalize_email(str(form.get("email", "")))
+        raw_email = str(form.get("email", ""))
+        if email_folds_to_ascii(raw_email):
+            raise LoginRejected("invalid_credentials")
+        email = normalize_email(raw_email)
         api_token = str(form.get("api_token", ""))
         if api_token in self._dev_tokens:
             return LoginIdentity(email=email, provider="api_key", interactive=False)

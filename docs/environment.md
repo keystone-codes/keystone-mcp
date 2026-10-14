@@ -53,6 +53,7 @@ reached from outside this machine. Two further rules are warnings — logged by
 | W3 | `production` | `KEYSTONE_MCP_UPSTREAM_EGRESS_ALLOW_PRIVATE=true`. |
 | W4 | `local` | `KEYSTONE_MCP_RBAC_MODE=enforce` and `KEYSTONE_MCP_DEV_TOKENS` is non-empty: a DEV token then signs any directory member in, including administrators. |
 | W5 | `local` | `KEYSTONE_MCP_HOST` is unspecified (`0.0.0.0`, `::`) and `KEYSTONE_MCP_DEV_TOKENS` is non-empty. Not a refusal — the Docker demo's own container legitimately binds `0.0.0.0` internally, relying on its port mapping to restrict reachability — but anyone who *can* reach the port signs in as any directory member. |
+| W20 | `production` | `KEYSTONE_MCP_USERS_BACKEND=http`, `KEYSTONE_MCP_USERS_SERVICE_URL` uses `http` on a non-loopback host, and `KEYSTONE_MCP_USERS_SERVICE_ALLOW_INSECURE_HTTP` is not set. |
 | W7 | both | RBAC is `enforce`, `KEYSTONE_MCP_POLICY_TOOLS=full` (the default) and the policy file is not writable (e.g. mounted `:ro`). Not a refusal — `policy_read`/`policy_validate` still work — but every mutating `policy_*` call refuses with `policy_readonly` until the mount is read-write or this replica is switched to `KEYSTONE_MCP_POLICY_TOOLS=read-only`. |
 
 ## Where settings come from
@@ -428,6 +429,7 @@ The signal handler is installed when the mode is `observe` or `enforce`.
 | `KEYSTONE_MCP_USERS_SERVICE_URL` | `""` | Only with `KEYSTONE_MCP_USERS_BACKEND=http`. Required when Google login or RBAC is enabled. |
 | `KEYSTONE_MCP_USERS_SERVICE_TOKEN` | `""` | Only with `KEYSTONE_MCP_USERS_BACKEND=http`. Bearer token for the users directory. Same secret as that service's own token. |
 | `KEYSTONE_MCP_USERS_SERVICE_TIMEOUT_SECONDS` | `3.0` | Only with `KEYSTONE_MCP_USERS_BACKEND=http`. Per-request timeout. |
+| `KEYSTONE_MCP_USERS_SERVICE_ALLOW_INSECURE_HTTP` | `false` | Silences the production warning about an `http://` `KEYSTONE_MCP_USERS_SERVICE_URL`. |
 | `KEYSTONE_MCP_USERS_CACHE_ALLOW_TTL_SECONDS` | `60` | Cache TTL for an allow decision. |
 | `KEYSTONE_MCP_USERS_CACHE_DENY_TTL_SECONDS` | `30` | Cache TTL for a deny decision. |
 | `KEYSTONE_MCP_USERS_REDIS_REVISION_KEY` | `km:users:revision` | Shared Redis key that invalidates the directory cache across replicas. |
