@@ -86,6 +86,7 @@ without `/` or equal to the MCP path) are refused at startup.
 | `KEYSTONE_MCP_SUPERADMIN_EMAIL` | 0.5.0 | stable |
 | `KEYSTONE_MCP_THROTTLE_MAX` | 0.5.0 | stable |
 | `KEYSTONE_MCP_THROTTLE_WINDOW` | 0.5.0 | stable |
+| `KEYSTONE_MCP_THROTTLE_BACKEND` | 0.6.0 | stable |
 | `KEYSTONE_MCP_TOKEN_TTL` | 0.5.0 | stable |
 | `KEYSTONE_MCP_UPSTREAMS` | 0.5.0 | stable |
 | `KEYSTONE_MCP_UPSTREAMS_PATH` | 0.5.0 | stable |
@@ -430,6 +431,7 @@ Frozen since 0.5.0. Metric names and label keys (not log message text):
 | `keystone_mcp_api_key_cache_entries` | `cache` |
 | `keystone_mcp_api_key_cache_evictions_total` | `cache` |
 | `keystone_mcp_users_revision_bump_failed_total` | — |
+| `keystone_mcp_throttle_backend_errors_total` | `kind` |
 
 Label value `unknown` is reserved for names that are not published.
 

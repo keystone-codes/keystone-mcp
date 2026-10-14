@@ -33,8 +33,9 @@ from keystone_mcp.auth.oauth_store import (
     OAuthStore,
     build_shared_auth_stores,
 )
+from keystone_mcp.auth.rate_window import RedisSlidingWindow
 from keystone_mcp.auth.sessions import SessionRevoker
-from keystone_mcp.auth.throttle import PerIdentityThrottle
+from keystone_mcp.auth.throttle import LoginAttemptThrottle, PerIdentityThrottle
 from keystone_mcp.catalog import register_catalog
 from keystone_mcp.config import (
     ConfigError,
@@ -402,12 +403,40 @@ def build_server(
     session_revoker = SessionRevoker(store, pending_store)
     _session_revoker_holder["revoker"] = session_revoker
 
+    login_throttle: LoginAttemptThrottle | None = None
+    oauth_endpoint_throttle: LoginAttemptThrottle | None = None
+    tool_sliding_window: RedisSlidingWindow | None = None
+    if settings.throttle_backend == "redis":
+        redis_client = getattr(store, "redis", None)
+        if redis_client is None:
+            raise RuntimeError(
+                "KEYSTONE_MCP_THROTTLE_BACKEND=redis requires a Redis OAuth store"
+            )
+        prefix = settings.redis_key_prefix
+        tool_sliding_window = RedisSlidingWindow(redis_client, key_prefix=prefix, kind="tool")
+        login_throttle = LoginAttemptThrottle(
+            settings.login_throttle_ip_max,
+            settings.login_throttle_email_max,
+            settings.login_throttle_window_seconds,
+            window=RedisSlidingWindow(redis_client, key_prefix=prefix, kind="login_ip"),
+            kind="login_ip",
+        )
+        oauth_endpoint_throttle = LoginAttemptThrottle(
+            ip_max=settings.oauth_throttle_ip_max,
+            email_max=0,
+            window_seconds=settings.login_throttle_window_seconds,
+            window=RedisSlidingWindow(redis_client, key_prefix=prefix, kind="oauth_ip"),
+            kind="oauth_ip",
+        )
+
     oauth = KeystoneOAuthProvider(
         settings,
         store,
         pending_store,
         login_providers=login_providers,
         user_resolver=directory_resolver,
+        login_throttle=login_throttle,
+        oauth_endpoint_throttle=oauth_endpoint_throttle,
         observability=rbac_observability,
         identity_binder=identity_binder,
     )
@@ -486,7 +515,11 @@ def build_server(
     async def _login_redirect_not_allowed(request):  # noqa: ANN001
         return await oauth.render_redirect_not_allowed(request)
 
-    throttle = PerIdentityThrottle(settings.throttle_max_requests, settings.throttle_window_seconds)
+    throttle = PerIdentityThrottle(
+        settings.throttle_max_requests,
+        settings.throttle_window_seconds,
+        window=tool_sliding_window,
+    )
     engine = RouterEngine(settings)
     registry = RouterRegistry(engine, mcp)
     upstreams = UpstreamRegistry(

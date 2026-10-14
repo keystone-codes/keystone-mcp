@@ -328,10 +328,11 @@ except `/healthz`/`/readyz`, by the `Host` allowlist
   resources, or templates per upstream per kind — a failed tools list marks
   the upstream unavailable; a failed prompts/resources read keeps the previous
   catalog for that kind.
-- The throttle, the users-directory cache and the circuit breaker are
-  per-process; live discovery (the catalog of published tools) is
-  per-process too. What that means with more than one replica:
-  [environment.md](environment.md#more-than-one-replica).
+- The throttle (when `KEYSTONE_MCP_THROTTLE_BACKEND=memory`), the users-directory
+  cache and the circuit breaker are per-process; live discovery (the catalog of
+  published tools) is per-process too. With `KEYSTONE_MCP_THROTTLE_BACKEND=redis`,
+  tool-call and sign-in IP limits are shared in Redis. What that means with more
+  than one replica: [environment.md](environment.md#more-than-one-replica).
 - Changing `KEYSTONE_MCP_UPSTREAMS_PATH`, `KEYSTONE_MCP_UPSTREAMS`, proxy schema
   patches, or per-tool timeouts still requires a process restart.
 - When RBAC is enabled, startup is refused only if every configured upstream

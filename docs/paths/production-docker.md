@@ -60,6 +60,7 @@ for this deployment. Required:
 | `KEYSTONE_MCP_BASE_URL` | `https://mcp.example.com` |
 | `KEYSTONE_MCP_HOST` | `0.0.0.0` |
 | `KEYSTONE_MCP_REDIS_URL` | `redis://:<password>@redis:6379/0` |
+| `KEYSTONE_MCP_THROTTLE_BACKEND` | `redis` (share tool-call and sign-in IP limits across replicas) |
 | `KEYSTONE_MCP_USERS_DB_URL` | `postgresql+psycopg://keystone:<password>@postgres:5432/keystone` |
 | `KEYSTONE_MCP_RBAC_MODE` | `enforce` (already the section-1 default; leave it) |
 | `KEYSTONE_MCP_RBAC_POLICY_PATH` | `/etc/keystone-mcp/policy/rbac-policy.yaml` |
