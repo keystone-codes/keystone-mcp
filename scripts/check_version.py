@@ -8,6 +8,7 @@ Sources checked:
   module is never imported so this works without an installed package)
 - ``CHANGELOG.md`` -> the first released heading (the first ``## [...]``
   heading that is not ``[Unreleased]``)
+- ``charts/keystone-mcp/Chart.yaml`` -> ``version`` and ``appVersion`` (Helm chart)
 
 With ``--tag``, additionally checks that the tag starts with ``v`` and that
 ``tag[1:]`` matches all three sources, and that the matching CHANGELOG
@@ -51,6 +52,7 @@ _CHANGELOG_HEADING_RE = re.compile(
 PYPROJECT_SOURCE = "pyproject.toml"
 DUNDER_SOURCE = "src/keystone_mcp/__init__.py"
 CHANGELOG_SOURCE = "CHANGELOG.md"
+CHART_SOURCE = "charts/keystone-mcp/Chart.yaml"
 
 # The project's PyPI distribution name (S14 / X10): "keystone-mcp" was
 # already taken by an unrelated project, so the distribution is named
@@ -125,6 +127,25 @@ def _read_dunder_version(root: Path) -> str:
     return match.group(1)
 
 
+_CHART_VERSION_RE = re.compile(r'^version:\s*["\']?(?P<version>[^"\']+)["\']?\s*$', re.MULTILINE)
+_CHART_APP_VERSION_RE = re.compile(
+    r'^appVersion:\s*["\']?(?P<app_version>[^"\']+)["\']?\s*$', re.MULTILINE
+)
+
+
+def _read_chart_versions(root: Path) -> tuple[str, str]:
+    path = root / CHART_SOURCE
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError as exc:
+        raise VersionCheckError(f"{CHART_SOURCE}: file not found ({path})") from exc
+    version_match = _CHART_VERSION_RE.search(text)
+    app_match = _CHART_APP_VERSION_RE.search(text)
+    if version_match is None or app_match is None:
+        raise VersionCheckError(f"{CHART_SOURCE}: missing version or appVersion")
+    return version_match.group("version"), app_match.group("app_version")
+
+
 def _read_changelog_version(root: Path) -> tuple[str, str | None]:
     path = root / CHANGELOG_SOURCE
     try:
@@ -153,11 +174,14 @@ def read_versions(root: Path) -> dict[str, str]:
     pyproject_version = _read_pyproject_version(root)
     dunder_version = _read_dunder_version(root)
     changelog_version, _changelog_date = _read_changelog_version(root)
+    chart_version, chart_app_version = _read_chart_versions(root)
 
     return {
         PYPROJECT_SOURCE: pyproject_version,
         DUNDER_SOURCE: dunder_version,
         CHANGELOG_SOURCE: changelog_version,
+        f"{CHART_SOURCE} (version)": chart_version,
+        f"{CHART_SOURCE} (appVersion)": chart_app_version,
     }
 
 
@@ -348,6 +372,21 @@ def check(root: Path, tag: str | None, dist_dir: Path | None = None) -> list[str
     if dunder_version != changelog_version:
         errors.append(
             f"{DUNDER_SOURCE} ({dunder_version}) != {CHANGELOG_SOURCE} ({changelog_version})"
+        )
+    chart_version = versions[f"{CHART_SOURCE} (version)"]
+    chart_app_version = versions[f"{CHART_SOURCE} (appVersion)"]
+    if chart_version != pyproject_version:
+        errors.append(
+            f"{CHART_SOURCE} version ({chart_version}) != {PYPROJECT_SOURCE} ({pyproject_version})"
+        )
+    if chart_app_version != pyproject_version:
+        errors.append(
+            f"{CHART_SOURCE} appVersion ({chart_app_version}) != "
+            f"{PYPROJECT_SOURCE} ({pyproject_version})"
+        )
+    if chart_version != chart_app_version:
+        errors.append(
+            f"{CHART_SOURCE} version ({chart_version}) != appVersion ({chart_app_version})"
         )
 
     if tag is not None:

@@ -1,7 +1,8 @@
 # Install Keystone-MCP on a host with systemd
 
 For Docker, use [paths/production-docker.md](paths/production-docker.md) —
-that is the main production path. This page is for a host that runs
+that is the main production path. For Kubernetes, use the Helm chart in
+[paths/kubernetes.md](paths/kubernetes.md). This page is for a host that runs
 Keystone-MCP directly, without a container.
 
 ## What you need

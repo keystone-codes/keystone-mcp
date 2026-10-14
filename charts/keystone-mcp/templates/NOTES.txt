@@ -1,0 +1,18 @@
+Keystone-MCP was installed as {{ include "keystone-mcp.fullname" . }} in namespace {{ .Release.Namespace }}.
+
+Base URL (KEYSTONE_MCP_BASE_URL): {{ .Values.baseUrl }}
+
+Grant the first administrator after sign-in:
+  kubectl exec -n {{ .Release.Namespace }} deploy/{{ include "keystone-mcp.fullname" . }} -- \
+    keystone-mcp users grant-admin --email {{ .Values.superadminEmail }}
+
+{{- if .Values.secret.create }}
+
+WARNING: secret.create is enabled. Do not use generated Secrets in production;
+create your own Secret and set existingSecret instead.
+{{- end }}
+
+{{- if or .Values.redis.enabled .Values.postgresql.enabled }}
+
+WARNING: Built-in Redis/Postgres are for demo and kind only. Use managed services in production.
+{{- end }}

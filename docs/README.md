@@ -9,8 +9,8 @@ find there, not just the file name.
   sign-in, a role change, in about 15 minutes
 - [Deploy to production](paths/production-docker.md) — Docker, Postgres and
   TLS on your own domain
-- [Kubernetes example](paths/kubernetes.md) — the same settings, packaged
-  for a cluster (not a Helm chart)
+- [Kubernetes](paths/kubernetes.md) — Helm chart (`charts/keystone-mcp`) or
+  plain kustomize example
 - [What Keystone-MCP does](features.md) — every capability in depth, and
   every capability
 
