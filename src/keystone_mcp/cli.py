@@ -11,7 +11,13 @@ from typing import Sequence
 
 import yaml
 
-from keystone_mcp.config import USERS_CLI_VARIABLES, ConfigError, settings_for_command
+from keystone_mcp.auth.oauth_cli import add_oauth_commands
+from keystone_mcp.config import (
+    OAUTH_CLI_VARIABLES,
+    USERS_CLI_VARIABLES,
+    ConfigError,
+    settings_for_command,
+)
 from keystone_mcp.config_check_cli import add_config_commands
 from keystone_mcp.env_file import load_env_file
 from keystone_mcp.observability.logging import configure_logging
@@ -239,6 +245,8 @@ _USERS_CLI_COMMANDS = frozenset({"users", "keys", "service-accounts"})
 
 
 def _settings_required_for_cli(command: str) -> frozenset[str]:
+    if command == "oauth":
+        return OAUTH_CLI_VARIABLES
     if command in _USERS_CLI_COMMANDS:
         return USERS_CLI_VARIABLES
     return frozenset()
@@ -306,6 +314,7 @@ def main(argv: list[str] | None = None) -> int:
     add_api_keys_commands(subparsers)
     add_service_accounts_commands(subparsers)
     add_plugins_commands(subparsers)
+    add_oauth_commands(subparsers)
     add_config_commands(subparsers)
 
     args = parser.parse_args(argv)
@@ -334,6 +343,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "service-accounts":
         return args.handler(args)
     if args.command == "plugins":
+        return args.handler(args)
+    if args.command == "oauth":
         return args.handler(args)
     parser.error(f"unknown command: {args.command}")
     return _EXIT_VALIDATION

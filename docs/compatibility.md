@@ -318,6 +318,7 @@ Frozen since 0.5.0. Exit codes are part of the contract; command output text is 
 | `keystone-mcp service-accounts add`, `service-accounts list`, `service-accounts update` | `0` on success, non-zero on failure |
 | `keystone-mcp upstream validate` | `0` ok; `1` validation or I/O error |
 | `keystone-mcp plugins list` | `0` on success, non-zero on failure |
+| `keystone-mcp oauth register-client` | `0` registered or updated; `1` invalid arguments, redirect URI not allowed, or no Redis configured; `3` Redis unavailable |
 | `keystone-mcp config check [--env-file PATH] [--strict] [--admins]` | `0` no errors; `1` errors (or warnings with `--strict`); `2` usage or `.env` load failure |
 | `keystone-mcp serve` | runs until stopped; configuration errors refuse startup |
 | `python -m keystone_mcp.server` | same entry point as `keystone-mcp serve` |
