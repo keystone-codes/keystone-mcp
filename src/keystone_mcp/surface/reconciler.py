@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 from keystone_mcp.adapters.base import Pattern
 from keystone_mcp.config import Settings
+from keystone_mcp.observability.metrics import record_upstream_item_rejected
 from keystone_mcp.rbac.loader import (
     log_live_catalog_drift,
     policy_files_content_hashes,
@@ -25,14 +26,6 @@ from keystone_mcp.router.upstream import (
     build_upstream_resource_specs,
     build_upstream_template_specs,
     build_upstream_tool_specs,
-    fetch_upstream_prompts,
-    fetch_upstream_resource_templates,
-    fetch_upstream_resources,
-    fetch_upstream_tools,
-    list_upstream_prompts,
-    list_upstream_resource_templates,
-    list_upstream_resources,
-    list_upstream_tools,
 )
 
 if TYPE_CHECKING:
@@ -278,112 +271,17 @@ class SurfaceReconciler:
         namespace = cfg.namespace
         previous = self._namespace_fingerprints.get(namespace, {})
 
-        discovery_timeout = (
-            cfg.discovery_timeout_seconds
-            if cfg.discovery_timeout_seconds is not None
-            else self.upstreams.discovery_timeout_seconds
-        )
-        prompts_raw: list = []
-        resources_raw: list = []
-        templates_raw: list = []
         try:
-            if cfg.transport == "stdio":
-                try:
-                    client = self.upstreams.connection(namespace).catalog_client(
-                        timeout=discovery_timeout
-                    )
-                except UpstreamProcessUnavailableError as exc:
-                    self.upstreams.mark_unavailable(namespace, str(exc))
-                    logger.warning(
-                        "upstream refresh failed namespace=%s: %s; keeping previous catalog",
-                        namespace,
-                        exc,
-                    )
-                    self._record_catalog_outcome(held=True)
-                    return False, False, False
-                async with client:
-                    tools = await list_upstream_tools(client, timeout_seconds=discovery_timeout)
-                    try:
-                        prompts_raw = await list_upstream_prompts(
-                            client, timeout_seconds=discovery_timeout
-                        )
-                    except UpstreamListToolsError as exc:
-                        logger.warning(
-                            "upstream prompts refresh failed namespace=%s: %s; "
-                            "keeping previous prompts",
-                            namespace,
-                            exc,
-                        )
-                    try:
-                        resources_raw = await list_upstream_resources(
-                            client, timeout_seconds=discovery_timeout
-                        )
-                        templates_raw = await list_upstream_resource_templates(
-                            client, timeout_seconds=discovery_timeout
-                        )
-                    except UpstreamListToolsError as exc:
-                        logger.warning(
-                            "upstream resources refresh failed namespace=%s: %s; "
-                            "keeping previous resources",
-                            namespace,
-                            exc,
-                        )
-            else:
-                tools = await fetch_upstream_tools(
-                    cfg.url,
-                    timeout_seconds=discovery_timeout,
-                    httpx_client_factory=(
-                        self.upstreams.http_client_factory(discovery_timeout)
-                        if self.upstreams.http_client_factory
-                        else None
-                    ),
-                    headers=self.upstreams.upstream_headers(namespace),
-                )
-                try:
-                    prompts_raw = await fetch_upstream_prompts(
-                        cfg.url,
-                        timeout_seconds=discovery_timeout,
-                        httpx_client_factory=(
-                            self.upstreams.http_client_factory(discovery_timeout)
-                            if self.upstreams.http_client_factory
-                            else None
-                        ),
-                        headers=self.upstreams.upstream_headers(namespace),
-                    )
-                except UpstreamListToolsError as exc:
-                    logger.warning(
-                        "upstream prompts refresh failed namespace=%s: %s; keeping previous prompts",
-                        namespace,
-                        exc,
-                    )
-                try:
-                    resources_raw = await fetch_upstream_resources(
-                        cfg.url,
-                        timeout_seconds=discovery_timeout,
-                        httpx_client_factory=(
-                            self.upstreams.http_client_factory(discovery_timeout)
-                            if self.upstreams.http_client_factory
-                            else None
-                        ),
-                        headers=self.upstreams.upstream_headers(namespace),
-                    )
-                    templates_raw = await fetch_upstream_resource_templates(
-                        cfg.url,
-                        timeout_seconds=discovery_timeout,
-                        httpx_client_factory=(
-                            self.upstreams.http_client_factory(discovery_timeout)
-                            if self.upstreams.http_client_factory
-                            else None
-                        ),
-                        headers=self.upstreams.upstream_headers(namespace),
-                    )
-                except UpstreamListToolsError as exc:
-                    logger.warning(
-                        "upstream resources refresh failed namespace=%s: %s; "
-                        "keeping previous resources",
-                        namespace,
-                        exc,
-                    )
+            catalog = await self.upstreams.read_catalog(cfg, allow_temporary_process=False)
+        except UpstreamProcessUnavailableError as exc:
+            self.upstreams.mark_unavailable(namespace, str(exc))
+            logger.warning(
+                "upstream refresh failed namespace=%s: %s; keeping previous catalog",
+                namespace,
+                exc,
+            )
+            self._record_catalog_outcome(held=True)
+            return False, False, False
         except UpstreamListToolsError as exc:
             self.upstreams.mark_unavailable(namespace, str(exc))
             logger.warning(
@@ -393,6 +291,11 @@ class SurfaceReconciler:
             )
             self._record_catalog_outcome(held=True)
             return False, False, False
+
+        tools = catalog.tools
+        prompts_raw = catalog.prompts
+        resources_raw = catalog.resources
+        templates_raw = catalog.templates
 
         became_available = self.upstreams.mark_available(namespace)
         specs = build_upstream_tool_specs(cfg, tools, schema_patches=self.upstreams.schema_patches)
@@ -410,8 +313,8 @@ class SurfaceReconciler:
                 )
                 self._record_catalog_outcome(held=True)
                 self._maybe_log_drift(became_available)
-                prompts_changed = self._refresh_prompts_for_namespace(cfg, prompts_raw)
-                resources_changed = self._refresh_resources_for_namespace(
+                prompts_changed = self._refresh_prompts_for_namespace_safe(cfg, prompts_raw)
+                resources_changed = self._refresh_resources_for_namespace_safe(
                     cfg, resources_raw, templates_raw
                 )
                 return False, prompts_changed, resources_changed
@@ -461,9 +364,39 @@ class SurfaceReconciler:
                 self._record_catalog_outcome(unchanged=True)
             self._maybe_log_drift(became_available, added=added, removed=removed, updated=updated)
 
-        prompts_changed = self._refresh_prompts_for_namespace(cfg, prompts_raw)
-        resources_changed = self._refresh_resources_for_namespace(cfg, resources_raw, templates_raw)
+        prompts_changed = self._refresh_prompts_for_namespace_safe(cfg, prompts_raw)
+        resources_changed = self._refresh_resources_for_namespace_safe(
+            cfg, resources_raw, templates_raw
+        )
         return tools_changed, prompts_changed, resources_changed
+
+    def _refresh_prompts_for_namespace_safe(self, cfg: object, prompts_raw: list | None) -> bool:
+        from keystone_mcp.router.upstream import UpstreamConfig
+
+        assert isinstance(cfg, UpstreamConfig)
+        try:
+            return self._refresh_prompts_for_namespace(cfg, prompts_raw)
+        except Exception:
+            logger.exception(
+                "upstream prompts refresh crashed namespace=%s; keeping previous prompts",
+                cfg.namespace,
+            )
+            return False
+
+    def _refresh_resources_for_namespace_safe(
+        self, cfg: object, resources_raw: list | None, templates_raw: list | None
+    ) -> bool:
+        from keystone_mcp.router.upstream import UpstreamConfig
+
+        assert isinstance(cfg, UpstreamConfig)
+        try:
+            return self._refresh_resources_for_namespace(cfg, resources_raw, templates_raw)
+        except Exception:
+            logger.exception(
+                "upstream resources refresh crashed namespace=%s; keeping previous resources",
+                cfg.namespace,
+            )
+            return False
 
     def _maybe_log_drift(
         self,
@@ -543,6 +476,9 @@ class SurfaceReconciler:
                     published,
                     owner_key,
                 )
+                record_upstream_item_rejected(
+                    namespace=namespace, kind="tool", reason="name_collision"
+                )
                 skipped.add(route_name)
                 continue
 
@@ -571,6 +507,9 @@ class SurfaceReconciler:
                     namespace,
                     spec.upstream_tool,
                     exc,
+                )
+                record_upstream_item_rejected(
+                    namespace=namespace, kind="tool", reason="unpublishable_schema"
                 )
                 skipped.add(route_name)
                 self.upstreams.mark_unpublishable(namespace, route_name)
@@ -618,10 +557,12 @@ class SurfaceReconciler:
             for name, spec in self.upstreams.content.prompts(namespace).items()
         }
 
-    def _refresh_prompts_for_namespace(self, cfg: object, prompts_raw: list) -> bool:
-        from keystone_mcp.router.upstream import UpstreamConfig, resolve_mounted_tool_name
+    def _refresh_prompts_for_namespace(self, cfg: object, prompts_raw: list | None) -> bool:
+        from keystone_mcp.router.upstream import UpstreamConfig
 
         assert isinstance(cfg, UpstreamConfig)
+        if prompts_raw is None:
+            return False
         namespace = cfg.namespace
         previous = self._namespace_prompt_fingerprints.get(namespace, {})
         prompt_specs = build_upstream_prompt_specs(cfg, prompts_raw)
@@ -648,12 +589,8 @@ class SurfaceReconciler:
         if desired == previous:
             return False
 
-        raw_by_route = {
-            resolve_mounted_tool_name(p.name, cfg.strip_prefix): p
-            for p in prompts_raw
-            if resolve_mounted_tool_name(p.name, cfg.strip_prefix)
-        }
-        changed = self.upstreams._apply_prompt_specs(cfg, prompt_specs, raw_by_route)
+        raw_by_name = {p.name: p for p in prompts_raw}
+        changed = self.upstreams._apply_prompt_specs(cfg, prompt_specs, raw_by_name)
         self._namespace_prompt_fingerprints[namespace] = dict(desired)
         return changed
 
@@ -670,11 +607,13 @@ class SurfaceReconciler:
         }
 
     def _refresh_resources_for_namespace(
-        self, cfg: object, resources_raw: list, templates_raw: list
+        self, cfg: object, resources_raw: list | None, templates_raw: list | None
     ) -> bool:
         from keystone_mcp.router.upstream import UpstreamConfig
 
         assert isinstance(cfg, UpstreamConfig)
+        if resources_raw is None or templates_raw is None:
+            return False
         namespace = cfg.namespace
         previous_res = self._namespace_resource_fingerprints.get(namespace, {})
         previous_tpl = self._namespace_template_fingerprints.get(namespace, {})

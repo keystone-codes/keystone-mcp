@@ -15,6 +15,7 @@ from fastmcp.utilities.tests import asgi_server
 from mcp.client.subscriptions import listen as listen_subscriptions
 from mcp.shared.exceptions import MCPError
 
+import keystone_mcp.router.upstream as upstream_module
 import keystone_mcp.surface.reconciler as reconciler_module
 from keystone_mcp.config import Settings
 from keystone_mcp.identity import VerifiedIdentity
@@ -301,8 +302,8 @@ async def test_resource_list_change_notifies_legacy(monkeypatch):
 
             app2 = build_lowlevel_upstream_app(tools=["greet"], resources=True)
             async with LifespanManager(app2):
-                real_resources = reconciler_module.fetch_upstream_resources
-                real_templates = reconciler_module.fetch_upstream_resource_templates
+                real_resources = upstream_module.fetch_upstream_resources
+                real_templates = upstream_module.fetch_upstream_resource_templates
                 factory = asgi_http_client_factory(app2)
 
                 async def fake_resources(url, **kwargs):
@@ -313,13 +314,13 @@ async def test_resource_list_change_notifies_legacy(monkeypatch):
                     kwargs["httpx_client_factory"] = factory(kwargs.get("timeout_seconds", 5.0))
                     return await real_templates(url, **kwargs)
 
-                reconciler_module.fetch_upstream_resources = fake_resources
-                reconciler_module.fetch_upstream_resource_templates = fake_templates
+                upstream_module.fetch_upstream_resources = fake_resources
+                upstream_module.fetch_upstream_resource_templates = fake_templates
                 try:
                     await reconciler.tick()
                 finally:
-                    reconciler_module.fetch_upstream_resources = real_resources
-                    reconciler_module.fetch_upstream_resource_templates = real_templates
+                    upstream_module.fetch_upstream_resources = real_resources
+                    upstream_module.fetch_upstream_resource_templates = real_templates
 
             await asyncio.sleep(0)
             assert any(m.method == "notifications/resources/list_changed" for m in received)
@@ -352,8 +353,8 @@ async def test_resource_list_change_notifies_modern(monkeypatch):
             async with listen_subscriptions(client.session, resources_list_changed=True) as sub:
                 app2 = build_lowlevel_upstream_app(tools=["greet"], resources=True)
                 async with LifespanManager(app2):
-                    real_resources = reconciler_module.fetch_upstream_resources
-                    real_templates = reconciler_module.fetch_upstream_resource_templates
+                    real_resources = upstream_module.fetch_upstream_resources
+                    real_templates = upstream_module.fetch_upstream_resource_templates
                     factory = asgi_http_client_factory(app2)
 
                     async def fake_resources(url, **kwargs):
@@ -364,13 +365,13 @@ async def test_resource_list_change_notifies_modern(monkeypatch):
                         kwargs["httpx_client_factory"] = factory(kwargs.get("timeout_seconds", 5.0))
                         return await real_templates(url, **kwargs)
 
-                    reconciler_module.fetch_upstream_resources = fake_resources
-                    reconciler_module.fetch_upstream_resource_templates = fake_templates
+                    upstream_module.fetch_upstream_resources = fake_resources
+                    upstream_module.fetch_upstream_resource_templates = fake_templates
                     try:
                         await reconciler.tick()
                     finally:
-                        reconciler_module.fetch_upstream_resources = real_resources
-                        reconciler_module.fetch_upstream_resource_templates = real_templates
+                        upstream_module.fetch_upstream_resources = real_resources
+                        upstream_module.fetch_upstream_resource_templates = real_templates
 
                 event = await asyncio.wait_for(sub.__anext__(), timeout=2.0)
                 assert type(event).__name__ == "ResourcesListChanged"
@@ -411,7 +412,7 @@ async def test_resources_failure_keeps_tools(monkeypatch, caplog: pytest.LogCapt
         assert upstreams.unavailable_namespaces() == {}
 
         monkeypatch.setattr(
-            "keystone_mcp.surface.reconciler.fetch_upstream_resources",
+            "keystone_mcp.router.upstream.fetch_upstream_resources",
             AsyncMock(side_effect=UpstreamListToolsError("list_resources exploded")),
         )
 

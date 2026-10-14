@@ -28,6 +28,7 @@ from keystone_mcp.identity_assertion import (
     load_ec_p256_private_key,
     resolve_identity_secret,
 )
+from keystone_mcp.observability.metrics import record_upstream_item_rejected
 from keystone_mcp.rbac.upstream_state import UpstreamCatalogState
 from keystone_mcp.router.catalog_fingerprint import (
     prompt_fingerprint,
@@ -44,7 +45,7 @@ from keystone_mcp.router.proxy_schema import PatchTable, apply_proxy_schema_patc
 from keystone_mcp.router.registry import Param
 from keystone_mcp.router.route import Mode
 from keystone_mcp.router.schema import schema_to_params
-from keystone_mcp.router.stdio_process import StdioUpstreamProcess
+from keystone_mcp.router.stdio_process import StdioUpstreamProcess, UpstreamProcessUnavailableError
 from keystone_mcp.router.upstream_connection import (
     HttpUpstreamConnection,
     StdioUpstreamConnection,
@@ -56,6 +57,7 @@ from keystone_mcp.router.upstream_content import (
     UpstreamPromptSpec,
     UpstreamResourceSpec,
     UpstreamTemplateSpec,
+    normalize_resource_uri,
     published_uri_for_namespace,
 )
 
@@ -505,20 +507,17 @@ def build_upstream_prompt_specs(
     cfg: UpstreamConfig,
     prompts: Iterable[Any],
 ) -> dict[str, UpstreamPromptSpec]:
-    """Map upstream prompt names to specs after the same filters as tools."""
+    """Map upstream prompt names to specs (tool prefix filters apply; strip_prefix does not)."""
     specs: dict[str, UpstreamPromptSpec] = {}
     for prompt in prompts:
         prompt_name = prompt.name
         if cfg.tool_filter is not None and not cfg.tool_filter(prompt_name):
             continue
-        route_name = resolve_mounted_tool_name(prompt_name, cfg.strip_prefix)
-        if not route_name:
-            continue
         title = getattr(prompt, "title", None)
         description = getattr(prompt, "description", None) or ""
         arg_fp = _prompt_arguments_fingerprint(prompt)
-        published = f"{cfg.namespace}_{route_name}"
-        specs[route_name] = UpstreamPromptSpec(
+        published = f"{cfg.namespace}_{prompt_name}"
+        specs[prompt_name] = UpstreamPromptSpec(
             name=prompt_name,
             published_name=published,
             fingerprint=prompt_fingerprint(
@@ -609,6 +608,16 @@ class UpstreamConfig:
     cwd: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class UpstreamCatalogRead:
+    """One read of an upstream's catalog. ``None`` means unread, never empty."""
+
+    tools: list[Any]
+    prompts: list[Any] | None
+    resources: list[Any] | None
+    templates: list[Any] | None
+
+
 @dataclass
 class UpstreamRegistry:
     """Manages mounted upstream MCP APIs and auto-generated proxy routes."""
@@ -666,6 +675,7 @@ class UpstreamRegistry:
     # verified" rather than refusing the policy as a typo.
     _unpublishable: dict[str, set[str]] = field(default_factory=dict)
     _connections: dict[str, UpstreamConnection] = field(default_factory=dict, repr=False)
+    _legacy_prompt_warnings_logged: set[str] = field(default_factory=set, repr=False)
 
     def __post_init__(self) -> None:
         pem = self._identity_signing_key_pem.strip()
@@ -1062,6 +1072,195 @@ class UpstreamRegistry:
             return cfg.tool_timeout_seconds
         return self.tool_timeout_seconds
 
+    def _remove_prompt_proxy(self, sub: FastMCP, namespace: str, name: str) -> bool:
+        try:
+            sub.local_provider.remove_prompt(name)
+        except KeyError:
+            logger.warning(
+                "upstream prompt proxy already gone namespace=%s name=%s",
+                namespace,
+                name,
+            )
+            return False
+        return True
+
+    def _remove_resource_proxy(
+        self, sub: FastMCP, namespace: str, spec: UpstreamResourceSpec
+    ) -> bool:
+        for uri in (spec.uri, normalize_resource_uri(spec.uri)):
+            try:
+                sub.local_provider.remove_resource(uri)
+                return True
+            except KeyError:
+                continue
+        logger.warning(
+            "upstream resource proxy already gone namespace=%s uri=%s",
+            namespace,
+            spec.uri,
+        )
+        return False
+
+    def _remove_template_proxy(
+        self, sub: FastMCP, namespace: str, spec: UpstreamTemplateSpec
+    ) -> bool:
+        try:
+            sub.local_provider.remove_template(spec.uri_template)
+        except KeyError:
+            logger.warning(
+                "upstream template proxy already gone namespace=%s uri_template=%s",
+                namespace,
+                spec.uri_template,
+            )
+            return False
+        return True
+
+    def _note_legacy_prompt_rbac(
+        self, cfg: UpstreamConfig, specs: dict[str, UpstreamPromptSpec]
+    ) -> None:
+        namespace = cfg.namespace
+        legacy: set[str] = set()
+        for spec in specs.values():
+            stripped = resolve_mounted_tool_name(spec.name, cfg.strip_prefix)
+            legacy_name = f"{namespace}_{stripped}"
+            if legacy_name == spec.published_name:
+                continue
+            legacy.add(legacy_name)
+            warn_key = f"{namespace}:{spec.name}"
+            if warn_key in self._legacy_prompt_warnings_logged:
+                continue
+            self._legacy_prompt_warnings_logged.add(warn_key)
+            logger.warning(
+                "upstream prompt namespace=%s is published as %s; the name %s used by "
+                "keystone-mcp 0.5.0 policy validation grants nothing",
+                namespace,
+                spec.published_name,
+                legacy_name,
+            )
+        self.content.set_legacy_prompt_rbac_names(namespace, frozenset(legacy))
+
+    async def read_catalog(
+        self, cfg: UpstreamConfig, *, allow_temporary_process: bool
+    ) -> UpstreamCatalogRead:
+        discovery_timeout = (
+            cfg.discovery_timeout_seconds
+            if cfg.discovery_timeout_seconds is not None
+            else self.discovery_timeout_seconds
+        )
+        prompts_raw: list[Any] | None = []
+        resources_raw: list[Any] | None = []
+        templates_raw: list[Any] | None = []
+
+        if cfg.transport == "stdio":
+            conn = self._connections[cfg.namespace]
+            if isinstance(conn, StdioUpstreamConnection) and conn.process.state == "running":
+                client = conn.catalog_client(timeout=discovery_timeout)
+                async with client:
+                    tools = await list_upstream_tools(client, timeout_seconds=discovery_timeout)
+                    try:
+                        prompts_raw = await list_upstream_prompts(
+                            client, timeout_seconds=discovery_timeout
+                        )
+                    except UpstreamListToolsError as exc:
+                        logger.warning(
+                            "upstream prompts refresh failed namespace=%s: %s; "
+                            "keeping previous prompts",
+                            cfg.namespace,
+                            exc,
+                        )
+                        prompts_raw = None
+                    try:
+                        resources_raw = await list_upstream_resources(
+                            client, timeout_seconds=discovery_timeout
+                        )
+                        templates_raw = await list_upstream_resource_templates(
+                            client, timeout_seconds=discovery_timeout
+                        )
+                    except UpstreamListToolsError as exc:
+                        logger.warning(
+                            "upstream resources refresh failed namespace=%s: %s; "
+                            "keeping previous resources",
+                            cfg.namespace,
+                            exc,
+                        )
+                        resources_raw = None
+                        templates_raw = None
+            else:
+                if not allow_temporary_process:
+                    raise UpstreamProcessUnavailableError(
+                        f"stdio upstream {cfg.namespace!r} has no running process for catalog read"
+                    )
+                tools = await self._discover_stdio_tools(cfg, discovery_timeout)
+                try:
+                    prompts_raw = await self._list_prompts_for_config(cfg, discovery_timeout)
+                except UpstreamListToolsError as exc:
+                    logger.warning(
+                        "upstream prompts refresh failed namespace=%s: %s; keeping previous prompts",
+                        cfg.namespace,
+                        exc,
+                    )
+                    prompts_raw = None
+                try:
+                    resources_raw, templates_raw = await self._list_resources_for_config(
+                        cfg, discovery_timeout
+                    )
+                except UpstreamListToolsError as exc:
+                    logger.warning(
+                        "upstream resources refresh failed namespace=%s: %s; "
+                        "keeping previous resources",
+                        cfg.namespace,
+                        exc,
+                    )
+                    resources_raw = None
+                    templates_raw = None
+        else:
+            tools = await fetch_upstream_tools(
+                cfg.url,
+                timeout_seconds=discovery_timeout,
+                httpx_client_factory=(
+                    self.http_client_factory(discovery_timeout)
+                    if self.http_client_factory
+                    else None
+                ),
+                headers=self.upstream_headers(cfg.namespace),
+            )
+            try:
+                prompts_raw = await fetch_upstream_prompts(
+                    cfg.url,
+                    timeout_seconds=discovery_timeout,
+                    httpx_client_factory=(
+                        self.http_client_factory(discovery_timeout)
+                        if self.http_client_factory
+                        else None
+                    ),
+                    headers=self.upstream_headers(cfg.namespace),
+                )
+            except UpstreamListToolsError as exc:
+                logger.warning(
+                    "upstream prompts refresh failed namespace=%s: %s; keeping previous prompts",
+                    cfg.namespace,
+                    exc,
+                )
+                prompts_raw = None
+            try:
+                resources_raw, templates_raw = await self._list_resources_for_config(
+                    cfg, discovery_timeout
+                )
+            except UpstreamListToolsError as exc:
+                logger.warning(
+                    "upstream resources refresh failed namespace=%s: %s; keeping previous resources",
+                    cfg.namespace,
+                    exc,
+                )
+                resources_raw = None
+                templates_raw = None
+
+        return UpstreamCatalogRead(
+            tools=tools,
+            prompts=prompts_raw,
+            resources=resources_raw,
+            templates=templates_raw,
+        )
+
     async def _list_prompts_for_config(
         self,
         cfg: UpstreamConfig,
@@ -1117,14 +1316,14 @@ class UpstreamRegistry:
         prev_names = set(previous_fp)
         new_names = set(desired_fp)
 
-        for route_name in sorted(prev_names - new_names):
-            sub._local_provider.remove_prompt(route_name)
-            changed = True
+        for prompt_name in sorted(prev_names - new_names):
+            if self._remove_prompt_proxy(sub, namespace, prompt_name):
+                changed = True
 
         tool_timeout = self._tool_timeout_for(cfg)
-        for route_name in sorted(new_names):
-            spec = specs[route_name]
-            if route_name in prev_names and previous_fp.get(route_name) == spec.fingerprint:
+        for prompt_name in sorted(new_names):
+            spec = specs[prompt_name]
+            if prompt_name in prev_names and previous_fp.get(prompt_name) == spec.fingerprint:
                 continue
 
             owner = self.content.owner_of_published_prompt(spec.published_name)
@@ -1138,12 +1337,15 @@ class UpstreamRegistry:
                     spec.published_name,
                     owner,
                 )
+                record_upstream_item_rejected(
+                    namespace=namespace, kind="prompt", reason="name_collision"
+                )
                 continue
 
-            if route_name in prev_names:
-                sub._local_provider.remove_prompt(route_name)
+            if prompt_name in prev_names:
+                self._remove_prompt_proxy(sub, namespace, prompt_name)
 
-            mcp_prompt = raw_prompts[route_name]
+            mcp_prompt = raw_prompts[prompt_name]
             proxy = UpstreamProxyPrompt.from_upstream_prompt(
                 registry=self,
                 namespace=namespace,
@@ -1158,6 +1360,7 @@ class UpstreamRegistry:
             sub.add_prompt(proxy)
             changed = True
 
+        self._note_legacy_prompt_rbac(cfg, specs)
         self.content.set_prompts(namespace, specs)
         return changed
 
@@ -1246,13 +1449,13 @@ class UpstreamRegistry:
 
         for uri in sorted(set(prev_res) - set(desired_res)):
             spec = previous_resources[uri]
-            sub._local_provider.remove_resource(spec.published_uri)
-            changed = True
+            if self._remove_resource_proxy(sub, namespace, spec):
+                changed = True
 
         for uri_template in sorted(set(prev_tpl) - set(desired_tpl)):
             spec = previous_templates[uri_template]
-            sub._local_provider.remove_template(spec.published_uri_template)
-            changed = True
+            if self._remove_template_proxy(sub, namespace, spec):
+                changed = True
 
         for uri in sorted(desired_res):
             spec = resource_specs[uri]
@@ -1269,9 +1472,12 @@ class UpstreamRegistry:
                     spec.rbac_name,
                     owner,
                 )
+                record_upstream_item_rejected(
+                    namespace=namespace, kind="resource", reason="name_collision"
+                )
                 continue
             if uri in prev_res:
-                sub._local_provider.remove_resource(spec.published_uri)
+                self._remove_resource_proxy(sub, namespace, spec)
             mcp_resource = raw_resources[uri]
             proxy = UpstreamProxyResource.from_upstream_resource(
                 registry=self,
@@ -1303,9 +1509,12 @@ class UpstreamRegistry:
                     spec.rbac_name,
                     owner,
                 )
+                record_upstream_item_rejected(
+                    namespace=namespace, kind="template", reason="name_collision"
+                )
                 continue
             if uri_template in prev_tpl:
-                sub._local_provider.remove_template(spec.published_uri_template)
+                self._remove_template_proxy(sub, namespace, spec)
             mcp_template = raw_templates[uri_template]
             proxy = UpstreamProxyTemplate.from_upstream_template(
                 registry=self,
@@ -1334,101 +1543,11 @@ class UpstreamRegistry:
         adapter = self._adapters[cfg.namespace]
         registered = 0
 
-        discovery_timeout = (
-            cfg.discovery_timeout_seconds
-            if cfg.discovery_timeout_seconds is not None
-            else self.discovery_timeout_seconds
-        )
-        prompts_raw: list[Any] = []
-        resources_raw: list[Any] = []
-        templates_raw: list[Any] = []
-        if cfg.transport == "stdio":
-            conn = self._connections[cfg.namespace]
-            if isinstance(conn, StdioUpstreamConnection) and conn.process.state == "running":
-                client = conn.catalog_client(timeout=discovery_timeout)
-                async with client:
-                    tools = await list_upstream_tools(client, timeout_seconds=discovery_timeout)
-                    try:
-                        prompts_raw = await list_upstream_prompts(
-                            client, timeout_seconds=discovery_timeout
-                        )
-                    except UpstreamListToolsError as exc:
-                        logger.warning(
-                            "upstream prompts refresh failed namespace=%s: %s; "
-                            "keeping previous prompts",
-                            cfg.namespace,
-                            exc,
-                        )
-                    try:
-                        resources_raw, templates_raw = await self._list_resources_for_config(
-                            cfg, discovery_timeout, catalog_client=client
-                        )
-                    except UpstreamListToolsError as exc:
-                        logger.warning(
-                            "upstream resources refresh failed namespace=%s: %s; "
-                            "keeping previous resources",
-                            cfg.namespace,
-                            exc,
-                        )
-            else:
-                tools = await self._discover_stdio_tools(cfg, discovery_timeout)
-                try:
-                    prompts_raw = await self._list_prompts_for_config(cfg, discovery_timeout)
-                except UpstreamListToolsError as exc:
-                    logger.warning(
-                        "upstream prompts refresh failed namespace=%s: %s; keeping previous prompts",
-                        cfg.namespace,
-                        exc,
-                    )
-                try:
-                    resources_raw, templates_raw = await self._list_resources_for_config(
-                        cfg, discovery_timeout
-                    )
-                except UpstreamListToolsError as exc:
-                    logger.warning(
-                        "upstream resources refresh failed namespace=%s: %s; "
-                        "keeping previous resources",
-                        cfg.namespace,
-                        exc,
-                    )
-        else:
-            tools = await fetch_upstream_tools(
-                cfg.url,
-                timeout_seconds=discovery_timeout,
-                httpx_client_factory=(
-                    self.http_client_factory(discovery_timeout)
-                    if self.http_client_factory
-                    else None
-                ),
-                headers=self.upstream_headers(cfg.namespace),
-            )
-            try:
-                prompts_raw = await fetch_upstream_prompts(
-                    cfg.url,
-                    timeout_seconds=discovery_timeout,
-                    httpx_client_factory=(
-                        self.http_client_factory(discovery_timeout)
-                        if self.http_client_factory
-                        else None
-                    ),
-                    headers=self.upstream_headers(cfg.namespace),
-                )
-            except UpstreamListToolsError as exc:
-                logger.warning(
-                    "upstream prompts refresh failed namespace=%s: %s; keeping previous prompts",
-                    cfg.namespace,
-                    exc,
-                )
-            try:
-                resources_raw, templates_raw = await self._list_resources_for_config(
-                    cfg, discovery_timeout
-                )
-            except UpstreamListToolsError as exc:
-                logger.warning(
-                    "upstream resources refresh failed namespace=%s: %s; keeping previous resources",
-                    cfg.namespace,
-                    exc,
-                )
+        catalog = await self.read_catalog(cfg, allow_temporary_process=True)
+        tools = catalog.tools
+        prompts_raw = catalog.prompts
+        resources_raw = catalog.resources
+        templates_raw = catalog.templates
         specs = build_upstream_tool_specs(cfg, tools, schema_patches=self.schema_patches)
         for spec in specs.values():
             route_key = f"{cfg.namespace}:{spec.route_name}"
@@ -1443,6 +1562,9 @@ class UpstreamRegistry:
                     spec.route_name,
                     published,
                     owner_key,
+                )
+                record_upstream_item_rejected(
+                    namespace=cfg.namespace, kind="tool", reason="name_collision"
                 )
                 continue
 
@@ -1478,26 +1600,27 @@ class UpstreamRegistry:
                 # the RBAC policy gate (P06, FX-proxy) treats an allow
                 # pattern naming exactly this tool as "not verified" rather
                 # than a typo.
+                record_upstream_item_rejected(
+                    namespace=cfg.namespace, kind="tool", reason="unpublishable_schema"
+                )
                 self.mark_unpublishable(cfg.namespace, spec.route_name)
                 continue
             self.clear_unpublishable(cfg.namespace, spec.route_name)
             registered += 1
 
-        prompt_specs = build_upstream_prompt_specs(cfg, prompts_raw)
-        raw_by_route = {
-            resolve_mounted_tool_name(p.name, cfg.strip_prefix): p
-            for p in prompts_raw
-            if resolve_mounted_tool_name(p.name, cfg.strip_prefix)
-        }
-        self._apply_prompt_specs(cfg, prompt_specs, raw_by_route)
+        if prompts_raw is not None:
+            prompt_specs = build_upstream_prompt_specs(cfg, prompts_raw)
+            raw_by_name = {p.name: p for p in prompts_raw}
+            self._apply_prompt_specs(cfg, prompt_specs, raw_by_name)
 
-        resource_specs = build_upstream_resource_specs(cfg, resources_raw)
-        template_specs = build_upstream_template_specs(cfg, templates_raw)
-        raw_resources = {str(r.uri): r for r in resources_raw}
-        raw_templates = {t.uri_template: t for t in templates_raw}
-        self._apply_resource_specs(
-            cfg, resource_specs, template_specs, raw_resources, raw_templates
-        )
+        if resources_raw is not None and templates_raw is not None:
+            resource_specs = build_upstream_resource_specs(cfg, resources_raw)
+            template_specs = build_upstream_template_specs(cfg, templates_raw)
+            raw_resources = {str(r.uri): r for r in resources_raw}
+            raw_templates = {t.uri_template: t for t in templates_raw}
+            self._apply_resource_specs(
+                cfg, resource_specs, template_specs, raw_resources, raw_templates
+            )
 
         logger.info(
             "discovered upstream=%s namespace=%s tools=%d",
