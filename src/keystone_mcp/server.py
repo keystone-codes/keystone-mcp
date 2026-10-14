@@ -491,6 +491,7 @@ def build_server(
         refresh_enabled=settings.refresh_interval_seconds > 0,
         identity_issuer=settings.base_url.rstrip("/"),
         _identity_signing_key_pem=settings.identity_signing_key,
+        _identity_signing_key_previous_pem=settings.identity_signing_key_previous,
     )
     upstreams.observability = rbac_observability
     upstreams.rbac_mode = settings.rbac_mode
@@ -600,8 +601,12 @@ def build_server(
         private_key = upstreams._identity_es256_private_key
         if private_key is None:
             return Response(status_code=404)
+        previous_key = upstreams._identity_es256_previous_private_key
         return JSONResponse(
-            build_identity_jwks(private_key),
+            build_identity_jwks(
+                private_key,
+                previous_key=previous_key,
+            ),
             headers={"Cache-Control": "public, max-age=300"},
         )
 

@@ -34,6 +34,12 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 - Metric `keystone_mcp_upstream_input_rounds_exceeded_total{namespace}`.
 - CI: the contract freeze gate now compares the public surface generated from the code — environment variables (found by AST), policy keys, CLI commands, plugin protocol signatures, built-in tool arguments, metrics and their labels — with a baseline generated from the `v0.5.0` tag.
 - Startup warnings W8–W19 (`docs/environment.md#startup-warnings`).
+- `KEYSTONE_MCP_IDENTITY_SIGNING_KEY_PREVIOUS`: publish the previous ES256 public key in the JWKS during a key rotation.
+- Claim `rbac_decision` in `X-Keystone-Identity`.
+
+### Changed
+
+- Identity verification examples (Python, TypeScript) require `issuer`, keep one JWKS client per process and refuse an assertion with `rbac_decision: "deny"` by default.
 
 ### Fixed
 
@@ -44,8 +50,13 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 ### Security
 
 - Stdio upstream stderr is rate-limited and masked (the entry's own `env` values and well-known token formats).
+- In `observe` mode, a call RBAC would deny now reaches the upstream with an empty `roles` list and the new claim `rbac_decision: "deny"` in `X-Keystone-Identity`.
+- Startup warns when two upstreams use the same HS256 signing secret value under different variables.
 
 ### Migration
+
+- Services that ran in `observe` and read `roles` from the assertion: a denied call now has `roles: []`; check `rbac_decision`. Code copied from the identity examples: pass `issuer` (your `KEYSTONE_MCP_BASE_URL` without a trailing slash).
+
 
 - A stdio upstream that blocks for more than ~35 s without answering pings is now restarted only after three missed pings (about a minute).
 

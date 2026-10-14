@@ -14,7 +14,11 @@ server.tool("myTool", schema, async (args, extra) => {
   const header = extra.requestInfo?.headers["x-keystone-identity"];
   const identity = await verifyKeystoneIdentity(
     Array.isArray(header) ? header[0] : header,
-    { secrets: [process.env.MYSVC_IDENTITY_SECRET!], audience: "mysvc-mcp" },
+    {
+      secrets: [process.env.MYSVC_IDENTITY_SECRET!],
+      audience: "mysvc-mcp",
+      issuer: process.env.KEYSTONE_MCP_BASE_URL!.replace(/\/$/, ""),
+    },
   );
   // identity.sub, identity.roles, identity.subType, ...
 });

@@ -69,6 +69,7 @@ HELLO_IDENTITY_SECRET = os.environ.get("HELLO_IDENTITY_SECRET", "").strip()
 
 #: This upstream's own registry entry name -- the assertion's ``aud``.
 HELLO_IDENTITY_AUDIENCE = os.environ.get("HELLO_IDENTITY_AUDIENCE", "hello").strip()
+HELLO_IDENTITY_ISSUER = os.environ.get("HELLO_IDENTITY_ISSUER", "").strip()
 
 GREET_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -187,7 +188,10 @@ def _verify_identity(headers: dict[str, str]) -> KeystoneIdentity | None:
     token = headers.get("x-keystone-identity")
     try:
         return verify_keystone_identity(
-            token, secrets=[HELLO_IDENTITY_SECRET], audience=HELLO_IDENTITY_AUDIENCE
+            token,
+            secrets=[HELLO_IDENTITY_SECRET],
+            audience=HELLO_IDENTITY_AUDIENCE,
+            issuer=HELLO_IDENTITY_ISSUER,
         )
     except IdentityError as exc:
         raise ValueError(f"identity rejected: {exc}") from exc

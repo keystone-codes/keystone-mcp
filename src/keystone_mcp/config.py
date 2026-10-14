@@ -1214,6 +1214,10 @@ class Settings:
     identity_signing_key: str = field(
         default_factory=lambda: _env("KEYSTONE_MCP_IDENTITY_SIGNING_KEY", "")
     )
+    identity_signing_key_previous: str = field(
+        default_factory=lambda: _env("KEYSTONE_MCP_IDENTITY_SIGNING_KEY_PREVIOUS", ""),
+        repr=False,
+    )
 
     @property
     def http_path(self) -> str:
@@ -1812,6 +1816,14 @@ def validate_settings(settings: Settings) -> None:
                 "KEYSTONE_MCP_IDENTITY_SIGNING_KEY must be a PEM EC P-256 private key"
             )
 
+    if settings.identity_signing_key_previous.strip():
+        try:
+            load_ec_p256_private_key(settings.identity_signing_key_previous)
+        except ValueError:
+            raise ConfigError(
+                "KEYSTONE_MCP_IDENTITY_SIGNING_KEY_PREVIOUS must be a PEM EC P-256 private key"
+            )
+
     if settings.shutdown_grace_seconds < 0 or settings.shutdown_grace_seconds > 3600:
         raise ConfigError(
             "KEYSTONE_MCP_SHUTDOWN_GRACE_SECONDS must be between 0 and 3600 "
@@ -2060,6 +2072,31 @@ def startup_warnings(settings: Settings, *, environ: Mapping[str, str] | None = 
     if forwarded:
         warnings.append(forwarded)
     warnings.extend(_warn_empty_bool_variables(env_map))
+
+    from keystone_mcp.identity_assertion import normalize_pem_env_value
+    from keystone_mcp.upstream_registry.load import identity_secret_value_warnings
+
+    try:
+        warnings.extend(identity_secret_value_warnings(settings.upstreams, env_map))
+    except ValueError:
+        pass
+
+    previous_pem = settings.identity_signing_key_previous.strip()
+    current_pem = settings.identity_signing_key.strip()
+    if previous_pem and not current_pem:
+        warnings.append(
+            "KEYSTONE_MCP_IDENTITY_SIGNING_KEY_PREVIOUS is set but "
+            "KEYSTONE_MCP_IDENTITY_SIGNING_KEY is empty: the previous key has no effect"
+        )
+    elif (
+        previous_pem
+        and current_pem
+        and normalize_pem_env_value(previous_pem) == normalize_pem_env_value(current_pem)
+    ):
+        warnings.append(
+            "KEYSTONE_MCP_IDENTITY_SIGNING_KEY_PREVIOUS is the same as "
+            "KEYSTONE_MCP_IDENTITY_SIGNING_KEY: only one key will be published in JWKS"
+        )
 
     return warnings
 

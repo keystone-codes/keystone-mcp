@@ -55,7 +55,13 @@ AUDIENCE = "hello"
 KEYSTONE_SECRET_ENV = "KEYSTONE_MCP_UPSTREAM_HELLO_TEST_IDENTITY_SECRET"
 
 
-def _load_hello_module(monkeypatch, *, secret: str | None, audience: str | None = None):
+def _load_hello_module(
+    monkeypatch,
+    *,
+    secret: str | None,
+    audience: str | None = None,
+    issuer: str | None = "http://localhost:8080",
+):
     """(Re)load examples/hello-upstream/server.py under a fresh environment.
 
     A new module name each time: the server's identity settings are only
@@ -69,6 +75,10 @@ def _load_hello_module(monkeypatch, *, secret: str | None, audience: str | None 
         monkeypatch.delenv("HELLO_IDENTITY_AUDIENCE", raising=False)
     else:
         monkeypatch.setenv("HELLO_IDENTITY_AUDIENCE", audience)
+    if issuer is None:
+        monkeypatch.delenv("HELLO_IDENTITY_ISSUER", raising=False)
+    else:
+        monkeypatch.setenv("HELLO_IDENTITY_ISSUER", issuer)
 
     # server.py does `import keystone_identity` as a plain top-level module
     # (it is a sibling file, not a package) -- make that resolvable.

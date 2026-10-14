@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, Literal
 
@@ -299,6 +301,39 @@ def parse_upstream_entry(
         resource_include_prefixes=resource_include_prefixes,
         resource_exclude_prefixes=resource_exclude_prefixes,
     )
+
+
+def identity_secret_value_warnings(
+    upstreams: Sequence[UpstreamConfig],
+    environ: Mapping[str, str],
+) -> list[str]:
+    """Warn when two enabled upstreams share the same HS256 secret value."""
+    by_hash: dict[str, list[tuple[str, str]]] = {}
+    for cfg in upstreams:
+        if not cfg.enabled or not cfg.identity_secret_env:
+            continue
+        var = cfg.identity_secret_env
+        raw = environ.get(var, "")
+        if not raw.strip():
+            continue
+        digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+        by_hash.setdefault(digest, []).append((cfg.name, var))
+
+    warnings: list[str] = []
+    for group in by_hash.values():
+        if len(group) < 2:
+            continue
+        vars_seen = {var for _name, var in group}
+        if len(vars_seen) < 2:
+            continue
+        names = ", ".join(sorted(name for name, _var in group))
+        var_list = ", ".join(sorted(vars_seen))
+        warnings.append(
+            f"upstreams {names} use the same HS256 signing secret value "
+            f"(variables {var_list}); each can forge identity assertions for "
+            "the other — give each upstream its own secret"
+        )
+    return warnings
 
 
 def parse_upstream_entries(

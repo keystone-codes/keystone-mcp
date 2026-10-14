@@ -108,6 +108,9 @@ more rows (W20+).
 | W17 | both | `KEYSTONE_MCP_RBAC_MODE=off` and `KEYSTONE_MCP_REFRESH_INTERVAL_SECONDS` < 0. | Set a non-negative interval. |
 | W18 | `production` | `FORWARDED_ALLOW_IPS` unset while `KEYSTONE_MCP_ALLOWED_HOSTS` is set or `KEYSTONE_MCP_HOST` is not loopback. | Set `FORWARDED_ALLOW_IPS` to trusted proxy CIDRs. |
 | W19 | both | A boolean `KEYSTONE_MCP_*` variable is set to an empty string (read as `false`). | Set `true` or `false` explicitly. |
+| W30 | both | Two enabled upstreams use the same HS256 signing secret **value** under different variable names. | Give each upstream its own secret value. |
+| W31 | both | `KEYSTONE_MCP_IDENTITY_SIGNING_KEY_PREVIOUS` is set without a current signing key. | Set `KEYSTONE_MCP_IDENTITY_SIGNING_KEY` or clear the previous key. |
+| W32 | both | `KEYSTONE_MCP_IDENTITY_SIGNING_KEY_PREVIOUS` equals the current signing key. | Use a distinct previous key during rotation only. |
 
 ## Where settings come from
 
@@ -518,6 +521,7 @@ Who is created first, and how later people are added, is [users.md](users.md).
 | `KEYSTONE_MCP_UPSTREAM_EGRESS_ALLOW_PRIVATE` | `false` | Allow upstream hosts treated as private: `localhost`, `*.localhost`, `*.local` (including `*.svc.cluster.local`), `*.internal`, and loopback, link-local, private or reserved IP literals (a non-canonical IP literal such as `2130706433` is refused outright). Both this and `KEYSTONE_MCP_UPSTREAM_ALLOW_INSECURE_HTTP` must be `true` for such hosts. |
 | `KEYSTONE_MCP_UPSTREAMS` | `""` | Fallback: the registry entries as one JSON array, used when no registry file is loaded (`KEYSTONE_MCP_UPSTREAMS_PATH` wins when both are set). Fields: `name`, `url`, `namespace`, `enabled`, `include_prefixes`, `exclude_prefixes`, `strip_prefix`, `tool_prefix`, `publish_resources`, `resource_include_prefixes`, `resource_exclude_prefixes`, `discovery_timeout_seconds`, `tool_timeout_seconds`, `route_mode`, `auth` (`{"bearer_env": "VAR_NAME", "identity_secret_env": "VAR_NAME", "identity_alg": "ES256"}`, see below). |
 | `KEYSTONE_MCP_IDENTITY_SIGNING_KEY` | `` (empty) | Optional EC P-256 private key in PEM form for ES256 identity assertions (`auth.identity_alg: ES256`); publishes `/.well-known/keystone-identity-jwks.json`. Startup refuses a non-P-256 or malformed value. Generate with `openssl ecparam -name prime256v1 -genkey -noout \| openssl pkcs8 -topk8 -nocrypt`. See the prose below. |
+| `KEYSTONE_MCP_IDENTITY_SIGNING_KEY_PREVIOUS` | `` (empty) | Optional previous EC P-256 private key (same PEM format) published alongside the current key in JWKS during ES256 rotation; only the public halves are exposed. Empty by default. |
 | `KEYSTONE_MCP_UPSTREAM_DISCOVERY_RETRIES` | `3` | Retries per upstream at startup; upstreams are discovered in parallel. |
 | `KEYSTONE_MCP_UPSTREAM_DISCOVERY_TIMEOUT` | `10.0` | Per-attempt discovery timeout, seconds. |
 | `KEYSTONE_MCP_UPSTREAM_REQUIRE_ALL` | `false` | When `true`, refuse startup when any configured upstream is unreachable (process exits with code `1` after `/healthz` has started answering). When `false` (default), an unreachable upstream is logged and retried on every refresh tick -- unless `KEYSTONE_MCP_REFRESH_INTERVAL_SECONDS=0`, in which case it is logged but never retried (there is no background task to retry it). In both cases `/readyz` answers `503` until background startup (discovery and policy load) finishes; with `false`, a single bad upstream does not block readiness after that. With `true`, `/readyz` also fails while any upstream remains unavailable after startup. |
@@ -553,8 +557,13 @@ ES256 and publishes the matching public key at
 Startup refuses a value that is not a valid P-256 PEM (never logs the key
 itself). Generate one with
 `openssl ecparam -name prime256v1 -genkey -noout | openssl pkcs8 -topk8 -nocrypt`.
-Rotation is replace the key and restart Keystone-MCP; assertions live only
-minutes, so the outage window is short.
+For rotation without a gap, set the old private key in
+`KEYSTONE_MCP_IDENTITY_SIGNING_KEY_PREVIOUS`, the new one in
+`KEYSTONE_MCP_IDENTITY_SIGNING_KEY`, restart every replica, wait at least
+five minutes (JWKS cache) plus the longest proxied tool timeout plus 60
+seconds, then clear `KEYSTONE_MCP_IDENTITY_SIGNING_KEY_PREVIOUS`. Signing
+always uses the current key; JWKS lists the current public key first and the
+previous one when configured.
 
 A registry entry's `auth.identity_secret_env` names a second, independent
 environment variable: the HS256 secret Keystone-MCP signs the

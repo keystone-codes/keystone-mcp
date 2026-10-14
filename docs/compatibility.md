@@ -31,6 +31,7 @@ without `/` or equal to the MCP path) are refused at startup.
 | `KEYSTONE_MCP_HOST` | 0.5.0 | stable |
 | `KEYSTONE_MCP_HTTP_PATH` | 0.5.0 | stable |
 | `KEYSTONE_MCP_IDENTITY_SIGNING_KEY` | 0.5.0 | stable |
+| `KEYSTONE_MCP_IDENTITY_SIGNING_KEY_PREVIOUS` | 0.6.0 | stable |
 | `KEYSTONE_MCP_INTERNAL_ALLOWED_CIDRS` | 0.5.0 | stable |
 | `KEYSTONE_MCP_INTERNAL_ENDPOINTS_ENABLED` | 0.5.0 | stable |
 | `KEYSTONE_MCP_LOGIN_BRAND` | 0.5.0 | stable |
@@ -238,7 +239,7 @@ Frozen since 0.5.0.
 | `X-Keystone-Subject-Type` | `human` or `service` |
 | `X-Author-Email` | Verified person email (lower-case); **deprecated (since 0.5.0, use X-Keystone-Identity)**; sent only for human subjects; removed in 2.0 |
 | `Authorization: Bearer <value>` | When the registry entry sets `auth.bearer_env` and the named variable is non-empty (HTTP upstreams only) |
-| `X-Keystone-Identity` | Signed JWT (`typ: keystone-identity+jwt`). **HS256** with the secret named by `auth.identity_secret_env` (per-upstream secret, at least 32 bytes), or **ES256** with `KEYSTONE_MCP_IDENTITY_SIGNING_KEY` when `auth.identity_alg: ES256`. **Audience** (`aud`) is the registry entry `name`. **Issuer** (`iss`) is `KEYSTONE_MCP_BASE_URL` without a trailing slash. **Expiry** (`exp`) is the tool-call timeout (seconds, rounded up) plus 60 seconds. **Roles** (`roles`) are those RBAC used to allow the call. Claims include `sub`, `sub_type`, `rbac`, `auth_method`, `interactive`, `task_id`, `mcp_method`, `mcp_target`, `iat`, `jti`, and for humans `email` when present; `client_id` when the OAuth client is known. Stdio upstreams carry the same assertion in `params._meta["keystone-mcp/identity"]` instead of an HTTP header. |
+| `X-Keystone-Identity` | Signed JWT (`typ: keystone-identity+jwt`). **HS256** with the secret named by `auth.identity_secret_env` (per-upstream secret, at least 32 bytes), or **ES256** with `KEYSTONE_MCP_IDENTITY_SIGNING_KEY` when `auth.identity_alg: ES256`. **Audience** (`aud`) is the registry entry `name`. **Issuer** (`iss`) is `KEYSTONE_MCP_BASE_URL` without a trailing slash. **Expiry** (`exp`) is the tool-call timeout (seconds, rounded up) plus 60 seconds. **Roles** (`roles`) are those RBAC used to allow the call (empty when denied). Claims include `sub`, `sub_type`, `rbac`, optional `rbac_decision` (`allow`/`deny` when RBAC is active), `auth_method`, `interactive`, `task_id`, `mcp_method`, `mcp_target`, `iat`, `jti`, and for humans `email` when present; `client_id` when the OAuth client is known. ES256 JWKS may list up to two public keys during rotation (`KEYSTONE_MCP_IDENTITY_SIGNING_KEY_PREVIOUS`). Stdio upstreams carry the same assertion in `params._meta["keystone-mcp/identity"]` instead of an HTTP header. |
 
 ## HTTP routes
 
