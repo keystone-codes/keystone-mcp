@@ -8,6 +8,7 @@ assertion never leaks a child.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import logging
 import os
@@ -16,7 +17,9 @@ from pathlib import Path
 
 import anyio
 import pytest
+from prometheus_client import REGISTRY
 
+from keystone_mcp.router import stdio_process
 from keystone_mcp.router.stdio_process import (
     StdioUpstreamProcess,
     UpstreamProcessUnavailableError,
@@ -328,3 +331,120 @@ def test_client_when_not_running_raises():
     proc = _make_proc()
     with pytest.raises(UpstreamProcessUnavailableError):
         proc.client()
+
+
+async def test_hang_with_inflight_call_fails_call_and_restarts(monkeypatch):
+    monkeypatch.setattr(stdio_process, "_PING_INTERVAL_SECONDS", 0.3)
+    monkeypatch.setattr(stdio_process, "_PING_TIMEOUT_SECONDS", 0.3)
+    monkeypatch.setattr(stdio_process, "_PING_FAILURES_TO_RESTART", 2)
+    states: list[tuple[str, str | None]] = []
+    proc = _make_proc(states=states)
+    try:
+        assert await proc.start(wait=10) is True
+        async with proc.client() as client:
+            pid_before = int((await client.call_tool("pid", {})).content[0].text)
+            t0 = anyio.current_time()
+            with pytest.raises(Exception):
+                with anyio.fail_after(6):
+                    await client.call_tool("block", {"seconds": 8})
+            assert anyio.current_time() - t0 <= 3.0
+
+        with anyio.fail_after(2):
+            while proc.state == "running":
+                await anyio.sleep(0.05)
+
+        state_names = [s for s, _ in states]
+        assert "stopping" in state_names
+        assert "backoff" in state_names
+
+        with anyio.fail_after(10):
+            while proc.state != "running":
+                await anyio.sleep(0.05)
+        assert _count(states, "running") >= 2
+        async with proc.client() as client:
+            pid_after = int((await client.call_tool("pid", {})).content[0].text)
+        assert pid_after != pid_before
+        assert proc.restarts == 1
+    finally:
+        await proc.stop()
+
+
+async def test_single_missed_ping_does_not_restart(monkeypatch):
+    monkeypatch.setattr(stdio_process, "_PING_INTERVAL_SECONDS", 0.3)
+    monkeypatch.setattr(stdio_process, "_PING_TIMEOUT_SECONDS", 0.3)
+    monkeypatch.setattr(stdio_process, "_PING_FAILURES_TO_RESTART", 3)
+    proc = _make_proc()
+    try:
+        assert await proc.start(wait=10) is True
+        async with proc.client() as client:
+            result = await client.call_tool("block", {"seconds": 0.5})
+        assert "unblocked" in result.content[0].text
+        assert proc.restarts == 0
+        assert proc.state == "running"
+    finally:
+        await proc.stop()
+
+
+async def test_stop_with_inflight_call_returns_quickly():
+    proc = _make_proc()
+    try:
+        assert await proc.start(wait=10) is True
+        async with proc.client() as client:
+            pid = int((await client.call_tool("pid", {})).content[0].text)
+            task = asyncio.create_task(client.call_tool("block", {"seconds": 30}))
+            await anyio.sleep(0.05)
+            t0 = anyio.current_time()
+            with anyio.fail_after(6):
+                await proc.stop()
+            assert anyio.current_time() - t0 < 6.0
+            task.cancel()
+            with contextlib.suppress(Exception):
+                await task
+        with pytest.raises(ProcessLookupError):
+            os.kill(pid, 0)
+    finally:
+        with contextlib.suppress(Exception), anyio.fail_after(5):
+            await proc.stop()
+
+
+async def test_stderr_is_rate_limited(monkeypatch, caplog):
+    monkeypatch.setattr(stdio_process, "_STDERR_LINES_PER_SECOND", 50.0)
+    monkeypatch.setattr(stdio_process, "_STDERR_BURST", 200)
+    proc = _make_proc()
+    try:
+        assert await proc.start(wait=10) is True
+        with caplog.at_level(logging.INFO, logger="keystone_mcp.upstream.stderr"):
+            async with proc.client() as client:
+                await client.call_tool("spam", {"lines": 1000})
+            with anyio.fail_after(3):
+                await anyio.sleep(1.1)
+        info_records = [
+            r
+            for r in caplog.records
+            if r.levelno == logging.INFO and r.name == "keystone_mcp.upstream.stderr"
+        ]
+        assert len(info_records) <= 260
+        assert "suppressed" in caplog.text
+        sample = REGISTRY.get_sample_value(
+            "keystone_mcp_upstream_stderr_suppressed_total",
+            {"namespace": "notes"},
+        )
+        assert sample is not None and sample > 0
+    finally:
+        await proc.stop()
+
+
+async def test_stderr_masks_entry_env_values(caplog):
+    proc = _make_proc(env={"NOTES_TOKEN": "s3cr3t-value-123"})
+    try:
+        assert await proc.start(wait=10) is True
+        with caplog.at_level(logging.INFO, logger="keystone_mcp.upstream.stderr"):
+            async with proc.client() as client:
+                await client.call_tool("spam", {"lines": 5})
+            with anyio.fail_after(3):
+                while "token-dump" not in caplog.text and "spam-line" not in caplog.text:
+                    await anyio.sleep(0.05)
+        assert "s3cr3t-value-123" not in caplog.text
+        assert "***REDACTED***" in caplog.text
+    finally:
+        await proc.stop()

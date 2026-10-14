@@ -249,7 +249,7 @@ async def test_hanging_namespace_does_not_delay_others(reconciler_stack):
     upstreams.add_upstream("ledger", "http://ledger:8082/mcp", namespace="ledger")
     reports_before = set(registry.routes.keys())
 
-    async def _read_catalog(cfg, *, allow_temporary_process: bool):
+    async def _read_catalog(cfg):
         if cfg.namespace == "reports":
             await asyncio.sleep(budget + 5.0)
             return UpstreamCatalogRead(
@@ -287,7 +287,7 @@ async def test_parallel_refresh_announces_changes_once(reconciler_stack):
     sessions.broadcast_list_changed = AsyncMock(return_value=0)
     reconciler.client_sessions = sessions
 
-    async def _read_catalog(cfg, *, allow_temporary_process: bool):
+    async def _read_catalog(cfg):
         if cfg.namespace == "reports":
             return UpstreamCatalogRead(
                 tools=[

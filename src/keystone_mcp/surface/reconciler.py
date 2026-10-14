@@ -84,6 +84,9 @@ class SurfaceReconciler:
         default_factory=dict, init=False, repr=False
     )
     _last_users_revision: int | None = field(default=None, init=False, repr=False)
+    _namespace_refresh_tasks: dict[str, asyncio.Task[None]] = field(
+        default_factory=dict, init=False, repr=False
+    )
 
     def seed_snapshots(self) -> None:
         """Capture post-bootstrap state so the first tick is a no-op when unchanged."""
@@ -123,6 +126,18 @@ class SurfaceReconciler:
 
     async def start(self) -> None:
         interval = self.settings.refresh_interval_seconds
+        self.upstreams.set_namespace_up_hook(self.refresh_namespace_soon)
+        for cfg in self.upstreams._upstreams:
+            if cfg.transport != "stdio":
+                continue
+            conn = self.upstreams.connection(cfg.namespace)
+            from keystone_mcp.router.upstream_connection import StdioUpstreamConnection
+
+            if not isinstance(conn, StdioUpstreamConnection):
+                continue
+            status = self.upstreams._status.get(cfg.namespace)
+            if conn.process.state == "running" and (status is None or not status.catalog_known):
+                self.refresh_namespace_soon(cfg.namespace)
         if interval <= 0:
             return
         self._loop = asyncio.get_running_loop()
@@ -221,6 +236,71 @@ class SurfaceReconciler:
         except Exception:
             logger.exception("surface reconciler step %s failed", "observe_users_revision")
 
+        await self._broadcast_catalog_changes(
+            catalog_changed=catalog_changed,
+            prompts_catalog_changed=prompts_catalog_changed,
+            resources_catalog_changed=resources_catalog_changed,
+            policy_reloaded=policy_reloaded,
+            users_revision_changed=users_revision_changed,
+        )
+
+    def refresh_namespace_soon(self, namespace: str) -> None:
+        """Schedule a single-namespace catalog refresh (stdio process came up)."""
+        existing = self._namespace_refresh_tasks.get(namespace)
+        if existing is not None and not existing.done():
+            return
+        self._namespace_refresh_tasks[namespace] = asyncio.create_task(
+            self._refresh_namespace_soon(namespace),
+            name=f"surface-refresh-{namespace}",
+        )
+
+    async def _refresh_namespace_soon(self, namespace: str) -> None:
+        from keystone_mcp.router.upstream import UpstreamConfig
+
+        try:
+            async with self._lock:
+                cfg = next(
+                    (c for c in self.upstreams._upstreams if c.namespace == namespace),
+                    None,
+                )
+                if cfg is None:
+                    return
+                assert isinstance(cfg, UpstreamConfig)
+                budget = self._refresh_budget_seconds(cfg)
+                try:
+                    (
+                        catalog_changed,
+                        prompts_catalog_changed,
+                        resources_catalog_changed,
+                    ) = await asyncio.wait_for(
+                        self._refresh_namespace(cfg),
+                        timeout=budget,
+                    )
+                except asyncio.TimeoutError:
+                    self.upstreams.mark_unavailable(
+                        namespace,
+                        f"refresh timed out after {budget:g}s",
+                    )
+                    return
+                await self._broadcast_catalog_changes(
+                    catalog_changed=catalog_changed,
+                    prompts_catalog_changed=prompts_catalog_changed,
+                    resources_catalog_changed=resources_catalog_changed,
+                    policy_reloaded=False,
+                    users_revision_changed=False,
+                )
+        finally:
+            self._namespace_refresh_tasks.pop(namespace, None)
+
+    async def _broadcast_catalog_changes(
+        self,
+        *,
+        catalog_changed: bool,
+        prompts_catalog_changed: bool,
+        resources_catalog_changed: bool,
+        policy_reloaded: bool,
+        users_revision_changed: bool,
+    ) -> None:
         kinds: set[str] = set()
         if catalog_changed or policy_reloaded or users_revision_changed:
             kinds.add("tools")
@@ -315,7 +395,7 @@ class SurfaceReconciler:
         previous = self._namespace_fingerprints.get(namespace, {})
 
         try:
-            catalog = await self.upstreams.read_catalog(cfg, allow_temporary_process=False)
+            catalog = await self.upstreams.read_catalog(cfg)
         except UpstreamProcessUnavailableError as exc:
             self.upstreams.mark_unavailable(namespace, str(exc))
             logger.warning(

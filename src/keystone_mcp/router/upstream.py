@@ -50,7 +50,6 @@ from keystone_mcp.router.upstream_connection import (
     HttpUpstreamConnection,
     StdioUpstreamConnection,
     UpstreamConnection,
-    temporary_stdio_client,
 )
 from keystone_mcp.router.upstream_content import (
     UpstreamContentCatalog,
@@ -702,6 +701,8 @@ class UpstreamRegistry:
     _unpublishable: dict[str, set[str]] = field(default_factory=dict)
     _connections: dict[str, UpstreamConnection] = field(default_factory=dict, repr=False)
     _legacy_prompt_warnings_logged: set[str] = field(default_factory=set, repr=False)
+    _namespace_up_hook: Callable[[str], None] | None = field(default=None, repr=False)
+    _stdio_discovery_tasks: dict[str, asyncio.Task[None]] = field(default_factory=dict, repr=False)
 
     def __post_init__(self) -> None:
         pem = self._identity_signing_key_pem.strip()
@@ -884,10 +885,39 @@ class UpstreamRegistry:
         except KeyError:
             raise KeyError(f"unknown upstream namespace: {namespace}") from None
 
+    def set_namespace_up_hook(self, hook: Callable[[str], None] | None) -> None:
+        """Register a callback when a stdio process reaches ``running``."""
+        self._namespace_up_hook = hook
+
+    def _invoke_namespace_up_hook(self, namespace: str) -> None:
+        if self._namespace_up_hook is not None:
+            self._namespace_up_hook(namespace)
+
+    def _schedule_stdio_discovery(self, namespace: str) -> None:
+        cfg = next((c for c in self._upstreams if c.namespace == namespace), None)
+        if cfg is None or cfg.transport != "stdio":
+            return
+        existing = self._stdio_discovery_tasks.get(namespace)
+        if existing is not None and not existing.done():
+            return
+
+        async def _run() -> None:
+            try:
+                await self._discover_with_retries(cfg)
+            finally:
+                self._stdio_discovery_tasks.pop(namespace, None)
+
+        self._stdio_discovery_tasks[namespace] = asyncio.create_task(_run())
+
     def _on_process_state(self, namespace: str) -> Callable[[str, str | None], None]:
         def _callback(state: str, reason: str | None) -> None:
             if state == "running":
-                self.mark_available(namespace)
+                status = self._status.get(namespace)
+                if status is not None and status.catalog_known:
+                    self.mark_available(namespace)
+                self._invoke_namespace_up_hook(namespace)
+            elif state == "stopping":
+                self.mark_unavailable(namespace, reason or "process stopping")
             elif state == "backoff":
                 self.mark_unavailable(namespace, reason or "process down")
                 if self.observability is not None:
@@ -896,9 +926,10 @@ class UpstreamRegistry:
         return _callback
 
     async def start_connections(self, *, wait: float | None = None) -> None:
-        for cfg in self._upstreams:
-            if cfg.transport != "stdio":
-                continue
+        if self._namespace_up_hook is None and not self.refresh_enabled:
+            self.set_namespace_up_hook(self._schedule_stdio_discovery)
+
+        async def _start_one(cfg: UpstreamConfig) -> tuple[str, bool, float]:
             conn = self._connections[cfg.namespace]
             assert isinstance(conn, StdioUpstreamConnection)
             discovery_wait = (
@@ -911,11 +942,18 @@ class UpstreamRegistry:
                 )
             )
             started = await conn.start(wait=discovery_wait)
+            return cfg.namespace, started, discovery_wait
+
+        stdio_cfgs = [cfg for cfg in self._upstreams if cfg.transport == "stdio"]
+        if not stdio_cfgs:
+            return
+        results = await asyncio.gather(*(_start_one(cfg) for cfg in stdio_cfgs))
+        for namespace, started, discovery_wait in results:
             if not started:
                 logger.warning(
                     "stdio upstream process did not reach running within %ss namespace=%s",
                     discovery_wait,
-                    cfg.namespace,
+                    namespace,
                 )
 
     async def stop_connections(self) -> None:
@@ -1164,9 +1202,7 @@ class UpstreamRegistry:
             )
         self.content.set_legacy_prompt_rbac_names(namespace, frozenset(legacy))
 
-    async def read_catalog(
-        self, cfg: UpstreamConfig, *, allow_temporary_process: bool
-    ) -> UpstreamCatalogRead:
+    async def read_catalog(self, cfg: UpstreamConfig) -> UpstreamCatalogRead:
         discovery_timeout = (
             cfg.discovery_timeout_seconds
             if cfg.discovery_timeout_seconds is not None
@@ -1211,33 +1247,10 @@ class UpstreamRegistry:
                         resources_raw = None
                         templates_raw = None
             else:
-                if not allow_temporary_process:
-                    raise UpstreamProcessUnavailableError(
-                        f"stdio upstream {cfg.namespace!r} has no running process for catalog read"
-                    )
-                tools = await self._discover_stdio_tools(cfg, discovery_timeout)
-                try:
-                    prompts_raw = await self._list_prompts_for_config(cfg, discovery_timeout)
-                except UpstreamListToolsError as exc:
-                    logger.warning(
-                        "upstream prompts refresh failed namespace=%s: %s; keeping previous prompts",
-                        cfg.namespace,
-                        exc,
-                    )
-                    prompts_raw = None
-                try:
-                    resources_raw, templates_raw = await self._list_resources_for_config(
-                        cfg, discovery_timeout
-                    )
-                except UpstreamListToolsError as exc:
-                    logger.warning(
-                        "upstream resources refresh failed namespace=%s: %s; "
-                        "keeping previous resources",
-                        cfg.namespace,
-                        exc,
-                    )
-                    resources_raw = None
-                    templates_raw = None
+                self.mark_unavailable(cfg.namespace, "process not running")
+                raise UpstreamProcessUnavailableError(
+                    f"stdio upstream {cfg.namespace!r} process not running"
+                )
         else:
             tools = await fetch_upstream_tools(
                 cfg.url,
@@ -1302,17 +1315,9 @@ class UpstreamRegistry:
                 client = conn.catalog_client(timeout=discovery_timeout)
                 async with client:
                     return await list_upstream_prompts(client, timeout_seconds=discovery_timeout)
-            assert cfg.command is not None
-            child_env = resolve_stdio_child_env(cfg.env_from)
-            client = temporary_stdio_client(
-                command=cfg.command,
-                args=cfg.args,
-                env=child_env,
-                cwd=cfg.cwd,
-                init_timeout=discovery_timeout,
+            raise UpstreamProcessUnavailableError(
+                f"stdio upstream {cfg.namespace!r} process not running"
             )
-            async with client:
-                return await list_upstream_prompts(client, timeout_seconds=discovery_timeout)
         return await fetch_upstream_prompts(
             cfg.url,
             timeout_seconds=discovery_timeout,
@@ -1417,21 +1422,9 @@ class UpstreamRegistry:
                         client, timeout_seconds=discovery_timeout
                     )
                 return resources, templates
-            assert cfg.command is not None
-            child_env = resolve_stdio_child_env(cfg.env_from)
-            client = temporary_stdio_client(
-                command=cfg.command,
-                args=cfg.args,
-                env=child_env,
-                cwd=cfg.cwd,
-                init_timeout=discovery_timeout,
+            raise UpstreamProcessUnavailableError(
+                f"stdio upstream {cfg.namespace!r} process not running"
             )
-            async with client:
-                resources = await list_upstream_resources(client, timeout_seconds=discovery_timeout)
-                templates = await list_upstream_resource_templates(
-                    client, timeout_seconds=discovery_timeout
-                )
-            return resources, templates
         resources = await fetch_upstream_resources(
             cfg.url,
             timeout_seconds=discovery_timeout,
@@ -1569,7 +1562,7 @@ class UpstreamRegistry:
         adapter = self._adapters[cfg.namespace]
         registered = 0
 
-        catalog = await self.read_catalog(cfg, allow_temporary_process=True)
+        catalog = await self.read_catalog(cfg)
         tools = catalog.tools
         prompts_raw = catalog.prompts
         resources_raw = catalog.resources
@@ -1655,24 +1648,3 @@ class UpstreamRegistry:
             registered,
         )
         return registered
-
-    async def _discover_stdio_tools(
-        self, cfg: UpstreamConfig, discovery_timeout: float
-    ) -> list[Any]:
-        conn = self._connections[cfg.namespace]
-        if isinstance(conn, StdioUpstreamConnection) and conn.process.state == "running":
-            client = conn.catalog_client(timeout=discovery_timeout)
-            async with client:
-                return await list_upstream_tools(client, timeout_seconds=discovery_timeout)
-
-        assert cfg.command is not None
-        child_env = resolve_stdio_child_env(cfg.env_from)
-        client = temporary_stdio_client(
-            command=cfg.command,
-            args=cfg.args,
-            env=child_env,
-            cwd=cfg.cwd,
-            init_timeout=discovery_timeout,
-        )
-        async with client:
-            return await list_upstream_tools(client, timeout_seconds=discovery_timeout)

@@ -97,6 +97,11 @@ _UPSTREAM_PROCESS_RESTARTS = Counter(
     "Restarts of stdio upstream processes",
     ["namespace"],
 )
+_UPSTREAM_STDERR_SUPPRESSED = Counter(
+    "keystone_mcp_upstream_stderr_suppressed_total",
+    "Stdio upstream stderr log lines dropped by rate limiting",
+    ["namespace"],
+)
 _UPSTREAM_ELICITATIONS = Counter(
     "keystone_mcp_upstream_elicitations_total",
     "Upstream elicitation rounds forwarded to the Keystone client",
@@ -352,6 +357,13 @@ class RbacMetrics:
 def record_upstream_elicitation(*, namespace: str, action: str) -> None:
     """Increment elicitation counter without an observability handle (proxy path)."""
     _UPSTREAM_ELICITATIONS.labels(namespace=namespace, action=action).inc()
+
+
+def record_upstream_stderr_suppressed(*, namespace: str, count: int) -> None:
+    """Increment suppressed stderr counter without an observability handle."""
+    if count <= 0:
+        return
+    _UPSTREAM_STDERR_SUPPRESSED.labels(namespace=namespace).inc(count)
 
 
 def count_directory_response_issue(field: str, issue: str) -> None:

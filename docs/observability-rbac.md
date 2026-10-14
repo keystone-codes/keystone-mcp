@@ -82,8 +82,9 @@ OAuth rotation and replay events. Fields: `action` (`grace_reissue`,
 | `keystone_mcp_rbac_policy_reload_total` | `success` | Policy load/reload (`true` / `false`) |
 | `keystone_mcp_catalog_refresh_total` | `outcome` | Upstream catalog refresh (`unchanged` / `held` / `applied`) |
 | `keystone_mcp_catalog_refresh_changes_total` | `direction` | Tools added or removed (`added` / `removed`; counts only, no tool names) |
-| `keystone_mcp_upstream_available` | `namespace` | 1 if the upstream is considered available, else 0. For HTTP: last discovery or refresh succeeded. **For stdio: the supervised process is running** (not in `backoff` / `stopped`). |
+| `keystone_mcp_upstream_available` | `namespace` | 1 if the upstream is considered available, else 0. For HTTP: last discovery or refresh succeeded. **For stdio: the catalog has been read successfully** (the process may still be in `backoff` while a previous catalog is kept). |
 | `keystone_mcp_upstream_process_restarts_total` | `namespace` | Cumulative restarts of a stdio upstream child after crash, hang, or failed start |
+| `keystone_mcp_upstream_stderr_suppressed_total` | `namespace` | Stderr log lines dropped by the stdio supervisor's rate limiter |
 | `keystone_mcp_upstream_items_rejected_total` | `namespace`, `kind`, `reason` | Catalog items Keystone refused to publish or pass on. `kind`: `tool`, `prompt`, `resource`, `template`, `catalog`, or `response`. `reason` (at 0.6.0): `name_collision`, `unpublishable_schema`, `uri_without_scheme`. Increments on every reconciliation attempt while the condition persists. |
 | `keystone_mcp_upstream_input_rounds_exceeded_total` | `namespace` | Tool calls stopped because the upstream kept requesting input |
 | `keystone_mcp_list_changed_sessions_total` | `kind` | Sessions notified that a list of tools/prompts/resources changed. A "session" is a handshake-era connection or an open `subscriptions/listen` stream |
