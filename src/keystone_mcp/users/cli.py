@@ -28,6 +28,8 @@ from pathlib import Path
 
 import httpx
 from redis.exceptions import RedisError
+from sqlalchemy import text
+from sqlalchemy.engine import Engine
 
 from keystone_mcp.auth.oauth_store import build_shared_auth_stores
 from keystone_mcp.auth.sessions import SessionRevoker
@@ -44,6 +46,7 @@ from keystone_mcp.user_directory.local import LocalUserDirectory
 from keystone_mcp.users.db import (
     UsersConfigError,
     check_users_db_url,
+    create_users_engine,
     describe_db_url,
     sqlite_file_path,
 )
@@ -57,6 +60,12 @@ from keystone_mcp.users.errors import (
 from keystone_mcp.users.export import build_person_export
 from keystone_mcp.users.factory import build_users_store
 from keystone_mcp.users.importer import ImportSourceError, fetch_source_users
+from keystone_mcp.users.migrate import (
+    HEAD_REVISION,
+    current_revision,
+    db_revision_status,
+    downgrade_to,
+)
 from keystone_mcp.users.roles import ROLE_ADMINISTRATOR
 from keystone_mcp.users.store import MutationResult, UsersStore
 
@@ -66,6 +75,8 @@ EXIT_OK = 0
 EXIT_USAGE = 1
 EXIT_IMPORT_SOURCE = 2
 EXIT_STORE = 3
+EXIT_DB_NEWER = 4
+EXIT_DB_OLDER = 5
 
 
 class _CliExit(Exception):
@@ -161,6 +172,42 @@ def _open_store(settings: Settings, *, allow_create: bool = True) -> UsersStore:
         print(f"users directory database is unavailable: {type(exc).__name__}", file=sys.stderr)
         raise _CliExit(EXIT_STORE) from exc
     return store
+
+
+def _open_engine_for_db_commands(settings: Settings) -> Engine:
+    """Open the users database without running migrations."""
+    if settings.users_backend != "local":
+        print(
+            "users commands work only with KEYSTONE_MCP_USERS_BACKEND=local",
+            file=sys.stderr,
+        )
+        raise _CliExit(EXIT_USAGE)
+
+    try:
+        check_users_db_url(settings.users_db_url)
+    except UsersConfigError as exc:
+        print(str(exc), file=sys.stderr)
+        raise _CliExit(EXIT_USAGE) from exc
+
+    print(f"Users directory: {describe_db_url(settings.users_db_url)}", file=sys.stderr)
+
+    db_path = sqlite_file_path(settings.users_db_url)
+    if db_path is not None and not db_path.exists():
+        print(
+            f"no users database at {db_path}",
+            file=sys.stderr,
+        )
+        raise _CliExit(EXIT_USAGE)
+
+    engine = create_users_engine(settings.users_db_url)
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+    except Exception as exc:  # noqa: BLE001
+        engine.dispose()
+        print(f"users directory database is unavailable: {type(exc).__name__}", file=sys.stderr)
+        raise _CliExit(EXIT_STORE) from exc
+    return engine
 
 
 _CLI_ACTOR = "system:cli"
@@ -514,6 +561,58 @@ def _cmd_unbind_identity(args: argparse.Namespace) -> int:
         return EXIT_OK
     finally:
         store.dispose()
+
+
+def _cmd_db_current(_args: argparse.Namespace) -> int:
+    try:
+        settings = _settings_for_users_cli()
+    except _CliExit as exc:
+        return exc.code
+    engine = _open_engine_for_db_commands(settings)
+    try:
+        db_rev = current_revision(engine)
+        print(f"database revision: {db_rev or '(none)'}")
+        print(f"expected revision: {HEAD_REVISION}")
+        status = db_revision_status(db_rev)
+        if status == "match":
+            return EXIT_OK
+        if status == "newer":
+            return EXIT_DB_NEWER
+        return EXIT_DB_OLDER
+    finally:
+        engine.dispose()
+
+
+def _cmd_db_downgrade(args: argparse.Namespace) -> int:
+    try:
+        settings = _settings_for_users_cli()
+    except _CliExit as exc:
+        return exc.code
+
+    target = (args.to or "").strip()
+    if not target:
+        print("--to is required", file=sys.stderr)
+        return EXIT_USAGE
+
+    if not args.yes:
+        if not sys.stdin.isatty():
+            print(
+                "refusing to downgrade without --yes when stdin is not a terminal",
+                file=sys.stderr,
+            )
+            return EXIT_IMPORT_SOURCE
+
+    engine = _open_engine_for_db_commands(settings)
+    try:
+        downgrade_to(engine, target)
+        db_rev = current_revision(engine)
+        print(f"database revision: {db_rev or '(none)'}")
+        return EXIT_OK
+    except Exception as exc:  # noqa: BLE001
+        print(f"downgrade failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return EXIT_STORE
+    finally:
+        engine.dispose()
 
 
 def _cmd_export(args: argparse.Namespace) -> int:
@@ -987,3 +1086,29 @@ def add_users_commands(subparsers: argparse._SubParsersAction) -> None:
         help="Skip interactive confirmation (required when stdin is not a terminal)",
     )
     delete_cmd.set_defaults(handler=_cmd_delete)
+
+    db_cmd = users_sub.add_parser("db", help="Inspect or roll back users-directory migrations")
+    db_sub = db_cmd.add_subparsers(dest="db_command", required=True)
+
+    db_current = db_sub.add_parser(
+        "current",
+        help="Print the database revision and the revision this binary expects",
+    )
+    db_current.set_defaults(handler=_cmd_db_current)
+
+    db_downgrade = db_sub.add_parser(
+        "downgrade",
+        help="Roll the users directory database back to an earlier revision",
+    )
+    db_downgrade.add_argument(
+        "--to",
+        required=True,
+        metavar="REVISION",
+        help="Alembic revision id to downgrade to (for example 0003_api_keys)",
+    )
+    db_downgrade.add_argument(
+        "--yes",
+        action="store_true",
+        help="Skip interactive confirmation (required when stdin is not a terminal)",
+    )
+    db_downgrade.set_defaults(handler=_cmd_db_downgrade)

@@ -4,6 +4,83 @@ Use this page when you move between minor releases. Each section lists checks
 for operators before traffic hits a new version, what happens to live OAuth
 sessions, how to roll back, and which metrics to watch afterward.
 
+## Before you upgrade
+
+1. Read the `### Migration` section of every release between your current
+   version and the target in [CHANGELOG.md](../CHANGELOG.md).
+2. Back up the users directory database (Postgres dump or a copy of the SQLite
+   file). Redis must persist to disk (`appendonly` or equivalent); restarting
+   Redis without persistence logs everyone out even when the application
+   version does not change.
+3. Install or unpack the target version, keep production secrets unchanged, and
+   run `keystone-mcp config check` against the same `.env` the server uses
+   (see [environment.md](environment.md#checking-a-configuration)).
+
+## Upgrade procedure
+
+1. Stop the old process or container, or run old and new replicas side by side
+   only when the release notes allow it (see [Rolling upgrade](#rolling-upgrade)).
+2. Start the new version against the same Postgres data, policy files, and
+   Redis. On startup one replica acquires an advisory lock and runs users
+   directory migrations to head; other replicas wait and then serve.
+3. Verify `/readyz` returns `"status": "ok"`, then:
+
+   ```bash
+   keystone-mcp users db current --env-file /path/to/.env
+   ```
+
+   Exit code `0` means the database revision matches what this binary expects.
+   Watch `keystone_mcp_oauth_token_keys_migrated_total` during the first hours
+   after a 0.6.0 rollout (legacy plain OAuth token keys move to SHA-256 on
+   first use).
+
+## Rolling upgrade
+
+You may run 0.5.x and 0.6.0 replicas together on the same Postgres and Redis
+while traffic moves. Refresh-token markers only grow, so both versions can read
+sessions opened on either replica. From 0.6.0, access and refresh tokens are
+stored under SHA-256 hashes immediately; 0.5.x cannot read those Redis entries.
+Plan mixed-version windows accordingly: renew sessions on 0.5.x replicas before
+every replica runs 0.6.0, or expect everyone to sign in again once only 0.6.0
+remains. Do not run an older application against a database stamped with a
+revision it does not know — downgrade the schema first (see [Rollback](#rollback)).
+
+## Rollback
+
+1. Stop every replica on the new version.
+2. Roll the users directory schema back with the **new** binary (it ships the
+   `downgrade()` functions):
+
+   ```bash
+   keystone-mcp users db downgrade --to <revision> --yes --env-file /path/to/.env
+   ```
+
+   Use the revision the previous application expects (see [Version notes](#version-notes)).
+3. Start the previous image or package again with the same data volumes.
+
+Sessions and Redis entries written only by the newer version may not survive
+rollback; each release's `### Migration` section lists what is lost. Nullable
+columns added by a newer migration remain in Postgres but are ignored by older
+code.
+
+## Version notes
+
+| Version | Users DB revision (`keystone-mcp users db current`) |
+|---|---|
+| 0.4.0 | `0001_initial` |
+| 0.5.0 | `0003_api_keys` |
+| 0.6.0 | `0004_identity_binding` |
+
+**0.4.x → 0.5.0** — Move Google and OIDC settings into
+`KEYSTONE_MCP_LOGIN_PROVIDERS_PATH`; rename `KEYSTONE_MCP_RBAC_ENABLED` to
+`KEYSTONE_MCP_RBAC_MODE`. File upload tools (`create_upload_url`,
+`get_download_link`, `upload_file`) are removed. Service accounts and API keys
+arrive with migration `0003_api_keys`. See [CHANGELOG.md](../CHANGELOG.md)
+`[0.5.0]` `### Migration`.
+
+**0.5.x → 0.6.0** — See the dedicated section below and [CHANGELOG.md](../CHANGELOG.md)
+`[Unreleased]` / `[0.6.0]` `### Migration`.
+
 ## 0.5.x → 0.6.0
 
 ### Before you upgrade
