@@ -11,10 +11,13 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 ### Added
 
 - Metric `keystone_mcp_admin_refusals_total`; audit field `actor_subject_type` on `rbac_policy_mutation`.
+- `LoginIdentity.key_id` and `LoginIdentity.key_expires_at` (optional) for form providers that sign people in with a Keystone API key.
 
 ### Changed
 
 - Service accounts get `forbidden` from every administration tool that changes state (`users_*`, `service_accounts_*`, `api_keys_*`, `policy_*`); reading stays available. `tools/list` no longer shows a caller the tools it will be refused for lack of an interactive sign-in.
+- A refresh token whose session marker is missing is refused with `invalid_grant` instead of being renewed as an `api_key` session. The marker is now written in the same Redis transaction as the token pair.
+- Access tokens of people carry `"subject_type": "human"`; a sign-in that resolves to a service-account subject is refused.
 
 ### Fixed
 
@@ -23,6 +26,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 ### Migration
 
 - Automation that changed users, service accounts or API keys through MCP with a service-account key now gets `forbidden`; do it from a person's session or with the `keystone-mcp` CLI on the host.
+- Sessions opened on 0.4.x/0.5.x keep working after the upgrade. Rolling back to 0.5.x keeps sessions opened on 0.6.0: 0.5.x ignores the new marker fields. While replicas of both versions run side by side, a session renewed by a 0.5.x replica loses the new fields again; session max-age and key checks apply once every replica runs 0.6.0.
 
 ## [0.5.0] - 2026-10-13
 

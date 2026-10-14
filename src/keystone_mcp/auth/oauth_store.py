@@ -13,6 +13,7 @@ from typing import Protocol, runtime_checkable
 
 from mcp.server.auth.provider import AccessToken, RefreshToken
 from mcp.shared.auth import OAuthClientInformationFull
+from pydantic import ConfigDict
 from redis.asyncio import Redis
 from redis.exceptions import WatchError
 
@@ -30,6 +31,14 @@ class RevokedTokens:
 
 class CredentialRevokedError(Exception):
     """Consumed credential was issued at or before the subject's not-before time."""
+
+
+class KeystoneRefreshToken(RefreshToken):
+    """Refresh token record with an optional issued-at time (0.6.0+)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    iat: int | None = None
 
 
 def _subject_key(subject: str) -> str:
@@ -85,6 +94,9 @@ class OAuthStore(Protocol):
 
     def refresh_credential_iat(self, refresh: RefreshToken) -> int | None: ...
 
+    @property
+    def writes_refresh_meta(self) -> bool: ...
+
     async def commit_token_pair(
         self,
         *,
@@ -93,6 +105,7 @@ class OAuthStore(Protocol):
         access: AccessToken,
         refresh: RefreshToken,
         replace_refresh_token: str | None = None,
+        refresh_meta: str | None = None,
     ) -> None: ...
 
     async def aclose(self) -> None: ...
@@ -206,9 +219,16 @@ class InMemoryOAuthStore:
         return None
 
     def _refresh_iat(self, refresh: RefreshToken) -> int | None:
+        stored_iat = getattr(refresh, "iat", None)
+        if isinstance(stored_iat, int):
+            return stored_iat
         if refresh.expires_at is not None:
             return int(refresh.expires_at) - self._refresh_ttl_seconds
         return None
+
+    @property
+    def writes_refresh_meta(self) -> bool:
+        return False
 
     def _reject_if_before_nbf(self, sub: str, iat: int | None) -> bool:
         if iat is None:
@@ -361,6 +381,7 @@ class InMemoryOAuthStore:
         access: AccessToken,
         refresh: RefreshToken,
         replace_refresh_token: str | None = None,
+        refresh_meta: str | None = None,
     ) -> None:
         sub = _subject_key(subject)
         async with self._commit_lock:
@@ -392,9 +413,11 @@ class RedisOAuthStore:
         client_ttl_seconds: int = 31 * 86400,
         refresh_ttl_seconds: int = 30 * 86400,
         access_ttl_seconds: int = 3600,
+        refresh_meta_key_prefix: str | None = None,
     ) -> None:
         prefix = key_prefix if key_prefix.endswith(":") else f"{key_prefix}:"
         self._prefix = prefix
+        self._refresh_meta_key_prefix = refresh_meta_key_prefix
         self._client_ttl_seconds = client_ttl_seconds
         self._refresh_ttl_seconds = refresh_ttl_seconds
         self._access_ttl_seconds = access_ttl_seconds
@@ -443,12 +466,23 @@ class RedisOAuthStore:
         return None
 
     def _refresh_iat(self, refresh: RefreshToken) -> int | None:
+        stored_iat = getattr(refresh, "iat", None)
+        if isinstance(stored_iat, int):
+            return stored_iat
         if refresh.expires_at is not None:
             # If refresh TTL was shortened after issuance, this estimate can be
             # later than the real issue time; the token may still pass nbf until
             # revoke_subject removes it from the index.
             return int(refresh.expires_at) - self._refresh_ttl_seconds
         return None
+
+    @property
+    def writes_refresh_meta(self) -> bool:
+        return self._refresh_meta_key_prefix is not None
+
+    def _refresh_meta_redis_key(self, refresh_token: str) -> str:
+        assert self._refresh_meta_key_prefix is not None
+        return f"{self._refresh_meta_key_prefix}{refresh_token}"
 
     async def _subject_nbf(self, sub: str) -> int | None:
         raw = await self._redis.get(self._subject_nbf_key(sub))
@@ -610,7 +644,7 @@ class RedisOAuthStore:
             raw, ttl = await pipe.execute()
         if raw is None:
             return None
-        refresh = RefreshToken.model_validate_json(raw)
+        refresh = KeystoneRefreshToken.model_validate_json(raw)
         if ttl == -1:
             # Legacy record written without a TTL.
             if refresh.expires_at is not None:
@@ -803,6 +837,12 @@ class RedisOAuthStore:
         if subject:
             pipe.srem(self._subject_index_key(_subject_key(subject)), f"rt:{token}")
 
+    def _pipe_put_refresh_meta(
+        self, pipe: object, refresh_token: str, payload: str, ttl: int
+    ) -> None:
+        key = self._refresh_meta_redis_key(refresh_token)
+        pipe.set(key, payload, ex=ttl)
+
     async def commit_token_pair(
         self,
         *,
@@ -811,6 +851,7 @@ class RedisOAuthStore:
         access: AccessToken,
         refresh: RefreshToken,
         replace_refresh_token: str | None = None,
+        refresh_meta: str | None = None,
     ) -> None:
         sub = _subject_key(subject)
         nbf_key = self._subject_nbf_key(sub)
@@ -818,6 +859,13 @@ class RedisOAuthStore:
             self._refresh_revoked_key(replace_refresh_token) if replace_refresh_token else None
         )
         old_refresh_subject = subject if replace_refresh_token else None
+        meta_ttl: int | None = None
+        if refresh_meta is not None and self.writes_refresh_meta:
+            if refresh.expires_at is None:
+                meta_ttl = self._refresh_ttl_seconds
+            else:
+                meta_ttl = int(refresh.expires_at - time.time())
+                meta_ttl = meta_ttl if meta_ttl > 0 else 1
 
         for _attempt in range(_COMMIT_MAX_WATCH_RETRIES):
             async with self._redis.pipeline() as pipe:
@@ -838,6 +886,8 @@ class RedisOAuthStore:
                 pipe.multi()
                 self._pipe_put_access(pipe, access)
                 self._pipe_put_refresh(pipe, refresh)
+                if refresh_meta is not None and meta_ttl is not None:
+                    self._pipe_put_refresh_meta(pipe, refresh.token, refresh_meta, meta_ttl)
                 if replace_refresh_token is not None:
                     self._pipe_delete_refresh(pipe, replace_refresh_token, old_refresh_subject)
                 try:
@@ -865,19 +915,28 @@ def build_oauth_store(settings: object) -> OAuthStore:
             "KEYSTONE_MCP_REDIS_URL is required for OAuth session persistence. "
             "Set it to the shared keystone Redis (e.g. redis://redis:6379/0)."
         )
+    from keystone_mcp.auth.login_pending_store import normalize_login_key_prefix
+
     prefix = getattr(settings, "redis_key_prefix", "km:oauth:")
+    login_prefix = normalize_login_key_prefix(
+        getattr(settings, "login_pending_key_prefix", "km:login:")
+    )
     return RedisOAuthStore(
         redis_url,
         key_prefix=prefix,
         client_ttl_seconds=client_ttl_seconds(settings),
         refresh_ttl_seconds=getattr(settings, "refresh_token_ttl_seconds", 30 * 86400),
         access_ttl_seconds=getattr(settings, "token_cache_ttl_seconds", 3600),
+        refresh_meta_key_prefix=f"{login_prefix}refresh_auth:",
     )
 
 
 def build_shared_auth_stores(settings: object) -> tuple[OAuthStore, object]:
     """Build OAuth and login-pending stores sharing one Redis connection pool."""
-    from keystone_mcp.auth.login_pending_store import RedisLoginPendingStore
+    from keystone_mcp.auth.login_pending_store import (
+        RedisLoginPendingStore,
+        normalize_login_key_prefix,
+    )
 
     redis_url = getattr(settings, "redis_url", "").strip()
     if not redis_url:
@@ -888,7 +947,9 @@ def build_shared_auth_stores(settings: object) -> tuple[OAuthStore, object]:
 
     redis = Redis.from_url(redis_url, decode_responses=True)
     oauth_prefix = getattr(settings, "redis_key_prefix", "km:oauth:")
-    login_prefix = getattr(settings, "login_pending_key_prefix", "km:login:")
+    login_prefix = normalize_login_key_prefix(
+        getattr(settings, "login_pending_key_prefix", "km:login:")
+    )
     oauth_store = RedisOAuthStore(
         redis_url,
         key_prefix=oauth_prefix,
@@ -897,6 +958,7 @@ def build_shared_auth_stores(settings: object) -> tuple[OAuthStore, object]:
         client_ttl_seconds=client_ttl_seconds(settings),
         refresh_ttl_seconds=getattr(settings, "refresh_token_ttl_seconds", 30 * 86400),
         access_ttl_seconds=getattr(settings, "token_cache_ttl_seconds", 3600),
+        refresh_meta_key_prefix=f"{login_prefix}refresh_auth:",
     )
     login_store = RedisLoginPendingStore(
         redis,

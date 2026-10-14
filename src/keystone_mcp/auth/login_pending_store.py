@@ -12,6 +12,12 @@ from typing import Protocol, runtime_checkable
 from redis.asyncio import Redis
 from redis.exceptions import NoScriptError, ResponseError
 
+
+def normalize_login_key_prefix(prefix: str) -> str:
+    """Ensure a login-pending Redis prefix ends with ``:``."""
+    return prefix if prefix.endswith(":") else f"{prefix}:"
+
+
 _CONSUME_SCRIPT = """
 local value = redis.call('GET', KEYS[1])
 if value then
@@ -87,8 +93,7 @@ class RedisLoginPendingStore:
         *,
         owns_redis: bool = False,
     ) -> None:
-        prefix = key_prefix if key_prefix.endswith(":") else f"{key_prefix}:"
-        self._prefix = prefix
+        self._prefix = normalize_login_key_prefix(key_prefix)
         self._redis = redis
         self._owns_redis = owns_redis
         self._consume_sha: str | None = None
