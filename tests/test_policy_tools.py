@@ -22,6 +22,7 @@ from keystone_mcp.server import policy_role_source
 from keystone_mcp.upstream_registry.policy import UpstreamSecurityPolicy
 from keystone_mcp.upstream_registry.validate import ValidationError, assert_valid_upstream_registry
 from keystone_mcp.user_directory.memory import InMemoryUserDirectory
+from support.test_env import UNUSED_REDIS_URL
 
 ADMIN = VerifiedIdentity(email="admin@example.com")
 EDITOR = VerifiedIdentity(email="editor@example.com")
@@ -62,7 +63,7 @@ def _settings(
         rbac_mode=rbac_mode,
         rbac_policy_path=str(policy),
         policy_tools=policy_tools,
-        redis_url="redis://localhost:6379/12",
+        redis_url=UNUSED_REDIS_URL,
         rbac_audit_subject_salt="policy-tools-test",
         users_backend="local",
     )

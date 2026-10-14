@@ -17,6 +17,7 @@ from keystone_mcp.user_directory.local import LocalUserDirectory
 from keystone_mcp.user_directory.memory import InMemoryUserDirectory
 from keystone_mcp.users import service
 from keystone_mcp.users.db import make_session_factory, session_scope
+from support.test_env import require_redis_url
 from support.users_store import make_users_store
 
 ADMIN = VerifiedIdentity(email="admin@example.com")
@@ -33,7 +34,7 @@ def _enforce_settings(tmp_path: Path) -> Settings:
         deployment_profile="local",
         rbac_mode="enforce",
         rbac_policy_path=str(policy),
-        redis_url="redis://localhost:6379/7",
+        redis_url=require_redis_url(),
         rbac_audit_subject_salt="tools-test",
         users_backend="local",
     )

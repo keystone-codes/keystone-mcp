@@ -18,6 +18,7 @@ from keystone_mcp.user_directory.local import LocalUserDirectory
 from keystone_mcp.users import service
 from keystone_mcp.users.db import session_scope
 from support.service_bearer import service_bearer_harness
+from support.test_env import require_redis_url
 from support.users_store import make_users_store
 
 
@@ -32,7 +33,7 @@ def _production_enforce_settings(tmp_path: Path) -> Settings:
         rbac_mode="enforce",
         rbac_policy_path=str(policy),
         rbac_audit_subject_salt="prod-test",
-        redis_url="redis://localhost:6379/7",
+        redis_url=require_redis_url(),
         users_backend="local",
         users_db_url="postgresql+psycopg://u:p@db:5432/keystone",
         enabled_login_methods=frozenset({"api_key"}),
@@ -135,7 +136,7 @@ def test_production_refuses_api_key_login_with_interactive_provider(
     monkeypatch.setenv("KEYSTONE_MCP_ENABLED_LOGIN_METHODS", "google,api_key")
     monkeypatch.setenv("KEYSTONE_MCP_PRIMARY_LOGIN_METHOD", "google")
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT", "salt")
-    monkeypatch.setenv("KEYSTONE_MCP_REDIS_URL", "redis://localhost:6379/7")
+    monkeypatch.setenv("KEYSTONE_MCP_REDIS_URL", require_redis_url())
     with pytest.raises(ConfigError, match="interactive provider"):
         load_settings()
 
@@ -159,7 +160,7 @@ def test_production_allows_api_key_login_without_interactive_provider(
     monkeypatch.delenv("KEYSTONE_MCP_GOOGLE_CLIENT_ID", raising=False)
     monkeypatch.delenv("KEYSTONE_MCP_GOOGLE_CLIENT_SECRET", raising=False)
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT", "salt")
-    monkeypatch.setenv("KEYSTONE_MCP_REDIS_URL", "redis://localhost:6379/7")
+    monkeypatch.setenv("KEYSTONE_MCP_REDIS_URL", require_redis_url())
     settings = load_settings()
     assert settings.api_key_login_enabled is True
 

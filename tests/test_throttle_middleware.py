@@ -27,6 +27,7 @@ from keystone_mcp.router.throttle_middleware import (
 from keystone_mcp.server import build_server
 from keystone_mcp.user_directory import build_in_memory_user_directory_resolver
 from support.login import dev_token_login
+from support.test_env import require_redis_url
 
 THROTTLE_LIMIT = 6
 SUBJECT = "user@example.com"
@@ -118,7 +119,7 @@ async def test_rbac_enforce_throttles_on_the_configured_limit(
         rbac_policy_path=str(policy_path),
         users_service_url="http://users:8000",
         users_service_token="token",
-        redis_url="redis://localhost:6379/0",
+        redis_url=require_redis_url(),
         rbac_audit_subject_salt="test-salt",
     )
     mcp = _build_app(settings, user_resolver=resolver)
@@ -137,7 +138,7 @@ async def test_rbac_observe_throttles_on_the_configured_limit(
         rbac_policy_path=str(policy_path),
         users_service_url="http://users:8000",
         users_service_token="token",
-        redis_url="redis://localhost:6379/0",
+        redis_url=require_redis_url(),
         rbac_audit_subject_salt="test-salt",
     )
     mcp = _build_app(settings, user_resolver=resolver)

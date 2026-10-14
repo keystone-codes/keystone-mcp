@@ -48,6 +48,14 @@ pytest -q
 uv run pytest -q
 ```
 
+The suite reads only `KEYSTONE_MCP_REDIS_URL` from your shell; other
+`KEYSTONE_MCP_*` exports are cleared so local config cannot skew results.
+Redis keys are written under `km:test:<run>:` and deleted at the end of the
+run. PostgreSQL tests require `KEYSTONE_TEST_POSTGRES_URL` pointing at a
+database whose name contains `test`; each pytest process uses its own schema.
+In CI, any skip not listed in `tests/data/ci-allowed-skips.txt` fails the
+build.
+
 Tests marked `integration` are optional, live-service tests that skip
 themselves when their environment prerequisites are not present — you do not
 need external services beyond Redis for the default run. The tests in

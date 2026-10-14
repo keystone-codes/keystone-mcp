@@ -11,6 +11,7 @@ from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import Settings
 from keystone_mcp.server import build_server
 from support.login import dev_token_login
+from support.test_env import UNUSED_REDIS_URL
 
 BASE_URL = "http://localhost:8080"
 
@@ -72,7 +73,7 @@ def test_observe_warns_users_tools_are_not_published(caplog, tmp_path):
         rbac_policy_path=str(policy),
         users_service_url="http://users:8000",
         users_service_token="token",
-        redis_url="redis://localhost:6379/0",
+        redis_url=UNUSED_REDIS_URL,
         rbac_audit_subject_salt="test-salt",
     )
     with caplog.at_level("WARNING", logger="keystone_mcp.server"):
@@ -91,7 +92,7 @@ def test_no_withheld_warning_when_rbac_is_enforce(caplog, tmp_path):
         rbac_policy_path=str(policy),
         users_service_url="http://users:8000",
         users_service_token="token",
-        redis_url="redis://localhost:6379/0",
+        redis_url=UNUSED_REDIS_URL,
         rbac_audit_subject_salt="test-salt",
     )
     with caplog.at_level("WARNING", logger="keystone_mcp.server"):

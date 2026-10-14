@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-import os
-import time
 from urllib.parse import parse_qs, urlparse
 
 import httpx
-import pytest
 import pytest_asyncio
 from asgi_lifespan import LifespanManager
 
@@ -25,29 +22,17 @@ from keystone_mcp.auth.oauth_store import RedisOAuthStore, build_shared_auth_sto
 from keystone_mcp.config import Settings
 from keystone_mcp.server import build_server
 from support.login import dev_token_login
-
-
-def _redis_url() -> str:
-    return os.environ.get("KEYSTONE_MCP_REDIS_URL", "").strip()
-
-
-@pytest.fixture
-def redis_url() -> str:
-    url = _redis_url()
-    if not url:
-        pytest.skip("KEYSTONE_MCP_REDIS_URL not set")
-    return url
+from support.test_env import redis_key_prefix
 
 
 @pytest_asyncio.fixture
 async def redis_harness(redis_url: str):
     """ASGI harness wired through build_shared_auth_stores (production path)."""
-    run_id = str(time.time_ns())
     settings = Settings(
         base_url=BASE_URL,
         redis_url=redis_url,
-        redis_key_prefix=f"km:oauth:itest:{run_id}:",
-        login_pending_key_prefix=f"km:login:itest:{run_id}:",
+        redis_key_prefix=redis_key_prefix("itest"),
+        login_pending_key_prefix=redis_key_prefix("login"),
     )
     oauth_store, pending_store = build_shared_auth_stores(settings)
     assert isinstance(oauth_store, RedisOAuthStore)
@@ -71,11 +56,10 @@ async def redis_harness(redis_url: str):
 
 
 async def test_build_shared_auth_stores_uses_same_redis_pool(redis_url: str):
-    run_id = str(time.time_ns())
     settings = Settings(
         redis_url=redis_url,
-        redis_key_prefix=f"km:oauth:pool:{run_id}:",
-        login_pending_key_prefix=f"km:login:pool:{run_id}:",
+        redis_key_prefix=redis_key_prefix("pool"),
+        login_pending_key_prefix=redis_key_prefix("login-pool"),
     )
     oauth_store, pending_store = build_shared_auth_stores(settings)
     assert isinstance(oauth_store, RedisOAuthStore)
