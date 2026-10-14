@@ -115,6 +115,36 @@ def host_allowed(
     return port is not None and (host, port) in exact
 
 
+def origin_header_allowed(origin_header: str, allowed_hosts: tuple[str, ...]) -> bool:
+    """Whether an ``Origin`` header value is on *allowed_hosts* (same rule as ``Host``)."""
+    parsed = urlsplit(origin_header)
+    host = parsed.hostname or ""
+    if not host:
+        return False
+    bracketed = f"[{host}]" if ":" in host else host
+    value = f"{bracketed}:{parsed.port}" if parsed.port is not None else bracketed
+    any_port, exact = host_allowlist_sets(allowed_hosts)
+    return host_allowed(
+        value,
+        any_port=any_port,
+        exact=exact,
+        allow_ip_literal=False,
+    )
+
+
+def cross_site_origin_refusal(
+    request: Request, allowed_hosts: tuple[str, ...]
+) -> Response | None:
+    """Return a 400 response when *request* carries a disallowed ``Origin``, else ``None``."""
+    origin_header = request.headers.get("origin")
+    if origin_header == "null":
+        origin_header = None
+    if origin_header and not origin_header_allowed(origin_header, allowed_hosts):
+        logger.warning("refused request: Origin %r is not allowed", origin_header)
+        return Response(status_code=400, content="Forbidden Origin")
+    return None
+
+
 class HostGuardMiddleware:
     """Refuse an HTTP request whose ``Host`` (and, if present, ``Origin``) is not allowed.
 
@@ -141,6 +171,7 @@ class HostGuardMiddleware:
         internal_prefixes: tuple[str, ...] = (),
     ) -> None:
         self.app = app
+        self._allowed_hosts = allowed_hosts
         self._internal_paths = frozenset(internal_paths)
         self._internal_prefixes = internal_prefixes
         self._any_port, self._exact = host_allowlist_sets(allowed_hosts)
@@ -177,25 +208,9 @@ class HostGuardMiddleware:
             await response(scope, receive, send)
             return
 
-        origin_header = request.headers.get("origin")
-        # Browsers send `Origin: null` for a same-origin form POST from a page
-        # with `Referrer-Policy: no-referrer` (our login and consent pages), so
-        # it carries no information; the `Host` check above already applied.
-        if origin_header == "null":
-            origin_header = None
-        if origin_header and not self._origin_allowed(origin_header):
-            logger.warning("refused request: Origin %r is not allowed", origin_header)
-            response = Response(status_code=400, content="Forbidden Origin")
-            await response(scope, receive, send)
+        refusal = cross_site_origin_refusal(request, self._allowed_hosts)
+        if refusal is not None:
+            await refusal(scope, receive, send)
             return
 
         await self.app(scope, receive, send)
-
-    def _origin_allowed(self, origin_header: str) -> bool:
-        parsed = urlsplit(origin_header)
-        host = parsed.hostname or ""
-        if not host:
-            return False
-        bracketed = f"[{host}]" if ":" in host else host
-        value = f"{bracketed}:{parsed.port}" if parsed.port is not None else bracketed
-        return self._is_allowed(value, allow_ip_literal=False)
