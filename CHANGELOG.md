@@ -28,10 +28,14 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 - List requests (`tools/list`, `prompts/list`, `resources/list`, `resources/templates/list`) count toward the per-identity rate limit. A throttled `prompts/get` returns a prompt error.
 - `/readyz` reports `503` until startup has finished, also with RBAC off; internal callers see `checks.bootstrap` (`pending`, `ok`, `fail`).
 
+- Upper bounds on the next major version of `starlette`, `pydantic`, `redis`, `sqlalchemy`, `alembic`.
+
 ### Fixed
 
 - `service_accounts_list`, `service_accounts_add` and `service_accounts_update` work when called over MCP.
 - The HTTP port opens right after the users-directory migrations; upstream discovery, login provider warm-up (now in parallel) and policy loading run in the background, so a hanging upstream no longer keeps the port closed long enough for a liveness probe to restart the pod.
+
+- Host install (`docs/deploy.md`, `scripts/deploy.sh`): install straight into `/opt` without editable mode; `deploy.sh` deploys a tag (`DEPLOY_REF`), refuses a directory without git and waits for `/readyz`.
 
 ### Security
 
@@ -42,6 +46,8 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 - Dynamic client registration limits client metadata (request ≤ 16 KB, `client_name` ≤ 100 characters, ≤ 10 `redirect_uris` of ≤ 2 KB, unlisted RFC 7591 fields dropped); a client that never completes a sign-in expires after 24 hours; at `KEYSTONE_MCP_OAUTH_MAX_CLIENTS` the oldest unused client is evicted instead of refusing everyone; IPv6 registration attempts are counted per /64.
 
 ### Migration
+
+- Host installs from 0.5 docs: reinstall with `uv sync --locked --no-dev --no-editable` in the deployed checkout and change `ExecStart` to `.venv/bin/python -m keystone_mcp.server`. `scripts/deploy.sh` now stops when run outside a git clone; set `DEPLOY_REF` to the release tag.
 
 - Automation that changed users, service accounts or API keys through MCP with a service-account key now gets `forbidden`; do it from a person's session or with the `keystone-mcp` CLI on the host.
 - Sessions opened on 0.4.x/0.5.x keep working after the upgrade. Rolling back to 0.5.x keeps sessions opened on 0.6.0: 0.5.x ignores the new marker fields. While replicas of both versions run side by side, a session renewed by a 0.5.x replica loses the new fields again; session max-age and key checks apply once every replica runs 0.6.0.

@@ -15,17 +15,16 @@ Keystone-MCP directly, without a container.
 ## 1. Install
 
 ```bash
-git clone https://github.com/keystone-codes/keystone-mcp.git
-cd keystone-mcp
-uv sync --locked
 sudo useradd --system --home-dir /opt/keystone-mcp --shell /usr/sbin/nologin keystone-mcp
-sudo mkdir -p /opt/keystone-mcp
-sudo rsync -a --exclude .git ./ /opt/keystone-mcp/
+sudo git clone --branch v<version> https://github.com/keystone-codes/keystone-mcp.git /opt/keystone-mcp
 sudo chown -R keystone-mcp:keystone-mcp /opt/keystone-mcp
+cd /opt/keystone-mcp
+sudo -u keystone-mcp uv sync --locked --no-dev --no-editable
 ```
 
-`uv sync --locked` installs only the runtime dependencies, not the
-development tooling a contributor's checkout uses.
+Clone straight into `/opt` and install with `uv sync --no-editable` so the
+virtual environment does not point back at a developer checkout elsewhere on
+the host. Runtime dependencies only — no contributor dev extras.
 
 Alternatively, `./setup.sh` writes a
 `.env` for this layout interactively, with a `local` or `production`
@@ -48,12 +47,11 @@ sudo /opt/keystone-mcp/.venv/bin/pip install "keystone-mcp-gateway==<version>"
 sudo chown -R keystone-mcp:keystone-mcp /opt/keystone-mcp
 ```
 
-Configure `.env` the same way as [step 2](#2-configure) below, then start it
-with `<venv>/bin/keystone-mcp serve` in place of
-`uv run python -m keystone_mcp.server` — the systemd unit in
-[step 3](#3-run-with-systemd) only needs its `ExecStart` line changed to
-`ExecStart=/opt/keystone-mcp/.venv/bin/keystone-mcp serve`. Routine updates
-([step 4](#4-routine-updates)) become `pip install --upgrade
+Configure `.env` the same way as [step 2](#2-configure) below, then use the
+same systemd unit as [step 3](#3-run-with-systemd) with
+`ExecStart=/opt/keystone-mcp/.venv/bin/keystone-mcp serve` instead of
+`ExecStart=/opt/keystone-mcp/.venv/bin/python -m keystone_mcp.server`.
+Routine updates ([step 4](#4-routine-updates)) become `pip install --upgrade
 "keystone-mcp-gateway==<new version>"` instead of `git pull` plus `uv sync`.
 
 ## 2. Configure
@@ -101,7 +99,8 @@ Type=simple
 User=keystone-mcp
 WorkingDirectory=/opt/keystone-mcp
 EnvironmentFile=/opt/keystone-mcp/.env
-ExecStart=/usr/local/bin/uv run python -m keystone_mcp.server
+ExecStart=/opt/keystone-mcp/.venv/bin/python -m keystone_mcp.server
+TimeoutStopSec=35
 Restart=on-failure
 RestartSec=5
 
@@ -119,17 +118,21 @@ Docker bridge in between.
 
 ## 4. Routine updates
 
-From the repository root on the server:
+From the install directory on the server (`/opt/keystone-mcp`):
 
 ```bash
-./scripts/deploy.sh
+keystone-mcp config check
+DEPLOY_REF=v<new> ./scripts/deploy.sh
 ```
 
-The script runs `git pull`, reinstalls dependencies with `uv sync --locked`,
-restarts the configured systemd unit, and checks `/healthz`. It installs
-runtime dependencies only. Override behaviour with
-`SKIP_GIT`, `SKIP_RESTART`, `SKIP_SMOKE`, `DEPLOY_SERVICE`, and
-`DEPLOY_HEALTH_URL` (see the script's own header comment).
+Run `keystone-mcp config check` against the live `.env` before each upgrade.
+The script fetches the requested tag or branch (`DEPLOY_REF`, or the deprecated
+`DEPLOY_BRANCH` alias), reinstalls with `uv sync --locked --no-dev --no-editable`,
+restarts the configured systemd unit, checks `/healthz`, then polls `/readyz`
+until the service is ready (or times out). Override behaviour with
+`SKIP_GIT`, `SKIP_RESTART`, `SKIP_SMOKE`, `DEPLOY_SERVICE`, `DEPLOY_REF`,
+`DEPLOY_READY_URL`, `DEPLOY_READY_TIMEOUT`, and `DEPLOY_HEALTH_URL` (see the
+script header).
 
 ## 5. Verify
 
