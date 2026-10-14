@@ -41,6 +41,8 @@ logger = logging.getLogger(__name__)
 _JITTER_MAX_SECONDS = 15.0
 _RESTART_DELAY_MIN_SECONDS = 5.0
 _RESTART_DELAY_MAX_SECONDS = 300.0
+_REFRESH_CONCURRENCY = 16
+_REFRESH_BUDGET_MULTIPLIER = 5
 
 
 @dataclass
@@ -241,26 +243,67 @@ class SurfaceReconciler:
                 for kind in kinds:
                     self.observability.record_list_changed(kind=kind, sessions=reached)
 
+    def _refresh_budget_seconds(self, cfg: object) -> float:
+        from keystone_mcp.router.upstream import UpstreamConfig
+
+        assert isinstance(cfg, UpstreamConfig)
+        discovery_timeout = (
+            cfg.discovery_timeout_seconds
+            if cfg.discovery_timeout_seconds is not None
+            else self.upstreams.discovery_timeout_seconds
+        )
+        return _REFRESH_BUDGET_MULTIPLIER * discovery_timeout
+
     async def _refresh_catalogs(self) -> tuple[bool, bool, bool]:
         """Refresh every namespace; return (tools, prompts, resources) changed flags."""
+        if not self.upstreams._upstreams:
+            return False, False, False
+
+        semaphore = asyncio.Semaphore(_REFRESH_CONCURRENCY)
+
+        async def refresh_one(cfg: object) -> tuple[bool, bool, bool]:
+            from keystone_mcp.router.upstream import UpstreamConfig
+
+            assert isinstance(cfg, UpstreamConfig)
+            async with semaphore:
+                budget = self._refresh_budget_seconds(cfg)
+                try:
+                    return await asyncio.wait_for(
+                        self._refresh_namespace(cfg),
+                        timeout=budget,
+                    )
+                except asyncio.TimeoutError:
+                    self.upstreams.mark_unavailable(
+                        cfg.namespace,
+                        f"refresh timed out after {budget:g}s",
+                    )
+                    logger.warning(
+                        "upstream refresh timed out namespace=%s after %gs; "
+                        "keeping previous catalog",
+                        cfg.namespace,
+                        budget,
+                    )
+                    self._record_catalog_outcome(held=True)
+                    return False, False, False
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    self.upstreams.mark_unavailable(cfg.namespace, f"{type(exc).__name__}: {exc}")
+                    logger.exception(
+                        "upstream refresh crashed namespace=%s; keeping previous catalog",
+                        cfg.namespace,
+                    )
+                    self._record_catalog_outcome(held=True)
+                    return False, False, False
+
+        results = await asyncio.gather(*(refresh_one(cfg) for cfg in self.upstreams._upstreams))
         tools_changed = False
         prompts_changed = False
         resources_changed = False
-        for cfg in self.upstreams._upstreams:
-            try:
-                tc, pc, rc = await self._refresh_namespace(cfg)
-                tools_changed = tools_changed or tc
-                prompts_changed = prompts_changed or pc
-                resources_changed = resources_changed or rc
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                self.upstreams.mark_unavailable(cfg.namespace, f"{type(exc).__name__}: {exc}")
-                logger.exception(
-                    "upstream refresh crashed namespace=%s; keeping previous catalog",
-                    cfg.namespace,
-                )
-                self._record_catalog_outcome(held=True)
+        for tc, pc, rc in results:
+            tools_changed = tools_changed or tc
+            prompts_changed = prompts_changed or pc
+            resources_changed = resources_changed or rc
         return tools_changed, prompts_changed, resources_changed
 
     async def _refresh_namespace(self, cfg: object) -> tuple[bool, bool, bool]:
