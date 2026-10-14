@@ -307,5 +307,16 @@ class RbacObservability:
                 exc_info=True,
             )
 
+    def record_oauth_client_eviction(self) -> None:
+        try:
+            self.metrics.record_oauth_client_eviction()
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "oauth client eviction metric failed",
+                exc_info=True,
+            )
+
     def metrics_response(self) -> tuple[bytes, str]:
         return self.metrics.scrape()

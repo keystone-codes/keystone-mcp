@@ -42,6 +42,7 @@ def _subject_key(subject: str) -> str:
 # lifetimes to compute how long a registered client is kept in Redis. The
 # margin absorbs the gap between a token's expiry and the client's last use.
 CLIENT_TTL_MARGIN_SECONDS = 86400
+UNUSED_CLIENT_TTL_SECONDS = 86400
 
 
 def client_ttl_seconds(settings: object) -> int:
@@ -60,6 +61,8 @@ class OAuthStore(Protocol):
     async def touch_client(self, client_id: str) -> None: ...
 
     async def count_clients(self) -> int: ...
+
+    async def evict_unused_client(self) -> str | None: ...
 
     async def get_access_token(self, token: str) -> AccessToken | None: ...
 
@@ -125,6 +128,7 @@ class InMemoryOAuthStore:
         self._subject_index_expires_at: dict[str, float] = {}
         self._subject_nbf: dict[str, int] = {}
         self._refresh_revoked: set[str] = set()
+        self._client_unused: dict[str, float] = {}
         self._commit_lock = asyncio.Lock()
 
     async def get_client(self, client_id: str) -> OAuthClientInformationFull | None:
@@ -139,16 +143,23 @@ class InMemoryOAuthStore:
         return client
 
     async def put_client(self, client: OAuthClientInformationFull) -> None:
+        unused_ttl = min(UNUSED_CLIENT_TTL_SECONDS, self._client_ttl_seconds)
         self._clients[client.client_id] = client
-        self._client_expires_at[client.client_id] = time.time() + self._client_ttl_seconds
+        self._client_expires_at[client.client_id] = time.time() + unused_ttl
+        self._client_unused[client.client_id] = time.time()
 
     async def touch_client(self, client_id: str) -> None:
         if client_id not in self._clients:
             return
         self._client_expires_at[client_id] = time.time() + self._client_ttl_seconds
+        self._client_unused.pop(client_id, None)
 
     async def count_clients(self) -> int:
         now = time.time()
+        unused_cutoff = now - UNUSED_CLIENT_TTL_SECONDS
+        for client_id, registered_at in list(self._client_unused.items()):
+            if registered_at <= unused_cutoff:
+                self._client_unused.pop(client_id, None)
         expired = [
             client_id
             for client_id, expires_at in self._client_expires_at.items()
@@ -157,7 +168,21 @@ class InMemoryOAuthStore:
         for client_id in expired:
             self._clients.pop(client_id, None)
             self._client_expires_at.pop(client_id, None)
+            self._client_unused.pop(client_id, None)
         return len(self._clients)
+
+    async def evict_unused_client(self) -> str | None:
+        for _ in range(10):
+            if not self._client_unused:
+                return None
+            client_id = min(self._client_unused, key=self._client_unused.__getitem__)
+            self._client_unused.pop(client_id, None)
+            if client_id not in self._clients:
+                continue
+            self._clients.pop(client_id, None)
+            self._client_expires_at.pop(client_id, None)
+            return client_id
+        return None
 
     def _touch_subject_index(self, sub: str) -> None:
         self._subject_index_expires_at[sub] = time.time() + self._client_ttl_seconds
@@ -418,6 +443,9 @@ class RedisOAuthStore:
         # entry never collides with a client record key.
         return f"{self._prefix}client_index"
 
+    def _client_unused_key(self) -> str:
+        return f"{self._prefix}client_unused"
+
     def _access_key(self, token: str) -> str:
         return f"{self._prefix}at:{token}"
 
@@ -509,14 +537,17 @@ class RedisOAuthStore:
         return OAuthClientInformationFull.model_validate_json(raw)
 
     async def put_client(self, client: OAuthClientInformationFull) -> None:
-        expiry = int(time.time()) + self._client_ttl_seconds
+        unused_ttl = min(UNUSED_CLIENT_TTL_SECONDS, self._client_ttl_seconds)
+        now = time.time()
+        expiry = int(now) + unused_ttl
         async with self._redis.pipeline(transaction=False) as pipe:
             pipe.set(
                 self._client_key(client.client_id),
                 client.model_dump_json(),
-                ex=self._client_ttl_seconds,
+                ex=unused_ttl,
             )
             pipe.zadd(self._client_index_key(), {client.client_id: expiry})
+            pipe.zadd(self._client_unused_key(), {client.client_id: now})
             await pipe.execute()
 
     async def touch_client(self, client_id: str) -> None:
@@ -525,16 +556,36 @@ class RedisOAuthStore:
         if not existed:
             return
         expiry = int(time.time()) + self._client_ttl_seconds
-        await self._redis.zadd(self._client_index_key(), {client_id: expiry})
+        async with self._redis.pipeline(transaction=False) as pipe:
+            pipe.zadd(self._client_index_key(), {client_id: expiry})
+            pipe.zrem(self._client_unused_key(), client_id)
+            await pipe.execute()
 
     async def count_clients(self) -> int:
         index_key = self._client_index_key()
+        unused_key = self._client_unused_key()
         now = int(time.time())
+        unused_cutoff = time.time() - UNUSED_CLIENT_TTL_SECONDS
         async with self._redis.pipeline(transaction=False) as pipe:
+            pipe.zremrangebyscore(unused_key, "-inf", unused_cutoff)
             pipe.zremrangebyscore(index_key, "-inf", now)
             pipe.zcard(index_key)
-            _removed, count = await pipe.execute()
+            _u, _i, count = await pipe.execute()
         return int(count)
+
+    async def evict_unused_client(self) -> str | None:
+        unused_key = self._client_unused_key()
+        index_key = self._client_index_key()
+        for _ in range(10):
+            popped = await self._redis.zpopmin(unused_key, count=1)
+            if not popped:
+                return None
+            client_id = popped[0][0]
+            deleted = await self._redis.delete(self._client_key(client_id))
+            await self._redis.zrem(index_key, client_id)
+            if deleted:
+                return client_id
+        return None
 
     async def get_access_token(self, token: str) -> AccessToken | None:
         key = self._access_key(token)

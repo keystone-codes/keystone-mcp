@@ -297,6 +297,36 @@ async def test_oauth_endpoint_throttle_disabled_when_zero():
                 assert r.status_code in (302, 307)
 
 
+@pytest.mark.asyncio
+async def test_register_ipv6_counted_per_64():
+    app = _build_app(
+        login_throttle_ip_max=2,
+        login_throttle_email_max=0,
+        login_throttle_window_seconds=300,
+    )
+    payload = {"redirect_uris": [REDIRECT_URI], "token_endpoint_auth_method": "none"}
+    async with LifespanManager(app):
+        transport_a = httpx.ASGITransport(app=app, client=("2001:db8::1", 12345))
+        transport_b = httpx.ASGITransport(app=app, client=("2001:db8::2", 12345))
+        transport_other = httpx.ASGITransport(app=app, client=("2001:db8:0:1::1", 12345))
+        transport_v4 = httpx.ASGITransport(app=app, client=("192.0.2.1", 12345))
+        transport_mapped = httpx.ASGITransport(app=app, client=("::ffff:192.0.2.1", 12345))
+        async with httpx.AsyncClient(transport=transport_a, base_url=BASE_URL) as c1:
+            assert (await c1.post("/register", json=payload)).status_code in (200, 201)
+            assert (await c1.post("/register", json=payload)).status_code in (200, 201)
+        async with httpx.AsyncClient(transport=transport_b, base_url=BASE_URL) as c2:
+            blocked = await c2.post("/register", json=payload)
+            assert blocked.status_code == 429
+        async with httpx.AsyncClient(transport=transport_other, base_url=BASE_URL) as c3:
+            assert (await c3.post("/register", json=payload)).status_code in (200, 201)
+        async with httpx.AsyncClient(transport=transport_v4, base_url=BASE_URL) as c4:
+            assert (await c4.post("/register", json=payload)).status_code in (200, 201)
+        async with httpx.AsyncClient(transport=transport_mapped, base_url=BASE_URL) as c5:
+            assert (await c5.post("/register", json=payload)).status_code in (200, 201)
+            blocked = await c5.post("/register", json=payload)
+            assert blocked.status_code == 429
+
+
 def test_negative_oauth_throttle_setting_is_refused():
     settings = Settings(
         base_url=BASE_URL,

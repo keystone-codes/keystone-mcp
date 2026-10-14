@@ -29,7 +29,7 @@ import secrets
 import time
 from collections.abc import Sequence
 from dataclasses import replace
-from urllib.parse import quote, urlencode, urlparse
+from urllib.parse import parse_qs, quote, urlencode, urlparse
 
 from fastmcp.server.auth import OAuthProvider
 from mcp.server.auth.provider import (
@@ -45,7 +45,7 @@ from mcp.server.auth.settings import ClientRegistrationOptions, RevocationOption
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 from pydantic import ValidationError
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, RedirectResponse, Response
+from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from starlette.routing import Route
 
 from keystone_mcp.auth.login_pending_store import LoginPendingStore
@@ -211,6 +211,227 @@ def _replay_body(body: bytes):
         return {"type": "http.request", "body": body, "more_body": False}
 
     return receive
+
+
+_REGISTER_MAX_BODY_BYTES = 16 * 1024
+_CLIENT_NAME_MAX_CHARS = 100
+_REDIRECT_URIS_MAX = 10
+_URI_MAX_CHARS = 2048
+_SHORT_FIELD_MAX_CHARS = 255
+_SCOPE_MAX_CHARS = 1024
+_LIST_FIELD_MAX_ITEMS = 10
+_REGISTER_ALLOWED_FIELDS = frozenset(
+    {
+        "redirect_uris",
+        "token_endpoint_auth_method",
+        "grant_types",
+        "response_types",
+        "scope",
+        "client_name",
+        "client_uri",
+        "software_id",
+        "software_version",
+        "application_type",
+    }
+)
+
+
+def _register_metadata_error(payload: object) -> str | None:
+    if not isinstance(payload, dict):
+        return None
+    client_name = payload.get("client_name")
+    if client_name is not None:
+        if not isinstance(client_name, str) or len(client_name) > _CLIENT_NAME_MAX_CHARS:
+            return "client_name is too long"
+    client_uri = payload.get("client_uri")
+    if client_uri is not None:
+        if not isinstance(client_uri, str) or len(client_uri) > _URI_MAX_CHARS:
+            return "client_uri is too long"
+    redirect_uris = payload.get("redirect_uris")
+    if redirect_uris is not None:
+        if not isinstance(redirect_uris, list):
+            return "redirect_uris is too long"
+        if len(redirect_uris) > _REDIRECT_URIS_MAX:
+            return "too many redirect_uris"
+        for uri in redirect_uris:
+            if not isinstance(uri, str) or len(uri) > _URI_MAX_CHARS:
+                return "redirect_uri is too long"
+    for field in ("grant_types", "response_types"):
+        value = payload.get(field)
+        if value is None:
+            continue
+        if not isinstance(value, list) or len(value) > _LIST_FIELD_MAX_ITEMS:
+            return f"{field} is too long"
+        for item in value:
+            if not isinstance(item, str) or len(item) > _SHORT_FIELD_MAX_CHARS:
+                return f"{field} is too long"
+    scope = payload.get("scope")
+    if scope is not None and (not isinstance(scope, str) or len(scope) > _SCOPE_MAX_CHARS):
+        return "scope is too long"
+    for field in (
+        "software_id",
+        "software_version",
+        "token_endpoint_auth_method",
+        "application_type",
+    ):
+        value = payload.get(field)
+        if value is not None and (
+            not isinstance(value, str) or len(value) > _SHORT_FIELD_MAX_CHARS
+        ):
+            return f"{field} is too long"
+    return None
+
+
+def _filter_register_payload(payload: dict[str, object]) -> dict[str, object]:
+    return {key: payload[key] for key in _REGISTER_ALLOWED_FIELDS if key in payload}
+
+
+async def _read_limited_body(receive, max_bytes: int) -> tuple[bytes, bool]:
+    body = b""
+    while True:
+        message = await receive()
+        if message["type"] == "http.disconnect":
+            break
+        chunk = message.get("body", b"")
+        body += chunk
+        if len(body) > max_bytes:
+            return body, True
+        if not message.get("more_body", False):
+            break
+    return body, False
+
+
+class _RegisterMetadataGuard:
+    """Validate and trim DCR metadata before the MCP SDK registration handler."""
+
+    def __init__(self, app: object, observability: RbacObservability | None) -> None:
+        self.app = app
+        self._observability = observability
+
+    async def __call__(self, scope, receive, send):  # noqa: ANN001
+        if scope.get("type") != "http" or scope.get("method") != "POST":
+            await self.app(scope, receive, send)
+            return
+
+        headers = dict(scope.get("headers") or [])
+        content_length_raw = headers.get(b"content-length")
+        if content_length_raw is not None:
+            try:
+                if int(content_length_raw) > _REGISTER_MAX_BODY_BYTES:
+                    await self._reject(scope, send, "registration request is too large")
+                    return
+            except ValueError:
+                pass
+
+        body, over_limit = await _read_limited_body(receive, _REGISTER_MAX_BODY_BYTES)
+        if over_limit:
+            await self._reject(scope, send, "registration request is too large")
+            return
+
+        try:
+            parsed = json.loads(body)
+        except json.JSONDecodeError:
+            await self.app(scope, _replay_body(body), send)
+            return
+
+        if not isinstance(parsed, dict):
+            await self.app(scope, _replay_body(body), send)
+            return
+
+        error_description = _register_metadata_error(parsed)
+        if error_description is not None:
+            await self._reject(scope, send, error_description)
+            return
+
+        filtered = _filter_register_payload(parsed)
+        filtered_body = json.dumps(filtered).encode("utf-8")
+        await self.app(scope, _replay_body(filtered_body), send)
+
+    async def _reject(self, scope, send, error_description: str) -> None:  # noqa: ANN001
+        if self._observability is not None:
+            self._observability.record_oauth_client_registration(outcome="rejected_metadata")
+        response = JSONResponse(
+            {"error": "invalid_client_metadata", "error_description": error_description},
+            status_code=400,
+            headers={"Cache-Control": "no-store"},
+        )
+        await response(scope, _replay_body(b""), send)
+
+
+def _error_redirect_allowed(
+    location: str,
+    *,
+    allowed_hosts: tuple[str, ...],
+    allowed_scheme_hosts: tuple[str, ...],
+) -> bool:
+    parsed = urlparse(location)
+    scheme = (parsed.scheme or "").lower()
+    host = (parsed.hostname or "").lower()
+    if scheme in {"http", "https"} and host in _LOOPBACK_REDIRECT_HOSTS:
+        return True
+    if allowed_hosts or allowed_scheme_hosts:
+        return _redirect_uri_allowed(location, allowed_hosts, allowed_scheme_hosts)
+    return False
+
+
+def _location_has_oauth_error(location: str) -> bool:
+    parsed = urlparse(location)
+    query = parse_qs(parsed.query, keep_blank_values=True)
+    return "error" in query
+
+
+class _AuthorizeErrorRedirectGuard:
+    """Keep SDK authorize error redirects on loopback or allow-listed hosts only."""
+
+    def __init__(self, app: object, settings: Settings, provider: KeystoneOAuthProvider) -> None:
+        self.app = app
+        self._settings = settings
+        self._provider = provider
+
+    async def __call__(self, scope, receive, send):  # noqa: ANN001
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+
+        request = Request(scope, receive)
+        redirect_blocked = False
+
+        async def intercept_send(message):  # noqa: ANN001
+            nonlocal redirect_blocked
+            if message["type"] == "http.response.start":
+                status = message.get("status", 200)
+                if status in {302, 303, 307}:
+                    headers = dict(message.get("headers") or [])
+                    location_raw = headers.get(b"location", b"").decode("latin-1")
+                    if location_raw and _location_has_oauth_error(location_raw):
+                        allowed = _error_redirect_allowed(
+                            location_raw,
+                            allowed_hosts=self._settings.oauth_allowed_redirect_hosts,
+                            allowed_scheme_hosts=self._settings.oauth_allowed_redirect_scheme_hosts,
+                        )
+                        if not allowed:
+                            redirect_blocked = True
+                            host = urlparse(location_raw).hostname or ""
+                            logger.warning(
+                                "authorize error not redirected: redirect_uri host %s is "
+                                "neither loopback nor allowed",
+                                host,
+                            )
+                            lang = _pick_language(
+                                request,
+                                self._settings.login_default_lang,
+                                base_url=self._settings.base_url,
+                            )
+                            response = self._provider._html_error(
+                                request, lang, "error_request", 400
+                            )
+                            await response(scope, receive, send)
+                            return
+            if redirect_blocked:
+                return
+            await send(message)
+
+        await self.app(scope, receive, intercept_send)
 
 
 class _AuthorizeRedirectHostGuard:
@@ -635,11 +856,10 @@ class KeystoneOAuthProvider(OAuthProvider):
             # is not ASGI-callable itself.
             app = route.app
             if route.path == "/authorize":
-                # Innermost: refuse a disallowed client before the SDK's own
-                # AuthorizationHandler ever runs (finding #3). Must apply
-                # whenever the allowlist is configured, independent of
-                # whether the throttle below is enabled.
                 app = _AuthorizeRedirectHostGuard(app, self._store, self._settings)
+                app = _AuthorizeErrorRedirectGuard(app, self._settings, self)
+            if route.path == "/register" and "POST" in route_methods:
+                app = _RegisterMetadataGuard(app, self._observability)
             if (
                 route.path == "/register"
                 and "POST" in route_methods
@@ -860,6 +1080,21 @@ class KeystoneOAuthProvider(OAuthProvider):
         )
 
     async def register_client(self, client_info: OAuthClientInformationFull) -> None:
+        if (
+            client_info.client_name is not None
+            and len(client_info.client_name) > _CLIENT_NAME_MAX_CHARS
+        ):
+            raise RegistrationError(
+                error="invalid_client_metadata",
+                error_description="client_name is too long",
+            )
+        redirect_uris = client_info.redirect_uris or []
+        if len(redirect_uris) > _REDIRECT_URIS_MAX:
+            raise RegistrationError(
+                error="invalid_client_metadata",
+                error_description="too many redirect_uris",
+            )
+
         allowed_hosts = self._settings.oauth_allowed_redirect_hosts
         allowed_scheme_hosts = self._settings.oauth_allowed_redirect_scheme_hosts
         if allowed_hosts or allowed_scheme_hosts:
@@ -904,19 +1139,28 @@ class KeystoneOAuthProvider(OAuthProvider):
         if max_clients > 0:
             current_count = await self._store.count_clients()
             if current_count >= max_clients:
-                logger.warning(
-                    "client registration refused: limit %d reached (%d registered)",
-                    max_clients,
-                    current_count,
-                )
-                if self._observability is not None:
-                    self._observability.record_oauth_client_registration(
-                        outcome="rejected_limit", client_count=current_count
+                evicted = await self._store.evict_unused_client()
+                if evicted is not None:
+                    logger.info(
+                        "client registration: evicted unused client %s to stay under the limit",
+                        evicted,
                     )
-                raise RegistrationError(
-                    error="invalid_client_metadata",
-                    error_description="client registration limit reached",
-                )
+                    if self._observability is not None:
+                        self._observability.record_oauth_client_eviction()
+                else:
+                    logger.warning(
+                        "client registration refused: limit %d reached (%d registered)",
+                        max_clients,
+                        current_count,
+                    )
+                    if self._observability is not None:
+                        self._observability.record_oauth_client_registration(
+                            outcome="rejected_limit", client_count=current_count
+                        )
+                    raise RegistrationError(
+                        error="invalid_client_metadata",
+                        error_description="client registration limit reached",
+                    )
 
         await self._store.put_client(client_info)
         if self._observability is not None:
