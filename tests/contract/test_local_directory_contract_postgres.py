@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime, timedelta
 
 import pytest
-
-from datetime import UTC, datetime, timedelta
 
 from keystone_mcp.contract_tests import (
     AdminDirectoryChecks06,
@@ -20,11 +19,11 @@ from keystone_mcp.contract_tests import (
     UserDirectoryChecks06,
     seed_contract_dataset,
 )
-from keystone_mcp.users import models as users_models
-from keystone_mcp.users import service as users_service
 from keystone_mcp.user_directory.local import LocalUserDirectory
 from keystone_mcp.user_directory.protocol import UserDirectory
 from keystone_mcp.user_directory.revision import InMemoryRevisionReader
+from keystone_mcp.users import models as users_models
+from keystone_mcp.users import service as users_service
 from keystone_mcp.users.revision import InProcessRevisionWriter
 from keystone_mcp.users.store import UsersStore
 from support.users_db import postgres_engine  # noqa: F401 -- fixture import
