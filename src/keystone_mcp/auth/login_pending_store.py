@@ -12,6 +12,8 @@ from typing import Protocol, runtime_checkable
 from redis.asyncio import Redis
 from redis.exceptions import NoScriptError, ResponseError
 
+from keystone_mcp.redis_client import redis_from_url
+
 
 def normalize_login_key_prefix(prefix: str) -> str:
     """Ensure a login-pending Redis prefix ends with ``:``."""
@@ -173,5 +175,5 @@ def build_login_pending_store(
             "keystone Redis (e.g. redis://redis:6379/0)."
         )
 
-    redis = Redis.from_url(redis_url, decode_responses=True)
+    redis = redis_from_url(redis_url)
     return RedisLoginPendingStore(redis, key_prefix=prefix, owns_redis=True)

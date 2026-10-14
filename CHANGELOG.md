@@ -20,6 +20,8 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 - Production startup warning when dynamic client registration is open and no redirect hosts are listed; metric `keystone_mcp_oauth_client_evictions_total`.
 - Metrics `keystone_mcp_api_key_verifications_total`, `keystone_mcp_api_key_cache_entries`, `keystone_mcp_api_key_cache_evictions_total`, `keystone_mcp_users_revision_bump_failed_total`.
 - Optional directory protocol `ApiKeyIdIndex`.
+- `KEYSTONE_MCP_SHUTDOWN_GRACE_SECONDS` (default 25): in-flight requests get this long to finish after SIGTERM (was 2 s).
+- The metrics path and `/internal/*` accept a `Host` that is an IP literal, so Prometheus can scrape each pod by its IP.
 
 ### Changed
 
@@ -31,6 +33,8 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 - `/readyz` reports `503` until startup has finished, also with RBAC off; internal callers see `checks.bootstrap` (`pending`, `ok`, `fail`).
 
 - Upper bounds on the next major version of `starlette`, `pydantic`, `redis`, `sqlalchemy`, `alembic`.
+- Redis clients use 5 s connect and read timeouts and a 30 s health check; a hung Redis now fails requests instead of holding them.
+- The container healthcheck reads `.env` and `KEYSTONE_MCP_HOST`.
 
 ### Fixed
 
@@ -47,6 +51,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 - A sign-in e-mail whose characters become ASCII letters only after lower-casing or Unicode normalisation is refused.
 - An OIDC provider with `email_claim` other than `email` must name the claim that confirms it (`email_verified_claim`) while `require_email_verified` is on.
 - Dynamic client registration limits client metadata (request ≤ 16 KB, `client_name` ≤ 100 characters, ≤ 10 `redirect_uris` of ≤ 2 KB, unlisted RFC 7591 fields dropped); a client that never completes a sign-in expires after 24 hours; at `KEYSTONE_MCP_OAUTH_MAX_CLIENTS` the oldest unused client is evicted instead of refusing everyone; IPv6 registration attempts are counted per /64.
+- `/readyz` shows per-check details only when the caller's address is internal and its `Host` header is allowed.
 
 ### Migration
 
@@ -58,6 +63,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 - Startup refusals (`KEYSTONE_MCP_UPSTREAM_REQUIRE_ALL=true` with an unavailable upstream, an invalid policy) still exit with code 1 and the same message, but after `/healthz` has started answering — rely on `/readyz`, not on the port being open, to know the replica is ready.
 - An HTTP users directory that answers `exists`/`is_blocked` with strings stops working — return JSON booleans. A providers file with `email_claim` other than `email` and `require_email_verified` on fails to load until `email_verified_claim` is set (or `require_email_verified: false` with `allowed_domains`). Run `keystone-mcp config check` before upgrading.
 - A client that registered but did not sign in within 24 hours registers again on its next attempt (MCP clients do this on `invalid_client`). Client metadata fields other than the RFC 7591 ones Keystone uses (`logo_uri`, `tos_uri`, `policy_uri`, `contacts`, `jwks`, `jwks_uri`) are no longer stored.
+- Shutdown now waits up to 25 s: give the container at least 35 s to stop (`terminationGracePeriodSeconds`, `stop_grace_period`, `docker stop -t`).
 
 ## [0.5.0] - 2026-10-13
 

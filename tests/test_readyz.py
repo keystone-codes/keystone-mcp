@@ -102,6 +102,37 @@ async def test_readyz_internal_caller_sees_checks():
     }
 
 
+async def test_readyz_details_need_allowed_host():
+    settings = Settings(base_url=BASE_URL)
+    app = _app(settings, oauth_store=InMemoryOAuthStore())
+    evil = await _get(
+        app,
+        "/readyz",
+        client_host="127.0.0.1",
+        headers={"Host": "evil.com"},
+    )
+    assert evil.status_code in (200, 503)
+    evil_body = evil.json()
+    assert "checks" not in evil_body
+    assert "upstreams" not in evil_body
+
+    localhost = await _get(
+        app,
+        "/readyz",
+        client_host="127.0.0.1",
+        headers={"Host": "localhost:8080"},
+    )
+    assert "checks" in localhost.json()
+
+    by_ip = await _get(
+        app,
+        "/readyz",
+        client_host="127.0.0.1",
+        headers={"Host": "127.0.0.1:8080"},
+    )
+    assert "checks" in by_ip.json()
+
+
 async def test_readyz_forwarded_request_gets_no_checks():
     settings = Settings(base_url=BASE_URL)
     app = _app(settings, oauth_store=InMemoryOAuthStore())

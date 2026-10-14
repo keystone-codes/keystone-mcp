@@ -137,6 +137,13 @@ curl -fsS http://127.0.0.1:8080/healthz
 curl -fsS http://127.0.0.1:8080/readyz
 ```
 
+Set `init: true` on the Keystone-MCP service (or run `docker run --init`) so
+orphaned stdio-upstream child processes are reaped. After SIGTERM the server
+waits up to `KEYSTONE_MCP_SHUTDOWN_GRACE_SECONDS` (default 25) for in-flight
+requests; allow at least 35 s when stopping (`stop_grace_period: 35s` in
+Compose, `docker stop -t 35`). The image healthcheck loads `.env` and honours
+`KEYSTONE_MCP_HOST` when choosing the probe URL.
+
 `--wait` blocks until every container's healthcheck passes, including
 Keystone-MCP's own `/readyz` poll (Redis, the RBAC policy, and the Postgres
 users directory — see [observability-logging.md](../observability-logging.md#readiness)).

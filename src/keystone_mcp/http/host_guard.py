@@ -22,6 +22,7 @@ victim's own browser, past any network-level isolation. See
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 from urllib.parse import urlsplit
 
@@ -71,6 +72,49 @@ def _parse_host_port(value: str) -> tuple[str, int | None]:
     return value, None
 
 
+def _is_ip_literal(host: str) -> bool:
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return True
+
+
+def host_allowlist_sets(
+    allowed_hosts: tuple[str, ...],
+) -> tuple[frozenset[str], frozenset[tuple[str, int]]]:
+    """Build the host sets used by :func:`host_allowed` from an allowlist."""
+    any_port: set[str] = set()
+    exact: set[tuple[str, int]] = set()
+    for entry in allowed_hosts:
+        host, port = _parse_host_port(entry)
+        if not host:
+            continue
+        if port is None:
+            any_port.add(host)
+        else:
+            exact.add((host, port))
+    return frozenset(any_port), frozenset(exact)
+
+
+def host_allowed(
+    value: str,
+    *,
+    any_port: frozenset[str],
+    exact: frozenset[tuple[str, int]],
+    allow_ip_literal: bool = False,
+) -> bool:
+    """Whether ``value`` (a ``Host`` or ``Origin`` host part) is on the allowlist."""
+    host, port = _parse_host_port(value)
+    if not host:
+        return False
+    if allow_ip_literal and _is_ip_literal(host):
+        return True
+    if host in any_port:
+        return True
+    return port is not None and (host, port) in exact
+
+
 class HostGuardMiddleware:
     """Refuse an HTTP request whose ``Host`` (and, if present, ``Origin``) is not allowed.
 
@@ -88,40 +132,46 @@ class HostGuardMiddleware:
     status line.
     """
 
-    def __init__(self, app: ASGIApp, allowed_hosts: tuple[str, ...]) -> None:
+    def __init__(
+        self,
+        app: ASGIApp,
+        allowed_hosts: tuple[str, ...],
+        *,
+        internal_paths: tuple[str, ...] = (),
+        internal_prefixes: tuple[str, ...] = (),
+    ) -> None:
         self.app = app
-        any_port: set[str] = set()
-        exact: set[tuple[str, int]] = set()
-        for entry in allowed_hosts:
-            host, port = _parse_host_port(entry)
-            if not host:
-                continue
-            if port is None:
-                any_port.add(host)
-            else:
-                exact.add((host, port))
-        self._any_port = frozenset(any_port)
-        self._exact = frozenset(exact)
+        self._internal_paths = frozenset(internal_paths)
+        self._internal_prefixes = internal_prefixes
+        self._any_port, self._exact = host_allowlist_sets(allowed_hosts)
 
-    def _is_allowed(self, value: str) -> bool:
-        host, port = _parse_host_port(value)
-        if not host:
-            return False
-        if host in self._any_port:
+    def _is_allowed(self, value: str, *, allow_ip_literal: bool) -> bool:
+        return host_allowed(
+            value,
+            any_port=self._any_port,
+            exact=self._exact,
+            allow_ip_literal=allow_ip_literal,
+        )
+
+    def _path_allows_ip_literal_host(self, path: str) -> bool:
+        if path in self._internal_paths:
             return True
-        return port is not None and (host, port) in self._exact
+        return any(path.startswith(prefix) for prefix in self._internal_prefixes)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope.get("type") != "http":
             await self.app(scope, receive, send)
             return
-        if scope.get("path", "") in _PROBE_PATHS:
+        path = scope.get("path", "")
+        if path in _PROBE_PATHS:
             await self.app(scope, receive, send)
             return
 
+        allow_ip_literal = self._path_allows_ip_literal_host(path)
+
         request = Request(scope, receive)
         host_header = request.headers.get("host", "")
-        if not self._is_allowed(host_header):
+        if not self._is_allowed(host_header, allow_ip_literal=allow_ip_literal):
             logger.warning("refused request: Host %r is not allowed", host_header)
             response = Response(status_code=421, content="Misdirected Request")
             await response(scope, receive, send)
@@ -148,4 +198,4 @@ class HostGuardMiddleware:
             return False
         bracketed = f"[{host}]" if ":" in host else host
         value = f"{bracketed}:{parsed.port}" if parsed.port is not None else bracketed
-        return self._is_allowed(value)
+        return self._is_allowed(value, allow_ip_literal=False)

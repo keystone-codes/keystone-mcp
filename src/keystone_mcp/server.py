@@ -45,7 +45,7 @@ from keystone_mcp.config import (
 )
 from keystone_mcp.env_file import load_env_file
 from keystone_mcp.http.access_log import AccessLogMiddleware
-from keystone_mcp.http.host_guard import HostGuardMiddleware
+from keystone_mcp.http.host_guard import HostGuardMiddleware, host_allowed, host_allowlist_sets
 from keystone_mcp.http.readiness import BootstrapState, ReadinessProbe
 from keystone_mcp.login.factory import (
     api_key_login_configured,
@@ -703,7 +703,16 @@ def _is_trusted_internal_caller(request, settings: Settings) -> bool:  # noqa: A
     if request.headers.get("x-forwarded-for"):
         return False
     client_host = request.client.host if request.client else None
-    return client_address_allowed(client_host, settings.internal_allowed_cidrs)
+    if not client_address_allowed(client_host, settings.internal_allowed_cidrs):
+        return False
+    host_header = request.headers.get("host", "")
+    any_port, exact = host_allowlist_sets(effective_allowed_hosts(settings))
+    return host_allowed(
+        host_header,
+        any_port=any_port,
+        exact=exact,
+        allow_ip_literal=True,
+    )
 
 
 def _warn_if_admin_tools_are_unguarded(registry: RouterRegistry, settings: Settings) -> None:
@@ -1018,7 +1027,22 @@ def _http_asgi_middleware(settings: Settings) -> list:
     """
     from starlette.middleware import Middleware
 
-    stack: list = [Middleware(HostGuardMiddleware, allowed_hosts=effective_allowed_hosts(settings))]
+    internal_paths: tuple[str, ...] = ()
+    internal_prefixes: tuple[str, ...] = ()
+    if settings.metrics_enabled:
+        metrics_path = settings.metrics_path.strip() or "/metrics"
+        internal_paths = (metrics_path,)
+    if settings.internal_endpoints_enabled:
+        internal_prefixes = ("/internal/",)
+
+    stack: list = [
+        Middleware(
+            HostGuardMiddleware,
+            allowed_hosts=effective_allowed_hosts(settings),
+            internal_paths=internal_paths,
+            internal_prefixes=internal_prefixes,
+        )
+    ]
     if settings.log_access_enabled:
         stack.append(Middleware(AccessLogMiddleware, settings=settings))
     return stack
@@ -1092,7 +1116,10 @@ def main() -> None:
         port=settings.port,
         path=settings.http_path,
         middleware=_http_asgi_middleware(settings) or None,
-        uvicorn_config={"access_log": False},
+        uvicorn_config={
+            "access_log": False,
+            "timeout_graceful_shutdown": settings.shutdown_grace_seconds,
+        },
     )
     if _startup_failure_holder["error"] is not None:
         raise SystemExit(1)
