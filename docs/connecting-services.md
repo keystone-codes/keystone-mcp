@@ -335,8 +335,9 @@ entries:
   forwards its whole environment. Values must already be set in the Keystone-MCP
   process (or container) under the names on the right.
 - **`auth.identity_secret_env`** — same HS256 assertion as HTTP, but it is sent
-  in `params._meta["keystone-mcp/identity"]` on `tools/call`, not in
-  `X-Keystone-Identity`. There is **no** `X-Author-Email` on stdio calls.
+  in `params._meta["keystone-mcp/identity"]` on `tools/call`, `prompts/get`,
+  and `resources/read`, not in `X-Keystone-Identity`. There is **no**
+  `X-Author-Email` on stdio calls.
 - **One process per entry** — started at startup (stdio connections start in
   parallel), discovered through, and restarted by the supervisor until shutdown.
 - **stderr** from the child is copied into Keystone-MCP's logs (logger
@@ -364,6 +365,31 @@ RUN apt-get update && apt-get install -y nodejs npm && rm -rf /var/lib/apt/lists
 
 See [`../examples/hello-stdio/`](../examples/hello-stdio/) for a small Python
 stdio server used in the demo compose stack.
+
+## Resource publish filters
+
+Tool filters (`include_prefixes`, `exclude_prefixes`, `tool_prefix`) do not
+limit which resources or templates Keystone publishes. Optional registry fields:
+
+- **`publish_resources`** — `true` (default) or `false`. When `false`, no
+  resources or templates from that upstream are published; tools and prompts are
+  unchanged.
+- **`resource_include_prefixes`** / **`resource_exclude_prefixes`** — same
+  prefix rules as `include_prefixes`; they match upstream `resource.name` and
+  template `name`, not the URI and not `strip_prefix`.
+
+Example:
+
+```yaml
+entries:
+  - name: notes
+    url: https://notes.internal/mcp
+    namespace: notes
+    include_prefixes: [notes_search, notes_get]
+    publish_resources: true
+    resource_include_prefixes: [handbook]
+    resource_exclude_prefixes: [private_]
+```
 
 ## Tool naming
 

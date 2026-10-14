@@ -29,6 +29,8 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 - `KEYSTONE_MCP_SHUTDOWN_GRACE_SECONDS` (default 25): in-flight requests get this long to finish after SIGTERM (was 2 s).
 - The metrics path and `/internal/*` accept a `Host` that is an IP literal, so Prometheus can scrape each pod by its IP.
 - Metric `keystone_mcp_upstream_items_rejected_total{namespace,kind,reason}`.
+- Registry fields `publish_resources`, `resource_include_prefixes`, `resource_exclude_prefixes` (optional; by default every upstream resource is published, as before).
+- Stdio upstreams receive the signed identity assertion in `params._meta["keystone-mcp/identity"]` on `prompts/get` and `resources/read` too.
 - Metric `keystone_mcp_upstream_input_rounds_exceeded_total{namespace}`.
 - CI: the contract freeze gate now compares the public surface generated from the code — environment variables (found by AST), policy keys, CLI commands, plugin protocol signatures, built-in tool arguments, metrics and their labels — with a baseline generated from the `v0.5.0` tag.
 - Startup warnings W8–W19 (`docs/environment.md#startup-warnings`).
@@ -109,11 +111,16 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 - An upstream that keeps asking for input can no longer hold a tool call (and keystone-mcp's CPU) forever: at most 10 rounds per call, all within the tool timeout.
 - Boolean settings accept `1/true/yes/on` and `0/false/no/off` in any case; any other non-empty value refuses startup instead of being read as false.
 - In `production`, an API-key sign-in provider is refused next to any interactive sign-in provider, including one from a plugin.
+- An upstream resource whose RBAC name equals a published tool or prompt name is no longer published, so one policy rule cannot open both by accident.
+- In `enforce` mode a resource without an RBAC name is no longer listed.
 
 ### Migration
 
 - The policy directory gets a lock file `<policy>.lock`; do not delete it while the server runs. Temporary files are now named `.<policy>.*.tmp`.
 - Upstream resources and templates whose URI has no `scheme://` part are no longer published (a startup warning names each one). Give them a scheme, e.g. `file:///…` or `myapp://…`.
+- If an upstream names a resource like one of its tools or prompts, that resource disappears (startup warning, metric `reason="rbac_name_collision"`); ask the upstream to rename it.
+- In `enforce` mode, a resource keystone-mcp has no RBAC name for no longer appears in `resources/list` or `resources/templates/list` (reading it was already refused); a client that relied on seeing it in the list must not.
+- To limit which resources an upstream publishes, use the new `resource_include_prefixes`/`resource_exclude_prefixes` or `publish_resources: false`; tool filters still do not apply to resources.
 - A read of a URI that matches several templates of one upstream now needs all of their names allowed; add the missing names (or a glob such as `ns_*`) to roles that read such URIs.
 - A tool whose schema exceeds 64 KiB, has a `pattern` longer than 512 characters or nests deeper than 64 levels is no longer published (warning and metric); raise `KEYSTONE_MCP_UPSTREAM_MAX_SCHEMA_BYTES` if needed.
 - An upstream with more than 2000 tools (or prompts, resources, templates) keeps its previous catalog; raise `KEYSTONE_MCP_UPSTREAM_MAX_CATALOG_ITEMS`.

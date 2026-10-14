@@ -262,6 +262,20 @@ def parse_upstream_entry(
             raise ValueError(f"tool_timeout_seconds must be numeric for upstream {name!r}")
         tool_timeout = float(tool_timeout)
 
+    publish_resources_raw = item.get("publish_resources", True)
+    if not isinstance(publish_resources_raw, bool):
+        raise ValueError(f"publish_resources must be a boolean for upstream {name!r}")
+    publish_resources = publish_resources_raw
+
+    resource_include_prefixes = _parse_prefix_list(
+        item.get("resource_include_prefixes"),
+        field_name="resource_include_prefixes",
+    )
+    resource_exclude_prefixes = _parse_prefix_list(
+        item.get("resource_exclude_prefixes"),
+        field_name="resource_exclude_prefixes",
+    )
+
     return UpstreamConfig(
         name=name,
         url=url,
@@ -281,6 +295,9 @@ def parse_upstream_entry(
         args=args,
         env_from=env_from,
         cwd=cwd,
+        publish_resources=publish_resources,
+        resource_include_prefixes=resource_include_prefixes,
+        resource_exclude_prefixes=resource_exclude_prefixes,
     )
 
 

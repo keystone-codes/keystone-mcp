@@ -126,16 +126,17 @@ async def call_upstream_resource_read(
     client: "Client",
     uri: str,
     *,
+    meta: dict[str, Any] | None = None,
     input_responses: types.InputResponses | None = None,
     request_state: str | None = None,
 ) -> types.ReadResourceResult | types.InputRequiredResult:
     """``resources/read`` on an upstream without forwarding client ``_meta``."""
     if client.protocol_version not in MODERN_PROTOCOL_VERSIONS:
-        return await client.read_resource_mcp(uri, meta=None)
+        return await client.read_resource_mcp(uri, meta=meta)
     return await client._await_with_session_monitoring(
         client.session.read_resource(
             uri,
-            meta=None,
+            meta=meta,
             input_responses=input_responses,
             request_state=request_state,
             allow_input_required=True,
@@ -148,20 +149,21 @@ async def call_upstream_prompt_modern(
     name: str,
     arguments: dict[str, Any],
     *,
+    meta: dict[str, Any] | None = None,
     input_responses: types.InputResponses | None = None,
     request_state: str | None = None,
 ) -> types.GetPromptResult | types.InputRequiredResult:
     """``prompts/get`` on a modern upstream without forwarding client ``_meta``.
 
     ``meta=None`` keeps the Keystone client's request metadata off the upstream
-    call; ``allow_input_required=True`` lets guard-round answers flow from the
-    downstream client on MCP 2026-07-28.
+    call unless Keystone supplies identity metadata itself; ``allow_input_required=True``
+    lets guard-round answers flow from the downstream client on MCP 2026-07-28.
     """
     return await client._await_with_session_monitoring(
         client.session.get_prompt(
             name,
             arguments,
-            meta=None,
+            meta=meta,
             input_responses=input_responses,
             request_state=request_state,
             allow_input_required=True,
