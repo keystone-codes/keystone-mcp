@@ -138,6 +138,12 @@ curl -fsS "https://mcp.example.com/healthz"
 curl -fsS "https://mcp.example.com/readyz"
 ```
 
+`/healthz` answers as soon as the port is open (after users-directory
+migrations). Use `/readyz` to confirm the replica can serve traffic — it stays
+`503` until upstream discovery and policy load finish. A Kubernetes
+`startupProbe` on `/healthz` (see `examples/kubernetes/deployment.yaml` once
+group E adds it) still helps during long migrations.
+
 Connect your MCP client to the public base URL and sign in — see
 [production-docker.md, step 9](paths/production-docker.md#9-add-people) for
 adding people once the first administrator is in.

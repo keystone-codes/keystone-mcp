@@ -442,7 +442,7 @@ Who is created first, and how later people are added, is [users.md](users.md).
 | `KEYSTONE_MCP_IDENTITY_SIGNING_KEY` | `` (empty) | Optional EC P-256 private key in PEM form for ES256 identity assertions (`auth.identity_alg: ES256`); publishes `/.well-known/keystone-identity-jwks.json`. Startup refuses a non-P-256 or malformed value. Generate with `openssl ecparam -name prime256v1 -genkey -noout \| openssl pkcs8 -topk8 -nocrypt`. See the prose below. |
 | `KEYSTONE_MCP_UPSTREAM_DISCOVERY_RETRIES` | `3` | Retries per upstream at startup; upstreams are discovered in parallel. |
 | `KEYSTONE_MCP_UPSTREAM_DISCOVERY_TIMEOUT` | `10.0` | Per-attempt discovery timeout, seconds. |
-| `KEYSTONE_MCP_UPSTREAM_REQUIRE_ALL` | `false` | Refuse to start when any configured upstream is unreachable at startup. By default an unreachable upstream is logged and retried on every refresh tick -- unless `KEYSTONE_MCP_REFRESH_INTERVAL_SECONDS=0`, in which case it is logged but never retried (there is no background task to retry it). |
+| `KEYSTONE_MCP_UPSTREAM_REQUIRE_ALL` | `false` | When `true`, refuse startup when any configured upstream is unreachable (process exits with code `1` after `/healthz` has started answering). When `false` (default), an unreachable upstream is logged and retried on every refresh tick -- unless `KEYSTONE_MCP_REFRESH_INTERVAL_SECONDS=0`, in which case it is logged but never retried (there is no background task to retry it). In both cases `/readyz` answers `503` until background startup (discovery and policy load) finishes; with `false`, a single bad upstream does not block readiness after that. With `true`, `/readyz` also fails while any upstream remains unavailable after startup. |
 | `KEYSTONE_MCP_REFRESH_INTERVAL_SECONDS` | `300` | How often the running process re-reads upstream tool lists and RBAC policy files; `0` disables the background refresh task entirely. With it disabled, an upstream that is unreachable at startup stays unreachable for the life of the process -- it is never retried. |
 | `KEYSTONE_MCP_UPSTREAM_TOOL_TIMEOUT_SECONDS` | `180.0` | Default max wait for a proxied tool call. |
 | `KEYSTONE_MCP_UPSTREAM_TOOL_TIMEOUTS` | `""` | JSON object of per-published-tool timeout overrides in seconds. |
@@ -564,7 +564,10 @@ the directory itself. The image defines a `HEALTHCHECK` that runs
 `python -m keystone_mcp.healthcheck` against `GET /readyz` (port `8080`) —
 readiness, not just liveness; see
 [observability-logging.md](observability-logging.md#readiness) for what it
-checks. There is no `curl` in the runtime image.
+checks. While background startup (upstream discovery and policy load) is still
+running, `/readyz` returns `503` and the container may show `starting` or
+`unhealthy` until discovery finishes — Docker does not restart the container
+for that alone. There is no `curl` in the runtime image.
 
 ```bash
 docker build -t keystone-mcp .

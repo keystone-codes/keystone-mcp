@@ -8,6 +8,18 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ## [Unreleased]
 
+### Fixed
+
+- The HTTP port opens right after the users-directory migrations; upstream discovery, login provider warm-up (now in parallel) and policy loading run in the background, so a hanging upstream no longer keeps the port closed long enough for a liveness probe to restart the pod.
+
+### Changed
+
+- `/readyz` reports `503` until startup has finished, also with RBAC off; internal callers see `checks.bootstrap` (`pending`, `ok`, `fail`).
+
+### Migration
+
+- Startup refusals (`KEYSTONE_MCP_UPSTREAM_REQUIRE_ALL=true` with an unavailable upstream, an invalid policy) still exit with code 1 and the same message, but after `/healthz` has started answering — rely on `/readyz`, not on the port being open, to know the replica is ready.
+
 ## [0.5.0] - 2026-10-13
 
 ### Added

@@ -44,7 +44,8 @@ Keystone-MCP.
 ## Observability
 
 - [ ] `/readyz` used for load balancer/orchestrator readiness; `/healthz` for liveness
-      (see [observability-logging.md](observability-logging.md#readiness)).
+      only (`/healthz` opens after migrations; readiness waits on `/readyz` — see
+      [observability-logging.md](observability-logging.md#readiness)).
 - [ ] `/metrics` not exposed to the internet (`KEYSTONE_MCP_INTERNAL_ALLOWED_CIDRS`).
 - [ ] Audit log destination configured if `KEYSTONE_MCP_RBAC_AUDIT_ENABLED=true`.
 - [ ] `KEYSTONE_MCP_LOG_FORMAT=json` and logs collected from stderr (see [observability-logging.md](observability-logging.md)).
@@ -53,9 +54,9 @@ Keystone-MCP.
 
 ## Smoke after deploy
 
-- [ ] `GET /healthz` → 200.
-- [ ] `GET /readyz` → 200 `{"status":"ok"}` once Redis, the RBAC policy, and
-      the users database are up.
+- [ ] `GET /healthz` → 200 soon after the process starts (port open after migrations).
+- [ ] `GET /readyz` → 200 `{"status":"ok"}` once background startup, Redis, the RBAC
+      policy, and the users database are up.
 - [ ] OAuth login for an existing user; `list_tools` reflects role policy.
 - [ ] One proxied tool call succeeds; upstream sees expected `X-Author-Email`.
 
