@@ -57,8 +57,8 @@ from keystone_mcp.router.upstream_content import (
     UpstreamPromptSpec,
     UpstreamResourceSpec,
     UpstreamTemplateSpec,
+    namespaced_uri,
     normalize_resource_uri,
-    published_uri_for_namespace,
 )
 
 if TYPE_CHECKING:
@@ -539,7 +539,20 @@ def build_upstream_resource_specs(
     for resource in resources:
         uri = str(resource.uri)
         name = resource.name
-        published = published_uri_for_namespace(cfg.namespace, uri)
+        published = namespaced_uri(cfg.namespace, uri)
+        if published is None:
+            logger.warning(
+                "upstream %s refused namespace=%s name=%s: URI %r has no scheme:// part, "
+                "so it cannot be namespaced",
+                "resource",
+                cfg.namespace,
+                name,
+                uri,
+            )
+            record_upstream_item_rejected(
+                namespace=cfg.namespace, kind="resource", reason="uri_without_scheme"
+            )
+            continue
         rbac_name = f"{cfg.namespace}_{name}"
         title = getattr(resource, "title", None)
         description = getattr(resource, "description", None) or ""
@@ -569,7 +582,20 @@ def build_upstream_template_specs(
     for template in templates:
         uri_template = template.uri_template
         name = template.name
-        published = published_uri_for_namespace(cfg.namespace, uri_template)
+        published = namespaced_uri(cfg.namespace, uri_template)
+        if published is None:
+            logger.warning(
+                "upstream %s refused namespace=%s name=%s: URI %r has no scheme:// part, "
+                "so it cannot be namespaced",
+                "template",
+                cfg.namespace,
+                name,
+                uri_template,
+            )
+            record_upstream_item_rejected(
+                namespace=cfg.namespace, kind="template", reason="uri_without_scheme"
+            )
+            continue
         rbac_name = f"{cfg.namespace}_{name}"
         title = getattr(template, "title", None)
         description = getattr(template, "description", None) or ""

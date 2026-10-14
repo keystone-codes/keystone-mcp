@@ -33,6 +33,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 ### Changed
 
 - Management roles: a role that reaches any built-in administration tool is a management role, and a person whose roles reach all of them is a full administrator — both derived from the active policy, whatever the role names. Only a full administrator can give or take away a management role, or change, block, unblock, log out, or manage API keys of an account that holds one.
+- `resources/read` requires every RBAC name of the matching resources and templates in the URI's own namespace to be allowed.
 - Service accounts get `forbidden` from every administration tool that changes state (`users_*`, `service_accounts_*`, `api_keys_*`, `policy_*`); reading stays available. `tools/list` no longer shows a caller the tools it will be refused for lack of an interactive sign-in.
 - A refresh token whose session marker is missing is refused with `invalid_grant` instead of being renewed as an `api_key` session. The marker is now written in the same Redis transaction as the token pair.
 - Access tokens of people carry `"subject_type": "human"`; a sign-in that resolves to a service-account subject is refused.
@@ -88,6 +89,8 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ### Migration
 
+- Upstream resources and templates whose URI has no `scheme://` part are no longer published (a startup warning names each one). Give them a scheme, e.g. `file:///…` or `myapp://…`.
+- A read of a URI that matches several templates of one upstream now needs all of their names allowed; add the missing names (or a glob such as `ns_*`) to roles that read such URIs.
 - Host installs from 0.5 docs: reinstall with `uv sync --locked --no-dev --no-editable` in the deployed checkout and change `ExecStart` to `.venv/bin/python -m keystone_mcp.server`. `scripts/deploy.sh` now stops when run outside a git clone; set `DEPLOY_REF` to the release tag.
 - Before upgrading, list who holds management roles: run `keystone-mcp users admins` on the new version (before switching traffic) — it lists full administrators, management roles and their holders. People in delegated roles (for example `users_*` only) keep managing ordinary accounts but get `forbidden` on management roles and their holders. If your administrator role is not named `administrator`, recovery is `keystone-mcp users grant-admin --email … [--role <name>]`.
 - A client that reuses an old refresh token more than `KEYSTONE_MCP_OAUTH_REFRESH_GRACE_SECONDS` after rotating it now loses its session (the person signs in again). While 0.5.x and 0.6.0 replicas run side by side, a token rotated by a 0.5.x replica is not recognised as reused; detection holds once every replica runs 0.6.0. Rolling back to 0.5.x restores the old 60-second behaviour; nothing is lost.

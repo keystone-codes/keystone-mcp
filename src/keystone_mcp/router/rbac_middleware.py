@@ -268,13 +268,13 @@ class RbacMiddleware(Middleware):
         catalog = self._content_catalog
         filtered = []
         for resource in resources:
-            rbac_name = None
+            rbac_names: tuple[str, ...] = ()
             if catalog is not None:
-                rbac_name = catalog.rbac_name_for_uri(str(resource.uri))
-            if rbac_name is None:
+                rbac_names = catalog.rbac_names_for_uri(str(resource.uri))
+            if not rbac_names:
                 filtered.append(resource)
                 continue
-            if policy.allows(decision.roles, rbac_name):
+            if all(policy.allows(decision.roles, name) for name in rbac_names):
                 filtered.append(resource)
         return filtered
 
@@ -316,11 +316,11 @@ class RbacMiddleware(Middleware):
         call_next,
     ):
         published_uri = str(context.message.uri)
-        rbac_name = None
+        rbac_names: tuple[str, ...] = ()
         if self._content_catalog is not None:
-            rbac_name = self._content_catalog.rbac_name_for_uri(published_uri)
+            rbac_names = self._content_catalog.rbac_names_for_uri(published_uri)
 
-        if rbac_name is None:
+        if not rbac_names:
             identity = resolve_verified_identity()
             decision = RbacDecision(
                 tool_name=published_uri,
@@ -334,15 +334,18 @@ class RbacMiddleware(Middleware):
                 raise ResourceError(CLIENT_DENIAL_MESSAGE)
             return await call_next(context)
 
-        decision = await self._evaluate(
-            context,
-            name=rbac_name,
-            roles_only=False,
-            operation="read_resource",
-        )
-        if not decision.allowed and self._enforce:
-            raise ResourceError(CLIENT_DENIAL_MESSAGE)
-        token = current_call_decision.set(decision)
+        last_decision = None
+        for rbac_name in rbac_names:
+            decision = await self._evaluate(
+                context,
+                name=rbac_name,
+                roles_only=False,
+                operation="read_resource",
+            )
+            if not decision.allowed and self._enforce:
+                raise ResourceError(CLIENT_DENIAL_MESSAGE)
+            last_decision = decision
+        token = current_call_decision.set(last_decision)
         try:
             return await call_next(context)
         finally:
