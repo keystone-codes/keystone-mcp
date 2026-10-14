@@ -32,6 +32,7 @@ import pytest
 
 from keystone_mcp.config import load_settings
 from keystone_mcp.env_file import load_env_file
+from support.test_env import require_redis_url
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SETUP_SCRIPT = PROJECT_ROOT / "setup.sh"
@@ -43,9 +44,7 @@ pytestmark = pytest.mark.skipif(shutil.which("bash") is None, reason="bash is no
 
 @pytest.fixture
 def redis_url() -> str:
-    url = os.environ.get("KEYSTONE_MCP_REDIS_URL", "").strip()
-    if not url:
-        pytest.skip("KEYSTONE_MCP_REDIS_URL not set")
+    url = require_redis_url()
     parsed = urlparse(url)
     try:
         with socket.create_connection((parsed.hostname, parsed.port or 6379), timeout=2):

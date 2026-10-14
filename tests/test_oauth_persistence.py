@@ -107,18 +107,14 @@ async def test_pending_txn_survives_shared_store_restart(persistence_client):
 
 async def test_redis_store_roundtrip():
     """RedisOAuthStore serializes clients and tokens (skip without Redis URL)."""
-    import os
-
-    redis_url = os.environ.get("KEYSTONE_MCP_REDIS_URL", "").strip()
-    if not redis_url:
-        return
-
     from mcp.server.auth.provider import AccessToken, RefreshToken
     from mcp.shared.auth import OAuthClientInformationFull
 
     from keystone_mcp.auth.oauth_store import RedisOAuthStore
+    from support.test_env import redis_key_prefix, require_redis_url
 
-    store = RedisOAuthStore(redis_url, key_prefix="km:oauth:test:")
+    url = require_redis_url()
+    store = RedisOAuthStore(url, key_prefix=redis_key_prefix("oauth"))
     try:
         client = OAuthClientInformationFull(
             client_id="test-client-id",

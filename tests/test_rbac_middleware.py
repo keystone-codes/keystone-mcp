@@ -30,6 +30,7 @@ from keystone_mcp.user_directory import (
     is_critical_tool,
 )
 from support.login import dev_token_login
+from support.test_env import UNUSED_REDIS_URL
 
 MOUNTED_TEST_POLICY = """\
 version: "test-mounted"
@@ -91,7 +92,7 @@ def _make_middleware(
         rbac_policy_path=str(policy_path),
         users_service_url="http://users:8000",
         users_service_token="token",
-        redis_url="redis://localhost:6379/0",
+        redis_url=UNUSED_REDIS_URL,
     )
     resolver, backend, _ = build_in_memory_user_directory_resolver()
     backend.unavailable = unavailable
@@ -387,7 +388,7 @@ def test_rbac_observe_registers_middleware(tmp_path: Path):
         rbac_policy_path=str(policy),
         users_service_url="http://users:8000",
         users_service_token="token",
-        redis_url="redis://localhost:6379/0",
+        redis_url=UNUSED_REDIS_URL,
     )
     resolver, _backend, _ = build_in_memory_user_directory_resolver()
     mcp, _registry, _oauth, _upstreams, policy_manager, _observability, _reconciler = build_server(

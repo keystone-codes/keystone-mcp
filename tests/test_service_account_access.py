@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 import time
 from pathlib import Path
-from uuid import uuid4
 
 import pytest
 from asgi_lifespan import LifespanManager
@@ -26,6 +25,7 @@ from keystone_mcp.identity import SUBJECT_HEADER, SUBJECT_TYPE_HEADER, VerifiedI
 from keystone_mcp.router.context import RouteContext
 from keystone_mcp.router.route import Route
 from keystone_mcp.server import bootstrap_platform, build_server
+from support.test_env import require_redis_url, users_revision_key
 
 SERVICE_TOKEN = "svc-test-access-token"
 POLICY = """\
@@ -43,7 +43,7 @@ critical_tools: []
 async def enforce_stack(tmp_path: Path):
     redis_url = os.environ.get("KEYSTONE_MCP_REDIS_URL")
     if not redis_url:
-        pytest.skip("KEYSTONE_MCP_REDIS_URL is not set")
+        require_redis_url()
 
     policy_path = tmp_path / "policy.yaml"
     policy_path.write_text(POLICY, encoding="utf-8")
@@ -55,7 +55,7 @@ async def enforce_stack(tmp_path: Path):
         redis_url=redis_url,
         users_backend="local",
         users_db_url=f"sqlite:///{tmp_path}/users.db",
-        users_redis_revision_key=f"km:users:revision:svc:{uuid4().hex}",
+        users_redis_revision_key=users_revision_key("svc"),
     )
     oauth_store = InMemoryOAuthStore()
     mcp, registry, _oauth, upstreams, policy_manager, observability, _rec = build_server(

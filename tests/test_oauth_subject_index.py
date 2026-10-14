@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import time
 import uuid
 
@@ -11,10 +10,7 @@ import pytest_asyncio
 from mcp.server.auth.provider import AccessToken, RefreshToken
 
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore, RedisOAuthStore
-
-
-def _redis_url() -> str:
-    return os.environ.get("KEYSTONE_MCP_REDIS_URL", "").strip()
+from support.test_env import redis_key_prefix, require_redis_url
 
 
 @pytest_asyncio.fixture(params=["memory", "redis"])
@@ -27,10 +23,8 @@ async def oauth_store(request):
         )
         yield store
         return
-    url = _redis_url()
-    if not url:
-        pytest.skip("KEYSTONE_MCP_REDIS_URL not set")
-    prefix = f"km:oauth:subj:{uuid.uuid4().hex}:"
+    url = require_redis_url()
+    prefix = redis_key_prefix("subj")
     store = RedisOAuthStore(
         url,
         key_prefix=prefix,
@@ -211,10 +205,8 @@ async def test_legacy_token_unread_is_still_revoked_by_not_before(oauth_store):
 
 @pytest.mark.asyncio
 async def test_index_prunes_dead_members_over_256():
-    url = _redis_url()
-    if not url:
-        pytest.skip("KEYSTONE_MCP_REDIS_URL not set")
-    prefix = f"km:oauth:prune:{uuid.uuid4().hex}:"
+    url = require_redis_url()
+    prefix = redis_key_prefix("prune")
     store = RedisOAuthStore(
         url,
         key_prefix=prefix,

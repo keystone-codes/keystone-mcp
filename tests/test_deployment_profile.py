@@ -23,6 +23,7 @@ from keystone_mcp.config import (
     load_settings,
     startup_warnings,
 )
+from support.test_env import UNUSED_REDIS_URL
 
 
 def _rbac_env(monkeypatch, tmp_path: Path) -> None:
@@ -36,7 +37,7 @@ def _rbac_env(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.delenv("KEYSTONE_MCP_USERS_SERVICE_URL", raising=False)
     monkeypatch.delenv("KEYSTONE_MCP_USERS_SERVICE_TOKEN", raising=False)
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_POLICY_PATH", str(policy))
-    monkeypatch.setenv("KEYSTONE_MCP_REDIS_URL", "redis://localhost:6379/0")
+    monkeypatch.setenv("KEYSTONE_MCP_REDIS_URL", UNUSED_REDIS_URL)
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT", "test-salt")
     # P5 (production refuses a SQLite users directory) only matters to the
     # tests in that section below; every other test that reaches this helper
@@ -452,7 +453,7 @@ def test_stage_like_production_configuration_is_accepted(monkeypatch, tmp_path: 
     monkeypatch.delenv("KEYSTONE_MCP_AUTH_SERVICE_TOKEN", raising=False)
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_MODE", "enforce")
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_POLICY_PATH", str(policy))
-    monkeypatch.setenv("KEYSTONE_MCP_REDIS_URL", "redis://localhost:6379/0")
+    monkeypatch.setenv("KEYSTONE_MCP_REDIS_URL", UNUSED_REDIS_URL)
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT", "test-salt")
     monkeypatch.delenv("KEYSTONE_MCP_DEV_TOKENS", raising=False)
 

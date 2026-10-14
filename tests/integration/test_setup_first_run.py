@@ -28,13 +28,14 @@ import socket
 import subprocess
 import sys
 import time
-import uuid
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import httpx
 import pytest
 from fastmcp.client.transports import StreamableHttpTransport
+
+from support.test_env import require_redis_url
 
 pytestmark = pytest.mark.skipif(shutil.which("bash") is None, reason="bash is not available")
 
@@ -54,9 +55,7 @@ SERVER_READY_POLL_SECONDS = 0.2
 
 @pytest.fixture
 def redis_url() -> str:
-    url = os.environ.get("KEYSTONE_MCP_REDIS_URL", "").strip()
-    if not url:
-        pytest.skip("KEYSTONE_MCP_REDIS_URL not set")
+    url = require_redis_url()
     parsed = urlparse(url)
     try:
         with socket.create_connection((parsed.hostname, parsed.port or 6379), timeout=2):
@@ -198,19 +197,21 @@ async def test_setup_local_profile_then_server_starts_and_admin_signs_in(
     #        tells a new user to, reading only the .env it just wrote ───────
     port = _free_port()
     base_url = f"http://127.0.0.1:{port}"
-    run_suffix = uuid.uuid4().hex
-    redis_key_prefix = f"km:oauth:a08:{run_suffix}:"
-    login_pending_key_prefix = f"km:login:a08:{run_suffix}:"
-    users_revision_key = f"km:users:revision:a08:{run_suffix}"
+    from support.test_env import redis_key_prefix as _redis_key_prefix
+    from support.test_env import users_revision_key as _users_revision_key
+
+    oauth_prefix = _redis_key_prefix("oauth")
+    login_prefix = _redis_key_prefix("login")
+    revision_key = _users_revision_key()
 
     server_env = {k: v for k, v in os.environ.items() if not k.startswith("KEYSTONE_MCP_")}
     server_env.update(
         {
             "KEYSTONE_MCP_PORT": str(port),
             "KEYSTONE_MCP_BASE_URL": base_url,
-            "KEYSTONE_MCP_REDIS_KEY_PREFIX": redis_key_prefix,
-            "KEYSTONE_MCP_LOGIN_PENDING_KEY_PREFIX": login_pending_key_prefix,
-            "KEYSTONE_MCP_USERS_REDIS_REVISION_KEY": users_revision_key,
+            "KEYSTONE_MCP_REDIS_KEY_PREFIX": oauth_prefix,
+            "KEYSTONE_MCP_LOGIN_PENDING_KEY_PREFIX": login_prefix,
+            "KEYSTONE_MCP_USERS_REDIS_REVISION_KEY": revision_key,
             "KEYSTONE_MCP_REFRESH_INTERVAL_SECONDS": "0",
         }
     )
@@ -297,6 +298,6 @@ async def test_setup_local_profile_then_server_starts_and_admin_signs_in(
         log_file.close()
         await _cleanup_redis(
             redis_url,
-            prefixes=[redis_key_prefix, login_pending_key_prefix],
-            exact_keys=[users_revision_key],
+            prefixes=[oauth_prefix, login_prefix],
+            exact_keys=[revision_key],
         )

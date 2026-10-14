@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import uuid
 from pathlib import Path
 
 import pytest
@@ -20,6 +19,7 @@ from keystone_mcp.user_directory.revision import InMemoryRevisionReader, RedisRe
 from keystone_mcp.users.db import create_users_engine
 from keystone_mcp.users.revision import NullRevisionWriter, RedisRevisionWriter
 from keystone_mcp.users.store import UsersStore
+from support.test_env import require_redis_url, users_revision_key
 from support.users_store import make_users_store
 
 
@@ -112,11 +112,11 @@ async def test_block_through_store_is_visible_immediately(tmp_path: Path) -> Non
 async def test_block_visible_through_redis_revision(tmp_path: Path) -> None:
     redis_url = os.environ.get("KEYSTONE_MCP_REDIS_URL")
     if not redis_url:
-        pytest.skip("KEYSTONE_MCP_REDIS_URL is not set; skipping Redis-backed revision test")
+        require_redis_url()
 
     from redis.asyncio import Redis
 
-    key = f"km:users:revision:test:{uuid.uuid4()}"
+    key = users_revision_key("local")
     engine = create_users_engine(f"sqlite:///{tmp_path}/keystone-users.db")
     store = UsersStore(engine, revision=RedisRevisionWriter(redis_url, key=key))
     await store.migrate()

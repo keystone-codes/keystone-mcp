@@ -9,6 +9,7 @@ from keystone_mcp.config import Settings
 from keystone_mcp.router.engine import RouterEngine
 from keystone_mcp.router.registry import RouterRegistry
 from keystone_mcp.user_directory.memory import InMemoryUserDirectory
+from support.test_env import UNUSED_REDIS_URL
 
 
 def _registry(settings: Settings | None = None) -> RouterRegistry:
@@ -29,7 +30,7 @@ def _enforce_settings(tmp_path: Path) -> Settings:
         rbac_policy_path=str(policy),
         users_service_url="http://users:8000",
         users_service_token="token",
-        redis_url="redis://localhost:6379/0",
+        redis_url=UNUSED_REDIS_URL,
         rbac_audit_subject_salt="test-salt",
     )
 

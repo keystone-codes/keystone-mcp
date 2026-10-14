@@ -30,6 +30,7 @@ from support.lowlevel_upstream import (
     asgi_http_client_factory,
     build_lowlevel_upstream_app,
 )
+from support.test_env import require_redis_url
 
 ANN = VerifiedIdentity(email="ann@example.com")
 _IDENTITY_SECRET = "s3cr3t-identity-" + "v" * 20
@@ -129,7 +130,7 @@ roles:
             rbac_policy_path=str(policy_path),
             users_service_url="http://users:8000",
             users_service_token="token",
-            redis_url="redis://localhost:6379/5",
+            redis_url=require_redis_url(),
         )
         resolver, backend, _revision = build_in_memory_user_directory_resolver()
         backend.seed(ANN.email, roles=("member",))
@@ -178,7 +179,7 @@ roles:
             rbac_policy_path=str(policy_path),
             users_service_url="http://users:8000",
             users_service_token="token",
-            redis_url="redis://localhost:6379/5",
+            redis_url=require_redis_url(),
         )
         await upstreams.discover_all()
         manager = RbacPolicyManager(
