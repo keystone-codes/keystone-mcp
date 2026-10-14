@@ -266,8 +266,10 @@ any other secret; you cannot retrieve it again from Keystone.
 from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
 
+# The base URL your operator gave you. The MCP route is `/` unless the
+# operator changed KEYSTONE_MCP_HTTP_PATH; `/mcp/` is not the default.
 transport = StreamableHttpTransport(
-    "https://mcp.example.com/mcp/",
+    "https://mcp.example.com/",
     headers={"Authorization": "Bearer ksk_<key_id>_<secret>"},
 )
 async with Client(transport) as client:
