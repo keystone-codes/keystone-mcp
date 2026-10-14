@@ -343,8 +343,11 @@ def test_ci_helm_job_pins_setup_helm_and_runs_chart_checks():
     job = doc["jobs"]["helm"]
     assert job.get("permissions") is None
     assert _job_needs(doc, "helm") == ["test"]
-    uses = list(_iter_uses(doc))
-    helm_setup = [u for u in uses if u.startswith("azure/setup-helm@")]
+    helm_setup = [
+        step.get("uses")
+        for step in job.get("steps") or []
+        if str(step.get("uses", "")).startswith("azure/setup-helm@")
+    ]
     assert len(helm_setup) == 1
     assert _COMMIT_SHA_RE.match(helm_setup[0].split("@", 1)[1])
     run_text = _job_step_run_text(doc, "helm")
@@ -352,6 +355,55 @@ def test_ci_helm_job_pins_setup_helm_and_runs_chart_checks():
     assert "helm template" in run_text
     assert "kubeconform" in run_text
     assert "test_helm_chart.py" in run_text
+
+
+def test_ci_helm_kind_job_runs_demo_smoke_on_kind():
+    doc = _load("ci.yml")
+    job = doc["jobs"]["helm-kind"]
+    assert job.get("timeout-minutes") == 20
+    assert _job_needs(doc, "helm-kind") == ["test", "helm-kind-changes"]
+    uses = [u for u in _iter_uses(doc) if u.startswith("helm/kind-action@")]
+    assert len(uses) == 1
+    assert _COMMIT_SHA_RE.match(uses[0].split("@", 1)[1])
+    assert job.get("env", {}).get("NODE_IMAGE") == "kindest/node:v1.30.0"
+    with_block = next(
+        step for step in doc["jobs"]["helm-kind"]["steps"] if str(step.get("uses", "")).startswith("helm/kind-action@")
+    ).get("with", {})
+    assert with_block.get("node_image") == "${{ env.NODE_IMAGE }}"
+    run_text = _job_step_run_text(doc, "helm-kind")
+    assert "kind load docker-image" in run_text
+    assert "charts/keystone-mcp/ci/hello-upstream.yaml" in run_text
+    assert "helm install keystone" in run_text
+    assert "scripts/smoke_demo.py" in run_text
+    assert "replicaCount=3" in run_text
+    assert "kubectl port-forward svc/keystone-keystone-mcp 8080:80" in run_text
+    filter_job = doc["jobs"]["helm-kind-changes"]
+    filter_uses = [
+        step.get("uses")
+        for step in filter_job.get("steps") or []
+        if str(step.get("uses", "")).startswith("dorny/paths-filter@")
+    ]
+    assert len(filter_uses) == 1
+    assert _COMMIT_SHA_RE.match(filter_uses[0].split("@", 1)[1])
+
+
+def test_release_publish_packages_and_pushes_helm_chart():
+    raw = (WORKFLOWS_DIR / "release.yml").read_text(encoding="utf-8")
+    publish_block = raw.split("  publish:", 1)[1].split("\n  pypi:", 1)[0]
+    assert "helm package charts/keystone-mcp" in publish_block
+    assert "helm show chart" in publish_block
+    assert "helm registry login ghcr.io" in publish_block
+    assert "helm push" in publish_block
+    assert "oci://ghcr.io/keystone-codes/charts" in publish_block
+    assert "already published to GHCR" in publish_block
+
+
+def test_release_image_dry_run_packages_chart_without_publish():
+    run_text = _job_step_run_text(_load("release.yml"), "image-dry-run")
+    assert "helm package charts/keystone-mcp" in run_text
+    assert "helm show chart" in run_text
+    assert "helm registry login" not in run_text
+    assert "helm push" not in run_text
 
 
 def test_compose_smoke_runs_mcp_python_sdk_client_e2e():

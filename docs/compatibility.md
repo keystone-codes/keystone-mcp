@@ -468,7 +468,7 @@ Frozen since 0.5.0.
 | Artifact | Frozen name |
 |---|---|
 | Container image | `ghcr.io/keystone-codes/keystone-mcp:<version>` (multi-arch `linux/amd64`, `linux/arm64`; tag `latest` points at the highest released version) |
-| Helm chart | `charts/keystone-mcp` (source); OCI publication — see F13 |
+| Helm chart (OCI) | `oci://ghcr.io/keystone-codes/charts/keystone-mcp:<version>` (source tree: `charts/keystone-mcp`) |
 | Container port | `8080` |
 | Runtime user | uid/gid `10001` (`keystone`) |
 | Writable volume | `/data` with default `KEYSTONE_MCP_USERS_DB_URL=sqlite:////data/keystone-users.db` in the image |
