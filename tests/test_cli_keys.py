@@ -12,8 +12,10 @@ import pytest
 
 from keystone_mcp import cli
 from keystone_mcp.users import service
+from keystone_mcp.users.cli import EXIT_USAGE
 from keystone_mcp.users.db import create_users_engine, make_session_factory, session_scope
 from keystone_mcp.users.migrate import upgrade_to_head
+from support.test_env import require_redis_url
 
 
 @pytest.fixture(autouse=True)
@@ -78,3 +80,18 @@ def test_cli_issue_list_revoke(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     listed_after = _run_keys(["list", "--subject", "svc:worker", "--all"], env=env)
     row = next(r for r in json.loads(listed_after.stdout)["api_keys"] if r["key_id"] == key_id)
     assert row["revoked_at"] is not None
+
+
+def test_keys_list_with_http_backend_is_one_line(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    env = os.environ.copy()
+    env["KEYSTONE_MCP_ENV_FILE"] = ""
+    env["KEYSTONE_MCP_DEPLOYMENT_PROFILE"] = "local"
+    env["KEYSTONE_MCP_USERS_BACKEND"] = "http"
+    env["KEYSTONE_MCP_USERS_DB_URL"] = f"sqlite:///{tmp_path / 'users.db'}"
+    env["KEYSTONE_MCP_REDIS_URL"] = require_redis_url()
+    result = _run_keys(["list"], env=env)
+    assert result.returncode == EXIT_USAGE
+    assert "Traceback" not in result.stderr
+    assert len([line for line in result.stderr.splitlines() if line.strip()]) == 1
