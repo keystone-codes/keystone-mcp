@@ -116,11 +116,16 @@ def create_users_engine(url: str) -> Engine:
 
         @event.listens_for(engine, "connect")
         def _set_sqlite_pragmas(dbapi_connection, _connection_record) -> None:  # noqa: ANN001
+            dbapi_connection.isolation_level = None
             cursor = dbapi_connection.cursor()
             cursor.execute("PRAGMA foreign_keys=ON")
             cursor.execute("PRAGMA busy_timeout=5000")
             cursor.execute("PRAGMA journal_mode=WAL")
             cursor.close()
+
+        @event.listens_for(engine, "begin")
+        def _begin_immediate(conn) -> None:  # noqa: ANN001
+            conn.exec_driver_sql("BEGIN IMMEDIATE")
 
         return engine
 
