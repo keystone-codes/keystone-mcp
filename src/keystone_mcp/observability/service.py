@@ -237,6 +237,7 @@ class RbacObservability:
         content_hash_after: str | None = None,
         changes: tuple[str, ...] = (),
         warnings_count: int = 0,
+        actor_subject_type: str | None = None,
     ) -> None:
         try:
             self.policy_audit.record_mutation(
@@ -251,6 +252,7 @@ class RbacObservability:
                 content_hash_after=content_hash_after,
                 changes=changes,
                 warnings_count=warnings_count,
+                actor_subject_type=actor_subject_type,
             )
             self.metrics.record_policy_mutation(operation=operation, outcome=outcome)
         except Exception:
@@ -259,6 +261,14 @@ class RbacObservability:
             logging.getLogger(__name__).warning(
                 "rbac policy mutation observability failed", exc_info=True
             )
+
+    def record_admin_refusal(self, *, operation: str, reason: str) -> None:
+        try:
+            self.metrics.record_admin_refusal(operation=operation, reason=reason)
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).warning("admin refusal metric failed", exc_info=True)
 
     def record_tool_call_attempt(self, *, tool_name: str) -> None:
         try:

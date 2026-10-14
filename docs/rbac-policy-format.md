@@ -131,6 +131,12 @@ see `login-providers.md`), never a machine's api_key sign-in
 confirming operations that must never run under a machine token. Service
 accounts never satisfy `requires_human_identity`.
 
+Tools listed here are omitted from `tools/list` for callers who did not sign in
+interactively (for example a DEV token or an API key sets `interactive: false`).
+A production example lists `users_*`, `service_accounts_*`, `api_keys_*`, and
+`policy_*` with a comment that administrators who sign in non-interactively are
+refused those tools unless an entry is removed.
+
 ### 2.7 `critical_tools`
 
 Tools whose role resolution must be synchronous: the user-directory allow cache
