@@ -17,6 +17,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
   report template asks for the client and its version. The demo upstream has a
   progress tool and an elicitation tool.
 - `KEYSTONE_MCP_USERS_SERVICE_ALLOW_INSECURE_HTTP`; production warning for an `http://` users directory; metric `keystone_mcp_users_directory_response_issues_total`; OIDC option `email_verified_claim`.
+- Production startup warning when dynamic client registration is open and no redirect hosts are listed; metric `keystone_mcp_oauth_client_evictions_total`.
 
 ### Changed
 
@@ -38,6 +39,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 - The HTTP users directory's `resolve` answer is checked strictly: a non-boolean `exists`, `is_blocked` or a non-string role is treated as the directory being unavailable instead of granting access. `0`/`1` are still accepted with a warning; a missing `is_blocked` is read as `false` with a warning.
 - A sign-in e-mail whose characters become ASCII letters only after lower-casing or Unicode normalisation is refused.
 - An OIDC provider with `email_claim` other than `email` must name the claim that confirms it (`email_verified_claim`) while `require_email_verified` is on.
+- Dynamic client registration limits client metadata (request ≤ 16 KB, `client_name` ≤ 100 characters, ≤ 10 `redirect_uris` of ≤ 2 KB, unlisted RFC 7591 fields dropped); a client that never completes a sign-in expires after 24 hours; at `KEYSTONE_MCP_OAUTH_MAX_CLIENTS` the oldest unused client is evicted instead of refusing everyone; IPv6 registration attempts are counted per /64.
 
 ### Migration
 
@@ -46,6 +48,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 - Each list request now uses one slot of `KEYSTONE_MCP_THROTTLE_MAX` (default 120 per 60 s). If a client lists very often, raise the limit. Metric series for names that are not published are now reported as `tool="unknown"`.
 - Startup refusals (`KEYSTONE_MCP_UPSTREAM_REQUIRE_ALL=true` with an unavailable upstream, an invalid policy) still exit with code 1 and the same message, but after `/healthz` has started answering — rely on `/readyz`, not on the port being open, to know the replica is ready.
 - An HTTP users directory that answers `exists`/`is_blocked` with strings stops working — return JSON booleans. A providers file with `email_claim` other than `email` and `require_email_verified` on fails to load until `email_verified_claim` is set (or `require_email_verified: false` with `allowed_domains`). Run `keystone-mcp config check` before upgrading.
+- A client that registered but did not sign in within 24 hours registers again on its next attempt (MCP clients do this on `invalid_client`). Client metadata fields other than the RFC 7591 ones Keystone uses (`logo_uri`, `tos_uri`, `policy_uri`, `contacts`, `jwks`, `jwks_uri`) are no longer stored.
 
 ## [0.5.0] - 2026-10-13
 

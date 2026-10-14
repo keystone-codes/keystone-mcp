@@ -116,6 +116,10 @@ _ADMIN_REFUSALS = Counter(
     "Administration tool calls refused by a built-in rule (not by the policy file)",
     ["operation", "reason"],
 )
+_OAUTH_CLIENT_EVICTIONS = Counter(
+    "keystone_mcp_oauth_client_evictions_total",
+    "Unused OAuth clients evicted to admit a new registration",
+)
 
 
 class RbacMetrics:
@@ -271,6 +275,11 @@ class RbacMetrics:
         if not self._enabled:
             return
         _OAUTH_CLIENTS.set(count)
+
+    def record_oauth_client_eviction(self) -> None:
+        if not self._enabled:
+            return
+        _OAUTH_CLIENT_EVICTIONS.inc()
 
     def scrape(self) -> tuple[bytes, str]:
         return generate_latest(), CONTENT_TYPE_LATEST
