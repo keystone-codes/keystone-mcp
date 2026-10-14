@@ -28,6 +28,7 @@ from keystone_mcp.adapters.mcp_proxy import (
     _http_client_factory,
 )
 from keystone_mcp.auth.rate_window import InMemorySlidingWindow, SlidingWindow
+from keystone_mcp.config import UpstreamConfig as RegistryUpstreamConfig
 from keystone_mcp.config import UpstreamLimits
 from keystone_mcp.identity_assertion import (
     IdentityAssertionSigner,
@@ -894,6 +895,11 @@ class UpstreamRegistry:
     _stdio_discovery_tasks: dict[str, asyncio.Task[None]] = field(default_factory=dict, repr=False)
     _resource_filter_hint_logged: set[str] = field(default_factory=set, repr=False)
     _guards: dict[str, UpstreamGuard] = field(default_factory=dict, repr=False)
+    _retired_sub_servers: dict[str, FastMCP] = field(default_factory=dict, repr=False)
+    _entry_configs: dict[str, RegistryUpstreamConfig] = field(default_factory=dict, repr=False)
+    _entry_secret_fingerprints: dict[str, tuple[tuple[str, str], ...]] = field(
+        default_factory=dict, repr=False
+    )
 
     def __post_init__(self) -> None:
         if self.sliding_window is None:
@@ -1038,8 +1044,11 @@ class UpstreamRegistry:
         )
         self._upstreams.append(cfg)
 
-        sub = FastMCP(name=namespace)
-        self.main_mcp.mount(sub, namespace=namespace)
+        if namespace in self._retired_sub_servers:
+            sub = self._retired_sub_servers.pop(namespace)
+        else:
+            sub = FastMCP(name=namespace)
+            self.main_mcp.mount(sub, namespace=namespace)
         self._sub_servers[namespace] = sub
         resolved_tool_timeout = (
             tool_timeout_seconds if tool_timeout_seconds is not None else self.tool_timeout_seconds
@@ -1112,6 +1121,116 @@ class UpstreamRegistry:
         if self.observability is not None:
             self.observability.record_upstream_available(namespace=namespace, available=False)
         return cfg
+
+    def register_config(self, entry: RegistryUpstreamConfig) -> UpstreamConfig:
+        """Register one registry-file entry and remember its source config for reload diffs."""
+        if not entry.enabled:
+            raise ValueError(f"upstream {entry.name!r} is disabled")
+        router_cfg = self.add_upstream(
+            entry.name,
+            entry.url,
+            namespace=entry.namespace,
+            tool_filter=entry.build_tool_filter(),
+            strip_prefix=entry.strip_prefix,
+            route_mode=entry.route_mode,
+            discovery_timeout_seconds=entry.discovery_timeout_seconds,
+            tool_timeout_seconds=entry.tool_timeout_seconds,
+            bearer_env=entry.bearer_env,
+            identity_secret_env=entry.identity_secret_env,
+            identity_alg=entry.identity_alg,
+            transport=entry.transport,
+            command=entry.command,
+            args=entry.args,
+            env_from=entry.env_from,
+            cwd=entry.cwd,
+            publish_resources=entry.publish_resources,
+            resource_filter=entry.build_resource_filter(),
+            limits=entry.limits,
+        )
+        self._entry_configs[entry.namespace] = entry
+        from keystone_mcp.upstream_registry.reload import upstream_secrets_fingerprint
+
+        self._entry_secret_fingerprints[entry.namespace] = upstream_secrets_fingerprint(entry)
+        return router_cfg
+
+    def applied_entry_configs(self) -> dict[str, RegistryUpstreamConfig]:
+        return dict(self._entry_configs)
+
+    def applied_secret_fingerprints(self) -> dict[str, tuple[tuple[str, str], ...]]:
+        return dict(self._entry_secret_fingerprints)
+
+    async def activate_upstream(self, namespace: str) -> None:
+        """Start stdio (if needed) and run discovery for one namespace."""
+        cfg = next((c for c in self._upstreams if c.namespace == namespace), None)
+        if cfg is None:
+            return
+        if cfg.transport == "stdio":
+            conn = self._connections[namespace]
+            if isinstance(conn, StdioUpstreamConnection):
+                discovery_wait = (
+                    cfg.discovery_timeout_seconds
+                    if cfg.discovery_timeout_seconds is not None
+                    else self.discovery_timeout_seconds
+                )
+                started = await conn.start(wait=discovery_wait)
+                if not started:
+                    logger.warning(
+                        "stdio upstream process did not reach running within %ss namespace=%s",
+                        discovery_wait,
+                        namespace,
+                    )
+        await self._discover_with_retries(cfg)
+
+    async def remove_upstream(self, namespace: str) -> None:
+        """Unpublish all proxy surface for ``namespace`` and tear down its connection."""
+        if namespace not in self._sub_servers:
+            return
+        cfg = next((c for c in self._upstreams if c.namespace == namespace), None)
+
+        sub = self._sub_servers[namespace]
+        route_keys = [
+            key
+            for key, route in self.registry.routes.items()
+            if route.namespace == namespace and route.config_mode == "PROXY"
+        ]
+        for route_key in sorted(route_keys):
+            route = self.registry.routes[route_key]
+            try:
+                sub.local_provider.remove_tool(route.name)
+            except KeyError:
+                logger.warning(
+                    "upstream remove namespace=%s route=%s missing on sub-server",
+                    namespace,
+                    route.name,
+                )
+            self.registry.remove_route(route_key)
+
+        if cfg is not None:
+            self._apply_prompt_specs(cfg, {}, {})
+            self._apply_resource_specs(cfg, {}, {}, {}, {})
+
+        discovery_task = self._stdio_discovery_tasks.pop(namespace, None)
+        if discovery_task is not None and not discovery_task.done():
+            discovery_task.cancel()
+
+        await self._connections[namespace].stop()
+
+        self._upstreams = [c for c in self._upstreams if c.namespace != namespace]
+        self._adapters.pop(namespace, None)
+        self._status.pop(namespace, None)
+        self._auth_headers.pop(namespace, None)
+        self._unpublishable.pop(namespace, None)
+        self._connections.pop(namespace, None)
+        self._guards.pop(namespace, None)
+        self._entry_configs.pop(namespace, None)
+        self._entry_secret_fingerprints.pop(namespace, None)
+        self.content.clear_namespace(namespace)
+
+        retired = self._sub_servers.pop(namespace)
+        self._retired_sub_servers[namespace] = retired
+
+        if self.observability is not None:
+            self.observability.clear_upstream_available(namespace=namespace)
 
     def connection(self, namespace: str) -> UpstreamConnection:
         try:

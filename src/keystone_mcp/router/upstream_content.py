@@ -126,6 +126,12 @@ class UpstreamContentCatalog:
         for spec in specs.values():
             self._template_owners[spec.rbac_name] = f"{namespace}:{spec.uri_template}"
 
+    def clear_namespace(self, namespace: str) -> None:
+        self.set_prompts(namespace, {})
+        self.set_resources(namespace, {})
+        self.set_templates(namespace, {})
+        self._legacy_prompt_rbac.pop(namespace, None)
+
     def owner_of_published_prompt(self, published_name: str) -> str | None:
         return self._prompt_owners.get(published_name)
 

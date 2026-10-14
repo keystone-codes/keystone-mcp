@@ -84,7 +84,9 @@ through the door" in [facade.md](facade.md#what-passes-through-the-door).
 Access rules — which role may call which tool patterns — live in one YAML
 file (`KEYSTONE_MCP_RBAC_POLICY_PATH`). Editing it and sending `SIGHUP`
 applies the change immediately, with no restart and no new deployment.
-Format: [rbac-policy-format.md](rbac-policy-format.md).
+The upstream registry file (`KEYSTONE_MCP_UPSTREAMS_PATH`) reloads the same
+way on the refresh tick or on `SIGHUP`. Format:
+[rbac-policy-format.md](rbac-policy-format.md).
 
 ## Services never check roles themselves
 

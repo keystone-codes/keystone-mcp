@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from keystone_mcp.adapters.base import Pattern
-from keystone_mcp.config import Settings
+from keystone_mcp.config import Settings, _upstream_security_policy
 from keystone_mcp.observability.metrics import record_upstream_item_rejected
 from keystone_mcp.rbac.loader import (
     log_live_catalog_drift,
@@ -26,6 +26,13 @@ from keystone_mcp.router.upstream import (
     build_upstream_resource_specs,
     build_upstream_template_specs,
     build_upstream_tool_specs,
+)
+from keystone_mcp.upstream_registry.load import load_upstream_registry_file
+from keystone_mcp.upstream_registry.reload import (
+    diff_upstream_registry,
+    enabled_upstream_map,
+    upstream_registry_file_hash,
+    upstream_registry_info_hash,
 )
 
 if TYPE_CHECKING:
@@ -63,6 +70,11 @@ class SurfaceReconciler:
     _policy_reload_event: asyncio.Event = field(
         default_factory=asyncio.Event, init=False, repr=False
     )
+    _registry_reload_event: asyncio.Event = field(
+        default_factory=asyncio.Event, init=False, repr=False
+    )
+    _registry_hash: str | None = field(default=None, init=False, repr=False)
+    _registry_rejected_hash: str | None = field(default=None, init=False, repr=False)
     _task: asyncio.Task[None] | None = field(default=None, init=False, repr=False)
     _loop: asyncio.AbstractEventLoop | None = field(default=None, init=False, repr=False)
 
@@ -93,6 +105,12 @@ class SurfaceReconciler:
     def seed_snapshots(self) -> None:
         """Capture post-bootstrap state so the first tick is a no-op when unchanged."""
         self._policy_hash, self._snapshot_hash = policy_files_content_hashes(self.settings)
+        self._registry_hash = upstream_registry_file_hash(self.settings)
+        self._registry_rejected_hash = None
+        if self.observability is not None:
+            self.observability.set_upstream_registry_identity(
+                content_hash=upstream_registry_info_hash(self._registry_hash)
+            )
         self._namespace_fingerprints = {
             cfg.namespace: self._fingerprint_namespace(cfg.namespace)
             for cfg in self.upstreams._upstreams
@@ -126,6 +144,24 @@ class SurfaceReconciler:
         self._loop.call_soon_threadsafe(self._policy_reload_event.set)
         return True
 
+    def request_registry_reload(self) -> bool:
+        if self._loop is None:
+            logger.warning(
+                "SIGHUP: upstream registry reload needs the surface reconciler; "
+                "set KEYSTONE_MCP_REFRESH_INTERVAL_SECONDS > 0"
+            )
+            return False
+        self._loop.call_soon_threadsafe(self._registry_reload_event.set)
+        return True
+
+    async def reload_registry_once(self) -> None:
+        """Apply one forced upstream registry reload (SIGHUP without a refresh loop)."""
+        async with self._lock:
+            await self._maybe_reload_registry(force=True)
+
+    def upstream_registry_hash(self) -> str | None:
+        return upstream_registry_info_hash(self._registry_hash)
+
     async def start(self) -> None:
         interval = self.settings.refresh_interval_seconds
         self.upstreams.set_namespace_up_hook(self.refresh_namespace_soon)
@@ -140,10 +176,10 @@ class SurfaceReconciler:
             status = self.upstreams._status.get(cfg.namespace)
             if conn.process.state == "running" and (status is None or not status.catalog_known):
                 self.refresh_namespace_soon(cfg.namespace)
-        if interval <= 0:
-            return
         self._loop = asyncio.get_running_loop()
         self.seed_snapshots()
+        if interval <= 0:
+            return
         self._task = asyncio.create_task(self._supervise(interval), name="surface-reconciler")
 
     async def stop(self) -> None:
@@ -181,10 +217,7 @@ class SurfaceReconciler:
                 jitter = random.uniform(0, min(_JITTER_MAX_SECONDS, interval / 4))
                 wait_seconds = interval + jitter
                 try:
-                    await asyncio.wait_for(
-                        self._policy_reload_event.wait(),
-                        timeout=wait_seconds,
-                    )
+                    await self._wait_for_reload_or_timeout(wait_seconds)
                 except asyncio.TimeoutError:
                     pass
                 # Do not clear the event here: ``_tick_locked`` reads
@@ -203,10 +236,47 @@ class SurfaceReconciler:
         except asyncio.CancelledError:
             raise
 
+    async def _wait_for_reload_or_timeout(self, timeout: float) -> None:
+        if self._policy_reload_event.is_set() or self._registry_reload_event.is_set():
+            return
+        policy_wait = asyncio.create_task(self._policy_reload_event.wait())
+        registry_wait = asyncio.create_task(self._registry_reload_event.wait())
+        try:
+            done, pending = await asyncio.wait(
+                {policy_wait, registry_wait},
+                timeout=timeout,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if not done:
+                raise asyncio.TimeoutError
+        finally:
+            for task in (policy_wait, registry_wait):
+                if not task.done():
+                    task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await task
+
     async def _tick_locked(self) -> None:
         force_policy = self._policy_reload_event.is_set()
         if force_policy:
             self._policy_reload_event.clear()
+        force_registry = self._registry_reload_event.is_set()
+        if force_registry:
+            self._registry_reload_event.clear()
+
+        registry_tools_changed = False
+        registry_prompts_changed = False
+        registry_resources_changed = False
+        try:
+            (
+                registry_tools_changed,
+                registry_prompts_changed,
+                registry_resources_changed,
+            ) = await self._maybe_reload_registry(force=force_registry)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("surface reconciler step %s failed", "maybe_reload_registry")
 
         if self.policy_revision_watcher is not None:
             try:
@@ -245,9 +315,9 @@ class SurfaceReconciler:
             logger.exception("surface reconciler step %s failed", "observe_users_revision")
 
         await self._broadcast_catalog_changes(
-            catalog_changed=catalog_changed,
-            prompts_catalog_changed=prompts_catalog_changed,
-            resources_catalog_changed=resources_catalog_changed,
+            catalog_changed=catalog_changed or registry_tools_changed,
+            prompts_catalog_changed=prompts_catalog_changed or registry_prompts_changed,
+            resources_catalog_changed=resources_catalog_changed or registry_resources_changed,
             policy_reloaded=policy_reloaded,
             users_revision_changed=users_revision_changed,
         )
@@ -817,6 +887,147 @@ class SurfaceReconciler:
                 annotations=route.annotations,
             )
         return fingerprints
+
+    async def _maybe_reload_registry(self, *, force: bool) -> tuple[bool, bool, bool]:
+        """Reload the upstream registry file when it changes (or ``force``)."""
+        from pathlib import Path
+
+        path_raw = self.settings.upstreams_path.strip()
+        if not path_raw:
+            if force:
+                logger.info(
+                    "SIGHUP: the upstream registry comes from KEYSTONE_MCP_UPSTREAMS and "
+                    "cannot be reloaded; use KEYSTONE_MCP_UPSTREAMS_PATH"
+                )
+                if self.observability is not None:
+                    self.observability.record_upstream_registry_reload(outcome="unchanged")
+            return False, False, False
+
+        current_hash = upstream_registry_file_hash(self.settings)
+        if current_hash is None:
+            return False, False, False
+
+        unchanged = current_hash == self._registry_hash
+        if unchanged and not force:
+            return False, False, False
+
+        if (
+            not force
+            and current_hash == self._registry_rejected_hash
+            and current_hash != self._registry_hash
+        ):
+            return False, False, False
+
+        registry_path = Path(path_raw)
+        policy = _upstream_security_policy(self.settings)
+        try:
+            loaded = await asyncio.to_thread(
+                load_upstream_registry_file,
+                registry_path,
+                policy=policy,
+                check_environment=True,
+            )
+        except ValueError as exc:
+            if current_hash != self._registry_rejected_hash:
+                logger.warning("upstream registry reload rejected: %s", exc)
+            self._registry_rejected_hash = current_hash
+            if self.observability is not None:
+                self.observability.record_upstream_registry_reload(outcome="rejected")
+            return False, False, False
+
+        previous = self.upstreams.applied_entry_configs()
+        desired = enabled_upstream_map(loaded)
+        diff = diff_upstream_registry(
+            previous,
+            desired,
+            force_secrets=force,
+            applied_secret_fingerprints=self.upstreams.applied_secret_fingerprints(),
+        )
+        if not diff.added and not diff.removed and not diff.changed:
+            if force:
+                if self.observability is not None:
+                    self.observability.record_upstream_registry_reload(outcome="unchanged")
+            return False, False, False
+
+        tools_changed = bool(diff.added or diff.removed or diff.changed)
+        prompts_changed = tools_changed
+        resources_changed = tools_changed
+
+        for namespace in diff.removed:
+            await self.upstreams.remove_upstream(namespace)
+            self._drop_namespace_snapshots(namespace)
+
+        for namespace in diff.changed:
+            await self.upstreams.remove_upstream(namespace)
+            self._drop_namespace_snapshots(namespace)
+
+        for namespace in (*diff.added, *diff.changed):
+            entry = desired[namespace]
+            try:
+                self.upstreams.register_config(entry)
+            except (ValueError, Exception) as exc:
+                logger.warning(
+                    "upstream registry entry failed namespace=%s: %s",
+                    namespace,
+                    exc,
+                )
+                continue
+            try:
+                await self.upstreams.activate_upstream(namespace)
+            except Exception as exc:
+                logger.warning(
+                    "upstream registry activation failed namespace=%s: %s",
+                    namespace,
+                    exc,
+                )
+                self.upstreams.mark_unavailable(namespace, str(exc))
+                continue
+            tc, pc, rc = await self._refresh_namespace(
+                next(c for c in self.upstreams._upstreams if c.namespace == namespace)
+            )
+            tools_changed = tools_changed or tc
+            prompts_changed = prompts_changed or pc
+            resources_changed = resources_changed or rc
+            self._namespace_fingerprints[namespace] = self._fingerprint_namespace(namespace)
+            self._namespace_prompt_fingerprints[namespace] = self._fingerprint_prompts_namespace(
+                namespace
+            )
+            self._namespace_resource_fingerprints[namespace] = self._fingerprint_resources_namespace(
+                namespace
+            )
+            self._namespace_template_fingerprints[namespace] = self._fingerprint_templates_namespace(
+                namespace
+            )
+
+        self._registry_hash = current_hash
+        self._registry_rejected_hash = None
+        if self.observability is not None:
+            self.observability.record_upstream_registry_reload(outcome="applied")
+            self.observability.set_upstream_registry_identity(
+                content_hash=upstream_registry_info_hash(current_hash)
+            )
+        logger.info(
+            "upstream registry reloaded: added=%s removed=%s changed=%s",
+            list(diff.added),
+            list(diff.removed),
+            list(diff.changed),
+        )
+        self._maybe_log_drift(
+            became_available=False,
+            added=len(diff.added),
+            removed=len(diff.removed),
+            updated=len(diff.changed),
+        )
+        return tools_changed, prompts_changed, resources_changed
+
+    def _drop_namespace_snapshots(self, namespace: str) -> None:
+        self._namespace_fingerprints.pop(namespace, None)
+        self._namespace_prompt_fingerprints.pop(namespace, None)
+        self._namespace_resource_fingerprints.pop(namespace, None)
+        self._namespace_template_fingerprints.pop(namespace, None)
+        self._empty_list_streak.pop(namespace, None)
+        self._empty_prompt_list_streak.pop(namespace, None)
+        self._empty_resource_list_streak.pop(namespace, None)
 
     async def _maybe_reload_policy(self, *, force: bool) -> bool:
         """Reload the RBAC policy if its files changed (or ``force``); return whether it was."""
