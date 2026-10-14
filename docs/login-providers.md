@@ -92,7 +92,7 @@ valid redirect URI as above. For local Keycloak on loopback HTTP, use
 | `KEYSTONE_MCP_ENABLED_LOGIN_METHODS` | list providers in the file |
 | `KEYSTONE_MCP_PRIMARY_LOGIN_METHOD` | order of entries in the file |
 
-These variables remain readable until the next major version but log a deprecation
+These variables keep working until 2.0 but log a deprecation
 warning at startup.
 
 ## Custom provider types from plugins

@@ -52,3 +52,12 @@ path; rejected for 0.5.0.
 - [connecting-services.md](../connecting-services.md#who-is-calling-x-keystone-identity)
 - [security-model.md](../security-model.md)
 - `src/keystone_mcp/identity_assertion.py`, `src/keystone_mcp/adapters/mcp_proxy.py`
+
+## Amendment (0.6.0)
+
+Since 0.5.0 an upstream entry may choose `auth.identity_alg: ES256` instead of
+a per-upstream HS256 secret: Keystone signs with `KEYSTONE_MCP_IDENTITY_SIGNING_KEY`
+(P-256, PKCS#8 PEM) and publishes the public key at
+`/.well-known/keystone-identity-jwks.json`; the claims, `aud` binding and
+lifetime are unchanged. HS256 remains the default. During rotation the JWKS
+lists both keys when `KEYSTONE_MCP_IDENTITY_SIGNING_KEY_PREVIOUS` is set.

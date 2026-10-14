@@ -125,7 +125,7 @@ Tools that additionally require an interactive human login. A call that the
 role union permits is still denied with reason `human_identity_required`
 unless the verified token carries `interactive: true` — a claim every
 interactive sign-in provider sets (Google and any configured OIDC provider;
-see `login-providers.md`), never a machine's api_key sign-in
+see [login-providers.md](login-providers.md)), never a machine's api_key sign-in
 (`has_interactive_human_identity` in
 `src/keystone_mcp/rbac/human_identity.py`). Use it for irreversible
 confirming operations that must never run under a machine token. Service
@@ -357,7 +357,7 @@ from the catalog is simply denied by `default_deny`.
 - Startup is different: a failure there is fatal (`PolicyLoadError`).
 - Requests in flight see either the old or the new policy, never a mix.
 
-**Tool writes.** A later release's administration tools (`policy_*`) change
+**Tool writes.** The administration tools `policy_*` change
 this same file from inside the process, through
 `keystone_mcp.rbac.policy_store.PolicyStore` (gated by
 `KEYSTONE_MCP_POLICY_TOOLS`, see [environment.md](environment.md)). A write is

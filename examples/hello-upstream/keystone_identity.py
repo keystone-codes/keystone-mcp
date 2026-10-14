@@ -37,6 +37,7 @@ from __future__ import annotations
 import threading
 from collections.abc import Sequence
 from dataclasses import dataclass
+from urllib.parse import urlparse
 
 import jwt
 
@@ -77,6 +78,17 @@ class KeystoneIdentity:
     mcp_method: str
     mcp_target: str
     jti: str
+
+
+def _validate_jwks_url(jwks_url: str) -> None:
+    parsed = urlparse(jwks_url)
+    if parsed.scheme == "https":
+        return
+    if parsed.scheme == "http":
+        host = (parsed.hostname or "").lower()
+        if host in ("localhost", "127.0.0.1", "[::1]"):
+            return
+    raise IdentityError("jwks_url must use https (plain http only on loopback)")
 
 
 def _jwks_client(jwks_url: str) -> jwt.PyJWKClient:
@@ -124,6 +136,8 @@ def verify_keystone_identity(
         raise IdentityError("pass either secrets (HS256) or jwks_url (ES256), not both")
     if not secrets and not jwks_url:
         raise IdentityError("secrets or jwks_url is required")
+    if jwks_url:
+        _validate_jwks_url(jwks_url)
 
     try:
         header = jwt.get_unverified_header(token)

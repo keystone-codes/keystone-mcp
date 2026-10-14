@@ -158,7 +158,7 @@ response by pattern, the default target for a route registered before its
 real adapter exists. Reference adapters for forks (`WebhookAdapter`,
 `ExternalHttpAdapter`) live in `keystone_mcp.contrib.adapters`: see
 [contrib/adapters.md](contrib/adapters.md). Neither is registered by default
-or covered by `docs/compatibility.md`; a fork that wants one registers a
+or covered by [compatibility.md](compatibility.md); a fork that wants one registers a
 route with it as `target`.
 
 To use one, register a route with `mode="stub"` while the target is being
@@ -196,7 +196,7 @@ built-in `KEYSTONE_MCP_USERS_BACKEND=http` directory speaks, and how
 `users_*` tool publication depends on what a directory declares: see
 [user-directory.md](user-directory.md). Registering a directory from your own
 package without editing core code is done through a Python entry point; see
-plugins.md.
+[plugins.md](plugins.md).
 
 #### Built-in tools: `Adapter` and `RouterRegistry.add_route`
 

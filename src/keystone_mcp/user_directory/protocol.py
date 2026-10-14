@@ -11,10 +11,10 @@ Rules every implementation follows (also checked by the contract tests in
 
 * The implementation normalizes ``subject`` on input (``strip().lower()`` for
   an email); every email it returns is already lower-cased.
-* ``resolve_user``'s argument is named ``subject``: in this card it is always
-  a person's email. A later card (X07) adds service-account identifiers of
-  the form ``svc:<name>``; an implementation that does not support those
-  answers ``exists=False`` rather than raising.
+* ``resolve_user``'s argument is named ``subject``: a person's email or, for
+  a service account, an identifier of the form ``svc:<name>``. An
+  implementation that does not support service accounts answers
+  ``exists=False`` rather than raising.
 * ``resolve_user`` for an unknown subject returns
   ``UserResolveResult(exists=False, roles=(), is_blocked=False)`` -- never an
   error. The only errors it raises are

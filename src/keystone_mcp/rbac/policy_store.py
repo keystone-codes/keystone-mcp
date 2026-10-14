@@ -1,6 +1,6 @@
 """Read and change the RBAC policy file from inside the process.
 
-``PolicyStore`` is the core the ``policy_*`` MCP tools (a later card) wrap in
+``PolicyStore`` is the core the ``policy_*`` MCP tools wrap in
 a thin adapter. It reuses the exact validation the hot-reload path
 (``RbacPolicyManager.reload``) already runs -- :func:`~keystone_mcp.rbac.loader
 .assert_live_catalog_validation` -- so a change accepted here can never fail
