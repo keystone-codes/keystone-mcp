@@ -1,4 +1,4 @@
-"""RBAC list endpoints for prompts and resources (C03 / A6-10)."""
+"""RBAC list endpoints for prompts and resources (prompts and resources)."""
 
 from __future__ import annotations
 

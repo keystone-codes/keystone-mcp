@@ -160,7 +160,7 @@ def test_policy_tools_registered_by_mode(tmp_path: Path):
 
 
 class _ReadOnlyDirectory:
-    """A directory that declares no capabilities (X06): ``users_list`` only."""
+    """A directory that declares no capabilities: ``users_list`` only."""
 
     name = "read-only-fake"
     capabilities: frozenset[str] = frozenset()

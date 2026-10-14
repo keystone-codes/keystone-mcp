@@ -6,7 +6,7 @@ does not import ``keystone_mcp.user_directory``, ``keystone_mcp.server``,
 ``keystone_mcp.adapters`` or ``keystone_mcp.config`` — those layers (reading
 through a cache, wiring into the server, the HTTP admin adapter) depend on
 this package, not the other way around — except the dependency-free
-``keystone_mcp.user_directory.types`` and ``.errors`` (X06): ``UserRecord``
+``keystone_mcp.user_directory.types`` and ``.errors``: ``UserRecord``
 and ``MutationResult`` are shared with every other ``UserDirectory``
 implementation, and so are the ``users_*`` skill's error classes, so both
 live there instead of being duplicated here.

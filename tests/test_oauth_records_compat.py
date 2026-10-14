@@ -1,11 +1,11 @@
 """Redis records written by fastmcp 3.4.4 / mcp 1.28.1 must still parse on 4.1.0 / 2.3.0.
 
 OAuth clients, access and refresh tokens, pending login transactions,
-authorization codes and the refresh-token auth-method marker (A15) all
-persist in Redis with no migration step across the fastmcp 4 upgrade (X02).
+authorization codes and the refresh-token auth-method marker all
+persist in Redis with no migration step across the fastmcp 4 upgrade.
 These are the six record shapes captured on fastmcp 3.4.4 / mcp 1.28.1 before
 the upgrade, reproduced verbatim as string constants -- see
-``internal/tasks-0.5.0/X-extensibility/X01-spike-report.md``, section
+the fastmcp 4 migration spike report (private task archive), section
 "Образцы записей" (sampled by ``scripts/spike_capture_records.py`` on the
 pre-upgrade branch, scenario B2: "Записи из шага 1 читаются новой версией").
 
@@ -120,7 +120,7 @@ def test_auth_code_envelope_from_3x_is_readable():
     assert parsed.code.code == "km_code_spike0000000000000000000000"
     assert parsed.code.subject == "user@example.com"
     assert parsed.auth_method == "google"
-    # The 3x envelope predates the "interactive" field (X05): rebuilt from
+ # The 3x envelope predates the "interactive" field: rebuilt from
     # the sign-in method's own name, same as has_interactive_human_identity's
     # fallback for a pre-0.5.0 token.
     assert parsed.interactive is True

@@ -1,4 +1,4 @@
-"""Acceptance tests for ``users_delete`` (F06)."""
+"""Acceptance tests for ``users_delete``."""
 
 from __future__ import annotations
 

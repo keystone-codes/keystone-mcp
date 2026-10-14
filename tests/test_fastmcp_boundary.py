@@ -7,7 +7,7 @@ fastmcp 4's ``StreamableHttpTransport`` hands its HTTP client factory an
 ``auth`` object built for ``httpx2`` (``fastmcp.client.auth.bearer.BearerAuth``),
 which an ``httpx.AsyncClient`` rejects with ``TypeError: Invalid "auth"
 argument`` -- the single biggest break found migrating off fastmcp 3.4.4 (see
-``internal/tasks-0.5.0/X-extensibility/X01-spike-report.md``). This guards
+the fastmcp 4 migration spike report (private task archive)). This guards
 against a regression back to ``httpx``.
 """
 

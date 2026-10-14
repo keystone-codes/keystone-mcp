@@ -1,4 +1,4 @@
-"""Upstream answer and catalog limits (C09 acceptance)."""
+"""Upstream answer and catalog limits."""
 
 from __future__ import annotations
 

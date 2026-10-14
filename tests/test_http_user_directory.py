@@ -1,9 +1,9 @@
-"""``HttpUserDirectory`` against the fake HTTP users directory contract (X06).
+"""``HttpUserDirectory`` against the fake HTTP users directory contract.
 
 Every operation is checked against :class:`LocalUserDirectory` acting on an
 identical, separately-seeded store: both directories must agree on the
 resulting :class:`UserRecord` (ignoring timestamps, which naturally differ
-between two independent writes). Error-code normalization (decision S3) and
+between two independent writes). Error-code normalization (HTTP users error-code normalization) and
 the timeout/connection-error mapping get their own tests.
 """
 

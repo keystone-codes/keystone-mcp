@@ -1,4 +1,4 @@
-"""Built-in HTML for sign-in, consent and error pages (card X13)."""
+"""Built-in HTML for sign-in, consent and error pages."""
 
 from __future__ import annotations
 

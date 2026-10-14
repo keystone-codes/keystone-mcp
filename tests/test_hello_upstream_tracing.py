@@ -1,4 +1,4 @@
-"""hello-upstream continues W3C trace context (F02)."""
+"""hello-upstream continues W3C trace context."""
 
 from __future__ import annotations
 

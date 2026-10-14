@@ -1,4 +1,4 @@
-"""Low-level upstream apps with configurable resources and templates (C02 tests)."""
+"""Low-level upstream apps with configurable resources and templates."""
 
 from __future__ import annotations
 

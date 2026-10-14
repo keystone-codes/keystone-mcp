@@ -409,7 +409,7 @@ def test_json_upstreams_support_auth(monkeypatch):
     assert upstreams[0].bearer_env == "KEYSTONE_MCP_UPSTREAM_DOCS_TOKEN"
 
 
-# --- upstream identity assertion secret (Y01) ---------------------------------------
+# --- upstream identity assertion secret ---------------------------------------
 
 
 def test_registry_accepts_identity_secret_env(monkeypatch, permissive_policy):
@@ -708,11 +708,11 @@ def _write_registry_json(tmp_path: Path, document: dict) -> Path:
     return path
 
 
-# --- transport: stdio (Y08) --------------------------------------------------------
+# --- transport: stdio --------------------------------------------------------
 
 
 def test_stdio_entry_is_accepted(permissive_policy):
-    # Also covers the Y01/Y08 merge point: a stdio entry with
+ # Also covers the identity secret / stdio merge point: a stdio entry with
     # auth.identity_secret_env is accepted like any other.
     document = {
         "schema_version": 1,

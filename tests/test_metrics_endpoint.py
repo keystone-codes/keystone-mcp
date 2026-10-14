@@ -80,7 +80,7 @@ async def test_upstream_available_gauge_is_exposed():
 
 @pytest.mark.asyncio
 async def test_list_changed_metric_is_exposed():
-    """Y05: ``keystone_mcp_list_changed_sessions_total{kind="tools"}`` is scraped."""
+    """``keystone_mcp_list_changed_sessions_total{kind="tools"}`` is scraped."""
     settings = Settings(base_url=BASE_URL, metrics_enabled=True)
     mcp, _registry, _oauth, _upstreams, _policy_manager, observability, _reconciler = build_server(
         login_providers=[dev_token_login({"token"})],

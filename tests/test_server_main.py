@@ -1,9 +1,9 @@
 """keystone_mcp.server.main(): .env is loaded before Settings is built.
 
-Only the one scenario A06 needs: `.env` in the working directory changes a
+Only the env-file scenario: `.env` in the working directory changes a
 setting that reaches `mcp.run`. Everything past settings construction
 (discovery, policy bootstrap, the actual HTTP server) is stubbed out, since
-this card only cares about the very first step of `main()`.
+this module only cares about the very first step of `main()`.
 """
 
 from __future__ import annotations
@@ -43,7 +43,7 @@ def test_main_loads_env_file_before_settings(tmp_path, monkeypatch):
 
 
 def test_main_logs_deployment_profile_and_startup_warnings(monkeypatch, capsys, tmp_path):
-    """A04: `main()` reports the resolved profile and any startup warnings.
+    """`main` reports the resolved profile and any startup warnings.
 
     ``configure_logging`` (called by ``main()`` just before these lines are
     logged) replaces the root logger's handlers with a plain

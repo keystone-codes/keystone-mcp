@@ -464,7 +464,7 @@ async def test_proxy_call_over_legacy_handshake():
     """``Client(..., mode="legacy")`` reaches the same upstream, same answer.
 
     ``McpProxyAdapter`` builds its default client with ``mode="auto"``
-    (X02: no epoch-caching optimisation here, that is left to section Y) --
+ (fastmcp 4 migration: no epoch-caching optimisation here, that is left to a later optimisation pass) --
     the upstream negotiates the newest protocol epoch it can. This pins the
     other end of that negotiation range: a client that forces the pre-SDK-v2
     handshake must still reach the same (SDK v2) upstream and get the exact

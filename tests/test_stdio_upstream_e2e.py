@@ -1,4 +1,4 @@
-"""End-to-end tests for stdio upstream proxying (Y09)."""
+"""End-to-end tests for stdio upstream proxying."""
 
 from __future__ import annotations
 

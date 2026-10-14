@@ -148,7 +148,7 @@ async def test_equivalent_spellings_of_our_own_resource_are_accepted(strict: boo
     assert await provider.verify_token("km_at_variant") is not None
 
 
-# ── Refresh must keep the resource binding (A15) ────────────────────────────
+# ── Refresh must keep the resource binding ────────────────────────────
 async def _http_app(**settings_overrides):
     """Build a KeystoneOAuthProvider behind a live ASGI app with custom settings."""
     settings = Settings(base_url=HTTP_BASE_URL, **settings_overrides)

@@ -1,4 +1,4 @@
-"""End-to-end test of a brand-new deployment (A08).
+"""End-to-end test of a brand-new deployment.
 
 Repeats the exact path a new user takes: run ``setup.sh`` in the ``local``
 profile with no terminal attached, start the server the way the script's own

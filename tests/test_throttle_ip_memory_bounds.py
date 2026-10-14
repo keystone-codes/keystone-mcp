@@ -1,4 +1,4 @@
-"""`LoginAttemptThrottle._ip_hits` does not grow without bound (A11 finding #6).
+"""`LoginAttemptThrottle._ip_hits` does not grow without bound.
 
 Before this fix, every distinct source IP that ever called `check_ip` left a
 bucket behind in `_ip_hits` forever: the sliding-window prune only runs on the

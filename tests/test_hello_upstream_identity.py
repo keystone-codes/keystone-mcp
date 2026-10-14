@@ -1,4 +1,4 @@
-"""hello-upstream verifies X-Keystone-Identity (Y02).
+"""hello-upstream verifies X-Keystone-Identity.
 
 Loads examples/hello-upstream/server.py by path -- the exact file the demo
 compose stack runs -- and drives it two ways: through Keystone's own

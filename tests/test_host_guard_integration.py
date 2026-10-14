@@ -1,4 +1,4 @@
-"""End-to-end DNS-rebinding scenario against a real server (finding #1).
+"""End-to-end DNS-rebinding scenario against a real server.
 
 Builds the app exactly the way `server.main` does — `build_server` plus
 `mcp.http_app(path=..., middleware=_http_asgi_middleware(settings))` — rather

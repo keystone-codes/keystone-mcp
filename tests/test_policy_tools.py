@@ -1,4 +1,4 @@
-"""Built-in policy_* admin tools (V02 acceptance)."""
+"""Built-in policy_* admin tools."""
 
 from __future__ import annotations
 

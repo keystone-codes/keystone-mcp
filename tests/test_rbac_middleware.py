@@ -746,7 +746,7 @@ critical_tools: []
     assert {item.name for item in prompts} == {"users_list"}
 
 
-# --- signed identity assertion in observe (D04) --------------------------------
+# --- signed identity assertion in observe --------------------------------
 
 _OBSERVE_IDENTITY_SECRET = "observe-test-identity-secret--" + "k" * 10
 _OBSERVE_IDENTITY_ENV = "KEYSTONE_MCP_UPSTREAM_OBSERVE_IDENTITY_SECRET"

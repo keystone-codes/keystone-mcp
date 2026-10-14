@@ -125,7 +125,7 @@ def _find_trivy_step(doc: dict) -> dict:
 
 @pytest.mark.parametrize("name", ["security.yml", "release.yml"])
 def test_trivy_scan_step_is_blocking(name: str):
-    """A fixable HIGH/CRITICAL finding must fail the job, in both workflows (Z10).
+    """A fixable HIGH/CRITICAL finding must fail the job, in both workflows.
 
     ``continue-on-error`` would make the step always report success whatever
     Trivy finds, and ``exit-code``/``trivyignores`` control whether a finding

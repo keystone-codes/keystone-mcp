@@ -202,7 +202,7 @@ async def test_human_identity_required_denial_records_login_provider(
     monkeypatch,
 ):
     """The audit event names the sign-in method behind a human_identity_required
-    denial (X05), so an operator can read "signed in with api_key" straight
+ denial), so an operator can read "signed in with api_key" straight
     off the log line instead of cross-referencing the token store.
     """
     from keystone_mcp.adapters.stub import StubAdapter

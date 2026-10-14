@@ -31,7 +31,7 @@ _BEARER_RE = re.compile(
     r"\bBearer\s+(?!ksk_[0-9a-f]{12}_)[A-Za-z0-9._~+/=-]+(?![A-Za-z0-9_-])",
     re.IGNORECASE,
 )
-#: A bare compact JWT (e.g. the X-Keystone-Identity assertion, Y01) — three
+#: A bare compact JWT (e.g. the X-Keystone-Identity assertion) — three
 #: base64url segments, the header segment always starting with ``eyJ`` (the
 #: base64 encoding of ``{"``). Catches a token logged outside a "Bearer "
 #: prefix or a token=value pair, e.g. a raw header dump.
@@ -154,7 +154,7 @@ def redact_dict(data: dict[str, Any]) -> dict[str, Any]:
             "private_key",
             "credential",
             "api_token",
-            # Y01: the signed identity assertion header -- a JWT, not a
+ # The signed identity assertion header -- a JWT, not a
             # secret by itself, but it carries roles, email and task_id for
             # whoever is named in it and should not sit in plain log storage.
             "x-keystone-identity",
