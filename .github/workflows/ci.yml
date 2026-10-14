@@ -111,6 +111,28 @@ jobs:
           --dev-token ci-smoke-token
           --admin-email admin@example.com
 
+      - name: MCP Python SDK client e2e (modern)
+        run: >-
+          uv run python scripts/client_e2e.py
+          --dev-token ci-smoke-token
+          --email member@example.com
+          --admin-email admin@example.com
+          --protocol modern
+
+      - name: MCP Python SDK client e2e (legacy)
+        run: >-
+          uv run python scripts/client_e2e.py
+          --dev-token ci-smoke-token
+          --email member@example.com
+          --admin-email admin@example.com
+          --protocol legacy
+
+      # OV-F6: Node.js in CI needs product-owner approval (0.5.0 rule). Local check:
+      # `claude mcp list` works without ANTHROPIC_API_KEY and shows "Needs authentication".
+      - name: Claude Code MCP recognition (OV-F6)
+        if: false
+        run: echo "Blocked on OV-F6 — add setup-node and claude mcp add/list here"
+
       - name: Demo stack logs
         if: failure()
         run: docker compose -f docker-compose.demo.yml logs --no-color

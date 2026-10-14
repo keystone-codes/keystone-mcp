@@ -325,6 +325,14 @@ def test_plugin_template_job_installs_with_dependencies():
     assert "--no-deps" not in run_text
 
 
+def test_compose_smoke_runs_mcp_python_sdk_client_e2e():
+    doc = _load("ci.yml")
+    run_text = _job_step_run_text(doc, "compose-smoke")
+    assert "scripts/client_e2e.py" in run_text
+    assert "--protocol modern" in run_text
+    assert "--protocol legacy" in run_text
+
+
 def test_coverage_threshold_is_enforced():
     pyproject = (Path(__file__).resolve().parent.parent / "pyproject.toml").read_text(
         encoding="utf-8"
