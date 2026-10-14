@@ -48,6 +48,7 @@ from keystone_mcp.server import (
     install_policy_reload_signal,
 )
 from keystone_mcp.surface.reconciler import SurfaceReconciler
+from support.test_env import UNUSED_REDIS_URL
 
 LIVE_TOOLS = frozenset(
     {
@@ -1150,7 +1151,7 @@ def test_default_policy_loads_against_builtin_catalog_in_enforce(tmp_path: Path)
         rbac_policy_path=str(default_policy_path()),
         users_service_url="http://users:8000",
         users_service_token="token",
-        redis_url="redis://localhost:6379/0",
+        redis_url=UNUSED_REDIS_URL,
         rbac_audit_subject_salt="test-salt",
     )
     mcp = FastMCP("test-builtin-only")

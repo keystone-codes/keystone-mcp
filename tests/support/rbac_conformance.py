@@ -23,6 +23,7 @@ from keystone_mcp.router.engine import RouterEngine
 from keystone_mcp.router.rbac_middleware import RbacDecision, RbacMiddleware
 from keystone_mcp.router.registry import RouterRegistry
 from keystone_mcp.user_directory import build_in_memory_user_directory_resolver
+from support.test_env import UNUSED_REDIS_URL
 
 _DATA = Path(__file__).resolve().parent / "data"
 CONFORMANCE_POLICY_PATH = _DATA / "conformance-policy.yaml"
@@ -110,7 +111,7 @@ def conformance_settings(
         rbac_catalog_snapshot_path=str(snapshot_path) if snapshot_path else "",
         users_service_url="http://users:8000",
         users_service_token="token",
-        redis_url="redis://localhost:6379/0",
+        redis_url=UNUSED_REDIS_URL,
     )
 
 

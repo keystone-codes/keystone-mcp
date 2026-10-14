@@ -21,6 +21,7 @@ from keystone_mcp.router.rbac_middleware import RbacMiddleware
 from keystone_mcp.router.registry import Param, RouterRegistry
 from keystone_mcp.router.upstream import UpstreamRegistry
 from keystone_mcp.user_directory import build_in_memory_user_directory_resolver
+from support.test_env import UNUSED_REDIS_URL
 
 MOUNTED_TEST_POLICY = """\
 version: "test-mounted"
@@ -96,7 +97,7 @@ def _rbac_stack(
         rbac_policy_path=str(policy_path),
         users_service_url="http://users:8000",
         users_service_token="token",
-        redis_url="redis://localhost:6379/0",
+        redis_url=UNUSED_REDIS_URL,
     )
     resolver, backend, revision = build_in_memory_user_directory_resolver()
     backend.seed(subject_state["email"], roles=roles)

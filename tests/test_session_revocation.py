@@ -31,6 +31,7 @@ from keystone_mcp.router.registry import RouterRegistry
 from keystone_mcp.server import bootstrap_platform, build_server
 from keystone_mcp.user_directory.local import LocalUserDirectory
 from support.login import dev_token_login
+from support.test_env import require_redis_url
 from support.users_store import make_users_store
 
 VALID_TOKEN = "valid-test-token"
@@ -79,7 +80,7 @@ async def session_harness(tmp_path: Path):
         rbac_mode="enforce",
         rbac_policy_path=str(policy_path),
         users_backend="local",
-        redis_url="redis://localhost:6379/0",
+        redis_url=require_redis_url(),
         rbac_audit_subject_salt="test-salt",
         superadmin_email=ADMIN.email,
         users_db_url=f"sqlite:///{tmp_path}/keystone-users.db",
@@ -342,7 +343,7 @@ def test_users_logout_published_only_when_enforce(tmp_path: Path):
         rbac_mode="enforce",
         rbac_policy_path=str(policy_path),
         users_backend="local",
-        redis_url="redis://localhost:6379/0",
+        redis_url=require_redis_url(),
     )
     off = Settings(base_url=BASE_URL, rbac_mode="off", users_backend="local")
     directory = InMemoryUserDirectory()

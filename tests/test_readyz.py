@@ -14,7 +14,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import sys
 from pathlib import Path
 
@@ -29,6 +28,7 @@ from keystone_mcp.config import Settings
 from keystone_mcp.http.readiness import ReadinessProbe
 from keystone_mcp.server import bootstrap_rbac_policy, build_server
 from support.login import dev_token_login
+from support.test_env import require_redis_url
 
 BASE_URL = "http://localhost:8080"
 STDIO_SERVER = str(Path(__file__).parent / "support" / "stdio_upstream.py")
@@ -46,9 +46,7 @@ critical_tools: []
 
 @pytest.fixture
 def redis_url() -> str:
-    url = os.environ.get("KEYSTONE_MCP_REDIS_URL", "").strip()
-    if not url:
-        pytest.skip("KEYSTONE_MCP_REDIS_URL not set")
+    url = require_redis_url()
     return url
 
 

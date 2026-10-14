@@ -7,7 +7,6 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from uuid import uuid4
 
 import httpx2
 from asgi_lifespan import LifespanManager
@@ -29,6 +28,7 @@ from support.lowlevel_upstream import (
     asgi_http_client_factory,
     build_lowlevel_upstream_app,
 )
+from support.test_env import require_redis_url, users_revision_key
 
 ADMIN_EMAIL = "admin@example.com"
 SERVICE_NAME = "ci"
@@ -99,7 +99,7 @@ async def service_bearer_harness(
     store = build_users_store(
         Settings(
             users_db_url=f"sqlite:///{tmp_path}/keystone-users.db",
-            redis_url="redis://localhost:6379/7",
+            redis_url=require_redis_url(),
         )
     )
     await store.migrate()
@@ -163,8 +163,8 @@ async def service_bearer_harness(
         rbac_mode=rbac_mode,
         rbac_policy_path=str(policy_path),
         rbac_audit_subject_salt="service-bearer-salt",
-        redis_url="redis://localhost:6379/7",
-        users_redis_revision_key=f"km:users:revision:test:{uuid4().hex}",
+        redis_url=require_redis_url(),
+        users_redis_revision_key=users_revision_key("e2e"),
         users_backend="local",
         users_db_url=users_db_url,
         upstreams_json=upstreams_json,

@@ -37,6 +37,7 @@ from support.lowlevel_upstream import (
     asgi_http_client_factory,
     build_lowlevel_upstream_app,
 )
+from support.test_env import UNUSED_REDIS_URL
 
 ANN = VerifiedIdentity(email="ann@example.com")
 
@@ -495,7 +496,7 @@ async def test_identity_assertion_roles_match_rbac_decision(
             rbac_policy_path=str(policy_path),
             users_service_url="http://users:8000",
             users_service_token="token",
-            redis_url="redis://localhost:6379/0",
+            redis_url=UNUSED_REDIS_URL,
         )
         main = FastMCP("keystone-test")
         registry = RouterRegistry(RouterEngine(settings), main)

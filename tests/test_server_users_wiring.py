@@ -20,6 +20,7 @@ from keystone_mcp.config import Settings
 from keystone_mcp.identity import VerifiedIdentity
 from keystone_mcp.router.engine import RouterEngine
 from keystone_mcp.server import bootstrap_rbac_policy, build_server
+from support.test_env import UNUSED_REDIS_URL
 from support.users_store import make_users_store
 
 ADMIN = VerifiedIdentity(email="admin@example.com")
@@ -51,7 +52,7 @@ async def test_build_server_passes_store_and_policy_roles_to_users_tools(
         rbac_mode="enforce",
         rbac_policy_path=str(policy_path),
         users_backend="local",
-        redis_url="redis://localhost:6379/0",
+        redis_url=UNUSED_REDIS_URL,
         rbac_audit_subject_salt="test-salt",
     )
 

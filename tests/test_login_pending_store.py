@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import time
 
 import pytest
@@ -15,6 +14,7 @@ from keystone_mcp.auth.login_pending_store import (
     build_login_pending_store,
 )
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore, RedisOAuthStore
+from support.test_env import redis_key_prefix, require_redis_url
 
 logger = logging.getLogger(__name__)
 
@@ -87,8 +87,8 @@ async def test_build_shares_the_oauth_store_redis_pool():
         redis = object()
 
     class _Settings:
-        redis_url = "redis://localhost:6379/0"
-        login_pending_key_prefix = "km:login:"
+        redis_url = require_redis_url()
+        login_pending_key_prefix = redis_key_prefix("login")
 
     store = build_login_pending_store(_Settings(), oauth_store=_WithRedis())
     assert isinstance(store, RedisLoginPendingStore)
@@ -108,11 +108,9 @@ async def test_no_secrets_in_logs(memory_store: InMemoryLoginPendingStore, caplo
 
 @pytest.fixture
 async def redis_store():
-    redis_url = os.environ.get("KEYSTONE_MCP_REDIS_URL", "").strip()
-    if not redis_url:
-        pytest.skip("KEYSTONE_MCP_REDIS_URL not set")
-    prefix = "km:login:test:"
-    oauth = RedisOAuthStore(redis_url, key_prefix="km:oauth:test:")
+    url = require_redis_url()
+    prefix = redis_key_prefix("login")
+    oauth = RedisOAuthStore(url, key_prefix=redis_key_prefix("oauth"))
     store = RedisLoginPendingStore(oauth.redis, key_prefix=prefix, owns_redis=False)
     yield store, prefix
     await oauth.aclose()

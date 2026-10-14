@@ -7,6 +7,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from support.test_env import require_redis_url
+
 
 def test_cli_add_list_update_block(tmp_path: Path, monkeypatch):
     db = tmp_path / "users.db"
@@ -15,7 +17,7 @@ def test_cli_add_list_update_block(tmp_path: Path, monkeypatch):
         "KEYSTONE_MCP_USERS_BACKEND": "local",
         "KEYSTONE_MCP_USERS_DB_URL": f"sqlite:///{db}",
         "KEYSTONE_MCP_RBAC_MODE": "off",
-        "KEYSTONE_MCP_REDIS_URL": "redis://localhost:6379/2",
+        "KEYSTONE_MCP_REDIS_URL": require_redis_url(),
     }
 
     def run(*args: str) -> dict:
