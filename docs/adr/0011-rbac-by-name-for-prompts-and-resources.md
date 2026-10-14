@@ -43,6 +43,15 @@ mode, matching list-tools behaviour.
 
 Unknown or disallowed prompt names fail closed on `prompts/get`.
 
+## Amendment (0.6.0)
+
+Keystone-MCP publishes an upstream resource or resource template only when its
+URI (template) starts with `scheme://`; others are skipped with a warning and
+counted in `keystone_mcp_upstream_items_rejected_total`. `resources/read` is
+checked against the resources and templates of the namespace the URI belongs
+to (`scheme://<namespace>/…`). When the URI matches more than one of them,
+every matching RBAC name must be allowed.
+
 ## Alternatives considered
 
 **Separate `prompts:` block in the policy file** — More YAML for operators and

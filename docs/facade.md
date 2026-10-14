@@ -89,8 +89,13 @@ file has no separate prompts or resources section). Two upstream resources that
 share the same `name` get one RBAC name and one policy decision. Why:
 [ADR 0011](adr/0011-rbac-by-name-for-prompts-and-resources.md).
 
-`resources/read` is allowed only for URIs that match a published resource or
-template; any other URI is denied in `enforce` mode.
+Keystone-MCP publishes an upstream resource or resource template only when its
+URI (template) starts with `scheme://`; others are skipped with a warning and
+counted in `keystone_mcp_upstream_items_rejected_total`. `resources/read` is
+checked against the resources and templates of the namespace the URI belongs
+to (`scheme://<namespace>/…`). When the URI matches more than one of them,
+every matching RBAC name must be allowed. Any URI that matches nothing published
+is denied in `enforce` mode.
 
 Keystone does not publish `notifications/resources/updated` and does not
 implement `resources/subscribe`. On MCP 2026-07-28 a client may subscribe via
