@@ -12,8 +12,8 @@ from keystone_mcp import cli
 from keystone_mcp.config import ConfigError, check_configuration, load_settings
 from keystone_mcp.users import service
 from keystone_mcp.users.db import create_users_engine, make_session_factory, session_scope
-from keystone_mcp.users.models import UserRow
 from keystone_mcp.users.migrate import upgrade_to_head
+from keystone_mcp.users.models import UserRow
 from support.d02_profile_cases import PROFILE_CASES
 from support.test_env import UNUSED_REDIS_URL, require_redis_url
 

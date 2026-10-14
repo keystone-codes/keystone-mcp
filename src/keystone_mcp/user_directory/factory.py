@@ -214,6 +214,7 @@ def build_user_directory_resolver(
         cache=cache,
         circuit_breaker=circuit,
         api_key_cache=api_key_cache,
+        backend_label=str(settings.users_backend),
     )
 
 

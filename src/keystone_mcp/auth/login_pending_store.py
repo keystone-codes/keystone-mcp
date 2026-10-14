@@ -6,6 +6,7 @@ sessions). Records are single-use: :meth:`consume` atomically reads and deletes.
 
 from __future__ import annotations
 
+import contextlib
 import time
 from typing import Protocol, runtime_checkable
 
@@ -85,6 +86,21 @@ class InMemoryLoginPendingStore:
         return None
 
 
+@contextlib.contextmanager
+def _trace_redis_operation(operation: str):
+    from keystone_mcp.observability.tracing import (
+        DB_OPERATION_NAME,
+        DB_SYSTEM_NAME,
+        traced,
+    )
+
+    with traced(
+        f"keystone.redis.{operation}",
+        **{DB_SYSTEM_NAME: "redis", DB_OPERATION_NAME: operation},
+    ):
+        yield
+
+
 class RedisLoginPendingStore:
     """Login pending state in shared Redis (GETDEL / Lua for atomic consume)."""
 
@@ -129,14 +145,17 @@ class RedisLoginPendingStore:
             return await self._consume_via_lua(redis_key)
 
     async def put(self, namespace: str, key: str, payload: str, ttl_seconds: int) -> None:
-        ttl = max(int(ttl_seconds), 1)
-        await self._redis.set(self._record_key(namespace, key), payload, ex=ttl)
+        with _trace_redis_operation("put"):
+            ttl = max(int(ttl_seconds), 1)
+            await self._redis.set(self._record_key(namespace, key), payload, ex=ttl)
 
     async def get(self, namespace: str, key: str) -> str | None:
-        return await self._redis.get(self._record_key(namespace, key))
+        with _trace_redis_operation("get"):
+            return await self._redis.get(self._record_key(namespace, key))
 
     async def consume(self, namespace: str, key: str) -> str | None:
-        return await self._atomic_consume(self._record_key(namespace, key))
+        with _trace_redis_operation("consume"):
+            return await self._atomic_consume(self._record_key(namespace, key))
 
     async def aclose(self) -> None:
         if self._owns_redis:

@@ -78,7 +78,7 @@ jobs:
           python-version: ${{ matrix.python }}
 
       - name: Install dependencies
-        run: uv sync --locked --extra dev
+        run: uv sync --locked --extra dev --extra otel
 
       - name: Python version
         run: uv run python --version

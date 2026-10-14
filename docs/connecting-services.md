@@ -496,6 +496,16 @@ Keep the upstream's own storage (database, object store, vendor APIs) on a
 separate, private network; Keystone-MCP and the upstream's MCP facade only need
 to share `mcp-upstreams`.
 
+## Tracing
+
+When Keystone-MCP has `KEYSTONE_MCP_OTEL_ENABLED=true`, upstream HTTP calls
+receive W3C `traceparent` / `tracestate` (and MCP `_meta` may carry
+`traceparent` via the SDK). To continue the trace in your service, extract
+those headers on each MCP HTTP request and create spans for your tool handlers.
+The demo upstream [`../examples/hello-upstream/`](../examples/hello-upstream/)
+does this when `OTEL_EXPORTER_OTLP_ENDPOINT` is set — see
+[observability-tracing.md](observability-tracing.md).
+
 ## Checklist
 
 1. `/mcp` speaks Streamable HTTP MCP; `/healthz` returns 200 when ready.
