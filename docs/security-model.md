@@ -431,6 +431,16 @@ the full list; in short:
 - [ ] A decision on DCR is made: left on, or off with clients registered by hand.
 - [ ] Startup warnings (W1-W3) were read and are understood, not just silenced.
 
+## How this is tested
+
+Release 0.6.0 adds `tests/security/`: an outside-in checklist (SEC-01…SEC-15
+in `tests/security/checklist.yaml`) with at least one HTTP or MCP test per
+item. `tests/security/test_checklist_complete.py` fails CI when a checklist
+entry has no test or points at a missing test name. To add a new attack
+scenario, extend `checklist.yaml`, add a test under `tests/security/`, and
+list both the new test and any existing regression test by id
+(`tests/...py::test_name`).
+
 ## Related docs
 
 - [Production checklist](production-checklist.md)
