@@ -40,6 +40,13 @@ currently run `fastmcp>=4.1,<5`, MCP SDK 2). Why: [ADR 0010](adr/0010-fastmcp-ma
 To update a dependency by hand:
 `uv lock --upgrade-package <name>`.
 
+Runtime dependencies also carry an **upper bound** at the next major version
+after the one currently pinned in `uv.lock` (for example `starlette>=0.37,<2`
+while lock resolves starlette 1.x). That keeps `pip install keystone-mcp-gateway`
+from pulling an untested major. Raising an upper bound — allowing the next
+major — is a separate PR after the daily canary job has gone green on that
+major.
+
 ## Running the tests
 
 ```bash
