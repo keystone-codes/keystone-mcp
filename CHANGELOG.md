@@ -11,6 +11,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 ### Added
 
 - Secrets can be passed as files: `KEYSTONE_MCP_<X>_FILE` for every secret variable (list in `docs/environment.md#secrets-from-files`), and `<NAME>_FILE` for variables named by the upstream registry, stdio `env` and sign-in provider options. The file wins when both are set.
+- Audit event `rbac_authz_decision` carries `task_id` for tool calls and always carries `subject` and `subject_type`, including for service accounts.
 - `KEYSTONE_MCP_SESSION_MAX_AGE_SECONDS` (default `2592000`, 30 days; `0` means no limit): a session is renewed for at most this long after sign-in.
 - `api_keys_revoke` and `keystone-mcp keys revoke` report `revoked_tokens`.
 - CI runs the test suite on Python 3.14 and enforces 86 % line-and-branch coverage.
@@ -115,6 +116,9 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ### Security
 
+- Log redaction masks API keys that end with `-` or `_`, and Keystone access and refresh tokens (`km_at_…`, `km_rt_…`) in free text.
+- Every subject pseudonym written to logs uses `KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT`.
+- `Settings` no longer includes secrets in its `repr`.
 - `KEYSTONE_MCP_USERS_BACKEND_CONFIG` refuses secret-like keys anywhere in the file (`client_secret`, `api_key`, `private_key`, keys inside lists), not only `secret`/`password`/`token` at mapping level.
 - Stdio upstream stderr is rate-limited and masked (the entry's own `env` values and well-known token formats).
 - keystone-mcp no longer re-validates an upstream's tool result against the upstream's own `outputSchema` on its event loop, so a pathological schema can no longer stall the whole process (including `/healthz`).
@@ -135,6 +139,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ### Migration
 
+- Log searches by the unsalted subject hash in session-revocation, throttle and directory-failure lines must use the salted pseudonym (the same value as in audit events).
 - Services that ran in `observe` and read `roles` from the assertion: a denied call now has `roles: []`; check `rbac_decision`. Code copied from the identity examples: pass `issuer` (your `KEYSTONE_MCP_BASE_URL` without a trailing slash).
 - Before upgrading, run `keystone-mcp config check` with the new version against your environment.
 - An administrator who blocks or logs out a person, or imports a directory that blocks them, also ends their live sessions, and a Redis failure aborts the command instead of leaving the sessions up. Scripts that run `keystone-mcp users import` should treat exit code `3` as "written, but some sessions were not revoked — run again".

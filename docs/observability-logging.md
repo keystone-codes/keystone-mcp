@@ -58,9 +58,16 @@ Audit lines keep the legacy prefix `rbac audit` in `msg` with JSON payload;
 
 With `KEYSTONE_MCP_LOG_REDACT=true` (default), a filter redacts:
 
+- Keystone API keys (`ksk_<key_id>_…`), including when the secret ends with `-`
+  or `_`
+- Keystone OAuth access and refresh tokens in free text (`km_at_…`, `km_rt_…`)
 - `Bearer` tokens and common `token` / `password` / `authorization` patterns
+- Bare JWTs and the `X-Keystone-Identity` header value
 - Redis URLs that embed passwords
 - Email addresses (replaced with `***@***`)
+
+Subject pseudonyms in ordinary log lines use the same
+`KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT` as RBAC audit events.
 
 Upstream mount logs record **namespace and host** only, not full URLs with
 embedded credentials.

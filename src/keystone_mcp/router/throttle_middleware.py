@@ -31,7 +31,7 @@ from mcp_types import INTERNAL_ERROR
 
 from keystone_mcp.auth.throttle import PerIdentityThrottle
 from keystone_mcp.identity import resolve_verified_identity
-from keystone_mcp.observability.subject import hash_subject
+from keystone_mcp.observability.subject import subject_pseudonym
 
 if TYPE_CHECKING:
     from mcp.types import (
@@ -83,6 +83,7 @@ class ThrottleMiddleware(Middleware):
             context.message.name,
             identity.subject,
             operation="call_tool",
+            subject_type=identity.subject_type,
         )
         raise ToolError(THROTTLE_MESSAGE)
 
@@ -98,7 +99,9 @@ class ThrottleMiddleware(Middleware):
         if self._throttle.check(identity.subject):
             return await call_next(context)
 
-        self._record_throttled("", identity.subject, operation="list_tools")
+        self._record_throttled(
+            "", identity.subject, operation="list_tools", subject_type=identity.subject_type
+        )
         raise MCPError(code=INTERNAL_ERROR, message=THROTTLE_MESSAGE)
 
     async def on_list_prompts(
@@ -113,7 +116,9 @@ class ThrottleMiddleware(Middleware):
         if self._throttle.check(identity.subject):
             return await call_next(context)
 
-        self._record_throttled("", identity.subject, operation="list_prompts")
+        self._record_throttled(
+            "", identity.subject, operation="list_prompts", subject_type=identity.subject_type
+        )
         raise MCPError(code=INTERNAL_ERROR, message=THROTTLE_MESSAGE)
 
     async def on_list_resources(
@@ -128,7 +133,9 @@ class ThrottleMiddleware(Middleware):
         if self._throttle.check(identity.subject):
             return await call_next(context)
 
-        self._record_throttled("", identity.subject, operation="list_resources")
+        self._record_throttled(
+            "", identity.subject, operation="list_resources", subject_type=identity.subject_type
+        )
         raise MCPError(code=INTERNAL_ERROR, message=THROTTLE_MESSAGE)
 
     async def on_list_resource_templates(
@@ -143,7 +150,12 @@ class ThrottleMiddleware(Middleware):
         if self._throttle.check(identity.subject):
             return await call_next(context)
 
-        self._record_throttled("", identity.subject, operation="list_resource_templates")
+        self._record_throttled(
+            "",
+            identity.subject,
+            operation="list_resource_templates",
+            subject_type=identity.subject_type,
+        )
         raise MCPError(code=INTERNAL_ERROR, message=THROTTLE_MESSAGE)
 
     async def on_get_prompt(
@@ -162,6 +174,7 @@ class ThrottleMiddleware(Middleware):
             context.message.name,
             identity.subject,
             operation="get_prompt",
+            subject_type=identity.subject_type,
         )
         raise PromptError(THROTTLE_MESSAGE)
 
@@ -181,6 +194,7 @@ class ThrottleMiddleware(Middleware):
             str(context.message.uri),
             identity.subject,
             operation="read_resource",
+            subject_type=identity.subject_type,
         )
         raise ResourceError(THROTTLE_MESSAGE)
 
@@ -190,6 +204,7 @@ class ThrottleMiddleware(Middleware):
         email: str,
         *,
         operation: str,
+        subject_type: str | None = None,
     ) -> None:
         # Imported here: rbac_middleware owns the denial-reason vocabulary and
         # importing it at module scope would couple throttling to RBAC loading.
@@ -208,10 +223,11 @@ class ThrottleMiddleware(Middleware):
                 cache_hit=None,
                 operation=operation,
                 request_id=_request_correlation_id(),
+                subject_type=subject_type,
             )
             return
         logger.info(
             "throttled tool=%s subject=%s",
             tool_name,
-            hash_subject(email),
+            subject_pseudonym(email),
         )
