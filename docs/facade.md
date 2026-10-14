@@ -333,8 +333,29 @@ except `/healthz`/`/readyz`, by the `Host` allowlist
   published tools) is per-process too. With `KEYSTONE_MCP_THROTTLE_BACKEND=redis`,
   tool-call and sign-in IP limits are shared in Redis. What that means with more
   than one replica: [environment.md](environment.md#more-than-one-replica).
-- Changing `KEYSTONE_MCP_UPSTREAMS_PATH`, `KEYSTONE_MCP_UPSTREAMS`, proxy schema
-  patches, or per-tool timeouts still requires a process restart.
+- Changing proxy schema patches (`KEYSTONE_MCP_PROXY_SCHEMA_PATCHES`) or
+  per-tool timeouts (`KEYSTONE_MCP_UPSTREAM_TOOL_TIMEOUTS`) still requires a
+  process restart, as do changing the registry file path
+  (`KEYSTONE_MCP_UPSTREAMS_PATH`), inline registry JSON
+  (`KEYSTONE_MCP_UPSTREAMS`), or upstream egress flags
+  (`KEYSTONE_MCP_UPSTREAM_ALLOW_INSECURE_HTTP`,
+  `KEYSTONE_MCP_UPSTREAM_EGRESS_ALLOW_PRIVATE`).
+
+## Changing the registry without a restart
+
+When `KEYSTONE_MCP_UPSTREAMS_PATH` points at a file, edits are picked up on
+the next refresh tick after the file changes, or immediately on `SIGHUP`
+(`kill -HUP <pid>`). Added entries are discovered and published; removed
+entries disappear with their tools, prompts and resources; changed entries
+(URL, filters, timeouts, auth names, transport, stdio command, `limits`) are
+rebuilt. A brief gap inside one tick where a changed entry has no routes is
+normal — a call in that moment gets “unknown tool”. Calls already in flight
+keep using the adapter they started with. An invalid file is rejected with a
+WARNING and the previous registry stays in effect. Upstream secret values
+(from `auth.bearer_env`, `identity_secret_env`, stdio `env`, or `*_FILE`
+companions) are re-read on `SIGHUP` even when the file bytes are unchanged.
+Compare replicas with `keystone_mcp_upstream_registry_info{content_hash}` and
+`/readyz` `upstream_registry_hash` (internal callers).
 - When RBAC is enabled, startup is refused only if every configured upstream
   is unreachable, not running with an empty live catalog; a single
   unreachable upstream among several is a warning, not a refusal.

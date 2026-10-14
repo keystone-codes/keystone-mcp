@@ -156,7 +156,7 @@ Frozen since 0.5.0. Structural validation:
 
 - Document shape: `schema_version: 1`, `entries:` (YAML or JSON; the same
   array may be supplied in `KEYSTONE_MCP_UPSTREAMS` when no registry file is
-  loaded).
+  loaded). Changes to the registry file are applied without a restart (since 0.6.0).
 - Per-entry fields accepted by the loader and validator: `name`, `url`
   (required for `transport: http`), `namespace` (1–64 characters
   `A-Za-z0-9_-`, not starting or ending with `_` or `-`), `enabled`,
@@ -434,6 +434,8 @@ Frozen since 0.5.0. Metric names and label keys (not log message text):
 | `keystone_mcp_upstream_limit_rejections_total` | `namespace`, `reason` |
 | `keystone_mcp_upstream_circuit_state` | `namespace` |
 | `keystone_mcp_upstream_inflight` | `namespace` |
+| `keystone_mcp_upstream_registry_reload_total` | `outcome` |
+| `keystone_mcp_upstream_registry_info` | `content_hash` |
 | `keystone_mcp_oauth_client_registrations_total` | `outcome` |
 | `keystone_mcp_oauth_client_evictions_total` | (counter, no labels) |
 | `keystone_mcp_oauth_token_exchange_total` | `grant_type`, `outcome` |

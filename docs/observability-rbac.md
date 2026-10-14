@@ -106,6 +106,8 @@ OAuth rotation and replay events. Fields: `action` (`grace_reissue`,
 | `keystone_mcp_catalog_refresh_total` | `outcome` | Upstream catalog refresh (`unchanged` / `held` / `applied`) |
 | `keystone_mcp_catalog_refresh_changes_total` | `direction` | Tools added or removed (`added` / `removed`; counts only, no tool names) |
 | `keystone_mcp_upstream_available` | `namespace` | 1 if the upstream is considered available, else 0. For HTTP: last discovery or refresh succeeded. **For stdio: the catalog has been read successfully** (the process may still be in `backoff` while a previous catalog is kept). |
+| `keystone_mcp_upstream_registry_reload_total` | `outcome` | Registry file reload attempts (`applied`, `unchanged`, `rejected`) |
+| `keystone_mcp_upstream_registry_info` | `content_hash` | Active registry file identity (gauge value always `1`; first 12 hex chars of the file SHA-256) |
 | `keystone_mcp_upstream_process_restarts_total` | `namespace` | Cumulative restarts of a stdio upstream child after crash, hang, or failed start |
 | `keystone_mcp_upstream_stderr_suppressed_total` | `namespace` | Stderr log lines dropped by the stdio supervisor's rate limiter |
 | `keystone_mcp_upstream_items_rejected_total` | `namespace`, `kind`, `reason` | Catalog items Keystone refused to publish or pass on. `kind`: `tool`, `prompt`, `resource`, `template`, `catalog`, or `response`. `reason` (at 0.6.0): `name_collision`, `rbac_name_collision`, `unpublishable_schema`, `uri_without_scheme`, `schema_too_large`, `schema_pattern_too_long`, `schema_too_deep`, `catalog_limit`, `response_too_large`. Increments on every reconciliation attempt while the condition persists. |

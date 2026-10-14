@@ -746,6 +746,8 @@ def build_server(
                 body["policy_in_sync"] = in_sync
             else:
                 body["policy_in_sync"] = None
+            if reconciler is not None:
+                body["upstream_registry_hash"] = reconciler.upstream_registry_hash()
         return JSONResponse(body, status_code=200 if report.ready else 503)
 
     if settings.metrics_enabled:
@@ -766,18 +768,16 @@ def build_server(
     if directory_resolver is not None:
         revision_reader = getattr(directory_resolver, "_revision_reader", None)
 
-    reconciler: SurfaceReconciler | None = None
-    if settings.refresh_interval_seconds > 0:
-        reconciler = SurfaceReconciler(
-            settings=settings,
-            registry=registry,
-            upstreams=upstreams,
-            policy_manager=policy_manager,
-            observability=rbac_observability,
-            revision_reader=revision_reader,
-            policy_revision_watcher=policy_revision_watcher,
-            client_sessions=client_sessions,
-        )
+    reconciler = SurfaceReconciler(
+        settings=settings,
+        registry=registry,
+        upstreams=upstreams,
+        policy_manager=policy_manager,
+        observability=rbac_observability,
+        revision_reader=revision_reader,
+        policy_revision_watcher=policy_revision_watcher,
+        client_sessions=client_sessions,
+    )
     _reconciler_holder["reconciler"] = reconciler
     _upstreams_holder["upstreams"] = upstreams
 
@@ -879,27 +879,7 @@ def _register_default_upstreams(upstreams: UpstreamRegistry, settings: Settings)
     for cfg in settings.upstreams:
         if not cfg.enabled:
             continue
-        upstreams.add_upstream(
-            cfg.name,
-            cfg.url,
-            namespace=cfg.namespace,
-            tool_filter=cfg.build_tool_filter(),
-            strip_prefix=cfg.strip_prefix,
-            route_mode=cfg.route_mode,
-            discovery_timeout_seconds=cfg.discovery_timeout_seconds,
-            tool_timeout_seconds=cfg.tool_timeout_seconds,
-            bearer_env=cfg.bearer_env,
-            identity_secret_env=cfg.identity_secret_env,
-            identity_alg=cfg.identity_alg,
-            transport=cfg.transport,
-            command=cfg.command,
-            args=cfg.args,
-            env_from=cfg.env_from,
-            cwd=cfg.cwd,
-            publish_resources=cfg.publish_resources,
-            resource_filter=cfg.build_resource_filter(),
-            limits=cfg.limits,
-        )
+        upstreams.register_config(cfg)
 
 
 async def bootstrap_upstreams(
@@ -1009,7 +989,7 @@ def bootstrap_rbac_policy(
         raise PolicyLoadError(str(exc)) from exc
 
 
-def install_policy_reload_signal(
+def install_reload_signal(
     registry: RouterRegistry,
     policy_manager: RbacPolicyManager | None,
     *,
@@ -1017,14 +997,14 @@ def install_policy_reload_signal(
     reconciler: SurfaceReconciler | None = None,
     bootstrap_state: BootstrapState | None = None,
 ) -> None:
-    """Register SIGHUP to queue RBAC policy reload on the reconciler loop."""
-    if policy_manager is None:
-        return
+    """Register SIGHUP to queue RBAC policy and upstream registry reload."""
     if not hasattr(signal, "SIGHUP"):
         logger.info("SIGHUP unavailable on this platform; RBAC hot-reload via signal disabled")
         return
 
     def _reload_policy_inline() -> None:
+        if policy_manager is None:
+            return
         result = policy_manager.reload(registry)
         if observability is not None:
             observability.record_policy_reload(success=result.success)
@@ -1037,12 +1017,46 @@ def install_policy_reload_signal(
         if bootstrap_state is not None and bootstrap_state.is_pending():
             logger.info("SIGHUP ignored: startup still in progress")
             return
-        if reconciler is not None and reconciler.request_policy_reload():
+        reconciler_running = (
+            reconciler is not None
+            and reconciler._task is not None
+            and not reconciler._task.done()
+        )
+        if reconciler_running and reconciler._loop is not None:
+            reconciler._loop.call_soon_threadsafe(reconciler._policy_reload_event.set)
+            reconciler._loop.call_soon_threadsafe(reconciler._registry_reload_event.set)
             return
-        _reload_policy_inline()
+        if policy_manager is not None:
+            _reload_policy_inline()
+        if reconciler is not None and reconciler._loop is not None:
+            reconciler._loop.call_soon_threadsafe(
+                asyncio.ensure_future, reconciler.reload_registry_once()
+            )
+        else:
+            logger.warning(
+                "SIGHUP: upstream registry reload needs the surface reconciler; "
+                "set KEYSTONE_MCP_REFRESH_INTERVAL_SECONDS > 0"
+            )
 
     signal.signal(signal.SIGHUP, _on_sighup)
-    logger.info("rbac policy SIGHUP hot-reload handler installed")
+    logger.info("rbac policy and upstream registry SIGHUP hot-reload handler installed")
+
+
+def install_policy_reload_signal(
+    registry: RouterRegistry,
+    policy_manager: RbacPolicyManager | None,
+    *,
+    observability: RbacObservability | None = None,
+    reconciler: SurfaceReconciler | None = None,
+    bootstrap_state: BootstrapState | None = None,
+) -> None:
+    install_reload_signal(
+        registry,
+        policy_manager,
+        observability=observability,
+        reconciler=reconciler,
+        bootstrap_state=bootstrap_state,
+    )
 
 
 async def _warm_up_one_login_provider(provider: LoginProvider) -> None:
@@ -1282,7 +1296,7 @@ def main() -> None:
 
     _deferred_bootstrap_holder["factory"] = _deferred_bootstrap
 
-    install_policy_reload_signal(
+    install_reload_signal(
         registry,
         policy_manager,
         observability=observability,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 from typing import TYPE_CHECKING
 
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, generate_latest
@@ -105,6 +106,16 @@ _UPSTREAM_AVAILABLE = Gauge(
     "keystone_mcp_upstream_available",
     "1 when the last discovery or refresh of the upstream succeeded, else 0",
     ["namespace"],
+)
+_UPSTREAM_REGISTRY_RELOAD = Counter(
+    "keystone_mcp_upstream_registry_reload_total",
+    "Upstream registry file reload attempts",
+    ["outcome"],
+)
+_UPSTREAM_REGISTRY_INFO = Gauge(
+    "keystone_mcp_upstream_registry_info",
+    "Active upstream registry file identity (value is always 1)",
+    ["content_hash"],
 )
 _UPSTREAM_PROCESS_RESTARTS = Counter(
     "keystone_mcp_upstream_process_restarts_total",
@@ -339,6 +350,24 @@ class RbacMetrics:
         if not self._enabled:
             return
         _UPSTREAM_AVAILABLE.labels(namespace=namespace).set(1 if available else 0)
+
+    def clear_upstream_available(self, *, namespace: str) -> None:
+        if not self._enabled:
+            return
+        with contextlib.suppress(KeyError):
+            _UPSTREAM_AVAILABLE.remove(namespace=namespace)
+
+    def record_upstream_registry_reload(self, *, outcome: str) -> None:
+        if not self._enabled:
+            return
+        _UPSTREAM_REGISTRY_RELOAD.labels(outcome=outcome).inc()
+
+    def set_upstream_registry_identity(self, *, content_hash: str | None) -> None:
+        if not self._enabled:
+            return
+        _UPSTREAM_REGISTRY_INFO.clear()
+        if content_hash is not None:
+            _UPSTREAM_REGISTRY_INFO.labels(content_hash=content_hash).set(1)
 
     def record_upstream_process_restart(self, *, namespace: str) -> None:
         if not self._enabled:
