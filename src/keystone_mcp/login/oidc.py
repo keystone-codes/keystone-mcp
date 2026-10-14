@@ -350,6 +350,8 @@ class OidcLoginProvider(RedirectLoginProviderBase):
             provider=self._config.name,
             interactive=True,
             groups=groups,
+            issuer=str(claims["iss"]),
+            subject_id=str(claims["sub"]),
         )
 
     async def _load_discovery(self) -> _DiscoveryDocument:

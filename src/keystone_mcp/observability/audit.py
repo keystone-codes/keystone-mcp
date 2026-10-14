@@ -196,15 +196,19 @@ class SessionAuditRecorder:
         revoked_tokens: int | None = None,
         reason: str | None = None,
         delay_ms: int | None = None,
+        login_provider: str | None = None,
     ) -> None:
         if not self._enabled:
             return
+        hashed = hash_subject(subject, salt=self._subject_salt) if subject else None
         event: dict[str, Any] = {
             "event": "oauth_session",
             "action": action,
-            "subject": hash_subject(subject, salt=self._subject_salt),
+            "subject": hashed,
             "client_id": client_id,
         }
+        if login_provider is not None:
+            event["login_provider"] = login_provider
         if revoked_tokens is not None:
             event["revoked_tokens"] = revoked_tokens
         if reason is not None:

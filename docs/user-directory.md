@@ -179,6 +179,13 @@ plugins.md.
 | `service_unavailable` | The directory (database or external service) did not answer. |
 | `service_error` | The directory (HTTP backend) answered with a response this client could not parse (an unrecognized status, an empty or malformed body, or a record missing a required field). |
 | `catalog_unavailable` / `catalog_timeout` | The read path (`resolve_user`/`ping`) could not reach the directory — fail-closed for login and RBAC. |
+| `identity_binding_conflict` | The same identity-provider account (`iss`, `sub`) is already bound to another person. |
+
+The built-in directory declares the optional `identity_binding` capability and
+implements `IdentityBindingDirectory`: `get_identity_binding`, `bind_identity`
+(idempotent, row-locked), and `clear_identity_binding`. Keystone calls
+`bind_identity` during interactive OIDC login when
+`KEYSTONE_MCP_LOGIN_IDENTITY_BINDING=bind`.
 
 ## The HTTP directory contract
 

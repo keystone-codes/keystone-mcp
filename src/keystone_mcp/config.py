@@ -35,6 +35,7 @@ logger = logging.getLogger(__name__)
 
 LoginMethod = Literal["google", "api_key"]
 RbacMode = Literal["off", "observe", "enforce"]
+LoginIdentityBindingMode = Literal["off", "bind"]
 LogFormat = Literal["json", "text"]
 UsersBackend = str
 DeploymentProfile = Literal["local", "production"]
@@ -292,6 +293,18 @@ def _parse_log_format(raw: str, *, field_name: str = "KEYSTONE_MCP_LOG_FORMAT") 
             variable=field_name,
         )
     return value  # type: ignore[return-value]
+
+
+def _parse_login_identity_binding(
+    raw: str, *, field_name: str = "KEYSTONE_MCP_LOGIN_IDENTITY_BINDING"
+) -> LoginIdentityBindingMode:
+    value = raw.strip().lower()
+    if value in ("off", "bind"):
+        return value  # type: ignore[return-value]
+    raise ConfigError(
+        f"{field_name} must be 'off' or 'bind'; got {raw!r}",
+        variable=field_name,
+    )
 
 
 def _parse_rbac_mode(raw: str, *, field_name: str = "KEYSTONE_MCP_RBAC_MODE") -> RbacMode:
@@ -1011,6 +1024,11 @@ class Settings:
     )
     login_providers_path: str = field(
         default_factory=lambda: _env("KEYSTONE_MCP_LOGIN_PROVIDERS_PATH", "")
+    )
+    login_identity_binding: LoginIdentityBindingMode = field(
+        default_factory=lambda: _parse_login_identity_binding(
+            _env("KEYSTONE_MCP_LOGIN_IDENTITY_BINDING", "off")
+        )
     )
 
     # Users directory: built in by default (local), or an external HTTP service

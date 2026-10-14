@@ -123,7 +123,6 @@ def test_upgrade_to_0002_from_0001(tmp_path: Path) -> None:
     import alembic.config
 
     from keystone_mcp.users.db import create_users_engine
-    from keystone_mcp.users.service import create_user
 
     engine = create_users_engine(sqlite_url(tmp_path))
     cfg = alembic.config.Config()
@@ -132,19 +131,18 @@ def test_upgrade_to_0002_from_0001(tmp_path: Path) -> None:
         cfg.attributes["connection"] = conn
         alembic.command.upgrade(cfg, "0001_initial")
     with engine.begin() as conn:
-        from keystone_mcp.users.db import make_session_factory, session_scope
-
-        factory = make_session_factory(engine)
-        with session_scope(factory) as session:
-            create_user(
-                session,
-                email="keep@example.com",
-                full_name="Keep",
-                roles=["member"],
-                note=None,
-                created_by="test",
-                allowed_roles=None,
+        conn.execute(
+            text(
+                "INSERT INTO keystone_user "
+                "(email, full_name, is_blocked, created_at, updated_at) "
+                "VALUES ('keep@example.com', 'Keep', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
             )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO keystone_user_role (email, role) VALUES ('keep@example.com', 'member')"
+            )
+        )
     upgrade_to_head(engine)
     inspector = inspect(engine)
     assert "keystone_service_account" in inspector.get_table_names()
@@ -154,6 +152,47 @@ def test_upgrade_to_0002_from_0001(tmp_path: Path) -> None:
             text("SELECT email FROM keystone_user WHERE email = 'keep@example.com'")
         ).first()
     assert row is not None
+    assert current_revision(engine) == HEAD_REVISION
+
+
+def test_upgrade_to_0004_adds_identity_binding_columns(tmp_path: Path) -> None:
+    engine = create_users_engine(sqlite_url(tmp_path))
+    upgrade_to_head(engine)
+    inspector = inspect(engine)
+    columns = {col["name"] for col in inspector.get_columns("keystone_user")}
+    assert {"idp_issuer", "idp_subject", "idp_bound_at"}.issubset(columns)
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO keystone_user "
+                "(email, full_name, is_blocked, created_at, updated_at) "
+                "VALUES ('legacy@example.com', 'Legacy', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+            )
+        )
+    upgrade_to_head(engine)
+    with engine.connect() as conn:
+        row = conn.execute(
+            text(
+                "SELECT idp_issuer, idp_subject FROM keystone_user "
+                "WHERE email = 'legacy@example.com'"
+            )
+        ).first()
+    assert row == (None, None)
+    assert current_revision(engine) == HEAD_REVISION
+
+
+def test_null_identity_pairs_do_not_conflict_on_sqlite(tmp_path: Path) -> None:
+    engine = create_users_engine(sqlite_url(tmp_path))
+    upgrade_to_head(engine)
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO keystone_user "
+                "(email, full_name, is_blocked, created_at, updated_at) "
+                "VALUES ('a@example.com', 'A', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP), "
+                "('b@example.com', 'B', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+            )
+        )
     assert current_revision(engine) == HEAD_REVISION
 
 

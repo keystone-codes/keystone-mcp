@@ -16,10 +16,13 @@ from typing import Any, Literal
 
 from sqlalchemy import Table, func, select
 from sqlalchemy.dialects import postgresql, sqlite
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
+from keystone_mcp.user_directory.errors import IdentityBindingConflictError
 from keystone_mcp.user_directory.types import (
     ApiKeyVerification,
+    IdentityBinding,
     generate_api_key_material,
     is_valid_service_account_name,
     parse_api_key,
@@ -927,3 +930,73 @@ def verify_api_key(session: Session, key: str) -> ApiKeyVerification | None:
         subject_type=subject_type_of(row.subject),
         expires_at=row.expires_at,
     )
+
+
+def _binding_from_user(user: UserRow) -> IdentityBinding | None:
+    if user.idp_issuer is None or user.idp_subject is None or user.idp_bound_at is None:
+        return None
+    return IdentityBinding(
+        issuer=user.idp_issuer,
+        subject=user.idp_subject,
+        bound_at=user.idp_bound_at,
+    )
+
+
+def _lock_user_row(session: Session, email: str) -> UserRow:
+    normalized = normalize_email(email)
+    user = session.scalar(select(UserRow).where(UserRow.email == normalized).with_for_update())
+    if user is None:
+        raise UserNotFoundError(normalized)
+    return user
+
+
+def get_identity_binding(session: Session, email: str) -> IdentityBinding | None:
+    normalized = normalize_email(email)
+    user = session.scalar(select(UserRow).where(UserRow.email == normalized))
+    if user is None:
+        raise UserNotFoundError(normalized)
+    return _binding_from_user(user)
+
+
+def bind_identity(
+    session: Session,
+    *,
+    email: str,
+    issuer: str,
+    subject: str,
+) -> IdentityBinding:
+    user = _lock_user_row(session, email)
+    existing = _binding_from_user(user)
+    if existing is not None:
+        return existing
+
+    bound_at = utcnow()
+    user.idp_issuer = issuer
+    user.idp_subject = subject
+    user.idp_bound_at = bound_at
+    try:
+        session.flush()
+    except IntegrityError as exc:
+        session.rollback()
+        conflict = session.scalar(
+            select(UserRow).where(
+                UserRow.idp_issuer == issuer,
+                UserRow.idp_subject == subject,
+            )
+        )
+        if conflict is not None:
+            raise IdentityBindingConflictError() from exc
+        raise
+    return IdentityBinding(issuer=issuer, subject=subject, bound_at=bound_at)
+
+
+def clear_identity_binding(session: Session, *, email: str, actor: str) -> bool:
+    del actor
+    user = _lock_user_row(session, email)
+    if user.idp_issuer is None and user.idp_subject is None:
+        return False
+    user.idp_issuer = None
+    user.idp_subject = None
+    user.idp_bound_at = None
+    session.flush()
+    return True

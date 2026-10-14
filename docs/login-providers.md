@@ -108,7 +108,20 @@ Why: [ADR 0009](adr/0009-plugins-via-entry-points.md).
 `LoginIdentity` carries optional `key_id` and `key_expires_at`. Set them only
 when your form provider signs people in with a Keystone API key from the users
 directory; Keystone uses them to end the session when that key is revoked or
-expires. Other providers leave both fields unset.
+expires. Other providers leave both fields unset. OIDC redirect providers set
+`issuer` and `subject_id` from the verified ID token (`iss`, `sub`).
+
+## Binding a person to one identity provider account
+
+With `KEYSTONE_MCP_LOGIN_IDENTITY_BINDING=bind`, Keystone remembers the
+`(iss, sub)` pair from the first successful interactive sign-in for each
+person in a directory that declares `identity_binding`, and refuses later
+sign-ins that present the same email with a different provider account.
+Use this when everyone should enter through one OIDC issuer and you want to
+stop another configured provider from accepting the same email. Do not enable
+it when people legitimately sign in through more than one provider for the same
+mailbox. Reset a mistaken binding on the server host with
+`keystone-mcp users unbind-identity --email <email>` (built-in directory only).
 
 ## What the sign-in page looks like
 

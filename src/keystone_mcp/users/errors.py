@@ -16,6 +16,7 @@ from __future__ import annotations
 from keystone_mcp.user_directory.errors import (
     ActorEmailRequiredError,
     DirectoryTimeoutError,
+    IdentityBindingConflictError,
     InvalidRoleError,
     InvalidUserFieldError,
     LastAdministratorError,
@@ -30,6 +31,7 @@ __all__ = [
     "ActorEmailRequiredError",
     "DirectoryTimeoutError",
     "InvalidRoleError",
+    "IdentityBindingConflictError",
     "InvalidUserFieldError",
     "LastAdministratorError",
     "SelfAdminMutationError",

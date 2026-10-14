@@ -27,6 +27,7 @@ class FakeUser:
     email: str = "alice@example.com"
     email_verified: bool = True
     hd: str | None = None
+    subject_id: str = "fake-subject"
     groups: list[str] = field(default_factory=list)
     extra_claims: dict[str, Any] = field(default_factory=dict)
 
@@ -295,7 +296,7 @@ class FakeOidcIssuer:
         payload: dict[str, Any] = {
             "iss": iss,
             "aud": "wrong-aud" if self.tamper.wrong_audience else self.client_id,
-            "sub": "fake-subject",
+            "sub": self.user.subject_id,
             "email": self.user.email,
             "nonce": token_nonce,
             "iat": now,

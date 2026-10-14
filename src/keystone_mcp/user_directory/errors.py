@@ -110,6 +110,14 @@ class ActorEmailRequiredError(UsersError):
         )
 
 
+class IdentityBindingConflictError(UsersError):
+    def __init__(self) -> None:
+        super().__init__(
+            "This identity provider account is already bound to another person",
+            code="identity_binding_conflict",
+        )
+
+
 class UsersStoreUnavailableError(UsersError):
     def __init__(self, message: str) -> None:
         super().__init__(message, code="service_unavailable")

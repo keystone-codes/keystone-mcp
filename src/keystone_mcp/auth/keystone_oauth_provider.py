@@ -76,8 +76,15 @@ from keystone_mcp.login.protocol import (
     LoginRejected,
 )
 from keystone_mcp.observability.service import RbacObservability
-from keystone_mcp.user_directory.errors import UserDirectoryUnavailableError
-from keystone_mcp.user_directory.protocol import ApiKeyStateReader, UserDirectoryResolver
+from keystone_mcp.user_directory.errors import (
+    IdentityBindingConflictError,
+    UserDirectoryUnavailableError,
+)
+from keystone_mcp.user_directory.protocol import (
+    ApiKeyStateReader,
+    IdentityBindingDirectory,
+    UserDirectoryResolver,
+)
 from keystone_mcp.user_directory.types import subject_type_of
 from keystone_mcp.user_directory.util import email_folds_to_ascii, normalize_email
 
@@ -1021,6 +1028,7 @@ class KeystoneOAuthProvider(OAuthProvider):
         login_throttle: LoginAttemptThrottle | None = None,
         oauth_endpoint_throttle: LoginAttemptThrottle | None = None,
         observability: RbacObservability | None = None,
+        identity_binder: IdentityBindingDirectory | None = None,
     ) -> None:
         super().__init__(
             base_url=settings.base_url,
@@ -1047,6 +1055,7 @@ class KeystoneOAuthProvider(OAuthProvider):
             window_seconds=settings.login_throttle_window_seconds,
         )
         self._observability = observability
+        self._identity_binder = identity_binder
 
     def get_routes(self, mcp_path: str | None = None) -> list[Route]:
         routes = super().get_routes(mcp_path)
@@ -2578,6 +2587,51 @@ class KeystoneOAuthProvider(OAuthProvider):
 
         if not resolved.exists or resolved.is_blocked:
             return self._html_error(request, lang, "error_user_denied", 403)
+
+        if self._identity_binder is not None and identity.issuer and identity.subject_id:
+            try:
+                prior_binding = await self._identity_binder.get_identity_binding(identity.email)
+                binding = await self._identity_binder.bind_identity(
+                    email=identity.email,
+                    issuer=identity.issuer,
+                    subject=identity.subject_id,
+                )
+            except UserDirectoryUnavailableError:
+                return self._html_error(request, lang, "error_directory_unavailable", 503)
+            except IdentityBindingConflictError:
+                if self._observability is not None:
+                    self._observability.record_login_identity_binding(outcome="conflict")
+                    self._observability.record_session_event(
+                        action="identity_mismatch",
+                        subject=identity.subject_id,
+                        client_id="",
+                        login_provider=name,
+                    )
+                logger.warning(
+                    "login identity binding conflict for provider %s",
+                    name,
+                )
+                return self._html_error(request, lang, "error_user_denied", 403)
+
+            matched = binding.issuer == identity.issuer and binding.subject == identity.subject_id
+            if not matched:
+                if self._observability is not None:
+                    self._observability.record_login_identity_binding(outcome="mismatch")
+                    self._observability.record_session_event(
+                        action="identity_mismatch",
+                        subject=identity.subject_id,
+                        client_id="",
+                        login_provider=name,
+                    )
+                logger.warning(
+                    "login identity binding mismatch for provider %s",
+                    name,
+                )
+                return self._html_error(request, lang, "error_user_denied", 403)
+
+            if self._observability is not None:
+                outcome = "matched" if prior_binding is not None else "bound"
+                self._observability.record_login_identity_binding(outcome=outcome)
 
         return await self._complete_login(
             attempt.txn_id, identity, lang, auth_method=name, interactive=provider.interactive
