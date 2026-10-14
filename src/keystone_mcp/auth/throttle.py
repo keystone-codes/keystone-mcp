@@ -8,6 +8,7 @@ email budget.
 
 from __future__ import annotations
 
+import ipaddress
 import math
 import threading
 import time
@@ -28,6 +29,22 @@ from starlette.responses import Response
 # have ever been seen.
 _MAX_TRACKED_IPS = 20_000
 _SWEEP_EVERY_N_CALLS = 2_000
+
+
+def ip_bucket(host: str) -> str:
+    """Normalize a peer address for per-network login/OAuth throttling."""
+    if not host or host == "unknown":
+        return host or "unknown"
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return host
+    if isinstance(ip, ipaddress.IPv4Address):
+        return str(ip)
+    if ip.ipv4_mapped is not None:
+        return str(ip.ipv4_mapped)
+    return str(ipaddress.ip_network(f"{ip}/64", strict=False))
+
 
 # Same shape of bound on `LoginAttemptThrottle._email_failures` (finding #2).
 # `check_email_failures` used to read `self._email_failures[normalized]` on a
@@ -108,7 +125,7 @@ class LoginAttemptThrottle:
         if self._ip_max <= 0:
             return True, 0
         ts = time.monotonic() if now is None else now
-        key = ip_key or "unknown"
+        key = ip_bucket(ip_key or "unknown")
         with self._lock:
             self._ip_calls_since_sweep += 1
             if (

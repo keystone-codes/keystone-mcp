@@ -8,6 +8,18 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ## [Unreleased]
 
+### Added
+
+- Production startup warning when dynamic client registration is open and no redirect hosts are listed; metric `keystone_mcp_oauth_client_evictions_total`.
+
+### Security
+
+- Dynamic client registration limits client metadata (request ≤ 16 KB, `client_name` ≤ 100 characters, ≤ 10 `redirect_uris` of ≤ 2 KB, unlisted RFC 7591 fields dropped); a client that never completes a sign-in expires after 24 hours; at `KEYSTONE_MCP_OAUTH_MAX_CLIENTS` the oldest unused client is evicted instead of refusing everyone; IPv6 registration attempts are counted per /64.
+
+### Migration
+
+- A client that registered but did not sign in within 24 hours registers again on its next attempt (MCP clients do this on `invalid_client`). Client metadata fields other than the RFC 7591 ones Keystone uses (`logo_uri`, `tos_uri`, `policy_uri`, `contacts`, `jwks`, `jwks_uri`) are no longer stored.
+
 ## [0.5.0] - 2026-10-13
 
 ### Added

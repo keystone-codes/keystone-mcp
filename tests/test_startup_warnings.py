@@ -8,7 +8,7 @@ say so instead of implying open user administration.
 from __future__ import annotations
 
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
-from keystone_mcp.config import Settings
+from keystone_mcp.config import Settings, startup_warnings
 from keystone_mcp.server import build_server
 from support.login import dev_token_login
 
@@ -105,3 +105,40 @@ def _in_memory_resolver():
     from keystone_mcp.user_directory import build_in_memory_user_directory_resolver
 
     return build_in_memory_user_directory_resolver()
+
+
+def test_dcr_without_allowlist_warns_in_production():
+    settings = Settings(
+        base_url=BASE_URL,
+        deployment_profile="production",
+        oauth_dcr_enabled=True,
+        oauth_allowed_redirect_hosts=(),
+        oauth_allowed_redirect_scheme_hosts=(),
+    )
+    warnings = startup_warnings(settings)
+    assert any("KEYSTONE_MCP_OAUTH_ALLOWED_REDIRECT_HOSTS is empty" in w for w in warnings)
+
+    with_hosts = Settings(
+        base_url=BASE_URL,
+        deployment_profile="production",
+        oauth_dcr_enabled=True,
+        oauth_allowed_redirect_hosts=("claude.ai",),
+    )
+    assert not any(
+        "KEYSTONE_MCP_OAUTH_ALLOWED_REDIRECT_HOSTS is empty" in w
+        for w in startup_warnings(with_hosts)
+    )
+
+    dcr_off = Settings(
+        base_url=BASE_URL,
+        deployment_profile="production",
+        oauth_dcr_enabled=False,
+    )
+    assert not any(
+        "KEYSTONE_MCP_OAUTH_ALLOWED_REDIRECT_HOSTS is empty" in w for w in startup_warnings(dcr_off)
+    )
+
+    local = Settings(base_url=BASE_URL, deployment_profile="local", oauth_dcr_enabled=True)
+    assert not any(
+        "KEYSTONE_MCP_OAUTH_ALLOWED_REDIRECT_HOSTS is empty" in w for w in startup_warnings(local)
+    )

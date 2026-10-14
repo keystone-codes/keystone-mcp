@@ -53,6 +53,7 @@ reached from outside this machine. Two further rules are warnings — logged by
 | W3 | `production` | `KEYSTONE_MCP_UPSTREAM_EGRESS_ALLOW_PRIVATE=true`. |
 | W4 | `local` | `KEYSTONE_MCP_RBAC_MODE=enforce` and `KEYSTONE_MCP_DEV_TOKENS` is non-empty: a DEV token then signs any directory member in, including administrators. |
 | W5 | `local` | `KEYSTONE_MCP_HOST` is unspecified (`0.0.0.0`, `::`) and `KEYSTONE_MCP_DEV_TOKENS` is non-empty. Not a refusal — the Docker demo's own container legitimately binds `0.0.0.0` internally, relying on its port mapping to restrict reachability — but anyone who *can* reach the port signs in as any directory member. |
+| W21 | `production` | `KEYSTONE_MCP_OAUTH_DCR_ENABLED=true` and `KEYSTONE_MCP_OAUTH_ALLOWED_REDIRECT_HOSTS` (and custom-scheme entries) are empty: any site can register an OAuth client. List the redirect hosts of the clients you use. |
 | W7 | both | RBAC is `enforce`, `KEYSTONE_MCP_POLICY_TOOLS=full` (the default) and the policy file is not writable (e.g. mounted `:ro`). Not a refusal — `policy_read`/`policy_validate` still work — but every mutating `policy_*` call refuses with `policy_readonly` until the mount is read-write or this replica is switched to `KEYSTONE_MCP_POLICY_TOOLS=read-only`. |
 
 ## Where settings come from
@@ -140,9 +141,9 @@ ExecStart=/opt/keystone-mcp/.venv/bin/python -m keystone_mcp.server
 | `KEYSTONE_MCP_LOGIN_THROTTLE_IP_MAX` | `30` | Max `POST /login`, `POST /login/google` and `POST /register` attempts per client IP in the login throttle window; `0` disables the IP limit. |
 | `KEYSTONE_MCP_LOGIN_THROTTLE_EMAIL_MAX` | `10` | Max failed `POST /login` attempts per email in the window; successful logins do not count; `0` disables the email limit. |
 | `KEYSTONE_MCP_LOGIN_THROTTLE_WINDOW` | `300` | Login throttle sliding-window length, seconds. |
-| `KEYSTONE_MCP_OAUTH_DCR_ENABLED` | `true` | Dynamic client registration (RFC 7591). `false` removes `POST /register` and the `registration_endpoint` entry from `/.well-known/oauth-authorization-server`; register clients manually instead (see [Registering a client manually](#registering-a-client-manually) below). The `/register` IP throttle (`KEYSTONE_MCP_LOGIN_THROTTLE_IP_MAX`) is unaffected. |
+| `KEYSTONE_MCP_OAUTH_DCR_ENABLED` | `true` | Dynamic client registration (RFC 7591). `false` removes `POST /register` and the `registration_endpoint` entry from `/.well-known/oauth-authorization-server`; register clients manually instead (see [Registering a client manually](#registering-a-client-manually) below). The `/register` IP throttle (`KEYSTONE_MCP_LOGIN_THROTTLE_IP_MAX`) is unaffected. When enabled, `POST /register` accepts at most 16 KB of JSON; `client_name` ≤ 100 characters; ≤ 10 `redirect_uris` of ≤ 2 KB each; unlisted RFC 7591 fields are dropped. A client that never completes sign-in expires after 24 hours. |
 | `KEYSTONE_MCP_OAUTH_THROTTLE_IP_MAX` | `120` | Max `GET`/`POST /authorize` and `POST /token` requests per client IP in the login throttle window; `0` disables. In-process: each replica counts separately. |
-| `KEYSTONE_MCP_OAUTH_MAX_CLIENTS` | `10000` | Soft cap on the number of live (non-expired) registered OAuth clients. Past the cap, `POST /register` is refused with `invalid_client_metadata`; existing clients are never evicted. `0` means unlimited; a negative value is a startup error. Checked against the shared Redis client count, so the cap holds across replicas, though two replicas registering at the same instant can both pass the check (soft limit). |
+| `KEYSTONE_MCP_OAUTH_MAX_CLIENTS` | `10000` | Soft cap on the number of live (non-expired) registered OAuth clients. Past the cap, the oldest client that never completed a sign-in is evicted to admit the new one; if every client has been used, registration is refused with `invalid_client_metadata`. `0` means unlimited; a negative value is a startup error. Checked against the shared Redis client count, so the cap holds across replicas, though two replicas registering at the same instant can both pass the check (soft limit). |
 | `KEYSTONE_MCP_OAUTH_ALLOWED_REDIRECT_HOSTS` | `` (empty) | Comma-separated bare hostnames (no scheme, no port, no path — e.g. `claude.ai,localhost`), or an IPv6 literal (`::1`, or bracketed, `[::1]`); lower-cased, exact match only, no subdomains or wildcards. Empty means no restriction, the 0.3.1 behaviour. When set, `POST /register` refuses a client whose `redirect_uris` include a disallowed combination (`invalid_redirect_uri`) — including `redirect_uris: null`/empty, which is refused rather than treated as "no redirect_uris to check" — and both `/authorize` and `POST /token` (authorization-code and refresh-token exchange) refuse one whose client is not allowed, even for a client registered before the restriction was turned on or tightened. `/authorize`'s refusal does **not** redirect to the client's (disallowed) `redirect_uri`, under any error condition — including a client-side validation error such as an unregistered `scope`, which the MCP SDK itself would otherwise redirect to that `redirect_uri` before Keystone's own check ever ran: it 302s to this server's own `/login/redirect-not-allowed`, which renders a 400 page, so the browser never visits the disallowed host. A bare host entry matches `https` for that host, and `http` only when the host is also loopback (`localhost`/`127.0.0.1`/`::1`) — `http://claude.ai/...` is refused even if `claude.ai` is listed. A custom (non-http(s)) URI scheme, e.g. a native app's `cursor://...`, is matched only against an explicit `scheme://host` entry in the same list (e.g. `cursor://anysphere.cursor-retrieval`); `http://`/`https://` are refused in that form (they are already covered by the bare-host rule, and allowing them here would bypass the loopback-only rule for `http`). An entry containing `/`, or `:` that is not part of a valid IPv6 literal or a `scheme://host` form, is a startup error (`ConfigError`), as is a malformed `scheme://host` entry. |
 
 `/authorize` and `/token` share one IP budget, separate from the
@@ -192,7 +193,9 @@ sharing that proxy, because all their attempts count against the same IP
 budget.
 
 Why: the login and OAuth-token limiters key on `request.client.host`, the TCP
-peer uvicorn sees. Keystone-MCP runs on uvicorn with `proxy_headers=True`
+peer uvicorn sees. IPv6 addresses are grouped by `/64` (IPv4-mapped IPv6
+addresses count as their IPv4); counters are per process, not shared across
+replicas. Keystone-MCP runs on uvicorn with `proxy_headers=True`
 (uvicorn's own default), which only trusts `X-Forwarded-For` from peers
 listed in `FORWARDED_ALLOW_IPS` — a plain uvicorn/environment variable, no
 `KEYSTONE_MCP_` prefix, default `127.0.0.1`. Outside that allowlist the
@@ -283,10 +286,11 @@ does not grow without bound:
 - Access token: `KEYSTONE_MCP_TOKEN_TTL`.
 - Refresh token: `KEYSTONE_MCP_REFRESH_TOKEN_TTL`, renewed on every rotation
   (`/token` with `grant_type=refresh_token`).
-- Client: `max(KEYSTONE_MCP_REFRESH_TOKEN_TTL, KEYSTONE_MCP_TOKEN_TTL)` plus
-  one day, renewed on every token issued under it (authorization-code
-  exchange and refresh). A client idle longer than this lifetime is deleted
-  and the connector registers again on its next connection.
+- Client: 24 hours until the first successful sign-in (authorization-code
+  exchange or refresh); after that, `max(KEYSTONE_MCP_REFRESH_TOKEN_TTL,
+  KEYSTONE_MCP_TOKEN_TTL)` plus one day, renewed on every token issued under
+  it. A client idle longer than its lifetime is deleted and the connector
+  registers again on its next connection.
 
 Records written before this release have no TTL; one is attached the first
 time the record is read (see the Migration note in `CHANGELOG.md`).
@@ -298,6 +302,8 @@ time the record is read (see the Migration note in `CHANGELOG.md`).
 |---|---|---|---|
 | `subject:<sub>` | SET | Members `at:<token>` and `rt:<token>` for that subject (`sub` is the normalized email) | `max(REFRESH_TOKEN_TTL, TOKEN_TTL)` plus one day, renewed when a token is added |
 | `subject_nbf:<sub>` | STRING | Unix seconds: tokens issued before this moment are invalid | Same as the subject set |
+| `client_index` | ZSET | Live registered client ids (score = expiry time) | n/a (members expire with clients) |
+| `client_unused` | ZSET | Client ids that never completed sign-in (score = registration time) | n/a (entries older than 24 h are pruned) |
 
 Tokens issued before an upgrade are added to the subject set on first use
 (lazy migration). A block or `users_logout` still invalidates them via

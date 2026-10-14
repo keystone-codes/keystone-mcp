@@ -792,8 +792,9 @@ class Settings:
     )
     # Soft cap on the number of live (non-expired) registered OAuth clients.
     # `0` means unlimited; a negative value is a startup error. Registration
-    # beyond the cap is refused with `invalid_client_metadata`; existing
-    # clients are never evicted to make room.
+    # beyond the cap evicts the oldest client that never completed a sign-in;
+    # if every client has been used, registration is refused with
+    # `invalid_client_metadata`.
     oauth_max_clients: int = field(
         default_factory=lambda: _env_int("KEYSTONE_MCP_OAUTH_MAX_CLIENTS", 10000)
     )
@@ -1537,6 +1538,17 @@ def startup_warnings(settings: Settings, *, environ: Mapping[str, str] | None = 
                     "X-Author-Email header; set auth.identity_secret_env so the "
                     "service can verify who is calling"
                 )
+        # W21
+        if (
+            settings.oauth_dcr_enabled
+            and not settings.oauth_allowed_redirect_hosts
+            and not settings.oauth_allowed_redirect_scheme_hosts
+        ):
+            warnings.append(
+                "Dynamic client registration is open (KEYSTONE_MCP_OAUTH_DCR_ENABLED=true) "
+                "and KEYSTONE_MCP_OAUTH_ALLOWED_REDIRECT_HOSTS is empty: any site can "
+                "register an OAuth client. List the redirect hosts of the clients you use."
+            )
     else:
         dev_token_set = {t for t in settings.dev_tokens.split(",") if t.strip()}
         # W4: the only local-profile warning (dev tokens under off/observe are

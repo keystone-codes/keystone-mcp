@@ -106,6 +106,10 @@ _OAUTH_CLIENTS = Gauge(
     "keystone_mcp_oauth_clients",
     "Live (non-expired) registered OAuth clients, as seen by this replica",
 )
+_OAUTH_CLIENT_EVICTIONS = Counter(
+    "keystone_mcp_oauth_client_evictions_total",
+    "Unused OAuth clients evicted to admit a new registration",
+)
 
 
 class RbacMetrics:
@@ -249,6 +253,11 @@ class RbacMetrics:
         if not self._enabled:
             return
         _OAUTH_CLIENTS.set(count)
+
+    def record_oauth_client_eviction(self) -> None:
+        if not self._enabled:
+            return
+        _OAUTH_CLIENT_EVICTIONS.inc()
 
     def scrape(self) -> tuple[bytes, str]:
         return generate_latest(), CONTENT_TYPE_LATEST
