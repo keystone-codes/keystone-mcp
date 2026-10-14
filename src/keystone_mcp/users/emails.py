@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from keystone_mcp.user_directory.util import email_folds_to_ascii
 from keystone_mcp.users.errors import InvalidUserFieldError
 
 MAX_EMAIL_LENGTH = 320
@@ -19,6 +20,8 @@ def require_valid_email(email: str) -> str:
     through ``normalize_email`` alone: a malformed or unknown address there
     should surface as ``UserNotFoundError``, not a validation error.
     """
+    if email_folds_to_ascii(email):
+        raise InvalidUserFieldError("email", "contains characters that look like ASCII letters")
     normalized = normalize_email(email)
     if len(normalized) > MAX_EMAIL_LENGTH:
         raise InvalidUserFieldError("email", "too long")

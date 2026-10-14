@@ -17,6 +17,7 @@ import jwt
 from jwt import PyJWKSet
 
 from keystone_mcp.login.protocol import LoginIdentity, LoginRedirect, LoginRejected
+from keystone_mcp.user_directory.util import email_folds_to_ascii
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +63,7 @@ class OidcProviderConfig:
     allowed_domains: tuple[str, ...] = ()
     hosted_domain: str | None = None
     email_claim: str = "email"
+    email_verified_claim: str = "email_verified"
     require_email_verified: bool = True
     groups_claim: str | None = None
     extra_authorize_params: Mapping[str, str] = field(default_factory=dict)
@@ -312,12 +314,15 @@ class OidcLoginProvider:
             raise LoginRejected("identity_invalid", "token response missing id_token")
 
         claims = await self._verify_id_token(discovery, id_token, expected_nonce=expected_nonce)
-        email_raw = str(claims.get(self._config.email_claim, "")).strip().lower()
+        email_claim_raw = str(claims.get(self._config.email_claim, ""))
+        if email_folds_to_ascii(email_claim_raw):
+            raise LoginRejected("identity_invalid", "email contains characters that fold to ASCII")
+        email_raw = email_claim_raw.strip().lower()
         if not email_raw or "@" not in email_raw:
             raise LoginRejected("identity_invalid", "id_token missing a usable email claim")
 
         if self._config.require_email_verified:
-            verified = claims.get("email_verified")
+            verified = claims.get(self._config.email_verified_claim)
             if verified is not True and not (
                 isinstance(verified, str) and verified.lower() == "true"
             ):

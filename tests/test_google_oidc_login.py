@@ -17,6 +17,8 @@ from conftest import (
 )
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import Settings
+from keystone_mcp.login.factory import build_login_providers
+from keystone_mcp.login.oidc import OidcLoginProvider
 from keystone_mcp.server import build_server
 from keystone_mcp.user_directory.factory import build_in_memory_user_directory_resolver
 from support.google_oidc_fixtures import build_mock_google_oidc
@@ -307,6 +309,119 @@ async def test_google_domain_restriction(google_harness):
                 hd="example.com",
             )
             assert ok.status_code == 302
+
+
+def test_legacy_google_domain_from_settings(monkeypatch):
+    monkeypatch.setenv("KEYSTONE_MCP_GOOGLE_CLIENT_SECRET", "secret")
+    settings = Settings(
+        google_client_id="g-cid",
+        google_client_secret="secret",
+        google_allowed_domain="corp.example",
+        login_providers_path="",
+        enabled_login_methods=frozenset({"google"}),
+    )
+    providers = build_login_providers(settings)
+    google = next(p for p in providers if p.name == "google")
+    assert isinstance(google, OidcLoginProvider)
+    assert google.config.hosted_domain == "corp.example"
+    assert google.config.allowed_domains == ("corp.example",)
+
+
+async def test_legacy_google_domain_end_to_end(monkeypatch):
+    monkeypatch.setenv("KEYSTONE_MCP_GOOGLE_CLIENT_SECRET", "test-google-secret")
+    import httpx
+    from asgi_lifespan import LifespanManager
+
+    import keystone_mcp.server as server_module
+
+    settings = _google_settings(
+        google_allowed_domain="corp.example",
+        login_providers_path="",
+        enabled_login_methods=frozenset({"google", "api_key"}),
+    )
+    mock_google = build_mock_google_oidc(
+        settings.google_redirect_uri,
+        client_id=settings.google_client_id,
+        client_secret=settings.google_client_secret,
+        allowed_domain="corp.example",
+    )
+    real_build = server_module.build_login_providers
+
+    def _build_with_mock_google(*args, **kwargs):
+        providers = real_build(*args, **kwargs)
+        return [mock_google.provider if p.name == "google" else p for p in providers]
+
+    monkeypatch.setattr(server_module, "build_login_providers", _build_with_mock_google)
+    resolver, backend, _ = build_in_memory_user_directory_resolver()
+    backend.seed("alice@corp.example", roles=("operator",))
+    mcp, _, oauth, _, _, _, _ = build_server(
+        settings=settings,
+        oauth_store=InMemoryOAuthStore(),
+        user_resolver=resolver,
+    )
+    app = mcp.http_app(path=settings.http_path)
+    async with LifespanManager(app):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url=BASE_URL
+        ) as client:
+            client_id = await register_client(client)
+            _, challenge = make_pkce()
+            txn = await authorize_to_login(client, client_id, challenge, settings.resource_url)
+            redirect = await _start_google_redirect(client, txn)
+            assert "hd=corp.example" in redirect
+
+            response, _ = await _complete_google_callback(
+                client,
+                oauth,
+                mock_google,
+                txn,
+                email="alice@corp.example",
+                hd="other.example",
+            )
+            assert response.status_code == 403
+
+
+async def test_legacy_google_without_domain_has_no_hd(monkeypatch):
+    monkeypatch.setenv("KEYSTONE_MCP_GOOGLE_CLIENT_SECRET", "test-google-secret")
+    import httpx
+    from asgi_lifespan import LifespanManager
+
+    import keystone_mcp.server as server_module
+
+    settings = _google_settings(
+        google_allowed_domain="",
+        login_providers_path="",
+        enabled_login_methods=frozenset({"google", "api_key"}),
+    )
+    mock_google = build_mock_google_oidc(
+        settings.google_redirect_uri,
+        client_id=settings.google_client_id,
+        client_secret=settings.google_client_secret,
+    )
+    real_build = server_module.build_login_providers
+
+    def _build_with_mock_google(*args, **kwargs):
+        providers = real_build(*args, **kwargs)
+        return [mock_google.provider if p.name == "google" else p for p in providers]
+
+    monkeypatch.setattr(server_module, "build_login_providers", _build_with_mock_google)
+    resolver, backend, _ = build_in_memory_user_directory_resolver()
+    backend.seed("alice@example.com", roles=("operator",))
+    mcp, _, oauth, _, _, _, _ = build_server(
+        settings=settings,
+        oauth_store=InMemoryOAuthStore(),
+        user_resolver=resolver,
+    )
+    app = mcp.http_app(path=settings.http_path)
+    async with LifespanManager(app):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url=BASE_URL
+        ) as client:
+            client_id = await register_client(client)
+            _, challenge = make_pkce()
+            txn = await authorize_to_login(client, client_id, challenge, settings.resource_url)
+            redirect = await _start_google_redirect(client, txn)
+            assert "hd=" not in redirect
 
 
 async def test_google_unknown_and_blocked_users_denied(google_harness):

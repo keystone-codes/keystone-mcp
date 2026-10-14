@@ -28,7 +28,8 @@ Register that exact URI at the provider. Keystone logs each callback at startup.
 | `scopes` | `oidc` | `openid`, `email` | Must include `openid`. |
 | `hosted_domain` | `oidc` | — | Sends Google `hd` and requires matching claim. |
 | `email_claim` | `oidc` | `email` | JWT claim used as email. |
-| `require_email_verified` | `oidc` | `true` | Require `email_verified` (bool or `"true"`). |
+| `email_verified_claim` | `oidc` | `email_verified` | JWT claim checked when `require_email_verified` is on (must match `email_claim` when that is not `email`). |
+| `require_email_verified` | `oidc` | `true` | Require the verified claim (bool or `"true"`). |
 | `groups_claim` | `oidc` | — | Optional claim copied into `LoginIdentity.groups` (informational). |
 | `extra_authorize_params` | `oidc` | — | Extra query params (not `state`, `nonce`, PKCE, etc.). |
 | `additional_issuers` | `oidc` | — | Other accepted `iss` values in the id token. |
@@ -54,7 +55,8 @@ authorization server). Scopes: `openid email`.
 Register an app in the tenant. Issuer:
 `https://login.microsoftonline.com/<tenant-id>/v2.0`. Add optional `email` claim
 in Token configuration. Set `require_email_verified: false` and require
-`allowed_domains` (Entra does not emit `email_verified`). Do not use `/common` or
+`allowed_domains` (Entra does not emit `email_verified`), or set
+`email_verified_claim` if your tenant issues one. Do not use `/common` or
 `/organizations` — the issuer will not match discovery.
 
 ## Keycloak

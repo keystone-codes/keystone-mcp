@@ -5,7 +5,9 @@ hold, and whether they are blocked. The policy file decides, for each role,
 which tools it may call. The users directory decides who the person is,
 their roles, and their block state. An email has to exist in the directory,
 and not be blocked, before that person's first sign-in — signing in never
-creates an account.
+creates an account. Addresses where some characters would become Latin letters
+only after lower-casing or Unicode normalisation are not accepted on write
+paths (`users_add`, seeding, `KEYSTONE_MCP_SUPERADMIN_EMAIL`) or at sign-in.
 
 The directory's storage is a SQLite file for a single host, or PostgreSQL
 for production and for more than one replica. See

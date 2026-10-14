@@ -119,14 +119,17 @@ def build_login_providers(
 
     providers: list[LoginProvider] = []
     if _legacy_google_enabled(settings):
+        google_options: dict[str, str] = {
+            "client_id": settings.google_client_id,
+            "client_secret_env": "KEYSTONE_MCP_GOOGLE_CLIENT_SECRET",
+        }
+        if settings.google_allowed_domain.strip():
+            google_options["allowed_domain"] = settings.google_allowed_domain
         config = LoginProviderConfig(
             name="google",
             type="google",
             title="Google",
-            options={
-                "client_id": settings.google_client_id,
-                "client_secret_env": "KEYSTONE_MCP_GOOGLE_CLIENT_SECRET",
-            },
+            options=google_options,
         )
         providers.append(
             _build_one(
