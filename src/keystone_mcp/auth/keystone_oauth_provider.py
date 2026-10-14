@@ -22,7 +22,9 @@ Indicators (RFC 8707) bind the token audience and are checked in ``verify_token`
 
 from __future__ import annotations
 
+import base64
 import hashlib
+import hmac
 import json
 import logging
 import secrets
@@ -31,6 +33,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from urllib.parse import parse_qs, quote, urlencode, urlparse
 
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from fastmcp.server.auth import OAuthProvider
 from mcp.server.auth.provider import (
     AccessToken,
@@ -49,7 +52,14 @@ from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse, Re
 from starlette.routing import Route
 
 from keystone_mcp.auth.login_pending_store import LoginPendingStore
-from keystone_mcp.auth.oauth_store import CredentialRevokedError, KeystoneRefreshToken, OAuthStore
+from keystone_mcp.auth.oauth_store import (
+    CredentialRevokedError,
+    KeystoneRefreshToken,
+    OAuthStore,
+    RefreshTokenAlreadyRotatedError,
+    RotationRecord,
+    token_digest,
+)
 from keystone_mcp.auth.throttle import (
     LoginAttemptThrottle,
     login_throttle_response,
@@ -75,16 +85,34 @@ logger = logging.getLogger(__name__)
 
 _NS_PENDING_TXN = "txn"
 _NS_AUTH_CODE = "code"
+_NS_CODE_USED = "code_used"
 _NS_LOGIN_ATTEMPT = "login_attempt"
 _NS_REFRESH_AUTH = "refresh_auth"
 
-# How long a rotated-away refresh token's auth_method/resource marker is kept
-# around after rotation, instead of being deleted immediately (finding #2). A
-# concurrent second request that validated the old refresh token (via the
-# SDK's load_refresh_token) before the first request finished rotating it can
-# still reach exchange_refresh_token after that rotation completed; this
-# grace window is what it reads instead of nothing.
-_OLD_REFRESH_MARKER_GRACE_SECONDS = 60
+_GRACE_HMAC_KEY = b"keystone-mcp refresh grace v1"
+
+
+def _grace_encryption_key(old_refresh_token: str) -> bytes:
+    return hmac.new(_GRACE_HMAC_KEY, old_refresh_token.encode(), hashlib.sha256).digest()
+
+
+def _seal_grace(old_refresh_token: str, token: OAuthToken) -> str:
+    aes = AESGCM(_grace_encryption_key(old_refresh_token))
+    nonce = secrets.token_bytes(12)
+    ciphertext = aes.encrypt(nonce, token.model_dump_json().encode(), None)
+    return base64.urlsafe_b64encode(nonce + ciphertext).decode().rstrip("=")
+
+
+def _open_grace(old_refresh_token: str, blob: str) -> OAuthToken | None:
+    try:
+        padded = blob + "=" * (-len(blob) % 4)
+        raw = base64.urlsafe_b64decode(padded.encode())
+        nonce, ciphertext = raw[:12], raw[12:]
+        aes = AESGCM(_grace_encryption_key(old_refresh_token))
+        plaintext = aes.decrypt(nonce, ciphertext, None)
+        return OAuthToken.model_validate_json(plaintext)
+    except Exception:
+        return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1435,7 +1463,22 @@ class KeystoneOAuthProvider(OAuthProvider):
         self, client: OAuthClientInformationFull, authorization_code: str
     ) -> AuthorizationCode | None:
         code = await self._get_auth_code(authorization_code)
-        if code is None or code.client_id != client.client_id:
+        if code is None:
+            digest = token_digest(authorization_code)
+            used = await self._pending_store.get(_NS_CODE_USED, digest)
+            if used is not None:
+                try:
+                    data = json.loads(used)
+                except json.JSONDecodeError:
+                    data = {}
+                if data.get("client_id") == client.client_id:
+                    await self._on_code_replay(
+                        client,
+                        subject=str(data.get("subject") or ""),
+                        client_id=client.client_id,
+                    )
+            return None
+        if code.client_id != client.client_id:
             return None
         return code
 
@@ -1447,10 +1490,26 @@ class KeystoneOAuthProvider(OAuthProvider):
         # Single-use code (atomic consume).
         envelope = await self._consume_auth_code(authorization_code.code)
         if envelope is None:
-            raise ValueError("authorization code invalid or already consumed")
+            await self._on_code_replay(
+                client,
+                subject=authorization_code.subject or "",
+                client_id=client.client_id,
+            )
+            raise TokenError(
+                error="invalid_grant",
+                error_description="authorization code invalid or already used",
+            )
         consumed_code = envelope.code
         if consumed_code.code != authorization_code.code:
-            raise ValueError("authorization code invalid or already consumed")
+            await self._on_code_replay(
+                client,
+                subject=authorization_code.subject or "",
+                client_id=client.client_id,
+            )
+            raise TokenError(
+                error="invalid_grant",
+                error_description="authorization code invalid or already used",
+            )
 
         auth_method = envelope.auth_method
         interactive = envelope.interactive
@@ -1501,12 +1560,30 @@ class KeystoneOAuthProvider(OAuthProvider):
                 refresh_meta=refresh_meta_arg,
             )
         except CredentialRevokedError:
+            if self._observability is not None:
+                self._observability.record_token_exchange(
+                    grant_type="authorization_code", outcome="revoked"
+                )
             raise TokenError(
                 error="invalid_grant",
                 error_description="session was revoked",
             ) from None
         if not self._store.writes_refresh_meta:
             await self._put_refresh_meta(refresh_token, session_meta)
+        used_payload = json.dumps(
+            {"subject": email, "client_id": client.client_id},
+            separators=(",", ":"),
+        )
+        await self._pending_store.put(
+            _NS_CODE_USED,
+            token_digest(authorization_code.code),
+            used_payload,
+            self._settings.auth_code_ttl_seconds,
+        )
+        if self._observability is not None:
+            self._observability.record_token_exchange(
+                grant_type="authorization_code", outcome="issued"
+            )
         return OAuthToken(
             access_token=access_token,
             token_type="Bearer",
@@ -1520,13 +1597,25 @@ class KeystoneOAuthProvider(OAuthProvider):
         self, client: OAuthClientInformationFull, refresh_token: str
     ) -> RefreshToken | None:
         token = await self._store.get_refresh_token(refresh_token)
-        if token is None or token.client_id != client.client_id:
+        if token is not None:
+            if token.client_id != client.client_id:
+                return None
+            if token.expires_at is not None and token.expires_at < time.time():
+                await self._store.delete_refresh_token(refresh_token)
+                return None
+            return token
+        rotated = await self._store.get_rotated_refresh(refresh_token)
+        if rotated is None or rotated.client_id != client.client_id:
             return None
-        if token.expires_at is not None and token.expires_at < time.time():
-            # Past its lifetime: drop it so the session cannot be renewed.
-            await self._store.delete_refresh_token(refresh_token)
-            return None
-        return token
+        return KeystoneRefreshToken(
+            token=refresh_token,
+            client_id=rotated.client_id,
+            scopes=rotated.scopes,
+            expires_at=rotated.expires_at,
+            resource=rotated.resource,
+            subject=rotated.subject,
+            rotated=True,
+        )
 
     async def exchange_refresh_token(
         self,
@@ -1534,26 +1623,19 @@ class KeystoneOAuthProvider(OAuthProvider):
         refresh_token: RefreshToken,
         scopes: list[str],
     ) -> OAuthToken:
-        """Rotate the refresh token, persisting the replacement before dropping it.
-
-        Order matters. The old token is deleted last, so a crash part-way through
-        leaves the client holding a refresh token that still works: at worst both
-        tokens are briefly valid, and the next successful rotation clears the old
-        one. Deleting first (as this did) means a crash before the new token is
-        stored strands the session with nothing to present, forcing a re-login.
-        """
+        """Rotate the refresh token atomically; replays within the grace window reuse the response."""
         self._refuse_if_client_redirect_uris_not_allowed(client)
-        # Read without deleting: two concurrent refreshes of the same token
-        # would otherwise race a GETDEL, and the loser would see no marker and
-        # fall back to "api_key", downgrading a Google session. The marker is
-        # dropped only after the new one is written (below). The same marker
-        # also carries the resource (RFC 8707) the original access token was
-        # bound to, so a refreshed token keeps that binding instead of coming
-        # back unbound.
+        if isinstance(refresh_token, KeystoneRefreshToken) and refresh_token.rotated:
+            return await self._replay_or_grace(client, refresh_token)
+
         old_meta = await self._read_refresh_meta(refresh_token.token)
         if old_meta is None:
             logger.warning("refresh refused: session marker is missing")
             await self._store.delete_refresh_token(refresh_token.token)
+            if self._observability is not None:
+                self._observability.record_token_exchange(
+                    grant_type="refresh_token", outcome="marker_missing"
+                )
             raise TokenError(
                 error="invalid_grant",
                 error_description="session marker is missing; sign in again",
@@ -1562,20 +1644,15 @@ class KeystoneOAuthProvider(OAuthProvider):
         resource = old_meta.resource
         interactive = old_meta.interactive
         if auth_method not in self._providers:
-            # The sign-in provider this session was opened through was
-            # removed from the configuration (or was never configured at
-            # all, for a marker that never belonged to this deployment).
-            # X03 used to read an unrecognised auth_method as "api_key",
-            # silently turning an interactive session into a machine one
-            # that could still refresh forever; X05 refuses instead, since
-            # only the operator removing the provider on purpose should end
-            # sessions opened through it -- not let them keep renewing under
-            # a different, weaker identity.
             logger.warning(
                 "refresh refused: sign-in provider %r is no longer configured", auth_method
             )
             await self._store.delete_refresh_token(refresh_token.token)
             await self._pending_store.consume(_NS_REFRESH_AUTH, refresh_token.token)
+            if self._observability is not None:
+                self._observability.record_token_exchange(
+                    grant_type="refresh_token", outcome="provider_removed"
+                )
             raise TokenError(
                 error="invalid_grant",
                 error_description="sign-in provider is no longer configured",
@@ -1594,8 +1671,44 @@ class KeystoneOAuthProvider(OAuthProvider):
         )
         new_meta = _meta_carry_forward(old_meta, resource=resource)
         encoded_meta = encode_refresh_meta(new_meta)
+        response = OAuthToken(
+            access_token=access_token,
+            token_type="Bearer",
+            expires_in=self._settings.token_cache_ttl_seconds,
+            scope=" ".join(granted) if granted else None,
+            refresh_token=new_refresh,
+        )
 
-        # Renew the client's lifetime before writing the new refresh token.
+        grace_seconds = self._settings.oauth_refresh_grace_seconds
+        grace_blob: str | None = None
+        if grace_seconds > 0:
+            grace_blob = _seal_grace(refresh_token.token, response)
+
+        if refresh_token.expires_at is None:
+            used_ttl = self._settings.refresh_token_ttl_seconds
+        else:
+            used_ttl = max(int(refresh_token.expires_at - now), 1)
+        used_json = json.dumps(
+            {
+                "subject": email,
+                "client_id": client.client_id,
+                "scopes": granted,
+                "expires_at": refresh_token.expires_at,
+                "resource": resource,
+                "rotated_at": now,
+            },
+            separators=(",", ":"),
+        )
+        old_meta_ttl = max(grace_seconds, 1)
+        rotation = RotationRecord(
+            used_json=used_json,
+            used_ttl=used_ttl,
+            grace_blob=grace_blob,
+            grace_ttl=grace_seconds,
+            old_meta=encode_refresh_meta(old_meta) if self._store.writes_refresh_meta else None,
+            old_meta_ttl=old_meta_ttl,
+        )
+
         await self._store.touch_client(client.client_id)
         access_record = AccessToken(
             token=access_token,
@@ -1624,41 +1737,125 @@ class KeystoneOAuthProvider(OAuthProvider):
                 refresh=refresh_record,
                 replace_refresh_token=refresh_token.token,
                 refresh_meta=refresh_meta_arg,
+                rotation=rotation,
             )
+        except RefreshTokenAlreadyRotatedError:
+            replay_token = KeystoneRefreshToken(
+                token=refresh_token.token,
+                client_id=refresh_token.client_id,
+                scopes=refresh_token.scopes,
+                expires_at=refresh_token.expires_at,
+                subject=email,
+                rotated=True,
+            )
+            return await self._replay_or_grace(client, replay_token)
         except CredentialRevokedError:
             await self._pending_store.consume(_NS_REFRESH_AUTH, refresh_token.token)
+            if self._observability is not None:
+                self._observability.record_token_exchange(
+                    grant_type="refresh_token", outcome="revoked"
+                )
             raise TokenError(
                 error="invalid_grant",
                 error_description="session was revoked",
             ) from None
         if not self._store.writes_refresh_meta:
             await self._put_refresh_meta(new_refresh, new_meta)
+            await self._put_refresh_meta(refresh_token.token, old_meta, ttl_seconds=old_meta_ttl)
+        if self._observability is not None:
+            self._observability.record_token_exchange(grant_type="refresh_token", outcome="issued")
+        return response
 
-        # Rewrite the old marker with a short grace TTL instead of deleting it
-        # outright (finding #2). The two calls a concurrent rotation of the
-        # same token race are `load_refresh_token` (SDK, before either request
-        # reaches this method) and this method's own `_read_refresh_meta`
-        # above: both requests validate the old token before either one
-        # rotates it, so a second request can still arrive here after the
-        # first has already finished. Deleting the marker immediately meant
-        # that second request read nothing and fell back to `("api_key",
-        # None)`, downgrading a Google session (and losing its resource
-        # binding) even though its own refresh token is perfectly valid.
-        # Keeping the marker alive a little longer closes that window; it
-        # still disappears well before the old refresh token could ever be
-        # presented again (it no longer exists in the OAuth store at all).
-        await self._put_refresh_meta(
-            refresh_token.token,
-            old_meta,
-            ttl_seconds=_OLD_REFRESH_MARKER_GRACE_SECONDS,
+    async def _replay_or_grace(
+        self, client: OAuthClientInformationFull, refresh_token: KeystoneRefreshToken
+    ) -> OAuthToken:
+        token_str = refresh_token.token
+        blob = await self._store.get_refresh_grace(token_str)
+        if blob is not None:
+            opened = _open_grace(token_str, blob)
+            if opened is not None and opened.refresh_token is not None:
+                still_live = await self._store.get_refresh_token(opened.refresh_token)
+                if still_live is not None:
+                    rotated = await self._store.get_rotated_refresh(token_str)
+                    delay_ms: int | None = None
+                    if rotated is not None:
+                        delay_ms = max(0, int((time.time() - rotated.rotated_at) * 1000))
+                    if self._observability is not None:
+                        self._observability.record_session_event(
+                            action="grace_reissue",
+                            subject=refresh_token.subject or "",
+                            client_id=client.client_id,
+                            delay_ms=delay_ms,
+                        )
+                        self._observability.record_token_exchange(
+                            grant_type="refresh_token", outcome="grace_reissue"
+                        )
+                    return opened
+        rotated = await self._store.get_rotated_refresh(token_str)
+        if rotated is not None:
+            revoked_count = await self._revoke_client_grant(rotated.subject, client.client_id)
+            if self._observability is not None:
+                self._observability.record_session_event(
+                    action="refresh_replay",
+                    subject=rotated.subject,
+                    client_id=client.client_id,
+                    revoked_tokens=revoked_count,
+                )
+                self._observability.record_token_exchange(
+                    grant_type="refresh_token", outcome="replay_revoked"
+                )
+            raise TokenError(
+                error="invalid_grant",
+                error_description="refresh token was already used",
+            )
+        if self._observability is not None:
+            self._observability.record_token_exchange(
+                grant_type="refresh_token", outcome="rotated_elsewhere"
+            )
+        raise TokenError(
+            error="invalid_grant",
+            error_description="refresh token is no longer valid",
         )
-        return OAuthToken(
-            access_token=access_token,
-            token_type="Bearer",
-            expires_in=self._settings.token_cache_ttl_seconds,
-            scope=" ".join(granted) if granted else None,
-            refresh_token=new_refresh,
+
+    async def _revoke_client_grant(self, subject: str, client_id: str) -> int:
+        access_list, refresh_list = await self._store.subject_tokens(subject)
+        access_tokens = [a.token for a in access_list if a.client_id == client_id]
+        refresh_tokens = [r.token for r in refresh_list if r.client_id == client_id]
+        revoked = await self._store.revoke_tokens(
+            subject, access=access_tokens, refresh=refresh_tokens
         )
+        for rt in revoked.refresh_tokens:
+            await self._pending_store.consume(_NS_REFRESH_AUTH, rt)
+        return revoked.access + len(revoked.refresh_tokens)
+
+    async def _on_code_replay(
+        self,
+        client: OAuthClientInformationFull,
+        *,
+        subject: str,
+        client_id: str,
+    ) -> None:
+        """Revoke tokens issued for a reused authorization code.
+
+        If two clients exchange the same code concurrently, the loser's replay
+        handler may run before the winner's token pair is committed, so the
+        winner's tokens can survive that race; a later replay still revokes all
+        tokens for that person at that OAuth client.
+        """
+        if subject:
+            revoked_count = await self._revoke_client_grant(subject, client_id)
+        else:
+            revoked_count = 0
+        if self._observability is not None:
+            self._observability.record_session_event(
+                action="code_replay",
+                subject=subject,
+                client_id=client_id,
+                revoked_tokens=revoked_count or None,
+            )
+            self._observability.record_token_exchange(
+                grant_type="authorization_code", outcome="code_replay"
+            )
 
     # ── Access tokens (Resource Server) ───────────────────────────────────
     async def load_access_token(self, token: str) -> AccessToken | None:

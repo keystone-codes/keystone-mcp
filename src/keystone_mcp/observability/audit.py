@@ -180,6 +180,47 @@ class UsersMutationAuditRecorder:
             logger.warning("rbac users mutation audit emit failed", exc_info=True)
 
 
+class SessionAuditRecorder:
+    """Best-effort audit for OAuth session rotation and replay events."""
+
+    def __init__(self, *, enabled: bool, subject_salt: str = "") -> None:
+        self._enabled = enabled
+        self._subject_salt = subject_salt
+
+    def record_session_event(
+        self,
+        *,
+        action: str,
+        subject: str,
+        client_id: str,
+        revoked_tokens: int | None = None,
+        reason: str | None = None,
+        delay_ms: int | None = None,
+    ) -> None:
+        if not self._enabled:
+            return
+        event: dict[str, Any] = {
+            "event": "oauth_session",
+            "action": action,
+            "subject": hash_subject(subject, salt=self._subject_salt),
+            "client_id": client_id,
+        }
+        if revoked_tokens is not None:
+            event["revoked_tokens"] = revoked_tokens
+        if reason is not None:
+            event["reason"] = reason
+        if delay_ms is not None:
+            event["delay_ms"] = delay_ms
+        try:
+            logger.info(
+                "rbac audit %s",
+                json.dumps(event, sort_keys=True, separators=(",", ":")),
+                extra={"stream": "audit"},
+            )
+        except Exception:
+            logger.warning("oauth session audit emit failed", exc_info=True)
+
+
 class PolicyMutationAuditRecorder:
     """Best-effort audit for ``policy_*`` administrative operations.
 

@@ -12,6 +12,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 - `keystone-mcp users admins` lists full administrators, management roles and their holders; exits 1 when there is no active full administrator.
 - `keystone-mcp users grant-admin --role <name>` grants a named role that gives full administration. Without the flag, when the policy has no `administrator` role but exactly one role that gives full administration, that role is granted.
+- `KEYSTONE_MCP_OAUTH_REFRESH_GRACE_SECONDS`; metric `keystone_mcp_oauth_token_exchange_total`; audit event `oauth_session`.
 - Metric `keystone_mcp_admin_refusals_total`; audit field `actor_subject_type` on `rbac_policy_mutation`.
 - `LoginIdentity.key_id` and `LoginIdentity.key_expires_at` (optional) for form providers that sign people in with a Keystone API key.
 - `docs/clients.md` lists the client versions tested with this release and known
@@ -74,6 +75,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ### Security
 
+- Refresh-token rotation is atomic: a refresh token is exchanged at most once. A second exchange within `KEYSTONE_MCP_OAUTH_REFRESH_GRACE_SECONDS` (default 10 s) gets the same response; a reuse after that revokes every token of that person at that OAuth client and is audited (`oauth_session`). Reusing an authorization code returns `invalid_grant` and revokes the tokens issued from it.
 - Release images are scanned by Trivy per platform (amd64 and arm64) on the exact digest that is then tagged; base images are pinned by digest and updated by Dependabot.
 - The HTTP users directory's `resolve` answer is checked strictly: a non-boolean `exists`, `is_blocked` or a non-string role is treated as the directory being unavailable instead of granting access. `0`/`1` are still accepted with a warning; a missing `is_blocked` is read as `false` with a warning.
 - A sign-in e-mail whose characters become ASCII letters only after lower-casing or Unicode normalisation is refused.
@@ -88,6 +90,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 - Host installs from 0.5 docs: reinstall with `uv sync --locked --no-dev --no-editable` in the deployed checkout and change `ExecStart` to `.venv/bin/python -m keystone_mcp.server`. `scripts/deploy.sh` now stops when run outside a git clone; set `DEPLOY_REF` to the release tag.
 - Before upgrading, list who holds management roles: run `keystone-mcp users admins` on the new version (before switching traffic) — it lists full administrators, management roles and their holders. People in delegated roles (for example `users_*` only) keep managing ordinary accounts but get `forbidden` on management roles and their holders. If your administrator role is not named `administrator`, recovery is `keystone-mcp users grant-admin --email … [--role <name>]`.
+- A client that reuses an old refresh token more than `KEYSTONE_MCP_OAUTH_REFRESH_GRACE_SECONDS` after rotating it now loses its session (the person signs in again). While 0.5.x and 0.6.0 replicas run side by side, a token rotated by a 0.5.x replica is not recognised as reused; detection holds once every replica runs 0.6.0. Rolling back to 0.5.x restores the old 60-second behaviour; nothing is lost.
 - Automation that changed users, service accounts or API keys through MCP with a service-account key now gets `forbidden`; do it from a person's session or with the `keystone-mcp` CLI on the host.
 - Sessions opened on 0.4.x/0.5.x keep working after the upgrade. Rolling back to 0.5.x keeps sessions opened on 0.6.0: 0.5.x ignores the new marker fields. While replicas of both versions run side by side, a session renewed by a 0.5.x replica loses the new fields again; session max-age and key checks apply once every replica runs 0.6.0.
 - Each list request now uses one slot of `KEYSTONE_MCP_THROTTLE_MAX` (default 120 per 60 s). If a client lists very often, raise the limit. Metric series for names that are not published are now reported as `tool="unknown"`.

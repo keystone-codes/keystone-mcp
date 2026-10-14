@@ -264,14 +264,18 @@ service (`KEYSTONE_MCP_USERS_BACKEND=http`) is not affected by this rule.
 OAuth clients, authorization codes, and refresh tokens live in **Redis**
 (`KEYSTONE_MCP_REDIS_URL`); there is no in-memory fallback, so every replica
 sees the same state. An authorization code is single-use — read and deleted
-atomically, so two concurrent exchanges cannot both succeed. Refreshing a
-token rotates it: a new refresh token is written and the old one is deleted,
-but kept resolvable (as a thin marker, not valid for exchange) for a short
-grace period so a second, in-flight request against the just-rotated token
-does not read nothing and silently fall back to a weaker identity. Every
-record expires: an access token after `KEYSTONE_MCP_TOKEN_TTL`, a refresh
-token after `KEYSTONE_MCP_REFRESH_TOKEN_TTL` of idleness, and a client record
-after the longer of the two plus a day — see
+atomically; presenting it again returns `invalid_grant` and revokes every
+token of that person at that OAuth client (in a race of two simultaneous
+exchanges, tokens issued by the winner may survive until a later replay).
+Refresh-token rotation is one-time: the store commits the new pair only if
+the old refresh token still exists. A second exchange within
+`KEYSTONE_MCP_OAUTH_REFRESH_GRACE_SECONDS` receives the same `/token`
+response (encrypted in Redis with a key derived from the old refresh token);
+each such reissue is audited. Reusing the old refresh token after that window
+revokes every token of that person at that OAuth client and is audited as
+theft. Every record expires: an access token after `KEYSTONE_MCP_TOKEN_TTL`, a
+refresh token after `KEYSTONE_MCP_REFRESH_TOKEN_TTL` of idleness, and a
+client record after the longer of the two plus a day — see
 [environment.md#server](environment.md#server) for the exact variables.
 
 An access token is bound to the resource (RFC 8707) named in the

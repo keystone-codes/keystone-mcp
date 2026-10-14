@@ -9,6 +9,7 @@ from keystone_mcp.observability.audit import (
     AuthzAuditRecorder,
     PolicyAuditFields,
     PolicyMutationAuditRecorder,
+    SessionAuditRecorder,
     UsersMutationAuditRecorder,
     policy_fields,
 )
@@ -38,6 +39,10 @@ class RbacObservability:
             subject_salt=settings.rbac_audit_subject_salt,
         )
         self.users_audit = UsersMutationAuditRecorder(
+            enabled=settings.rbac_audit_enabled,
+            subject_salt=settings.rbac_audit_subject_salt,
+        )
+        self.session_audit = SessionAuditRecorder(
             enabled=settings.rbac_audit_enabled,
             subject_salt=settings.rbac_audit_subject_salt,
         )
@@ -354,6 +359,44 @@ class RbacObservability:
 
             logging.getLogger(__name__).warning(
                 "oauth client eviction metric failed",
+                exc_info=True,
+            )
+
+    def record_token_exchange(self, *, grant_type: str, outcome: str) -> None:
+        try:
+            self.metrics.record_token_exchange(grant_type=grant_type, outcome=outcome)
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "oauth token exchange metric failed",
+                exc_info=True,
+            )
+
+    def record_session_event(
+        self,
+        *,
+        action: str,
+        subject: str,
+        client_id: str,
+        revoked_tokens: int | None = None,
+        reason: str | None = None,
+        delay_ms: int | None = None,
+    ) -> None:
+        try:
+            self.session_audit.record_session_event(
+                action=action,
+                subject=subject,
+                client_id=client_id,
+                revoked_tokens=revoked_tokens,
+                reason=reason,
+                delay_ms=delay_ms,
+            )
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "oauth session audit failed",
                 exc_info=True,
             )
 
