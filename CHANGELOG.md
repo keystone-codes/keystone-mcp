@@ -14,6 +14,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 - `api_keys_revoke` and `keystone-mcp keys revoke` report `revoked_tokens`.
 - CI runs the test suite on Python 3.14 and enforces 86 % line-and-branch coverage.
 - A policy change made through `policy_*` reaches every replica on its next call (revision in Redis, `KEYSTONE_MCP_POLICY_REDIS_REVISION_KEY`). Metrics `keystone_mcp_rbac_policy_info{content_hash}`, `keystone_mcp_rbac_policy_in_sync`, `keystone_mcp_rbac_policy_revision_checks_total`; `/readyz` details show `policy_content_hash` and `policy_in_sync`.
+- `keystone-mcp config check`: lists every startup refusal and warning for the current environment and `.env` without starting the server (exit 0 / 1 / 2; `--strict` fails on warnings; `--admins` also checks that the built-in directory has an active full administrator). See `docs/environment.md#checking-a-configuration`.
 - `policy_rollback` accepts `expected_hash`. `policy_catalog` and policy changes see prompt and resource names, as a reload does.
 - Metric `keystone_mcp_upstream_stderr_suppressed_total{namespace}`; process state `stopping`.
 - `keystone-mcp users admins` lists full administrators, management roles and their holders; exits 1 when there is no active full administrator.
@@ -76,6 +77,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ### Fixed
 
+- `keystone-mcp keys …` and `keystone-mcp service-accounts …` report a configuration problem or an unknown role in one line instead of a traceback, and close the database.
 - `docs/compatibility.md` lists the error codes the built-in tools actually return.
 - Contract test `test_provider_unavailable_on_complete` no longer touches a private field of the provider.
 - A hung stdio upstream with a call in flight is now detected within one ping interval of the third missed ping: calls in flight fail at once and the process is restarted; a single slow ping no longer restarts it.
@@ -126,9 +128,10 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ### Migration
 
+- Before upgrading, run `keystone-mcp config check` with the new version against your environment.
 - An administrator who blocks or logs out a person, or imports a directory that blocks them, also ends their live sessions, and a Redis failure aborts the command instead of leaving the sessions up. Scripts that run `keystone-mcp users import` should treat exit code `3` as "written, but some sessions were not revoked — run again".
 - If you copied the 0.5 Kubernetes example: rename the secret key `KEYSTONE_MCP_GOOGLE_CLIENT_SECRET` to the variable named in your providers file, add the providers file, and set `KEYSTONE_MCP_POLICY_TOOLS=read-only` for a read-only policy mount. Old variables keep working with a deprecation warning.
-- Session lifetime defaults to 30 days (`KEYSTONE_MCP_SESSION_MAX_AGE_SECONDS=2592000`); set `0` for no limit. People sign in again that long after sign-in; sessions opened before you set or upgrade count from their first renewal afterwards. Revoking an API key of a person who still has a session opened before 0.6.0 ends all of that person's sessions. Run `keystone-mcp config check` before upgrading.
+- Session lifetime defaults to 30 days (`KEYSTONE_MCP_SESSION_MAX_AGE_SECONDS=2592000`); set `0` for no limit. People sign in again that long after sign-in; sessions opened before you set or upgrade count from their first renewal afterwards. Revoking an API key of a person who still has a session opened before 0.6.0 ends all of that person's sessions.
 - Nothing to do on a shared policy volume. Without one, a replica whose policy file differs from the last change made through `policy_*` reports `keystone_mcp_rbac_policy_in_sync 0`; copy the file to every replica and send `SIGHUP`.
 - Plugin authors: change `keystone-mcp-gateway<0.6` to `<2`; mix in the contract class for every declared capability and add a `keystone_unavailable_directory_factory` fixture (or mark the class `keystone_contract_lenient` with a reason). Directory config files with inline secrets under keys like `client_secret` or inside lists now refuse startup: move the value to an environment variable and reference it with `<key>_env`.
 - A stdio upstream that blocks for more than ~35 s without answering pings is now restarted only after three missed pings (about a minute).

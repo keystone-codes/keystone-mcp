@@ -65,6 +65,8 @@ Keystone-MCP.
 
 ## Deploy
 
+- [ ] `keystone-mcp config check` reports no `ERROR` lines for the target environment.
+
 Follow [paths/production-docker.md](paths/production-docker.md) for Docker
 (the main path), or [deploy.md](deploy.md) for a host with systemd and
 `./scripts/deploy.sh`. Keep secrets and host-specific runbooks outside this
