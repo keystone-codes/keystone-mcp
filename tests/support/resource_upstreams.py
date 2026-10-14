@@ -13,7 +13,7 @@ from starlette.applications import Starlette
 from starlette.routing import Mount, Route
 from starlette.types import Receive, Scope, Send
 
-from support.lowlevel_upstream import UPSTREAM_BASE_URL, _TOOL_DEFINITIONS
+from support.lowlevel_upstream import _TOOL_DEFINITIONS, UPSTREAM_BASE_URL
 
 HELLO_UPSTREAM_MCP_URL = f"{UPSTREAM_BASE_URL}/hello/mcp"
 EVIL_UPSTREAM_MCP_URL = f"{UPSTREAM_BASE_URL}/evil/mcp"
@@ -40,7 +40,9 @@ def build_resource_upstream_app(
             tools=[_TOOL_DEFINITIONS["greet"]],
         )
 
-    async def _on_call_tool(_ctx: object, params: types.CallToolRequestParams) -> types.CallToolResult:
+    async def _on_call_tool(
+        _ctx: object, params: types.CallToolRequestParams
+    ) -> types.CallToolResult:
         if params.name != "greet":
             return types.CallToolResult(
                 content=[types.TextContent(type="text", text=f"unknown tool: {params.name}")],
@@ -103,8 +105,19 @@ def build_resource_upstream_app(
 
 def mount_resource_upstream_apps(apps_by_prefix: dict[str, Starlette]) -> Starlette:
     """Combine several upstream Starlette apps under ``/<prefix>/mcp``."""
+
+    @contextlib.asynccontextmanager
+    async def _combined_lifespan(_app: Starlette) -> AsyncIterator[None]:
+        async with contextlib.AsyncExitStack() as stack:
+            for sub_app in apps_by_prefix.values():
+                lifespan = sub_app.router.lifespan_context
+                if lifespan is not None:
+                    await stack.enter_async_context(lifespan(sub_app))
+            yield
+
     return Starlette(
         routes=[Mount(f"/{prefix}", app=app) for prefix, app in apps_by_prefix.items()],
+        lifespan=_combined_lifespan,
     )
 
 

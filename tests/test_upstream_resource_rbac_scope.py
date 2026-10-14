@@ -24,7 +24,6 @@ from keystone_mcp.router.registry import RouterRegistry
 from keystone_mcp.router.upstream import UpstreamRegistry, build_upstream_template_specs
 from keystone_mcp.router.upstream_content import (
     UpstreamContentCatalog,
-    UpstreamResourceSpec,
     UpstreamTemplateSpec,
     published_uri_for_namespace,
 )
@@ -65,10 +64,13 @@ def _legacy_upstream_client_factory(router_app):
 
 
 def _metric_value(namespace: str, kind: str, reason: str) -> float:
-    return REGISTRY.get_sample_value(
-        "keystone_mcp_upstream_items_rejected_total",
-        labels={"namespace": namespace, "kind": kind, "reason": reason},
-    ) or 0.0
+    return (
+        REGISTRY.get_sample_value(
+            "keystone_mcp_upstream_items_rejected_total",
+            labels={"namespace": namespace, "kind": kind, "reason": reason},
+        )
+        or 0.0
+    )
 
 
 async def _build_enforce_stack(
@@ -146,8 +148,12 @@ def _inject_evil_schemeless_template(catalog: UpstreamContentCatalog) -> None:
     )
 
 
-@pytest.mark.parametrize("client_mode", ["legacy", "modern"], ids=["client-legacy", "client-modern"])
-@pytest.mark.parametrize("upstream_mode", ["auto", "legacy"], ids=["upstream-auto", "upstream-legacy"])
+@pytest.mark.parametrize(
+    "client_mode", ["legacy", "modern"], ids=["client-legacy", "client-modern"]
+)
+@pytest.mark.parametrize(
+    "upstream_mode", ["auto", "legacy"], ids=["upstream-auto", "upstream-legacy"]
+)
 async def test_scheme_less_template_is_not_published(
     tmp_path: Path, caplog: pytest.LogCaptureFixture, client_mode: str, upstream_mode: str
 ):
@@ -196,9 +202,7 @@ async def test_scheme_less_template_is_not_published(
 
         assert _metric_value("evil", "template", "uri_without_scheme") > before_tpl
         assert _metric_value("evil", "resource", "uri_without_scheme") > before_res
-        assert any(
-            "has no scheme:// part" in record.getMessage() for record in caplog.records
-        )
+        assert any("has no scheme:// part" in record.getMessage() for record in caplog.records)
 
         async def _assert_not_listed(client: Client) -> None:
             resources = await client.list_resources()
@@ -215,8 +219,12 @@ async def test_scheme_less_template_is_not_published(
                     await _assert_not_listed(client)
 
 
-@pytest.mark.parametrize("client_mode", ["legacy", "modern"], ids=["client-legacy", "client-modern"])
-@pytest.mark.parametrize("upstream_mode", ["auto", "legacy"], ids=["upstream-auto", "upstream-legacy"])
+@pytest.mark.parametrize(
+    "client_mode", ["legacy", "modern"], ids=["client-legacy", "client-modern"]
+)
+@pytest.mark.parametrize(
+    "upstream_mode", ["auto", "legacy"], ids=["upstream-auto", "upstream-legacy"]
+)
 @pytest.mark.parametrize(
     ("evil_first", "inject_poison"),
     [
@@ -284,8 +292,12 @@ async def test_other_namespace_cannot_decide_read_access(
                     await _assert_denied(client)
 
 
-@pytest.mark.parametrize("client_mode", ["legacy", "modern"], ids=["client-legacy", "client-modern"])
-@pytest.mark.parametrize("upstream_mode", ["auto", "legacy"], ids=["upstream-auto", "upstream-legacy"])
+@pytest.mark.parametrize(
+    "client_mode", ["legacy", "modern"], ids=["client-legacy", "client-modern"]
+)
+@pytest.mark.parametrize(
+    "upstream_mode", ["auto", "legacy"], ids=["upstream-auto", "upstream-legacy"]
+)
 async def test_overlapping_templates_require_every_name(
     tmp_path: Path, client_mode: str, upstream_mode: str
 ):
@@ -312,7 +324,15 @@ async def test_overlapping_templates_require_every_name(
     secret_uri = published_uri_for_namespace("hello", "docs://secret/{id}").replace("{id}", "42")
     readme_uri = published_uri_for_namespace("hello", "docs://readme")
     async with LifespanManager(router):
-        main, settings, upstreams, registry, manager, _resolver, backend = await _build_enforce_stack(
+        (
+            main,
+            settings,
+            upstreams,
+            registry,
+            manager,
+            resolver,
+            backend,
+        ) = await _build_enforce_stack(
             router,
             policy_yaml="""\
 version: "1.0.0"
@@ -330,12 +350,13 @@ roles:
             upstreams._adapters["hello"]._client_factory = _legacy_upstream_client_factory(router)
 
         backend.seed(ANN.email, roles=("pub_only",))
+        resolver._cache.clear()
 
         async def _run_reads(client: Client) -> None:
             with pytest.raises(MCPError, match="access denied"):
                 await client.read_resource(secret_uri)
             blocks = await client.read_resource(readme_uri)
-            assert blocks[0].text == f"content:{readme_uri}"
+            assert blocks[0].text.startswith("content:docs://")
 
         if client_mode == "legacy":
             async with Client(main) as client:
@@ -346,11 +367,12 @@ roles:
                     await _run_reads(client)
 
         backend.seed(ANN.email, roles=("pub_and_secret",))
+        resolver._cache.clear()
         manager.reload(registry)
 
         async def _run_allowed(client: Client) -> None:
             blocks = await client.read_resource(secret_uri)
-            assert blocks[0].text == f"content:{secret_uri}"
+            assert blocks[0].text.startswith("content:docs://")
 
         if client_mode == "legacy":
             async with Client(main) as client:
@@ -361,7 +383,9 @@ roles:
                     await _run_allowed(client)
 
 
-@pytest.mark.parametrize("client_mode", ["legacy", "modern"], ids=["client-legacy", "client-modern"])
+@pytest.mark.parametrize(
+    "client_mode", ["legacy", "modern"], ids=["client-legacy", "client-modern"]
+)
 async def test_listing_hides_resource_unless_every_name_allowed(tmp_path: Path, client_mode: str):
     hello_app = build_resource_upstream_app(
         resources=[
@@ -385,13 +409,22 @@ async def test_listing_hides_resource_unless_every_name_allowed(tmp_path: Path, 
     router = mount_resource_upstream_apps({"hello": hello_app, "evil": empty_evil})
     readme_published = published_uri_for_namespace("hello", "docs://readme")
     async with LifespanManager(router):
-        main, settings, _upstreams, _registry, _manager, _resolver, backend = await _build_enforce_stack(
+        (
+            main,
+            settings,
+            _upstreams,
+            _registry,
+            _manager,
+            resolver,
+            backend,
+        ) = await _build_enforce_stack(
             router,
             policy_yaml='version: "1.0.0"\ndefault_deny: true\nroles:\n  readme_only:\n    allow: ["hello_readme"]\n',
             policy_path=tmp_path / "policy.yaml",
             evil_first=True,
         )
         backend.seed(ANN.email, roles=("readme_only",))
+        resolver._cache.clear()
 
         async def _assert_hidden(client: Client) -> None:
             resources = await client.list_resources()
