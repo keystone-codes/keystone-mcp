@@ -11,9 +11,10 @@ or otherwise alters a frozen contract: environment variables,
 policy keys, HTTP headers, tool names, registry fields, or behaviour operators
 depend on.
 
-Do not edit an accepted record in place. Supersede it: add a new numbered file
-and set the old record's status to **Superseded by** `NNNN-title.md` (linked from
-the old record).
+Do not rewrite an accepted record. A clarification that does not change the
+decision goes into a dated `## Amendment (X.Y.Z)` section at the end; a changed
+decision supersedes the record: add a new numbered file and set the old record's
+status to **Superseded by** `NNNN-title.md` (linked from the old record).
 
 ## Template
 
@@ -65,5 +66,7 @@ Keep each record under roughly 80 lines. Use short sentences and present tense.
 | [0010](0010-fastmcp-major-version.md) | Why Keystone runs on fastmcp 4 | Accepted (0.5.0) |
 | [0011](0011-rbac-by-name-for-prompts-and-resources.md) | Prompts and resources are authorised by name with the tool patterns | Accepted (0.5.0) |
 | [0012](0012-stdio-upstreams-run-unsandboxed.md) | A stdio upstream is trusted like Keystone itself | Accepted (0.5.0) |
+| [0013](0013-management-roles-from-the-policy.md) | Management roles come from the policy file | Accepted (0.6.0) |
 | [0014](0014-plugin-protocols-grow-by-new-protocols.md) | Plugin protocols stay fixed until 2.0; new capabilities use new optional protocols | Accepted (0.6.0) |
 | [0015](0015-delete-by-anonymizing.md) | Delete a person by anonymizing the record by default | Accepted (0.6.0) |
+| [0016](0016-machine-human-boundary-in-code.md) | Machines never administer, enforced in code | Accepted (0.6.0) |

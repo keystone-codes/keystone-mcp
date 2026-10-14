@@ -10,6 +10,8 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ### Added
 
+- ADR 0013 (management roles come from the policy) and ADR 0016 (machines never
+  administer, enforced in code).
 - The upstream registry file is reloaded without a restart: on the next refresh tick after the file changes, or at once on `SIGHUP`. Added entries are discovered and published, removed ones disappear with their tools, prompts and resources, changed ones are rebuilt; an invalid file keeps the previous registry. `SIGHUP` also re-reads upstream secrets. Metrics `keystone_mcp_upstream_registry_reload_total`, `keystone_mcp_upstream_registry_info`.
 - Upstream registry `limits`: concurrent calls per replica (`concurrency`), calls per window for the whole service (`rate`, `window`; shared across replicas with `KEYSTONE_MCP_THROTTLE_BACKEND=redis`), and a circuit breaker with a half-open probe (`breaker_failures`, `breaker_recovery_seconds`). Metrics `keystone_mcp_upstream_limit_rejections_total`, `keystone_mcp_upstream_circuit_state`, `keystone_mcp_upstream_inflight`.
 - CI: daily canary against the newest fastmcp/mcp and against the lowest allowed dependency versions; a sentinel test lists every private fastmcp/mcp API Keystone relies on.
@@ -96,6 +98,12 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ### Fixed
 
+- Skills: `users_block` reports `service_unavailable` when sessions could not be
+  revoked; `keystone-policy-admin` passes `file_hash` as `expected_hash`; error
+  tables list only codes the tools return; service accounts and API keys are
+  covered.
+- Docs: `features.md` and README describe stdio upstreams, the signed identity
+  header and OIDC sign-in as shipped.
 - In `observe` mode, a resource read that matches several RBAC names is signed as a denial when any of those names would be denied.
 - Minimum versions: `redis>=5.0.1` (5.0.0 has no `Redis.aclose()`, used after every users-directory change from the CLI) and `pyyaml>=6.0.1` (6.0 does not build on Python 3.12).
 - Startup refuses a users directory that declares an unknown capability name.

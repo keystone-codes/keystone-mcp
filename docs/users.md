@@ -136,13 +136,17 @@ before their own first sign-in.
 | Delete or anonymize a person | `users_delete` (full administrator only; two-step confirmation) |
 
 `users_block` and `users_logout` revoke all access and refresh tokens for
-that person immediately. The response includes `revoked_tokens` (a count, or
-`null` if the token store was unavailable during a block — the block still
-applies). `users_unblock` does not restore old sessions; the person signs in
+that person immediately. On success the response includes `revoked_tokens`
+(a count). If the session store is down during `users_block`, the person is
+still blocked but the tool returns `service_unavailable` with a message to
+call `users_block` again; `users_logout` returns `service_unavailable` without
+revoking. `users_unblock` does not restore old sessions; the person signs in
 again for new tokens. `users_logout` does not require the email to still
 exist in the directory.
 
 ## Deleting a person
+
+Why: [ADR 0015](adr/0015-delete-by-anonymizing.md).
 
 Use `users_delete` when someone must be removed from the directory or their
 record anonymized — not for routine offboarding (`users_block` is reversible).
@@ -300,6 +304,10 @@ Blocking a person in an external (`http`) directory takes effect on that
 person's next token renewal — at most `KEYSTONE_MCP_TOKEN_TTL` later.
 
 ## Service accounts
+
+Why: [ADR 0016](adr/0016-machine-human-boundary-in-code.md) (mutations refused in
+code); [ADR 0013](adr/0013-management-roles-from-the-policy.md) (who may change
+management roles).
 
 Machine callers (CI, schedulers, agents without a human at the keyboard) use a
 **service account** instead of a person-shaped user record. Each account is

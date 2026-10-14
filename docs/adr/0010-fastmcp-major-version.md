@@ -63,3 +63,9 @@ the test baseline.
 - [CONTRIBUTING.md](../CONTRIBUTING.md#dependencies)
 - `pyproject.toml`, `src/keystone_mcp/adapters/mcp_proxy.py`,
   `tests/support/lowlevel_upstream.py`
+
+## Amendment (0.6.0)
+
+The migration to snake_case field names on FastMCP upstream objects is complete;
+`pyproject.toml` sets `filterwarnings = error::fastmcp.exceptions.FastMCPDeprecationWarning`
+so CI fails on regressions.

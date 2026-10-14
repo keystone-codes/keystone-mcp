@@ -60,7 +60,8 @@ roles and allow patterns with the same validation as a hot-reload. Full referenc
 
 ## Services in any language or SDK
 
-A service behind Keystone-MCP is a plain MCP server over Streamable HTTP.
+A service behind Keystone-MCP is a plain MCP server over Streamable HTTP or
+stdio.
 It can be written in any language, with any MCP SDK, with its own storage
 and its own integrations. Keystone-MCP only needs its URL, a namespace, and
 optionally a bearer token to authenticate back to it. Contract:
@@ -71,8 +72,8 @@ entry with `transport: stdio` names a `command`, its `args`, and the names
 of the environment variables it needs (never their values) — the shape
 most ready-made MCP servers from npm or pip come in. Keystone-MCP's
 registry and supervisor already start that process, keep it alive, and
-restart it with a backoff after a crash or a hang; proxying calls to it
-lands with the stdio wiring.
+restart it with a backoff after a crash or a hang; proxied tool calls use the
+stdio session the supervisor keeps open.
 
 A long-running tool can report progress while it runs
 (`notifications/progress`); Keystone-MCP relays every update to the client,
@@ -90,10 +91,12 @@ way on the refresh tick or on `SIGHUP`. Format:
 
 ## Services never check roles themselves
 
-RBAC is decided once, on Keystone-MCP, before a call is ever forwarded. A
-proxied call carries the verified `X-Author-Email` of the signed-in
-person, never a role — the service trusts that header only on a network
-Keystone-MCP alone controls. Details: [security-model.md](security-model.md).
+RBAC is decided once, on Keystone-MCP, before a call is ever forwarded. When
+the registry entry configures it, a proxied call carries a signed
+`X-Keystone-Identity` assertion with the subject, roles used for the decision,
+and (in `observe` or `enforce`) an `rbac_decision`. The legacy
+`X-Author-Email` header is still sent but deprecated — it carries no roles.
+Details: [security-model.md](security-model.md).
 
 ## `production` refuses a weak configuration
 
