@@ -108,6 +108,9 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 - Docs no longer describe the `policy_*` tools and service-account subjects as future work; deprecation notes say "removed in 2.0" everywhere.
 - The release workflow no longer creates a GitHub Release when publishing to PyPI failed.
+- The users-directory circuit breaker lets one probe request through after the pause instead of all waiting requests.
+- SQLite users directory (local profile): writes take the lock at transaction start, so two processes on one file cannot both remove an administrator.
+- Two concurrent `users_add` / `service_accounts_add` / `users_grant_role` with the same data return `conflict` or `changed: false` instead of `service_unavailable`.
 - Skills: `users_block` reports `service_unavailable` when sessions could not be
   revoked; `keystone-policy-admin` passes `file_hash` as `expected_hash`; error
   tables list only codes the tools return; service accounts and API keys are

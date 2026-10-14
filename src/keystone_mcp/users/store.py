@@ -19,7 +19,7 @@ from collections.abc import Callable, Sequence
 from redis.exceptions import RedisError
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from keystone_mcp.user_directory.types import (
     ApiKeyRecord,
@@ -74,6 +74,19 @@ def _wrap_database_errors(exc: Exception) -> Exception:
     if isinstance(exc, SQLAlchemyError | OSError):
         return UsersStoreUnavailableError("users directory database is unavailable")
     return exc
+
+
+async def _to_thread_with_integrity_retry(call: Callable[[], object]) -> object:
+    try:
+        return await asyncio.to_thread(call)
+    except IntegrityError:
+        logger.info("users directory write raced with a concurrent write; retried once")
+        try:
+            return await asyncio.to_thread(call)
+        except Exception as exc:
+            raise _wrap_database_errors(exc) from exc
+    except Exception as exc:
+        raise _wrap_database_errors(exc) from exc
 
 
 class UsersStore:
@@ -216,10 +229,7 @@ class UsersStore:
                     return _in_session()
             return _in_session()
 
-        try:
-            mutation, full_key = await asyncio.to_thread(_call)
-        except Exception as exc:
-            raise _wrap_database_errors(exc) from exc
+        mutation, full_key = await _to_thread_with_integrity_retry(_call)
         await self._after_change()
         record = api_key_record_from_row(mutation.row)
         return IssuedApiKey(record=record, key=full_key)
@@ -534,10 +544,7 @@ class UsersStore:
                     return _in_session()
             return _in_session()
 
-        try:
-            mutation = await asyncio.to_thread(_call)
-        except Exception as exc:
-            raise _wrap_database_errors(exc) from exc
+        mutation = await _to_thread_with_integrity_retry(_call)
 
         result = _mutation_result_from_mutation(mutation)
         if result.changed:
@@ -568,10 +575,7 @@ class UsersStore:
                     return _in_session()
             return _in_session()
 
-        try:
-            mutation = await asyncio.to_thread(_call)
-        except Exception as exc:
-            raise _wrap_database_errors(exc) from exc
+        mutation = await _to_thread_with_integrity_retry(_call)
 
         result = self._service_mutation_result(mutation)
         if result.changed:

@@ -133,7 +133,7 @@ class CachedUserDirectoryResolver:
             ):
                 return cached
 
-        if self._circuit.is_open():
+        if not self._circuit.allow_request():
             raise UserDirectoryUnavailableError(
                 "users directory circuit breaker is open",
                 code="circuit_open",
@@ -317,7 +317,7 @@ class CachedUserDirectoryResolver:
                 self._record_outcome("limited")
                 return None
 
-        if self._circuit.is_open():
+        if not self._circuit.allow_request():
             self._record_outcome("unavailable")
             raise UserDirectoryUnavailableError(
                 "users directory circuit breaker is open",
