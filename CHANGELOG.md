@@ -24,6 +24,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 - The metrics path and `/internal/*` accept a `Host` that is an IP literal, so Prometheus can scrape each pod by its IP.
 - Metric `keystone_mcp_upstream_items_rejected_total{namespace,kind,reason}`.
 - Metric `keystone_mcp_upstream_input_rounds_exceeded_total{namespace}`.
+- CI: the contract freeze gate now compares the public surface generated from the code — environment variables (found by AST), policy keys, CLI commands, plugin protocol signatures, built-in tool arguments, metrics and their labels — with a baseline generated from the `v0.5.0` tag.
 
 ### Changed
 
@@ -63,6 +64,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 - Policy validation of a prompt from an upstream with `strip_prefix` uses the name clients see; removing such a prompt upstream no longer crashes the refresh.
 - `KEYSTONE_MCP_UPSTREAM_TOOL_TIMEOUTS` keys are matched against the published tool name, as documented.
 - Tools whose `inputSchema` uses `x-mcp-header` can be called on MCP 2026-07-28 upstreams.
+- `docs/compatibility.md` matched to the code: `KEYSTONE_MCP_ENV_FILE` is listed; `KEYSTONE_MCP_USERS_SERVICE_*` are not deprecated; the policy `version` is any non-empty string; `/login/<provider>` and `/login/redirect-not-allowed` are listed; `users import` never had `--email`; `catalog export` has no `--live-url`.
 
 ### Security
 

@@ -1,0 +1,76 @@
+# section=builtin-tools source=v0.5.0 generator=1
+api_keys_issue
+api_keys_issue(expires_in_days)	nullable=no required=no type=int
+api_keys_issue(label)	nullable=no required=no type=str
+api_keys_issue(subject)	nullable=no required=yes type=str
+api_keys_list
+api_keys_list(include_revoked)	nullable=no required=no type=bool
+api_keys_list(subject)	nullable=no required=no type=str
+api_keys_revoke
+api_keys_revoke(key_id)	nullable=no required=yes type=str
+policy_allow_add
+policy_allow_add(expected_hash)	nullable=no required=no type=str
+policy_allow_add(patterns)	nullable=no required=yes type=list
+policy_allow_add(role)	nullable=no required=yes type=str
+policy_allow_remove
+policy_allow_remove(expected_hash)	nullable=no required=no type=str
+policy_allow_remove(patterns)	nullable=no required=yes type=list
+policy_allow_remove(role)	nullable=no required=yes type=str
+policy_catalog
+policy_catalog(namespace)	nullable=no required=no type=str
+policy_catalog(role)	nullable=no required=no type=str
+policy_list_set
+policy_list_set(expected_hash)	nullable=no required=no type=str
+policy_list_set(list)	nullable=no required=yes type=str
+policy_list_set(patterns)	nullable=no required=yes type=list
+policy_read
+policy_role_delete
+policy_role_delete(expected_hash)	nullable=no required=no type=str
+policy_role_delete(role)	nullable=no required=yes type=str
+policy_role_set
+policy_role_set(allow)	nullable=no required=yes type=list
+policy_role_set(description)	nullable=no required=no type=str
+policy_role_set(expected_hash)	nullable=no required=no type=str
+policy_role_set(role)	nullable=no required=yes type=str
+policy_rollback
+policy_validate
+policy_validate(policy)	nullable=no required=no type=dict
+service_accounts_add
+service_accounts_add(description)	nullable=no required=no type=str
+service_accounts_add(name)	nullable=no required=yes type=str
+service_accounts_add(roles)	nullable=no required=no type=list
+service_accounts_list
+service_accounts_list(is_blocked)	nullable=no required=no type=bool
+service_accounts_update
+service_accounts_update(description)	nullable=no required=no type=str
+service_accounts_update(is_blocked)	nullable=no required=no type=bool
+service_accounts_update(name)	nullable=no required=yes type=str
+service_accounts_update(roles)	nullable=no required=no type=list
+users_add
+users_add(email)	nullable=no required=yes type=str
+users_add(full_name)	nullable=no required=yes type=str
+users_add(note)	nullable=no required=no type=str
+users_add(roles)	nullable=no required=no type=list
+users_block
+users_block(email)	nullable=no required=yes type=str
+users_grant_role
+users_grant_role(email)	nullable=no required=yes type=str
+users_grant_role(role)	nullable=no required=yes type=str
+users_list
+users_list(email_contains)	nullable=no required=no type=str
+users_list(is_blocked)	nullable=no required=no type=bool
+users_list(role)	nullable=no required=no type=str
+users_logout
+users_logout(email)	nullable=no required=yes type=str
+users_revoke_role
+users_revoke_role(email)	nullable=no required=yes type=str
+users_revoke_role(role)	nullable=no required=yes type=str
+users_set_roles
+users_set_roles(email)	nullable=no required=yes type=str
+users_set_roles(roles)	nullable=no required=yes type=list
+users_unblock
+users_unblock(email)	nullable=no required=yes type=str
+users_update
+users_update(email)	nullable=no required=yes type=str
+users_update(full_name)	nullable=no required=no type=str
+users_update(note)	nullable=no required=no type=str

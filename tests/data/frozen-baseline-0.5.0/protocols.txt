@@ -1,0 +1,135 @@
+# section=protocols source=v0.5.0 generator=1
+login.protocol.FormField	kind=dataclass
+login.protocol.FormLoginProvider	kind=protocol
+login.protocol.FormLoginProvider.form_fields	async=no kind=method returns=Sequence[FormField]
+login.protocol.FormLoginProvider.verify	async=yes kind=method returns=LoginIdentity
+login.protocol.FormLoginProvider.verify(form)	annotation=Mapping[str, default=- kind=positional_or_keyword required=yes
+login.protocol.LoginIdentity	kind=dataclass
+login.protocol.LoginKind	values=redirect,form
+login.protocol.LoginProvider	kind=protocol
+login.protocol.LoginProvider.aclose	async=yes kind=method returns=None
+login.protocol.LoginProvider.interactive	kind=property returns=bool
+login.protocol.LoginProvider.kind	kind=property returns=LoginKind
+login.protocol.LoginProvider.name	kind=property returns=str
+login.protocol.LoginProvider.title	kind=property returns=str
+login.protocol.LoginProvider.warm_up	async=yes kind=method returns=None
+login.protocol.LoginRedirect	kind=dataclass
+login.protocol.LoginRejectReason	values=invalid_credentials,identity_invalid,email_unverified,domain_not_allowed,provider_unavailable,request_invalid
+login.protocol.LoginRejected	kind=exception
+login.protocol.RedirectLoginProvider	kind=protocol
+login.protocol.RedirectLoginProvider.begin	async=yes kind=method returns=LoginRedirect
+login.protocol.RedirectLoginProvider.begin(callback_url)	annotation=str default=- kind=keyword_only required=yes
+login.protocol.RedirectLoginProvider.begin(state)	annotation=str default=- kind=keyword_only required=yes
+login.protocol.RedirectLoginProvider.complete	async=yes kind=method returns=LoginIdentity
+login.protocol.RedirectLoginProvider.complete(attempt)	annotation=Mapping[str, default=- kind=keyword_only required=yes
+login.protocol.RedirectLoginProvider.complete(callback_url)	annotation=str default=- kind=keyword_only required=yes
+login.protocol.RedirectLoginProvider.complete(params)	annotation=Mapping[str, default=- kind=keyword_only required=yes
+plugins.LoginProviderConfig	kind=dataclass
+plugins.LoginProviderFactory	kind=protocol
+plugins.PluginConflictError	kind=exception
+plugins.PluginContext	kind=dataclass
+plugins.PluginContext.secret	async=no kind=method returns=str
+plugins.PluginContext.secret(env_name)	annotation=str default=- kind=positional_or_keyword required=yes
+plugins.UserDirectoryFactory	kind=protocol
+user_directory.errors.ActorEmailRequiredError	kind=exception
+user_directory.errors.DirectoryTimeoutError	kind=exception
+user_directory.errors.InvalidRoleError	kind=exception
+user_directory.errors.InvalidUserFieldError	kind=exception
+user_directory.errors.LastAdministratorError	kind=exception
+user_directory.errors.SelfAdminMutationError	kind=exception
+user_directory.errors.UserAlreadyExistsError	kind=exception
+user_directory.errors.UserDirectoryError	kind=exception
+user_directory.errors.UserDirectoryUnavailableError	kind=exception
+user_directory.errors.UserNotFoundError	kind=exception
+user_directory.errors.UsersError	kind=exception
+user_directory.errors.UsersStoreUnavailableError	kind=exception
+user_directory.protocol.ApiKeyDirectory	kind=protocol
+user_directory.protocol.ApiKeyDirectory.issue_api_key	async=yes kind=method returns=IssuedApiKey
+user_directory.protocol.ApiKeyDirectory.issue_api_key(actor)	annotation=str default=- kind=keyword_only required=yes
+user_directory.protocol.ApiKeyDirectory.issue_api_key(expires_in_days)	annotation=int default=- kind=keyword_only required=yes
+user_directory.protocol.ApiKeyDirectory.issue_api_key(label)	annotation=str default=- kind=keyword_only required=yes
+user_directory.protocol.ApiKeyDirectory.issue_api_key(subject)	annotation=str default=- kind=keyword_only required=yes
+user_directory.protocol.ApiKeyDirectory.list_api_keys	async=yes kind=method returns=list[ApiKeyRecord]
+user_directory.protocol.ApiKeyDirectory.list_api_keys(include_revoked)	annotation=bool default=False kind=keyword_only required=no
+user_directory.protocol.ApiKeyDirectory.list_api_keys(subject)	annotation=str default=None kind=keyword_only required=no
+user_directory.protocol.ApiKeyDirectory.revoke_api_key	async=yes kind=method returns=tuple[ApiKeyRecord,
+user_directory.protocol.ApiKeyDirectory.revoke_api_key(actor)	annotation=str default=- kind=keyword_only required=yes
+user_directory.protocol.ApiKeyDirectory.revoke_api_key(key_id)	annotation=str default=- kind=keyword_only required=yes
+user_directory.protocol.ApiKeyDirectory.verify_api_key	async=yes kind=method returns=ApiKeyVerification
+user_directory.protocol.ApiKeyDirectory.verify_api_key(key)	annotation=str default=- kind=positional_or_keyword required=yes
+user_directory.protocol.ServiceAccountDirectory	kind=protocol
+user_directory.protocol.ServiceAccountDirectory.create_service_account	async=yes kind=method returns=ServiceAccountMutation
+user_directory.protocol.ServiceAccountDirectory.create_service_account(actor)	annotation=str default=- kind=keyword_only required=yes
+user_directory.protocol.ServiceAccountDirectory.create_service_account(description)	annotation=str default=- kind=keyword_only required=yes
+user_directory.protocol.ServiceAccountDirectory.create_service_account(name)	annotation=str default=- kind=keyword_only required=yes
+user_directory.protocol.ServiceAccountDirectory.create_service_account(roles)	annotation=Sequence[str] default=- kind=keyword_only required=yes
+user_directory.protocol.ServiceAccountDirectory.list_service_accounts	async=yes kind=method returns=list[ServiceAccountRecord]
+user_directory.protocol.ServiceAccountDirectory.list_service_accounts(is_blocked)	annotation=bool default=False kind=keyword_only required=no
+user_directory.protocol.ServiceAccountDirectory.update_service_account	async=yes kind=method returns=ServiceAccountMutation
+user_directory.protocol.ServiceAccountDirectory.update_service_account(actor)	annotation=str default=- kind=keyword_only required=yes
+user_directory.protocol.ServiceAccountDirectory.update_service_account(description)	annotation=str default=None kind=keyword_only required=no
+user_directory.protocol.ServiceAccountDirectory.update_service_account(is_blocked)	annotation=bool default=None kind=keyword_only required=no
+user_directory.protocol.ServiceAccountDirectory.update_service_account(name)	annotation=str default=- kind=keyword_only required=yes
+user_directory.protocol.ServiceAccountDirectory.update_service_account(roles)	annotation=Sequence[str] default=None kind=keyword_only required=no
+user_directory.protocol.UserDirectory	kind=protocol
+user_directory.protocol.UserDirectory.aclose	async=yes kind=method returns=None
+user_directory.protocol.UserDirectory.capabilities	kind=property returns=frozenset[str]
+user_directory.protocol.UserDirectory.list_users	async=yes kind=method returns=list[UserRecord]
+user_directory.protocol.UserDirectory.list_users(email_contains)	annotation=str default=None kind=keyword_only required=no
+user_directory.protocol.UserDirectory.list_users(is_blocked)	annotation=bool default=False kind=keyword_only required=no
+user_directory.protocol.UserDirectory.list_users(role)	annotation=str default=None kind=keyword_only required=no
+user_directory.protocol.UserDirectory.name	kind=property returns=str
+user_directory.protocol.UserDirectory.ping	async=yes kind=method returns=None
+user_directory.protocol.UserDirectory.resolve_user	async=yes kind=method returns=UserResolveResult
+user_directory.protocol.UserDirectory.resolve_user(subject)	annotation=str default=- kind=positional_or_keyword required=yes
+user_directory.protocol.UserDirectoryAdmin	kind=protocol
+user_directory.protocol.UserDirectoryAdmin.create_user	async=yes kind=method returns=MutationResult
+user_directory.protocol.UserDirectoryAdmin.create_user(actor)	annotation=str default=- kind=keyword_only required=yes
+user_directory.protocol.UserDirectoryAdmin.create_user(email)	annotation=str default=- kind=keyword_only required=yes
+user_directory.protocol.UserDirectoryAdmin.create_user(full_name)	annotation=str default=- kind=keyword_only required=yes
+user_directory.protocol.UserDirectoryAdmin.create_user(note)	annotation=str default=- kind=keyword_only required=yes
+user_directory.protocol.UserDirectoryAdmin.create_user(roles)	annotation=Sequence[str] default=- kind=keyword_only required=yes
+user_directory.protocol.UserDirectoryAdmin.grant_role	async=yes kind=method returns=MutationResult
+user_directory.protocol.UserDirectoryAdmin.grant_role(actor)	annotation=str default=- kind=keyword_only required=yes
+user_directory.protocol.UserDirectoryAdmin.grant_role(email)	annotation=str default=- kind=keyword_only required=yes
+user_directory.protocol.UserDirectoryAdmin.grant_role(role)	annotation=str default=- kind=keyword_only required=yes
+user_directory.protocol.UserDirectoryAdmin.replace_roles	async=yes kind=method returns=MutationResult
+user_directory.protocol.UserDirectoryAdmin.replace_roles(actor)	annotation=str default=- kind=keyword_only required=yes
+user_directory.protocol.UserDirectoryAdmin.replace_roles(email)	annotation=str default=- kind=keyword_only required=yes
+user_directory.protocol.UserDirectoryAdmin.replace_roles(roles)	annotation=Sequence[str] default=- kind=keyword_only required=yes
+user_directory.protocol.UserDirectoryAdmin.revoke_role	async=yes kind=method returns=MutationResult
+user_directory.protocol.UserDirectoryAdmin.revoke_role(actor)	annotation=str default=- kind=keyword_only required=yes
+user_directory.protocol.UserDirectoryAdmin.revoke_role(email)	annotation=str default=- kind=keyword_only required=yes
+user_directory.protocol.UserDirectoryAdmin.revoke_role(role)	annotation=str default=- kind=keyword_only required=yes
+user_directory.protocol.UserDirectoryAdmin.set_blocked	async=yes kind=method returns=MutationResult
+user_directory.protocol.UserDirectoryAdmin.set_blocked(actor)	annotation=str default=- kind=keyword_only required=yes
+user_directory.protocol.UserDirectoryAdmin.set_blocked(blocked)	annotation=bool default=- kind=keyword_only required=yes
+user_directory.protocol.UserDirectoryAdmin.set_blocked(email)	annotation=str default=- kind=keyword_only required=yes
+user_directory.protocol.UserDirectoryAdmin.update_user	async=yes kind=method returns=MutationResult
+user_directory.protocol.UserDirectoryAdmin.update_user(actor)	annotation=str default=- kind=keyword_only required=yes
+user_directory.protocol.UserDirectoryAdmin.update_user(email)	annotation=str default=- kind=keyword_only required=yes
+user_directory.protocol.UserDirectoryAdmin.update_user(full_name)	annotation=str default=- kind=keyword_only required=yes
+user_directory.protocol.UserDirectoryAdmin.update_user(note)	annotation=str default=- kind=keyword_only required=yes
+user_directory.protocol.UserDirectoryBackend	kind=protocol
+user_directory.protocol.UserDirectoryBackend.aclose	async=yes kind=method returns=None
+user_directory.protocol.UserDirectoryBackend.resolve_user	async=yes kind=method returns=UserResolveResult
+user_directory.protocol.UserDirectoryBackend.resolve_user(email)	annotation=str default=- kind=positional_or_keyword required=yes
+user_directory.protocol.UserDirectoryResolver	kind=protocol
+user_directory.protocol.UserDirectoryResolver.aclose	async=yes kind=method returns=None
+user_directory.protocol.UserDirectoryResolver.resolve	async=yes kind=method returns=UserResolveResult
+user_directory.protocol.UserDirectoryResolver.resolve(critical)	annotation=bool default=False kind=keyword_only required=no
+user_directory.protocol.UserDirectoryResolver.resolve(email)	annotation=str default=- kind=positional_or_keyword required=yes
+user_directory.protocol.UserDirectoryResolver.verify_api_key	async=yes kind=method returns=ApiKeyVerification
+user_directory.protocol.UserDirectoryResolver.verify_api_key(key)	annotation=str default=- kind=positional_or_keyword required=yes
+user_directory.types.ApiKeyRecord	kind=dataclass
+user_directory.types.ApiKeyRecord.to_dict	async=no kind=method returns=dict[str,
+user_directory.types.ApiKeyVerification	kind=dataclass
+user_directory.types.IssuedApiKey	kind=dataclass
+user_directory.types.MutationResult	kind=dataclass
+user_directory.types.ServiceAccountMutation	kind=dataclass
+user_directory.types.ServiceAccountRecord	kind=dataclass
+user_directory.types.ServiceAccountRecord.to_dict	async=no kind=method returns=dict[str,
+user_directory.types.UserRecord	kind=dataclass
+user_directory.types.UserRecord.to_dict	async=no kind=method returns=dict[str,
+user_directory.types.UserResolveResult	kind=dataclass
+user_directory.types.UserResolveResult.is_allow_decision	kind=property returns=bool
