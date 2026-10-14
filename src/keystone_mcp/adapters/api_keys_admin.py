@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from keystone_mcp.adapters.guards import check_management_authority, require_human_actor
+from keystone_mcp.plugins import missing_members
 from keystone_mcp.user_directory.errors import UsersError
 from keystone_mcp.user_directory.protocol import ApiKeyDirectory, UserDirectory
 
@@ -62,7 +63,11 @@ class ApiKeysAdminAdapter:
             return refusal
 
         directory = self._directory
-        if directory is None or not isinstance(directory, ApiKeyDirectory):
+        if (
+            directory is None
+            or "api_keys" not in directory.capabilities
+            or missing_members(directory, ApiKeyDirectory)
+        ):
             return self._error(
                 route,
                 ctx,

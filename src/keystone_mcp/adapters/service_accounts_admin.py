@@ -6,6 +6,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from keystone_mcp.adapters.guards import check_management_authority, require_human_actor
+from keystone_mcp.plugins import missing_members
 from keystone_mcp.user_directory.errors import UsersError
 from keystone_mcp.user_directory.protocol import ServiceAccountDirectory, UserDirectory
 from keystone_mcp.user_directory.types import service_subject
@@ -69,7 +70,11 @@ class ServiceAccountsAdminAdapter:
             self._record_mutation_audit(route, ctx, spec, refusal)
             return refusal
         directory = self._directory
-        if directory is None or not isinstance(directory, ServiceAccountDirectory):
+        if (
+            directory is None
+            or "service_accounts" not in directory.capabilities
+            or missing_members(directory, ServiceAccountDirectory)
+        ):
             return self._error(
                 route,
                 ctx,

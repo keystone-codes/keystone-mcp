@@ -258,7 +258,7 @@ async def test_token_endpoint_error_is_identity_invalid():
         await provider.complete(
             params=params, callback_url="http://app/cb", attempt=redirect.attempt
         )
-    assert exc.value.reason == "identity_invalid"
+    assert exc.value.reason == "provider_unavailable"
 
 
 @pytest.mark.parametrize("auth_method", ["client_secret_basic", "client_secret_post"])

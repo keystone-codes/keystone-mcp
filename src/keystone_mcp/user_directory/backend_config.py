@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -10,18 +10,39 @@ import yaml
 
 from keystone_mcp.config import ConfigError
 
-_FORBIDDEN_KEYS = frozenset({"secret", "password", "token"})
+_FORBIDDEN_SUBSTRINGS = (
+    "secret",
+    "password",
+    "passwd",
+    "token",
+    "api_key",
+    "apikey",
+    "private_key",
+    "credential",
+)
 
 
-def _check_forbidden(data: Mapping[str, Any], *, path: str) -> None:
-    for key, value in data.items():
-        if key in _FORBIDDEN_KEYS:
-            raise ConfigError(
-                f"{path}: secrets must not be stored in the file; use "
-                f"{key}_env and read it with context.secret()"
-            )
-        if isinstance(value, dict):
-            _check_forbidden(value, path=f"{path}.{key}")
+def _is_forbidden_key(key: str) -> bool:
+    lowered = key.lower()
+    if lowered.endswith("_env"):
+        return False
+    return any(part in lowered for part in _FORBIDDEN_SUBSTRINGS)
+
+
+def _check_forbidden(value: Any, *, path: str) -> None:
+    if isinstance(value, Mapping):
+        for key, nested in value.items():
+            key_str = str(key)
+            if _is_forbidden_key(key_str):
+                raise ConfigError(
+                    f"{path}: secrets must not be stored in the file; use "
+                    f"{key_str}_env and read it with context.secret()"
+                )
+            _check_forbidden(nested, path=f"{path}.{key_str}")
+        return
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        for index, item in enumerate(value):
+            _check_forbidden(item, path=f"{path}[{index}]")
 
 
 def load_users_backend_config(path: str) -> dict[str, Any]:

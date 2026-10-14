@@ -12,6 +12,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
+from keystone_mcp.user_directory.base import UserDirectoryAdminBase
 from keystone_mcp.user_directory.errors import (
     LastAdministratorError,
     SelfAdminMutationError,
@@ -57,7 +58,7 @@ class _Entry:
 
 
 @dataclass
-class InMemoryUserDirectory:
+class InMemoryUserDirectory(UserDirectoryAdminBase):
     """Dev/test directory implementing the full ``UserDirectory`` protocol."""
 
     _users: dict[str, _Entry] = field(default_factory=dict)
