@@ -2201,7 +2201,7 @@ class KeystoneOAuthProvider(OAuthProvider):
         if form_provider is None:
             return self._html_error(request, lang, "error_request", 400)
 
-        allowed_ip, retry_ip = self._login_throttle.check_ip(peer_host(request))
+        allowed_ip, retry_ip = await self._login_throttle.acheck_ip(peer_host(request))
         if not allowed_ip:
             return login_throttle_response(retry_ip)
 
@@ -2393,7 +2393,7 @@ class KeystoneOAuthProvider(OAuthProvider):
         if origin_refusal is not None:
             return origin_refusal
 
-        allowed_ip, retry_ip = self._login_throttle.check_ip(peer_host(request))
+        allowed_ip, retry_ip = await self._login_throttle.acheck_ip(peer_host(request))
         if not allowed_ip:
             return login_throttle_response(retry_ip)
 

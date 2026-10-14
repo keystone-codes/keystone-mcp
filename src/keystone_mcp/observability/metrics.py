@@ -183,6 +183,11 @@ _USERS_REVISION_BUMP_FAILED = Counter(
     "keystone_mcp_users_revision_bump_failed_total",
     "Users directory revision bumps that failed after a successful mutation",
 )
+_THROTTLE_BACKEND_ERRORS = Counter(
+    "keystone_mcp_throttle_backend_errors_total",
+    "Redis throttle backend failures that were treated as allowed",
+    ["kind"],
+)
 
 
 class RbacMetrics:
@@ -437,3 +442,7 @@ def record_upstream_item_rejected(*, namespace: str, kind: str, reason: str) -> 
 def record_upstream_input_rounds_exceeded(*, namespace: str) -> None:
     """Increment input-round cap counter without an observability handle."""
     _UPSTREAM_INPUT_ROUNDS_EXCEEDED.labels(namespace=namespace).inc()
+
+
+def record_throttle_backend_error(*, kind: str) -> None:
+    _THROTTLE_BACKEND_ERRORS.labels(kind=kind).inc()

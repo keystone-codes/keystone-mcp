@@ -17,6 +17,8 @@ from collections import OrderedDict, defaultdict, deque
 from starlette.requests import Request
 from starlette.responses import Response
 
+from keystone_mcp.auth.rate_window import InMemorySlidingWindow, RedisSlidingWindow, SlidingWindow
+
 # Bounds on `LoginAttemptThrottle._ip_hits` (A11 finding #6). Without them, an
 # attacker who never repeats a source address — trivial with IPv6, which
 # offers an effectively unlimited pool — leaves one stale, single-timestamp
@@ -68,26 +70,46 @@ _MAX_EMAIL_LEN = 320
 
 
 class PerIdentityThrottle:
-    def __init__(self, max_requests: int = 30, window_seconds: int = 60) -> None:
+    def __init__(
+        self,
+        max_requests: int = 30,
+        window_seconds: int = 60,
+        *,
+        window: SlidingWindow | None = None,
+    ) -> None:
         self._max = max_requests
-        self._window = window_seconds
+        self._window_seconds = window_seconds
+        self._window = window or InMemorySlidingWindow()
         self._hits: dict[str, deque[float]] = defaultdict(deque)
         self._lock = threading.Lock()
 
     def check(self, identity_key: str, now: float | None = None) -> bool:
         """Record a hit and return True if within the limit, False if exceeded."""
+        if isinstance(self._window, RedisSlidingWindow):
+            raise RuntimeError("use acheck")
         if self._max <= 0:
             return True
         ts = time.monotonic() if now is None else now
         with self._lock:
             bucket = self._hits[identity_key]
-            cutoff = ts - self._window
+            cutoff = ts - self._window_seconds
             while bucket and bucket[0] <= cutoff:
                 bucket.popleft()
             if len(bucket) >= self._max:
                 return False
             bucket.append(ts)
             return True
+
+    async def acheck(self, identity_key: str, now: float | None = None) -> bool:
+        if isinstance(self._window, RedisSlidingWindow):
+            decision = await self._window.hit(
+                identity_key,
+                limit=self._max,
+                window_seconds=self._window_seconds,
+                now=now,
+            )
+            return decision.allowed
+        return self.check(identity_key, now=now)
 
 
 def _normalize_email_key(email: str) -> str:
@@ -107,10 +129,15 @@ class LoginAttemptThrottle:
         ip_max: int = 30,
         email_max: int = 10,
         window_seconds: int = 300,
+        *,
+        window: SlidingWindow | None = None,
+        kind: str = "login_ip",
     ) -> None:
         self._ip_max = ip_max
         self._email_max = email_max
-        self._window = window_seconds
+        self._window_seconds = window_seconds
+        self._ip_window = window
+        self._ip_kind = kind
         self._ip_hits: OrderedDict[str, deque[float]] = OrderedDict()
         self._ip_calls_since_sweep = 0
         self._email_failures: OrderedDict[str, deque[float]] = OrderedDict()
@@ -122,6 +149,8 @@ class LoginAttemptThrottle:
 
     def check_ip(self, ip_key: str, now: float | None = None) -> tuple[bool, int]:
         """Record one attempt for *ip_key*; return whether it is within the IP limit."""
+        if isinstance(self._ip_window, RedisSlidingWindow):
+            raise RuntimeError("use acheck_ip")
         if self._ip_max <= 0:
             return True, 0
         ts = time.monotonic() if now is None else now
@@ -154,6 +183,17 @@ class LoginAttemptThrottle:
                 self._ip_hits.pop(key, None)
             return False, retry_after
 
+    async def acheck_ip(self, ip_key: str, now: float | None = None) -> tuple[bool, int]:
+        if isinstance(self._ip_window, RedisSlidingWindow):
+            decision = await self._ip_window.hit(
+                ip_bucket(ip_key or "unknown"),
+                limit=self._ip_max,
+                window_seconds=self._window_seconds,
+                now=now,
+            )
+            return decision.allowed, decision.retry_after
+        return self.check_ip(ip_key, now=now)
+
     def _sweep_ip_hits(self, ts: float) -> None:
         """Drop IP buckets that have aged out of the window entirely.
 
@@ -162,7 +202,7 @@ class LoginAttemptThrottle:
         than pruning each bucket fully.
         """
         self._ip_calls_since_sweep = 0
-        cutoff = ts - self._window
+        cutoff = ts - self._window_seconds
         stale = [key for key, bucket in self._ip_hits.items() if not bucket or bucket[-1] <= cutoff]
         for key in stale:
             del self._ip_hits[key]
@@ -225,7 +265,7 @@ class LoginAttemptThrottle:
         window means every hit in it is, so one timestamp per key is enough.
         """
         self._email_calls_since_sweep = 0
-        cutoff = ts - self._window
+        cutoff = ts - self._window_seconds
         stale = [
             key
             for key, bucket in self._email_failures.items()
@@ -235,14 +275,14 @@ class LoginAttemptThrottle:
             del self._email_failures[key]
 
     def _prune(self, bucket: deque[float], ts: float) -> None:
-        cutoff = ts - self._window
+        cutoff = ts - self._window_seconds
         while bucket and bucket[0] <= cutoff:
             bucket.popleft()
 
     def _within_limit(self, bucket: deque[float], max_hits: int, ts: float) -> tuple[bool, int]:
         self._prune(bucket, ts)
         if len(bucket) >= max_hits:
-            retry = max(1, int(math.ceil(bucket[0] + self._window - ts)))
+            retry = max(1, int(math.ceil(bucket[0] + self._window_seconds - ts)))
             return False, retry
         return True, 0
 
@@ -278,7 +318,7 @@ class IpLoginThrottleMiddleware:
         if scope.get("type") == "http":
             request = Request(scope, receive)
             if request.method in self._methods:
-                allowed, retry_after = self._throttle.check_ip(peer_host(request))
+                allowed, retry_after = await self._throttle.acheck_ip(peer_host(request))
                 if not allowed:
                     await login_throttle_response(retry_after)(scope, receive, send)
                     return
