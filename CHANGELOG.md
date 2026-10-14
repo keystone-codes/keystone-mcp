@@ -10,6 +10,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ### Added
 
+- Developers: `tests/security/` — an attacker's checklist for sign-in, OAuth and RBAC with a test for every item; CI fails when an item has no test.
 - Secrets can be passed as files: `KEYSTONE_MCP_<X>_FILE` for every secret variable (list in `docs/environment.md#secrets-from-files`), and `<NAME>_FILE` for variables named by the upstream registry, stdio `env` and sign-in provider options. The file wins when both are set.
 - Audit event `rbac_authz_decision` carries `task_id` for tool calls and always carries `subject` and `subject_type`, including for service accounts.
 - `KEYSTONE_MCP_SESSION_MAX_AGE_SECONDS` (default `2592000`, 30 days; `0` means no limit): a session is renewed for at most this long after sign-in.

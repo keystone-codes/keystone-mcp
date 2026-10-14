@@ -1,0 +1,154 @@
+- id: SEC-01
+  attack: "Substitute redirect_uri at /authorize and at /token"
+  expected: "400 page without redirect for an unregistered URI; invalid_grant when /token gets another URI than /authorize"
+  tests:
+    - tests/security/test_oauth_redirect.py::test_unregistered_redirect_uri_gets_error_page
+    - tests/security/test_oauth_redirect.py::test_token_redirect_uri_mismatch_is_invalid_grant
+    - tests/test_authorize_error_redirect.py::test_authorize_error_to_foreign_host_shows_page
+    - tests/test_redirect_host_allowlist.py::test_registration_refused_for_unlisted_host
+  status: closed
+  finding: null
+
+- id: SEC-02
+  attack: "Reuse authorization code (sequential and parallel)"
+  expected: "Second exchange invalid_grant; tokens from first exchange remain valid until rotation rules apply"
+  tests:
+    - tests/security/test_oauth_code_pkce.py::test_authorization_code_second_exchange_is_invalid_grant
+    - tests/security/test_oauth_code_pkce.py::test_parallel_code_exchanges_one_wins_one_invalid_grant
+    - tests/test_oauth_flow.py::test_authorization_code_is_single_use
+    - tests/test_refresh_rotation.py::test_code_replay_is_invalid_grant_and_revokes
+  status: closed
+  finding: null
+
+- id: SEC-03
+  attack: "OAuth/OIDC state tampering and replay"
+  expected: "Callback refused on wrong, reused, or cross-provider state"
+  tests:
+    - tests/security/test_login_csrf_state_nonce.py::test_oidc_callback_wrong_state_rejected
+    - tests/test_google_oidc_login.py::test_google_state_mismatch_and_single_use
+    - tests/test_login_flow_generic.py::test_callback_state_is_single_use
+    - tests/test_login_flow_generic.py::test_callback_for_other_provider_is_refused
+  status: closed
+  finding: null
+
+- id: SEC-04
+  attack: "Forged OIDC id_token (nonce, alg, iss, aud, exp)"
+  expected: "Sign-in refused"
+  tests:
+    - tests/security/test_login_csrf_state_nonce.py::test_oidc_tampered_id_token_rejected
+    - tests/test_oidc_provider.py::test_wrong_nonce_is_refused
+    - tests/test_oidc_provider.py::test_bad_signature_is_refused
+    - tests/test_google_oidc_login.py::test_google_callback_rejects_bad_iss_aud_exp_nonce
+  status: closed
+  finding: null
+
+- id: SEC-05
+  attack: "PKCE bypass (plain, missing, wrong verifier)"
+  expected: "Refused at /authorize or /token"
+  tests:
+    - tests/security/test_oauth_code_pkce.py::test_pkce_plain_method_rejected_at_token
+    - tests/security/test_oauth_code_pkce.py::test_token_exchange_without_verifier_rejected
+    - tests/test_oauth_flow.py::test_pkce_wrong_verifier_is_rejected
+  status: closed
+  finding: null
+
+- id: SEC-06
+  attack: "CSRF on login and consent"
+  expected: "400/403 without completing sign-in"
+  tests:
+    - tests/security/test_login_csrf_state_nonce.py::test_login_redirect_post_without_csrf_cookie_rejected
+    - tests/security/test_login_csrf_state_nonce.py::test_login_redirect_post_with_wrong_origin_rejected
+    - tests/test_oauth_consent.py::test_post_login_google_requires_matching_csrf
+    - tests/test_google_oidc_login.py::test_google_callback_without_csrf_cookie_is_refused
+  status: open
+  finding: SEC-06
+
+- id: SEC-07
+  attack: "Client-forged identity headers and _meta"
+  expected: "Upstream sees only Keystone-verified identity"
+  tests:
+    - tests/security/test_identity_headers.py::test_forged_identity_headers_not_seen_by_upstream
+    - tests/security/test_identity_headers.py::test_upstream_sees_keystone_verified_email
+    - tests/test_stdio_upstream_e2e.py::test_client_meta_identity_is_not_forwarded_to_stdio
+  status: closed
+  finding: null
+
+- id: SEC-08
+  attack: "RBAC bypass via tool-name tricks"
+  expected: "Forbidden or unknown tool; never executes privileged tool"
+  tests:
+    - tests/security/test_rbac_names.py::test_admin_tool_names_are_not_reachable
+    - tests/security/test_rbac_names.py::test_wildcard_tool_name_does_not_call_real_tool
+    - tests/test_upstream_resource_rbac_scope.py::test_other_namespace_cannot_decide_read_access
+  status: closed
+  finding: null
+
+- id: SEC-09
+  attack: "Administration tools without role"
+  expected: "forbidden; no mutation"
+  tests:
+    - tests/security/test_admin_tools_access.py::test_member_cannot_call_users_add
+    - tests/security/test_admin_tools_access.py::test_machine_wildcard_role_cannot_mutate_users
+    - tests/test_management_roles_e2e.py::test_hr_cannot_touch_administrators_over_mcp
+    - tests/test_admin_tools_machine_boundary_e2e.py::test_service_account_key_cannot_change_admin_state
+  status: closed
+  finding: null
+
+- id: SEC-10
+  attack: "Secret leakage in logs and HTTP bodies at DEBUG"
+  expected: "No raw tokens, keys, or passwords in logs or responses"
+  tests:
+    - tests/security/test_secret_leaks.py::test_oauth_flow_leaves_no_raw_secrets_in_logs_or_bodies
+    - tests/test_logging_redact.py::test_keystone_access_and_refresh_tokens_are_masked
+  status: closed
+  finding: null
+
+- id: SEC-11
+  attack: "DoS via dynamic client registration"
+  expected: "Rate/size limits; Redis bounded"
+  tests:
+    - tests/security/test_dos_registration_authorize.py::test_dcr_rejects_oversized_registration_body
+    - tests/test_dcr_limits.py::test_register_rejects_large_body_without_reading_it_all
+    - tests/test_client_registration_cap.py::test_registration_refused_when_cap_reached
+    - tests/test_login_attempt_limit.py::test_register_returns_429_when_ip_limit_exceeded
+  status: closed
+  finding: null
+
+- id: SEC-12
+  attack: "DoS via /authorize (volume and giant parameters)"
+  expected: "429 or 400; stable memory"
+  tests:
+    - tests/security/test_dos_registration_authorize.py::test_authorize_giant_params_return_400_without_memory_spike
+    - tests/test_login_attempt_limit.py::test_authorize_returns_429_when_oauth_ip_limit_exceeded
+    - tests/test_authorize_error_redirect.py::test_authorize_error_to_foreign_host_shows_page
+  status: closed
+  finding: null
+
+- id: SEC-13
+  attack: "Human API key misuse (revoked, expired, service key on form)"
+  expected: "Refused; revoked key ends open sessions"
+  tests:
+    - tests/security/test_api_key_and_refresh.py::test_wrong_api_key_on_login_form_rejected
+    - tests/test_api_key_session_revocation.py::test_revoke_key_ends_sessions_opened_with_it
+    - tests/test_login_api_key.py::test_service_account_key_is_refused_on_login_form
+    - tests/test_refresh_rechecks.py::test_expired_key_session_cannot_refresh
+  status: closed
+  finding: null
+
+- id: SEC-14
+  attack: "Stolen refresh token after grace window"
+  expected: "Branch revoked; both sides get invalid_grant"
+  tests:
+    - tests/security/test_api_key_and_refresh.py::test_stolen_refresh_after_grace_window_revokes_branch
+    - tests/test_refresh_rotation.py::test_replay_after_grace_revokes_branch
+  status: closed
+  finding: null
+
+- id: SEC-15
+  attack: "Raw OAuth tokens in Redis"
+  expected: "No Redis key or value contains raw access/refresh token"
+  tests:
+    - tests/security/test_redis_contents.py::test_redis_has_no_raw_access_or_refresh_tokens
+    - tests/test_oauth_hashed_keys.py::test_no_redis_key_or_value_contains_a_token
+  status: closed
+  finding: null
