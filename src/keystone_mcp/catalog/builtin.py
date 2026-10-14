@@ -31,6 +31,7 @@ from keystone_mcp.adapters.service_accounts_admin import ServiceAccountsAdminAda
 from keystone_mcp.adapters.users_admin import RoleSource, UsersAdminAdapter
 from keystone_mcp.catalog.names import BUILTIN_TOOL_NAMES  # noqa: F401 — re-export
 from keystone_mcp.config import Settings
+from keystone_mcp.rbac.management import ManagementSource, file_management_source
 from keystone_mcp.router.registry import Param, RouterRegistry
 from keystone_mcp.user_directory.protocol import UserDirectory
 
@@ -46,20 +47,36 @@ def register_catalog(
     observability: object | None = None,
     directory: UserDirectory | None = None,
     role_source: RoleSource | None = None,
+    management_source: ManagementSource | None = None,
     policy_store: object | None = None,
     session_revoker: object | None = None,
 ) -> None:
     """``policy_store``, when given, is a ``keystone_mcp.rbac.policy_store.PolicyStore``."""
+    resolved_management = management_source
+    if resolved_management is None:
+        policy_path = settings.rbac_policy_path.strip()
+        if policy_path:
+            resolved_management = file_management_source(policy_path)
+        else:
+            logger.warning("management-role checks are off: no RBAC policy path")
     users_admin = UsersAdminAdapter(
         directory=directory,
         observability=observability,
         role_source=role_source,
+        management_source=resolved_management,
         session_revoker=session_revoker,
     )
     service_accounts_admin = ServiceAccountsAdminAdapter(
-        directory=directory, observability=observability, role_source=role_source
+        directory=directory,
+        observability=observability,
+        role_source=role_source,
+        management_source=resolved_management,
     )
-    api_keys_admin = ApiKeysAdminAdapter(directory=directory, observability=observability)
+    api_keys_admin = ApiKeysAdminAdapter(
+        directory=directory,
+        observability=observability,
+        management_source=resolved_management,
+    )
 
     P = Param  # noqa: N806 — local alias for brevity
 

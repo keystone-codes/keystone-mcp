@@ -65,6 +65,15 @@ always accepts, file or no file, is `administrator` — reserved, and the
 system refuses to block or demote the last active administrator, or let one
 remove their own `administrator` role.
 
+### Who can manage whom
+
+Management roles and full administrators are derived from the policy file, not
+from the literal name `administrator` ([rbac-policy-format.md §2.10](rbac-policy-format.md#210-management-roles-and-full-administrators)).
+Only a full administrator may grant or revoke a management role or change an
+account that already holds one; delegated roles such as `users_*` without full
+coverage still manage ordinary accounts. Run `keystone-mcp users admins` on the
+host to see who holds management roles before and after a policy change.
+
 ## A client application is not a person
 
 Registering an OAuth client (`POST /register`, dynamic client registration —

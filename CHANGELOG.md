@@ -10,6 +10,8 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ### Added
 
+- `keystone-mcp users admins` lists full administrators, management roles and their holders; exits 1 when there is no active full administrator.
+- `keystone-mcp users grant-admin --role <name>` grants a named role that gives full administration. Without the flag, when the policy has no `administrator` role but exactly one role that gives full administration, that role is granted.
 - Metric `keystone_mcp_admin_refusals_total`; audit field `actor_subject_type` on `rbac_policy_mutation`.
 - `LoginIdentity.key_id` and `LoginIdentity.key_expires_at` (optional) for form providers that sign people in with a Keystone API key.
 - `docs/clients.md` lists the client versions tested with this release and known
@@ -19,6 +21,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ### Changed
 
+- Management roles: a role that reaches any built-in administration tool is a management role, and a person whose roles reach all of them is a full administrator — both derived from the active policy, whatever the role names. Only a full administrator can give or take away a management role, or change, block, unblock, log out, or manage API keys of an account that holds one.
 - Service accounts get `forbidden` from every administration tool that changes state (`users_*`, `service_accounts_*`, `api_keys_*`, `policy_*`); reading stays available. `tools/list` no longer shows a caller the tools it will be refused for lack of an interactive sign-in.
 - A refresh token whose session marker is missing is refused with `invalid_grant` instead of being renewed as an `api_key` session. The marker is now written in the same Redis transaction as the token pair.
 - Access tokens of people carry `"subject_type": "human"`; a sign-in that resolves to a service-account subject is refused.
@@ -34,6 +37,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ### Migration
 
+- Before upgrading, list who holds management roles: run `keystone-mcp users admins` on the new version (before switching traffic) — it lists full administrators, management roles and their holders. People in delegated roles (for example `users_*` only) keep managing ordinary accounts but get `forbidden` on management roles and their holders. If your administrator role is not named `administrator`, recovery is `keystone-mcp users grant-admin --email … [--role <name>]`.
 - Automation that changed users, service accounts or API keys through MCP with a service-account key now gets `forbidden`; do it from a person's session or with the `keystone-mcp` CLI on the host.
 - Sessions opened on 0.4.x/0.5.x keep working after the upgrade. Rolling back to 0.5.x keeps sessions opened on 0.6.0: 0.5.x ignores the new marker fields. While replicas of both versions run side by side, a session renewed by a 0.5.x replica loses the new fields again; session max-age and key checks apply once every replica runs 0.6.0.
 

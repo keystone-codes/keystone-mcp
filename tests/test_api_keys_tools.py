@@ -26,7 +26,7 @@ ADMIN = VerifiedIdentity(email="admin@example.com")
 def _enforce_settings(tmp_path: Path) -> Settings:
     policy = tmp_path / "rbac-policy.yaml"
     policy.write_text(
-        "default_deny: true\nroles: {administrator: {allow: ['*']}}\n",
+        'version: "api-keys-tools"\ndefault_deny: true\nroles:\n  administrator:\n    allow: ["*"]\n',
         encoding="utf-8",
     )
     return Settings(
@@ -65,6 +65,14 @@ def test_api_keys_tools_omitted_without_capability(tmp_path: Path) -> None:
 async def test_issue_response_includes_notice_and_audit_has_no_secret(tmp_path: Path) -> None:
     settings = _enforce_settings(tmp_path)
     store, _ = await make_users_store(tmp_path)
+    await store.create_user(
+        email="admin@example.com",
+        full_name="Admin",
+        roles=["administrator"],
+        note=None,
+        created_by="system:test",
+        allowed_roles=None,
+    )
     directory = LocalUserDirectory(store)
     factory = make_session_factory(store._engine)  # noqa: SLF001
     with session_scope(factory) as session:

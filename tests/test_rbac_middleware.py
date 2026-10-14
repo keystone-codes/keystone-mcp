@@ -633,7 +633,7 @@ async def test_list_hides_tools_requiring_human_identity_for_non_interactive_cal
         rbac_policy_path=str(policy_path),
         users_service_url="http://users:8000",
         users_service_token="token",
-        redis_url="redis://localhost:6379/0",
+        redis_url=UNUSED_REDIS_URL,
     )
     resolver, backend, _ = build_in_memory_user_directory_resolver()
     backend.seed("human@example.com", roles=("administrator",))
@@ -696,7 +696,7 @@ critical_tools: []
         rbac_policy_path=str(policy_path),
         users_service_url="http://users:8000",
         users_service_token="token",
-        redis_url="redis://localhost:6379/0",
+        redis_url=UNUSED_REDIS_URL,
     )
     resolver, backend, _ = build_in_memory_user_directory_resolver()
     await backend.create_service_account(
