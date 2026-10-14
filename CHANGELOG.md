@@ -10,6 +10,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ### Added
 
+- CI runs the test suite on Python 3.14 and enforces 85 % line-and-branch coverage.
 - A policy change made through `policy_*` reaches every replica on its next call (revision in Redis, `KEYSTONE_MCP_POLICY_REDIS_REVISION_KEY`). Metrics `keystone_mcp_rbac_policy_info{content_hash}`, `keystone_mcp_rbac_policy_in_sync`, `keystone_mcp_rbac_policy_revision_checks_total`; `/readyz` details show `policy_content_hash` and `policy_in_sync`.
 - `policy_rollback` accepts `expected_hash`. `policy_catalog` and policy changes see prompt and resource names, as a reload does.
 - Metric `keystone_mcp_upstream_stderr_suppressed_total{namespace}`; process state `stopping`.

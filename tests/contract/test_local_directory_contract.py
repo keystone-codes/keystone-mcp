@@ -17,8 +17,6 @@ from keystone_mcp.user_directory.local import LocalUserDirectory
 from keystone_mcp.user_directory.protocol import UserDirectory
 from support.users_store import make_users_store
 
-pytest_plugins = ["keystone_mcp.contract_tests"]
-
 
 def _sqlite_factory(tmp_path) -> Callable[[], Awaitable[UserDirectory]]:
     counter = 0

@@ -11,6 +11,7 @@ from __future__ import annotations
 import pytest
 from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
+from mcp.shared.exceptions import MCPError
 
 from conftest import obtain_access_token
 
@@ -52,6 +53,6 @@ async def test_tool_call_without_token_is_rejected(harness):
         harness.settings.transport_url,
         httpx_client_factory=harness.mcp_client_factory(),
     )
-    with pytest.raises(Exception):
+    with pytest.raises(MCPError, match="error response"):
         async with Client(transport) as client:
             await client.list_tools()

@@ -14,8 +14,6 @@ from keystone_mcp.user_directory.protocol import UserDirectory
 from support.fake_users_service import build_fake_users_service
 from support.users_store import make_users_store
 
-pytest_plugins = ["keystone_mcp.contract_tests"]
-
 TOKEN = "contract-test-token"
 
 

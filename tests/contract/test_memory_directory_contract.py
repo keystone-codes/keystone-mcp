@@ -14,8 +14,6 @@ from keystone_mcp.contract_tests import (
 from keystone_mcp.user_directory.memory import InMemoryUserDirectory
 from keystone_mcp.user_directory.protocol import UserDirectory
 
-pytest_plugins = ["keystone_mcp.contract_tests"]
-
 
 @pytest.fixture
 def keystone_directory_factory() -> Callable[[], Awaitable[UserDirectory]]:

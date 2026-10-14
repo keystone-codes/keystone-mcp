@@ -444,13 +444,12 @@ async def test_email_verified_claim_is_used(tmp_path, monkeypatch):
     fake.user.extra_claims = {"upn": "alice@example.com", "email_verified": True}
     redirect2 = await provider.begin(state="st2", callback_url="http://app/cb")
     params2 = await fake.authorize(redirect2.url)
-    with pytest.raises(Exception) as exc_info:
+    from keystone_mcp.login.protocol import LoginRejected
+
+    with pytest.raises(LoginRejected) as exc_info:
         await provider.complete(
             params=params2, callback_url="http://app/cb", attempt=redirect2.attempt
         )
-    from keystone_mcp.login.protocol import LoginRejected
-
-    assert isinstance(exc_info.value, LoginRejected)
     assert exc_info.value.reason == "email_unverified"
 
 

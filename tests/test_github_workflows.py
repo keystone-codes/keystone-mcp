@@ -255,3 +255,75 @@ def test_release_publish_depends_on_the_image_scan():
     doc = _load("release.yml")
     assert "publish" in _job_needs(doc, "pypi")
     assert "publish" in _job_needs(doc, "github-release")
+
+
+def _job_step_names(doc: dict, job_name: str) -> list[str]:
+    job = doc["jobs"][job_name]
+    return [step.get("name", "") for step in job.get("steps") or []]
+
+
+def _job_step_run_text(doc: dict, job_name: str) -> str:
+    chunks: list[str] = []
+    for step in doc["jobs"][job_name].get("steps") or []:
+        run = step.get("run")
+        if run:
+            chunks.append(str(run))
+    return "\n".join(chunks)
+
+
+def test_test_job_has_redis_and_postgres_services():
+    doc = _load("test-gate.yml")
+    test_job = doc["jobs"]["test"]
+    services = test_job.get("services") or {}
+    assert "redis" in services
+    assert "postgres" in services
+    env = test_job.get("env") or {}
+    assert env.get("KEYSTONE_MCP_REDIS_URL")
+    postgres_url = env.get("KEYSTONE_TEST_POSTGRES_URL", "")
+    assert postgres_url
+    assert "test" in postgres_url.lower()
+
+
+def test_contract_freeze_step_runs_before_full_suite():
+    doc = _load("test-gate.yml")
+    names = _job_step_names(doc, "test")
+    assert "Contract freeze gate" in names
+    assert "Full test suite" in names
+    assert names.index("Contract freeze gate") < names.index("Full test suite")
+
+    lint = doc["jobs"]["lint"]
+    lint_names = _job_step_names(doc, "lint")
+    assert any("Frozen baseline matches" in name for name in lint_names)
+    checkout = next(
+        step
+        for step in lint.get("steps") or []
+        if str(step.get("uses", "")).startswith("actions/checkout@")
+    )
+    assert checkout.get("with", {}).get("fetch-depth") == 0
+
+
+def test_skip_check_step_present():
+    doc = _load("test-gate.yml")
+    assert "Check skipped tests" in _job_step_names(doc, "test")
+
+
+def test_plugin_template_job_installs_with_dependencies():
+    doc = _load("ci.yml")
+    run_text = _job_step_run_text(doc, "plugin-template")
+    assert "--no-deps" not in run_text
+
+
+def test_coverage_threshold_is_enforced():
+    pyproject = (Path(__file__).resolve().parent.parent / "pyproject.toml").read_text(
+        encoding="utf-8"
+    )
+    match = re.search(r"fail_under\s*=\s*(\d+)", pyproject)
+    assert match is not None
+    assert int(match.group(1)) >= 85
+    gate = _load("test-gate.yml")
+    full_suite = next(
+        step
+        for step in gate["jobs"]["test"].get("steps") or []
+        if step.get("name") == "Full test suite"
+    )
+    assert "--cov" in str(full_suite.get("run", ""))
