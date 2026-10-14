@@ -115,7 +115,7 @@ async def test_keystone_timeout_cancels_upstream(cancel_stack, upstream_mode):
 
     async with asgi_server(main) as running:
         async with running.client() as client:
-            with pytest.raises(ToolError, match="timed out"):
+            with pytest.raises(ToolError, match="timed out|did not answer within"):
                 await client.call_tool("hello_slow", {})
 
     assert "slow_cancelled_at" in observed

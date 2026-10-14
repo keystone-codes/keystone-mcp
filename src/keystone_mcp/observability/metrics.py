@@ -107,6 +107,11 @@ _UPSTREAM_ITEMS_REJECTED = Counter(
     "Upstream catalog items or answers keystone-mcp refused to publish or pass on",
     ["namespace", "kind", "reason"],
 )
+_UPSTREAM_INPUT_ROUNDS_EXCEEDED = Counter(
+    "keystone_mcp_upstream_input_rounds_exceeded_total",
+    "Tool calls stopped because the upstream kept requesting input",
+    ["namespace"],
+)
 _OAUTH_CLIENT_REGISTRATIONS = Counter(
     "keystone_mcp_oauth_client_registrations_total",
     "Dynamic client registration (POST /register) outcomes",
@@ -290,6 +295,11 @@ class RbacMetrics:
             return
         _UPSTREAM_ELICITATIONS.labels(namespace=namespace, action=action).inc()
 
+    def record_upstream_input_rounds_exceeded(self, *, namespace: str) -> None:
+        if not self._enabled:
+            return
+        _UPSTREAM_INPUT_ROUNDS_EXCEEDED.labels(namespace=namespace).inc()
+
     def record_oauth_client_registration(self, *, outcome: str) -> None:
         if not self._enabled:
             return
@@ -348,3 +358,8 @@ def record_upstream_item_rejected(*, namespace: str, kind: str, reason: str) -> 
     on every reconciliation attempt while the condition persists.
     """
     _UPSTREAM_ITEMS_REJECTED.labels(namespace=namespace, kind=kind, reason=reason).inc()
+
+
+def record_upstream_input_rounds_exceeded(*, namespace: str) -> None:
+    """Increment input-round cap counter without an observability handle."""
+    _UPSTREAM_INPUT_ROUNDS_EXCEEDED.labels(namespace=namespace).inc()
