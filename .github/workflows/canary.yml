@@ -1,0 +1,174 @@
+name: Dependency canary
+
+on:
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  latest:
+    name: Latest dependencies
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: keystone_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      KEYSTONE_MCP_REDIS_URL: redis://localhost:6379/0
+      KEYSTONE_TEST_POSTGRES_URL: postgresql+psycopg://postgres:postgres@localhost:5432/keystone_test
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.11.22"
+          python-version: "3.12"
+
+      - name: Upgrade lock in a temp copy
+        run: |
+          work="$RUNNER_TEMP/canary-latest"
+          cp -r "$GITHUB_WORKSPACE/." "$work"
+          cd "$work"
+          uv lock --upgrade
+          uv sync --extra dev
+
+      - name: Print dependency versions
+        run: |
+          work="$RUNNER_TEMP/canary-latest"
+          cd "$work"
+          uv run python - <<'PY'
+          import importlib.metadata as md
+
+          for name in ("fastmcp", "mcp", "httpx2", "starlette"):
+              try:
+                  print(f"{name}=={md.version(name)}")
+              except md.PackageNotFoundError:
+                  print(f"{name}=(not installed)")
+          PY
+
+      - name: Pytest (full suite and private API sentinels)
+        run: |
+          work="$RUNNER_TEMP/canary-latest"
+          cd "$work"
+          uv run pytest -q
+          uv run pytest tests/test_private_api_sentinels.py -v
+
+  prerelease:
+    name: Prerelease fastmcp/mcp
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: keystone_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      KEYSTONE_MCP_REDIS_URL: redis://localhost:6379/0
+      KEYSTONE_TEST_POSTGRES_URL: postgresql+psycopg://postgres:postgres@localhost:5432/keystone_test
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.11.22"
+          python-version: "3.12"
+
+      - name: Upgrade lock with prereleases
+        run: |
+          work="$RUNNER_TEMP/canary-prerelease"
+          cp -r "$GITHUB_WORKSPACE/." "$work"
+          cd "$work"
+          uv lock --upgrade --upgrade-package fastmcp --upgrade-package mcp --prerelease allow
+          uv sync --extra dev
+
+      - name: Pytest
+        run: |
+          work="$RUNNER_TEMP/canary-prerelease"
+          cd "$work"
+          uv run pytest -q
+          uv run pytest tests/test_private_api_sentinels.py -v
+
+  lowest-direct:
+    name: Lowest allowed direct deps
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: keystone_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      KEYSTONE_MCP_REDIS_URL: redis://localhost:6379/0
+      KEYSTONE_TEST_POSTGRES_URL: postgresql+psycopg://postgres:postgres@localhost:5432/keystone_test
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.11.22"
+          python-version: "3.12"
+
+      - name: Install lowest direct versions
+        run: |
+          uv venv "$RUNNER_TEMP/canary-low"
+          uv pip install --python "$RUNNER_TEMP/canary-low/bin/python" --resolution lowest-direct ".[dev]"
+
+      - name: Pytest
+        run: |
+          export PATH="$RUNNER_TEMP/canary-low/bin:$PATH"
+          pytest -q
+          pytest tests/test_private_api_sentinels.py -v

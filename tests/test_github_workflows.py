@@ -319,6 +319,19 @@ def test_skip_check_step_present():
     assert "Check skipped tests" in _job_step_names(doc, "test")
 
 
+def test_canary_runs_daily_with_latest_and_lowest():
+    doc = _load("canary.yml")
+    on_block = doc.get("on") or doc.get(True)
+    schedule = (on_block or {}).get("schedule") or []
+    assert schedule, "canary.yml must declare a schedule"
+    assert "workflow_dispatch" in (on_block or {})
+    assert doc.get("permissions") == {"contents": "read"}
+    assert "latest" in doc["jobs"]
+    assert "lowest-direct" in doc["jobs"]
+    latest_run = _job_step_run_text(doc, "latest")
+    assert "uv lock --upgrade" in latest_run
+
+
 def test_plugin_template_job_installs_with_dependencies():
     doc = _load("ci.yml")
     run_text = _job_step_run_text(doc, "plugin-template")

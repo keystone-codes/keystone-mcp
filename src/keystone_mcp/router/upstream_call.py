@@ -2,11 +2,14 @@
 
 Every call Keystone makes to an upstream — proxying a tool, forwarding its
 progress, its cancellation, or (later) an elicitation round-trip — goes
-through :func:`call_upstream_tool`. Centralizing it here keeps fastmcp/mcp
-private APIs (``Client._parse_call_tool_result`` today; ``Client.
-_session_kwargs`` and ``Client._await_with_session_monitoring`` once
-elicitation lands) confined to one module instead of scattered across the
-proxy adapter, so an SDK upgrade only has one place to re-check.
+through :func:`call_upstream_tool`. Most private fastmcp/mcp symbols live
+here (``Client._session_kwargs``, ``Client._await_with_session_monitoring``,
+``Client._parse_call_tool_result``); others are in ``server.py``
+(``FastMCP._mcp_server``), ``router/upstream_content.py`` (``Namespace._transform_uri``),
+``router/proxy_components.py`` (``_stash_proxy_request_context``, ``forward_uri``,
+``ProxyResource._cached_content``), and ``surface/client_sessions.py``
+(``ServerSession._connection``). The full list and signatures are in
+``tests/test_private_api_sentinels.py``.
 
 :class:`DownstreamCall` captures the client request this upstream call is
 answering, once, at the top of the request: the client's ``ServerSession``

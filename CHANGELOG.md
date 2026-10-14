@@ -10,6 +10,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ### Added
 
+- CI: daily canary against the newest fastmcp/mcp and against the lowest allowed dependency versions; a sentinel test lists every private fastmcp/mcp API Keystone relies on.
 - Developers: hostile sign-in provider, users directory and upstream test suites; property-based fuzzing of RBAC, redirect checks, registry and policy parsing, with a daily long run in CI.
 - Developers: `tests/security/` — an attacker's checklist for sign-in, OAuth and RBAC with a test for every item; CI fails when an item has no test.
 - Secrets can be passed as files: `KEYSTONE_MCP_<X>_FILE` for every secret variable (list in `docs/environment.md#secrets-from-files`), and `<NAME>_FILE` for variables named by the upstream registry, stdio `env` and sign-in provider options. The file wins when both are set.
@@ -88,6 +89,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ### Fixed
 
+- Minimum versions: `redis>=5.0.1` (5.0.0 has no `Redis.aclose()`, used after every users-directory change from the CLI) and `pyyaml>=6.0.1` (6.0 does not build on Python 3.12).
 - Startup refuses a users directory that declares an unknown capability name.
 - The HTTP users directory treats a resolve response whose `email` field does not match the requested subject as nonexistent.
 - POST `/login/{provider}` rejects a cross-site `Origin`.
