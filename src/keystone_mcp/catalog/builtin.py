@@ -351,8 +351,10 @@ def register_catalog(
             ),
             (
                 "policy_rollback",
-                "Restore the previous policy file generation from the one-step backup.",
-                [],
+                "Restore the previous policy file generation from the one-step backup. "
+                "Pass expected_hash (file_hash from policy_read) to refuse when someone "
+                "else changed the file since you read it.",
+                [P("expected_hash", str, required=False, default=None)],
             ),
         ]
         for tool_name, description, params in _policy_read_tools:
