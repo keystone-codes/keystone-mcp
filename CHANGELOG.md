@@ -8,6 +8,15 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ## [Unreleased]
 
+### Added
+
+- Metrics `keystone_mcp_api_key_verifications_total`, `keystone_mcp_api_key_cache_entries`, `keystone_mcp_api_key_cache_evictions_total`, `keystone_mcp_users_revision_bump_failed_total`.
+- Optional directory protocol `ApiKeyIdIndex`.
+
+### Fixed
+
+- A replica that changes a user or service account forgets its own cached decisions at once, even when Redis could not record the change.
+
 ## [0.5.0] - 2026-10-13
 
 ### Added

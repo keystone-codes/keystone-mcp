@@ -106,6 +106,25 @@ _OAUTH_CLIENTS = Gauge(
     "keystone_mcp_oauth_clients",
     "Live (non-expired) registered OAuth clients, as seen by this replica",
 )
+_API_KEY_VERIFICATIONS = Counter(
+    "keystone_mcp_api_key_verifications_total",
+    "API key verification outcomes at the directory resolver",
+    ["outcome"],
+)
+_API_KEY_CACHE_ENTRIES = Gauge(
+    "keystone_mcp_api_key_cache_entries",
+    "Entries in the resolver API key verification caches",
+    ["cache"],
+)
+_API_KEY_CACHE_EVICTIONS = Counter(
+    "keystone_mcp_api_key_cache_evictions_total",
+    "LRU evictions from the resolver API key verification caches",
+    ["cache"],
+)
+_USERS_REVISION_BUMP_FAILED = Counter(
+    "keystone_mcp_users_revision_bump_failed_total",
+    "Users directory revision bumps that failed after a successful mutation",
+)
 
 
 class RbacMetrics:
@@ -249,6 +268,26 @@ class RbacMetrics:
         if not self._enabled:
             return
         _OAUTH_CLIENTS.set(count)
+
+    def record_api_key_verification(self, *, outcome: str) -> None:
+        if not self._enabled:
+            return
+        _API_KEY_VERIFICATIONS.labels(outcome=outcome).inc()
+
+    def set_api_key_cache_size(self, *, cache: str, size: int) -> None:
+        if not self._enabled:
+            return
+        _API_KEY_CACHE_ENTRIES.labels(cache=cache).set(size)
+
+    def record_api_key_cache_evictions(self, *, cache: str, count: int) -> None:
+        if not self._enabled or count <= 0:
+            return
+        _API_KEY_CACHE_EVICTIONS.labels(cache=cache).inc(count)
+
+    def record_users_revision_bump_failed(self) -> None:
+        if not self._enabled:
+            return
+        _USERS_REVISION_BUMP_FAILED.inc()
 
     def scrape(self) -> tuple[bytes, str]:
         return generate_latest(), CONTENT_TYPE_LATEST

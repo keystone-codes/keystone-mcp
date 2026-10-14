@@ -100,6 +100,10 @@ provider; `keystone_oidc_provider` is derived from your factory.
 - `AdminDirectoryContract` — extends the read contract; requires `"admin"`.
 - `ServiceAccountDirectoryContract` — requires `"service_accounts"`.
 - `ApiKeyDirectoryContract` — requires `"api_keys"`.
+- Optional `ApiKeyIdIndex` (see `keystone_mcp.user_directory.protocol`) lets
+  Keystone reject unknown API key ids before calling your directory; without
+  it, Keystone rate-limits first-time ids to 20 directory lookups per second
+  (burst 50) per replica.
 - `OidcLoginProviderContract` / `FormLoginProviderContract` — sign-in providers.
 
 Helper `seed_contract_dataset(directory)` fills an admin-capable directory with

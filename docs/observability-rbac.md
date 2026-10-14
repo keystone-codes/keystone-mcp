@@ -75,6 +75,10 @@ Emitted for every `users_*` admin tool attempt, including ambiguous outcomes
 | `keystone_mcp_users_mutation_total` | `operation`, `outcome` | Admin mutation attempts |
 | `keystone_mcp_oauth_client_registrations_total` | `outcome` | `POST /register` outcomes (`created`, `rejected_limit`, `rejected_redirect_host`) |
 | `keystone_mcp_oauth_clients` | (gauge) | Live registered OAuth clients, refreshed on every registration attempt on this replica |
+| `keystone_mcp_api_key_verifications_total` | `outcome` | API key checks at the directory resolver (`valid`, `invalid`, `malformed`, `unknown_key_id`, `limited`, `unavailable`) |
+| `keystone_mcp_api_key_cache_entries` | `cache` | Entries in the positive/negative API key verification caches (`positive`, `negative`) |
+| `keystone_mcp_api_key_cache_evictions_total` | `cache` | LRU evictions from those caches |
+| `keystone_mcp_users_revision_bump_failed_total` | — | Users-directory revision `INCR` failed after a successful mutation on this replica |
 
 `keystone_mcp_oauth_clients` is a per-replica gauge: it is set to the result of
 the store's client count right after each registration attempt on that
@@ -99,6 +103,18 @@ into `other` is not guaranteed to match across replicas.
 
 Use these as templates for your own Prometheus/Alertmanager configuration.
 Adjust windows and thresholds per environment.
+
+### Unauthenticated API-key traffic
+
+```promql
+sum(rate(keystone_mcp_api_key_verifications_total{outcome=~"unknown_key_id|malformed|limited"}[5m])) > 50
+```
+
+### Users revision bump failures
+
+```promql
+increase(keystone_mcp_users_revision_bump_failed_total[15m]) > 0
+```
 
 ### Mass RBAC denials (possible misconfiguration or attack)
 
