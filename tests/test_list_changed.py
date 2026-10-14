@@ -24,7 +24,6 @@ from fastmcp import Client
 from fastmcp.utilities.tests import asgi_server
 from mcp.client.subscriptions import listen as listen_subscriptions
 
-import keystone_mcp.router.upstream as upstream_module
 from conftest import BASE_URL, VALID_TOKEN, obtain_access_token
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import Settings
@@ -69,25 +68,26 @@ async def _build_with_upstream(settings: Settings, app):
 
 
 @asynccontextmanager
-async def _fetch_from(app):
-    """Point the reconciler's next ``fetch_upstream_tools`` call(s) at a different app.
+async def _fetch_from(app, upstreams):
+    """Point the reconciler's next HTTP discovery at a different in-process app."""
+    from keystone_mcp.router.upstream_connection import HttpUpstreamConnection
 
-    Stands in for the upstream's tool catalog growing between one reconciler
-    tick and the next, without needing to fabricate ``mcp_types.Tool``
-    objects by hand.
-    """
-    real_fetch = upstream_module.fetch_upstream_tools
     factory_builder = asgi_http_client_factory(app)
-
-    async def fake_fetch(url, **kwargs):
-        kwargs["httpx_client_factory"] = factory_builder(kwargs.get("timeout_seconds", 5.0))
-        return await real_fetch(url, **kwargs)
-
-    upstream_module.fetch_upstream_tools = fake_fetch
+    previous_registry_factory = upstreams.http_client_factory
+    previous_conn_factories: dict[str, object] = {}
+    upstreams.http_client_factory = factory_builder
+    for namespace, conn in upstreams._connections.items():
+        if isinstance(conn, HttpUpstreamConnection):
+            previous_conn_factories[namespace] = conn._http_client_factory
+            conn._http_client_factory = factory_builder
     try:
         yield
     finally:
-        upstream_module.fetch_upstream_tools = real_fetch
+        upstreams.http_client_factory = previous_registry_factory
+        for namespace, previous in previous_conn_factories.items():
+            conn = upstreams._connections[namespace]
+            if isinstance(conn, HttpUpstreamConnection):
+                conn._http_client_factory = previous  # type: ignore[assignment]
 
 
 def _legacy_client(mcp, received: list) -> Client:
@@ -176,7 +176,7 @@ async def test_new_upstream_tool_sends_list_changed_legacy_era():
             assert {t.name for t in tools} == {"hello_greet"}
 
             app2 = build_lowlevel_upstream_app(tools=["greet", "search"])
-            async with LifespanManager(app2), _fetch_from(app2):
+            async with LifespanManager(app2), _fetch_from(app2, _upstreams):
                 await reconciler.tick()
             await asyncio.sleep(0)  # let the in-memory handler run
 
@@ -207,7 +207,7 @@ async def test_new_upstream_tool_sends_list_changed_modern_era():
 
             async with listen_subscriptions(client.session, tools_list_changed=True) as sub:
                 app2 = build_lowlevel_upstream_app(tools=["greet", "search"])
-                async with LifespanManager(app2), _fetch_from(app2):
+                async with LifespanManager(app2), _fetch_from(app2, _upstreams):
                     await reconciler.tick()
 
                 event = await asyncio.wait_for(sub.__anext__(), timeout=2.0)
