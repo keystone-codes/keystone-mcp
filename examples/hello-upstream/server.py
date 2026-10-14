@@ -270,12 +270,14 @@ def _format_elicit_answer(result: types.ElicitResult) -> str:
 async def _slow_count(arguments: dict[str, Any], ctx: _ToolCtx | None) -> list[types.ContentBlock]:
     n = int(arguments["n"])
     token = _progress_token(
-        *((
-            ctx.call_meta,
-            ctx.meta,
+        *(
+            (
+                ctx.call_meta,
+                ctx.meta,
+            )
+            if ctx
+            else ()
         )
-        if ctx
-        else ())
     )
     try:
         for i in range(1, n + 1):
