@@ -9,6 +9,9 @@ from typing import Any
 from fastmcp import FastMCP
 
 from keystone_mcp.adapters.stub import StubAdapter
+from keystone_mcp.auth.login_pending_store import InMemoryLoginPendingStore
+from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
+from keystone_mcp.auth.sessions import SessionRevoker
 from keystone_mcp.catalog.builtin import register_catalog
 from keystone_mcp.config import Settings
 from keystone_mcp.identity import VerifiedIdentity
@@ -113,6 +116,7 @@ async def build_admin_harness(
         users_backend="local",
         users_db_url=f"sqlite:///{tmp_path}/keystone-users.db",
         redis_url=UNUSED_REDIS_URL,
+        rbac_audit_subject_salt="test-salt",
     )
     store, _revision = await make_users_store(tmp_path, revision=NullRevisionWriter())
     await store.create_user(
@@ -159,6 +163,9 @@ async def build_admin_harness(
         observability=observability,
         directory=directory,
     )
+    pending = InMemoryLoginPendingStore()
+    oauth_store = InMemoryOAuthStore()
+    session_revoker = SessionRevoker(oauth_store, pending)
     register_catalog(
         registry,
         settings,
@@ -167,6 +174,9 @@ async def build_admin_harness(
         role_source=policy_role_source(manager),
         management_source=snapshot_and_file_management_source(manager),
         policy_store=policy_store,
+        session_revoker=session_revoker,
+        login_pending_store=pending,
+        oauth_store=oauth_store,
     )
     manager.reload(registry)
     return AdminHarness(
@@ -197,6 +207,7 @@ async def build_delegation_harness(
         users_backend="local",
         users_db_url=f"sqlite:///{tmp_path}/users.db",
         redis_url=UNUSED_REDIS_URL,
+        rbac_audit_subject_salt="test-salt",
     )
     if store is None:
         store, _revision = await make_users_store(tmp_path, revision=NullRevisionWriter())
@@ -231,6 +242,9 @@ async def build_delegation_harness(
     def catalog_names_source() -> frozenset[str]:
         return delegation_catalog_names(manager, registry)
 
+    pending = InMemoryLoginPendingStore()
+    oauth_store = InMemoryOAuthStore()
+    session_revoker = SessionRevoker(oauth_store, pending)
     register_catalog(
         registry,
         settings,
@@ -239,6 +253,9 @@ async def build_delegation_harness(
         role_source=policy_role_source(manager),
         management_source=snapshot_and_file_management_source(manager),
         catalog_names_source=catalog_names_source,
+        session_revoker=session_revoker,
+        login_pending_store=pending,
+        oauth_store=oauth_store,
     )
     if manager.snapshot is None:
         manager.load_initial(registry)

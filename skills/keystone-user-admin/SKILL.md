@@ -1,18 +1,18 @@
 ---
 name: keystone-user-admin
-description: Manage Keystone-MCP users and roles - add, update, block/unblock, grant, revoke or replace roles. Use when asked to give someone access, change a role, or disable a user in Keystone-MCP.
+description: Manage Keystone-MCP users and roles - add, update, block/unblock, grant, revoke or replace roles, or delete a person when they ask for erasure. Use when asked to give someone access, change a role, disable a user, or remove personal data in Keystone-MCP.
 ---
 
 # Keystone-MCP user and role administration
 
-The Keystone-MCP connector exposes nine `users_*` tools backed by the shared users
+The Keystone-MCP connector exposes ten `users_*` tools backed by the shared users
 directory. Pick the tool from the table below and call it once with exactly the
 listed arguments. Do not probe other tools and do not guess argument names.
 
 Only a **full administrator** (every administration tool allowed by policy,
-whatever the role names) may grant or revoke a **management role** or change,
-block, unblock, log out, or manage API keys for an account that holds a
-management role. Other allowed changes follow ordinary RBAC. Changes take
+whatever the role names) may grant or revoke a **management role**, change,
+block, unblock, log out, delete a person, or manage API keys for an account that
+holds a management role. Other allowed changes follow ordinary RBAC. Changes take
 effect immediately — no restart or re-login is needed on the server side.
 
 ## Roles
@@ -44,6 +44,25 @@ permissions are the union of each role's allow patterns.
 | Revoke access | `users_block` | `{"email": "..."}` — also ends all OAuth sessions (`revoked_tokens` in the response) |
 | End sessions only | `users_logout` | `{"email": "..."}` — revokes tokens; person can sign in again; directory entry not required |
 | Restore access | `users_unblock` | `{"email": "..."}` — does not restore old sessions |
+| Delete or anonymize a person | `users_delete` | `{"email": "..."}` — see below; irreversible |
+
+## `users_delete`
+
+Call this only when the human explicitly asks to **delete their data** or to
+**remove the person from the directory** — not for ordinary offboarding
+(`users_block` is the reversible alternative).
+
+1. Call `users_delete` with `{"email": "..."}` only. The server returns
+   `state: "confirmation_required"`, a **summary** (roles, keys, sessions), and a
+   one-time `confirmation` code.
+2. **Show the summary to the human and wait for an explicit “yes”.** Do not
+   call step 2 until they agree.
+3. Call again with `{"email": "...", "confirmation": "<code>"}` using exactly
+   the code from step 1. Never invent or reuse a code.
+
+The deployment mode (`anonymize` vs hard delete) is set by the operator in
+`KEYSTONE_MCP_USERS_DELETE_MODE`, not by tool arguments. On success you get
+`state: "done"` with `pseudonym` (audit hash). Sessions and API keys are revoked.
 
 ## Rules
 
@@ -59,24 +78,25 @@ permissions are the union of each role's allow patterns.
    unknown, ask for it. Do not invent one and do not send an empty string.
 5. **`users_update` changes only `full_name` and `note`.** It cannot change roles
    or email. At least one of the two must be present.
-6. **There is no delete tool.** "Remove a user" means `users_block`. Add
-   `users_revoke_role` if the roles must be stripped as well.
+6. **Offboarding vs erasure.** Routine departure: `users_block` (reversible).
+   Erasure or GDPR-style removal: `users_delete` with the two-step flow above.
 7. **Provision before first sign-in.** A person cannot log in until they exist
    here and are not blocked. Create the account first, then tell them to sign in.
 
 ## Confirm first
 
-Ask the user to confirm before: `users_block`, revoking `administrator`, and any
-`users_set_roles` that would drop roles the person currently has. State which
-roles disappear, then act.
+Ask the user to confirm before: `users_block`, `users_delete` (step 2 only after
+they agree to the summary), revoking `administrator`, and any `users_set_roles`
+that would drop roles the person currently has. State which roles disappear, then act.
 
 ## Reading the result
 
 Success is `{"state": "done", "user": {...}}`, or `{"state": "done", "users": [...],
 "total": N}` for `users_list`, or `{"state": "done", "email": "...", "revoked_tokens": N}`
-for `users_logout`. `users_block` may add top-level `revoked_tokens` (or `null` if the
-token store failed during revoke). Failure is `{"state": "error", "code": "...",
-"message": "..."}`.
+for `users_logout`, or `{"state": "confirmation_required", ...}` / `{"state": "done",
+"pseudonym": "...", ...}` for `users_delete`. `users_block` may add top-level
+`revoked_tokens` (or `null` if the token store failed during revoke). Failure is
+`{"state": "error", "code": "...", "message": "..."}`.
 
 Report the resulting roles and blocked status back to the user — do not just say
 "done".

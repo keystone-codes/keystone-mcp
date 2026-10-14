@@ -10,6 +10,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ### Added
 
+- `users_delete` and `keystone-mcp users delete`: delete a person or anonymize the record (`KEYSTONE_MCP_USERS_DELETE_MODE`, default `anonymize`), after a confirmation code; sessions and API keys are revoked, references to the person in other records are replaced with the audit pseudonym. Only a full administrator may delete. Optional users-directory capability `delete` (`UserDeletionDirectory`); the built-in directory has it.
 - Developers: hostile sign-in provider, users directory and upstream test suites; property-based fuzzing of RBAC, redirect checks, registry and policy parsing, with a daily long run in CI.
 - Developers: `tests/security/` — an attacker's checklist for sign-in, OAuth and RBAC with a test for every item; CI fails when an item has no test.
 - Secrets can be passed as files: `KEYSTONE_MCP_<X>_FILE` for every secret variable (list in `docs/environment.md#secrets-from-files`), and `<NAME>_FILE` for variables named by the upstream registry, stdio `env` and sign-in provider options. The file wins when both are set.
@@ -145,6 +146,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ### Migration
 
+- Roles that list administration tools by name (instead of `users_*`) need `users_delete` to remain full administrators.
 - Log searches by the unsalted subject hash in session-revocation, throttle and directory-failure lines must use the salted pseudonym (the same value as in audit events).
 - Services that ran in `observe` and read `roles` from the assertion: a denied call now has `roles: []`; check `rbac_decision`. Code copied from the identity examples: pass `issuer` (your `KEYSTONE_MCP_BASE_URL` without a trailing slash).
 - Before upgrading, run `keystone-mcp config check` with the new version against your environment.

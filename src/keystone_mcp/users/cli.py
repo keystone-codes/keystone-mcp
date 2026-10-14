@@ -32,7 +32,7 @@ from redis.exceptions import RedisError
 from keystone_mcp.auth.oauth_store import build_shared_auth_stores
 from keystone_mcp.auth.sessions import SessionRevoker
 from keystone_mcp.config import USERS_CLI_VARIABLES, ConfigError, Settings, settings_for_command
-from keystone_mcp.observability.subject import configure_subject_salt
+from keystone_mcp.observability.subject import configure_subject_salt, hash_subject
 from keystone_mcp.rbac.management import (
     AdminsReport,
     build_admins_report,
@@ -46,6 +46,7 @@ from keystone_mcp.users.db import (
     describe_db_url,
     sqlite_file_path,
 )
+from keystone_mcp.users.emails import normalize_email
 from keystone_mcp.users.errors import (
     InvalidUserFieldError,
     LastAdministratorError,
@@ -513,6 +514,88 @@ def _cmd_unbind_identity(args: argparse.Namespace) -> int:
         store.dispose()
 
 
+def _cmd_delete(args: argparse.Namespace) -> int:
+    try:
+        settings = _settings_for_users_cli()
+    except _CliExit as exc:
+        return exc.code
+    try:
+        store = _open_store(settings)
+    except _CliExit as exc:
+        return exc.code
+
+    email = (args.email or "").strip()
+    if not email:
+        print("an email is required", file=sys.stderr)
+        return EXIT_USAGE
+
+    if not args.yes:
+        if not sys.stdin.isatty():
+            print(
+                "refusing to delete without --yes when stdin is not a terminal",
+                file=sys.stderr,
+            )
+            return EXIT_IMPORT_SOURCE
+
+    try:
+        if not args.yes:
+            try:
+                resolved = asyncio.run(store.resolve(email))
+            except UsersError as exc:
+                print(str(exc), file=sys.stderr)
+                return EXIT_STORE
+            if not resolved.exists:
+                print(f"User not found: {email}", file=sys.stderr)
+                return EXIT_STORE
+            refs = asyncio.run(store.count_person_references(email))
+            print(
+                f"Delete {email} (mode={settings.users_delete_mode}): "
+                f"roles={list(resolved.roles)}, references={refs}"
+            )
+            confirm = input("Type the email again to confirm deletion: ").strip()
+            if normalize_email(confirm) != normalize_email(email):
+                print("confirmation did not match", file=sys.stderr)
+                return EXIT_IMPORT_SOURCE
+
+        pseudonym = hash_subject(email, salt=settings.rbac_audit_subject_salt)
+        if pseudonym is None:
+            print("could not build deletion pseudonym", file=sys.stderr)
+            return EXIT_STORE
+        try:
+            asyncio.run(
+                store.delete_user(
+                    email=email,
+                    actor=_CLI_ACTOR,
+                    mode=settings.users_delete_mode,
+                    pseudonym=pseudonym,
+                )
+            )
+        except LastAdministratorError as exc:
+            print(str(exc), file=sys.stderr)
+            return EXIT_USAGE
+        except UserNotFoundError:
+            print(f"User not found: {email}", file=sys.stderr)
+            return EXIT_STORE
+        except UsersError as exc:
+            print(str(exc), file=sys.stderr)
+            return EXIT_STORE
+
+        revoked = 0
+        if settings.redis_url.strip():
+            revoked_count = _revoke_sessions_or_report(settings, email)
+            if revoked_count is None:
+                print(f"Deleted {email}; sessions NOT revoked", file=sys.stderr)
+                return EXIT_STORE
+            revoked = revoked_count
+        else:
+            print("sessions not revoked: KEYSTONE_MCP_REDIS_URL is not set", file=sys.stderr)
+
+        print(f"Deleted {email}; revoked {revoked} token(s)")
+        return EXIT_OK
+    finally:
+        store.dispose()
+
+
 def _cmd_logout(args: argparse.Namespace) -> int:
     try:
         settings = _settings_for_users_cli()
@@ -814,3 +897,15 @@ def add_users_commands(subparsers: argparse._SubParsersAction) -> None:
         "--email", required=True, help="Email of the person whose binding to clear"
     )
     unbind_cmd.set_defaults(handler=_cmd_unbind_identity)
+
+    delete_cmd = users_sub.add_parser(
+        "delete",
+        help="Delete a person or anonymize their record (see KEYSTONE_MCP_USERS_DELETE_MODE)",
+    )
+    delete_cmd.add_argument("--email", required=True, help="Email of the person to delete")
+    delete_cmd.add_argument(
+        "--yes",
+        action="store_true",
+        help="Skip interactive confirmation (required when stdin is not a terminal)",
+    )
+    delete_cmd.set_defaults(handler=_cmd_delete)

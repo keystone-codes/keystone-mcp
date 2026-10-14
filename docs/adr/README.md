@@ -66,3 +66,4 @@ Keep each record under roughly 80 lines. Use short sentences and present tense.
 | [0011](0011-rbac-by-name-for-prompts-and-resources.md) | Prompts and resources are authorised by name with the tool patterns | Accepted (0.5.0) |
 | [0012](0012-stdio-upstreams-run-unsandboxed.md) | A stdio upstream is trusted like Keystone itself | Accepted (0.5.0) |
 | [0014](0014-plugin-protocols-grow-by-new-protocols.md) | Plugin protocols stay fixed until 2.0; new capabilities use new optional protocols | Accepted (0.6.0) |
+| [0015](0015-delete-by-anonymizing.md) | Delete a person by anonymizing the record by default | Accepted (0.6.0) |

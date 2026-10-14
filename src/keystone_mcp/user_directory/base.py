@@ -32,3 +32,7 @@ class ServiceAccountDirectoryBase(UserDirectoryBase):
 
 class ApiKeyDirectoryBase(UserDirectoryBase):
     """Optional base for directories that declare ``api_keys``."""
+
+
+class UserDeletionDirectoryBase(UserDirectoryBase):
+    """Optional base for directories that declare the ``delete`` capability."""

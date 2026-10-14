@@ -30,6 +30,7 @@ _MUTATING_ARGS: dict[str, dict] = {
     "users_grant_role": {"email": "u@example.com", "role": "administrator"},
     "users_revoke_role": {"email": "u@example.com", "role": "member"},
     "users_logout": {"email": "u@example.com"},
+    "users_delete": {"email": "u@example.com"},
     "service_accounts_add": {"name": "evil", "roles": ["member"]},
     "service_accounts_update": {"name": "ci", "description": "pwned"},
     "api_keys_issue": {"subject": "svc:ci"},

@@ -22,6 +22,7 @@ _BUILTIN_TOOL_ARGS: dict[str, dict] = {
     "users_grant_role": {"email": "u@example.com", "role": "member"},
     "users_revoke_role": {"email": "u@example.com", "role": "member"},
     "users_logout": {"email": "u@example.com"},
+    "users_delete": {"email": "u@example.com"},
     "service_accounts_list": {},
     "service_accounts_add": {"name": "helper", "roles": ["member"]},
     "service_accounts_update": {"name": "ci", "description": "updated"},
@@ -70,6 +71,10 @@ async def test_every_builtin_tool_runs_through_the_engine(tmp_path, tool_name: s
             {"role": "member", "patterns": ["users_list"]},
             identity=ADMIN,
         )
+    if tool_name == "users_delete":
+        first = await harness.engine.execute(route, args, identity=ADMIN)
+        assert first["state"] == "confirmation_required"
+        args = {**args, "confirmation": first["confirmation"]}
     result = await harness.engine.execute(route, args, identity=ADMIN)
     assert isinstance(result, dict)
     if tool_name == "policy_rollback":
