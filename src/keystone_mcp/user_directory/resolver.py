@@ -14,7 +14,12 @@ import httpx
 from keystone_mcp.user_directory.cache import ApiKeyVerificationCache, ResolutionCache
 from keystone_mcp.user_directory.circuit_breaker import CircuitBreaker
 from keystone_mcp.user_directory.errors import UserDirectoryUnavailableError
-from keystone_mcp.user_directory.protocol import ApiKeyDirectory, ApiKeyIdIndex, UserDirectory
+from keystone_mcp.user_directory.protocol import (
+    ApiKeyDirectory,
+    ApiKeyIdIndex,
+    ApiKeyState,
+    UserDirectory,
+)
 from keystone_mcp.user_directory.revision import RevisionReader
 from keystone_mcp.user_directory.types import (
     ApiKeyVerification,
@@ -219,6 +224,44 @@ class CachedUserDirectoryResolver:
             self._key_id_index_loaded_at = mono
             self._key_id_index_ids = ids
             return ids
+
+    async def api_key_state(self, key_id: str, *, subject: str) -> ApiKeyState:
+        if "api_keys" not in self._backend.capabilities:
+            return "unknown"
+        if not isinstance(self._backend, ApiKeyDirectory):
+            return "unknown"
+
+        if self._circuit.is_open():
+            raise UserDirectoryUnavailableError(
+                "users directory circuit breaker is open",
+                code="circuit_open",
+            )
+
+        normalized = normalize_email(subject)
+        try:
+            rows = await self._backend.list_api_keys(subject=subject, include_revoked=True)
+        except UserDirectoryUnavailableError:
+            self._circuit.record_failure()
+            raise
+        except (httpx.HTTPError, OSError) as exc:
+            self._circuit.record_failure()
+            raise UserDirectoryUnavailableError(
+                "users directory is unavailable",
+                code="catalog_unavailable",
+            ) from exc
+
+        self._circuit.record_success()
+        record = next((row for row in rows if row.key_id == key_id), None)
+        if record is None or normalize_email(record.subject) != normalized:
+            return "unknown"
+        if record.revoked_at is not None:
+            return "revoked"
+        if record.expires_at is not None:
+            from keystone_mcp.users.models import utcnow
+
+            if record.expires_at <= utcnow():
+                return "expired"
+        return "active"
 
     async def verify_api_key(
         self, key: str, *, now: float | None = None

@@ -196,6 +196,16 @@ class ApiKeyIdIndex(Protocol):
     async def active_api_key_ids(self) -> frozenset[str]: ...
 
 
+ApiKeyState = Literal["active", "revoked", "expired", "unknown"]
+
+
+@runtime_checkable
+class ApiKeyStateReader(Protocol):
+    """Optional: a resolver that can tell whether an API key is still valid by its key_id."""
+
+    async def api_key_state(self, key_id: str, *, subject: str) -> ApiKeyState: ...
+
+
 @runtime_checkable
 class UserDirectoryBackend(Protocol):
     """Deprecated: a read-only, single-method directory client (0.4.0).

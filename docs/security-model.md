@@ -277,6 +277,15 @@ theft. Every record expires: an access token after `KEYSTONE_MCP_TOKEN_TTL`, a
 refresh token after `KEYSTONE_MCP_REFRESH_TOKEN_TTL` of idleness, and a
 client record after the longer of the two plus a day — see
 [environment.md#server](environment.md#server) for the exact variables.
+Each refresh exchange re-checks the person in the users directory (including
+`is_blocked` on an external directory), the API key the session was opened
+with when recorded, and the session age cap
+(`KEYSTONE_MCP_SESSION_MAX_AGE_SECONDS`, default 30 days). While the directory
+is unreachable, `POST /token` answers `503 temporarily_unavailable` and the
+refresh token stays valid for retry. Disabling someone at the identity provider
+therefore stops access no later than that cap; with no cap (`0`) only a block
+in the Keystone directory ends refresh. Production should set the cap to 30
+days (`2592000`).
 
 An access token is bound to the resource (RFC 8707) named in the
 `/authorize` request behind it, with the resource URI normalized before

@@ -44,6 +44,8 @@ from keystone_mcp.user_directory.errors import (
 )
 from keystone_mcp.user_directory.protocol import (
     ApiKeyIdIndex,
+    ApiKeyState,
+    ApiKeyStateReader,
     Capability,
     UserDirectory,
     UserDirectoryAdmin,
@@ -57,6 +59,8 @@ __all__ = [
     "ActorEmailRequiredError",
     "ApiKeyDirectoryBase",
     "ApiKeyIdIndex",
+    "ApiKeyState",
+    "ApiKeyStateReader",
     "CORE_CRITICAL_PATTERNS",
     "CachedUserDirectoryResolver",
     "Capability",

@@ -10,6 +10,8 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ### Added
 
+- `KEYSTONE_MCP_SESSION_MAX_AGE_SECONDS` (default `2592000`, 30 days; `0` means no limit): a session is renewed for at most this long after sign-in.
+- `api_keys_revoke` and `keystone-mcp keys revoke` report `revoked_tokens`.
 - A policy change made through `policy_*` reaches every replica on its next call (revision in Redis, `KEYSTONE_MCP_POLICY_REDIS_REVISION_KEY`). Metrics `keystone_mcp_rbac_policy_info{content_hash}`, `keystone_mcp_rbac_policy_in_sync`, `keystone_mcp_rbac_policy_revision_checks_total`; `/readyz` details show `policy_content_hash` and `policy_in_sync`.
 - `policy_rollback` accepts `expected_hash`. `policy_catalog` and policy changes see prompt and resource names, as a reload does.
 - Metric `keystone_mcp_upstream_stderr_suppressed_total{namespace}`; process state `stopping`.
@@ -39,6 +41,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ### Changed
 
+- Renewing a token re-checks the person in the users directory and the API key the session was opened with; while the directory is unreachable, `/token` answers `503` and the refresh token stays valid.
 - Keystone checks a plugin against the method list of the 0.5 protocols instead of `isinstance`; the startup error names missing methods. The plugin template depends on `keystone-mcp-gateway>=0.5,<2`.
 - Contract tests: a directory that declares `admin`, `service_accounts` or `api_keys` must run the matching contract class, and the availability tests are no longer skipped silently. In 0.5 a test class that mixed in only `UserDirectoryContract` passed without checking the administrator rules its directory claimed — a gap in the contract tests, fixed here. Opt out only with `@pytest.mark.keystone_contract_lenient(reason=...)`.
 - Kubernetes and production-docker examples and `setup.sh` configure sign-in through a providers file (`KEYSTONE_MCP_LOGIN_PROVIDERS_PATH`) and no longer write deprecated or removed variables.
@@ -116,6 +119,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 ### Migration
 
 - If you copied the 0.5 Kubernetes example: rename the secret key `KEYSTONE_MCP_GOOGLE_CLIENT_SECRET` to the variable named in your providers file, add the providers file, and set `KEYSTONE_MCP_POLICY_TOOLS=read-only` for a read-only policy mount. Old variables keep working with a deprecation warning.
+- Session lifetime defaults to 30 days (`KEYSTONE_MCP_SESSION_MAX_AGE_SECONDS=2592000`); set `0` for no limit. People sign in again that long after sign-in; sessions opened before you set or upgrade count from their first renewal afterwards. Revoking an API key of a person who still has a session opened before 0.6.0 ends all of that person's sessions. Run `keystone-mcp config check` before upgrading.
 - Nothing to do on a shared policy volume. Without one, a replica whose policy file differs from the last change made through `policy_*` reports `keystone_mcp_rbac_policy_in_sync 0`; copy the file to every replica and send `SIGHUP`.
 - Plugin authors: change `keystone-mcp-gateway<0.6` to `<2`; mix in the contract class for every declared capability and add a `keystone_unavailable_directory_factory` fixture (or mark the class `keystone_contract_lenient` with a reason). Directory config files with inline secrets under keys like `client_secret` or inside lists now refuse startup: move the value to an environment variable and reference it with `<key>_env`.
 - A stdio upstream that blocks for more than ~35 s without answering pings is now restarted only after three missed pings (about a minute).

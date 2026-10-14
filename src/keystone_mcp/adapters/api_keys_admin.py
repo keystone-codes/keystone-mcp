@@ -2,18 +2,25 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
+
+from redis.exceptions import RedisError
 
 from keystone_mcp.adapters.guards import check_management_authority, require_human_actor
 from keystone_mcp.plugins import missing_members
 from keystone_mcp.user_directory.errors import UsersError
 from keystone_mcp.user_directory.protocol import ApiKeyDirectory, UserDirectory
+from keystone_mcp.user_directory.types import subject_type_of
 
 if TYPE_CHECKING:
+    from keystone_mcp.auth.sessions import SessionRevoker
     from keystone_mcp.observability.service import RbacObservability
     from keystone_mcp.rbac.management import ManagementSource
     from keystone_mcp.router.context import RouteContext
     from keystone_mcp.router.route import Route
+
+logger = logging.getLogger(__name__)
 
 
 class ApiKeysAdminAdapter:
@@ -23,10 +30,12 @@ class ApiKeysAdminAdapter:
         directory: UserDirectory | None = None,
         management_source: ManagementSource | None = None,
         observability: RbacObservability | None = None,
+        session_revoker: SessionRevoker | None = None,
     ) -> None:
         self._directory = directory
         self._management_source = management_source
         self._observability = observability
+        self._session_revoker = session_revoker
 
     @staticmethod
     def _error(route: Route, ctx: RouteContext, *, code: str, message: str) -> dict[str, Any]:
@@ -138,7 +147,41 @@ class ApiKeysAdminAdapter:
                     key_id=str(spec["key_id"]),
                     actor=actor,
                 )
-                result = self._done(route, ctx, api_key=record.to_dict())
+                extra: dict[str, Any] = {}
+                if subject_type_of(record.subject) == "human":
+                    if self._session_revoker is None:
+                        extra["revoked_tokens"] = 0
+                    else:
+                        try:
+                            extra[
+                                "revoked_tokens"
+                            ] = await self._session_revoker.revoke_api_key_sessions(
+                                record.subject, record.key_id
+                            )
+                        except RedisError:
+                            logger.warning(
+                                "api key revoked but sessions not revoked: token store unavailable"
+                            )
+                            result = self._error(
+                                route,
+                                ctx,
+                                code="service_unavailable",
+                                message=(
+                                    "key is revoked; sessions were not revoked. "
+                                    "Call api_keys_revoke again to retry session revocation."
+                                ),
+                            )
+                            self._record_mutation_audit(route, ctx, spec, result)
+                            return result
+                    if self._observability is not None:
+                        self._observability.record_session_event(
+                            action="key_sessions_revoked",
+                            subject=record.subject,
+                            client_id="",
+                            revoked_tokens=extra.get("revoked_tokens"),
+                            reason=record.key_id,
+                        )
+                result = self._done(route, ctx, api_key=record.to_dict(), **extra)
         except UsersError as exc:
             result = self._error(route, ctx, code=exc.code, message=str(exc))
             self._record_mutation_audit(route, ctx, spec, result)
