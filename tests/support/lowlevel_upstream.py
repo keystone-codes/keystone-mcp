@@ -604,6 +604,7 @@ def asgi_http_client_factory(
     app: Starlette,
     *,
     streaming: bool = False,
+    max_response_bytes: int | None = None,
 ) -> Callable[[float], Callable[..., httpx2.AsyncClient]]:
     """``HttpClientFactoryBuilder`` that routes every request into *app* in-process.
 
@@ -634,6 +635,10 @@ def asgi_http_client_factory(
                 transport: httpx2.AsyncBaseTransport = StreamingASGITransport(app=app)
             else:
                 transport = httpx2.ASGITransport(app=app)
+            if max_response_bytes is not None:
+                from keystone_mcp.adapters.mcp_proxy import limit_response_size
+
+                transport = limit_response_size(transport, max_response_bytes)
             return httpx2.AsyncClient(
                 transport=transport,
                 base_url=UPSTREAM_BASE_URL,

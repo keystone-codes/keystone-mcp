@@ -8,8 +8,14 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ## [Unreleased]
 
+### Security
+
+- keystone-mcp no longer re-validates an upstream's tool result against the upstream's own `outputSchema` on its event loop, so a pathological schema can no longer stall the whole process (including `/healthz`).
+- Upstream answers, catalogs and tool schemas are bounded: `KEYSTONE_MCP_UPSTREAM_MAX_RESPONSE_BYTES`, `KEYSTONE_MCP_UPSTREAM_MAX_CATALOG_ITEMS`, `KEYSTONE_MCP_UPSTREAM_MAX_SCHEMA_BYTES`.
+
 ### Added
 
+- `KEYSTONE_MCP_UPSTREAM_MAX_RESPONSE_BYTES` (default 16 MiB), `KEYSTONE_MCP_UPSTREAM_MAX_SCHEMA_BYTES` (default 64 KiB), `KEYSTONE_MCP_UPSTREAM_MAX_CATALOG_ITEMS` (default 2000).
 - Metric `keystone_mcp_admin_refusals_total`; audit field `actor_subject_type` on `rbac_policy_mutation`.
 - `LoginIdentity.key_id` and `LoginIdentity.key_expires_at` (optional) for form providers that sign people in with a Keystone API key.
 - `docs/clients.md` lists the client versions tested with this release and known
@@ -47,6 +53,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ### Fixed
 
+- An upstream's `serverInfo` stamp no longer reaches the client in tool and prompt results.
 - `service_accounts_list`, `service_accounts_add` and `service_accounts_update` work when called over MCP.
 - The HTTP port opens right after the users-directory migrations; upstream discovery, login provider warm-up (now in parallel) and policy loading run in the background, so a hanging upstream no longer keeps the port closed long enough for a liveness probe to restart the pod.
 - A replica that changes a user or service account forgets its own cached decisions at once, even when Redis could not record the change.
@@ -76,6 +83,9 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ### Migration
 
+- A tool whose schema exceeds 64 KiB, has a `pattern` longer than 512 characters or nests deeper than 64 levels is no longer published (warning and metric); raise `KEYSTONE_MCP_UPSTREAM_MAX_SCHEMA_BYTES` if needed.
+- An upstream with more than 2000 tools (or prompts, resources, templates) keeps its previous catalog; raise `KEYSTONE_MCP_UPSTREAM_MAX_CATALOG_ITEMS`.
+- Discovery no longer follows HTTP redirects (proxied calls never did); point the registry `url` at the final address.
 - Host installs from 0.5 docs: reinstall with `uv sync --locked --no-dev --no-editable` in the deployed checkout and change `ExecStart` to `.venv/bin/python -m keystone_mcp.server`. `scripts/deploy.sh` now stops when run outside a git clone; set `DEPLOY_REF` to the release tag.
 
 - Automation that changed users, service accounts or API keys through MCP with a service-account key now gets `forbidden`; do it from a person's session or with the `keystone-mcp` CLI on the host.
