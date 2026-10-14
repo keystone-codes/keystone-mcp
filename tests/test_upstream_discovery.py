@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from typing import Any, Callable
-from unittest.mock import AsyncMock
 
 import httpx
 import pydantic
@@ -20,7 +19,11 @@ from keystone_mcp.router.engine import RouterEngine
 from keystone_mcp.router.proxy_tool import UpstreamProxyTool
 from keystone_mcp.router.registry import RouterRegistry
 from keystone_mcp.router.route import Route
-from keystone_mcp.router.upstream import UpstreamListToolsError, UpstreamRegistry
+from keystone_mcp.router.upstream import (
+    UpstreamCatalogRead,
+    UpstreamListToolsError,
+    UpstreamRegistry,
+)
 
 
 @pytest.fixture
@@ -126,9 +129,14 @@ async def test_one_unpublishable_tool_does_not_drop_the_namespace(monkeypatch, c
         SimpleNamespace(name="bad_tool", description="", input_schema=empty_schema),
         SimpleNamespace(name="good_tool", description="", input_schema=empty_schema),
     ]
+
+    async def _fake_read(_cfg):
+        return UpstreamCatalogRead(tools=tools, prompts=[], resources=[], templates=[])
+
     monkeypatch.setattr(
-        "keystone_mcp.router.upstream.fetch_upstream_tools",
-        AsyncMock(return_value=tools),
+        upstreams,
+        "read_catalog",
+        _fake_read,
     )
 
     original_register_tool = RouterRegistry._register_tool
@@ -293,10 +301,11 @@ async def test_discovery_skips_tool_whose_published_name_is_taken(monkeypatch, c
             name="read", description="", input_schema={"type": "object", "properties": {}}
         ),
     ]
-    monkeypatch.setattr(
-        "keystone_mcp.router.upstream.fetch_upstream_tools",
-        AsyncMock(return_value=tools),
-    )
+
+    async def _fake_read(_cfg):
+        return UpstreamCatalogRead(tools=tools, prompts=[], resources=[], templates=[])
+
+    monkeypatch.setattr(upstreams, "read_catalog", _fake_read)
 
     with caplog.at_level("ERROR"):
         counts = await upstreams.discover_all()
