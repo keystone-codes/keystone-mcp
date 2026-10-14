@@ -9,6 +9,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
 
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
@@ -23,6 +25,11 @@ jobs:
 
       - name: Lockfile check
         run: uv lock --check
+
+      - name: Frozen baseline matches the v0.5.0 tag
+        run: |
+          uv run python tests/support/contract_snapshot.py --from-tag v0.5.0 --out "$RUNNER_TEMP/baseline"
+          diff -ru "$RUNNER_TEMP/baseline" tests/data/frozen-baseline-0.5.0
 
       - name: Ruff check
         run: uv run ruff check .
@@ -114,6 +121,7 @@ jobs:
         run: >-
           uv run pytest
           tests/test_contract_freeze.py
+          tests/test_contract_freeze_rules.py
           tests/test_env_docs_sync.py
           tests/test_removed_variables.py
           -v

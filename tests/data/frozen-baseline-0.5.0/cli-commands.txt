@@ -1,0 +1,18 @@
+# section=cli-commands source=v0.5.0 generator=1
+catalog diff
+catalog export
+catalog validate
+keys issue
+keys list
+keys revoke
+plugins list
+serve
+service-accounts add
+service-accounts list
+service-accounts update
+upstream validate
+users block
+users grant-admin
+users import
+users logout
+users unblock
