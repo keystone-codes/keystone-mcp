@@ -308,7 +308,12 @@ the same Host/Origin guard and OAuth IP throttle as `/token`.
   request that carries an `X-Forwarded-For` header at all — a value here
   would mean the "source address" is whatever a possibly-untrusted proxy
   reported, not a real network fact
-  (`src/keystone_mcp/server.py::_reject_untrusted_internal_caller`).
+  (`src/keystone_mcp/server.py::_reject_untrusted_internal_caller`). On those
+  paths only, `HostGuardMiddleware` also accepts a `Host` whose host part is
+  an IP literal (for example a Kubernetes pod IP), while a hostname still must
+  be on the allowlist. DNS rebinding always arrives with the attacker's
+  domain name, not an IP literal, so this exception does not weaken that
+  defence.
 - Logs never show a `Bearer` token, a password, a Redis URL's embedded
   credentials, or an email address in the clear
   (`KEYSTONE_MCP_LOG_REDACT=true`, the default).
@@ -353,15 +358,11 @@ the same Host/Origin guard and OAuth IP throttle as `/token`.
   and other OpenID Connect issuers). In production, API-key sign-in for
   people is refused while an interactive provider is configured. The old
   `KEYSTONE_MCP_AUTH_SERVICE_*` variables are removed; startup refuses them.
-- `HostGuardMiddleware` exempts only `/healthz` and `/readyz`, not
-  `/metrics` or `/internal/*`. By default the allowlist holds only
-  `KEYSTONE_MCP_BASE_URL`'s host (plus `localhost`/`127.0.0.1`/`[::1]` when
-  that host is itself loopback), so with a public `KEYSTONE_MCP_BASE_URL` a
-  scrape addressed to `127.0.0.1:8080`, a Kubernetes Service name, or a pod
-  IP is refused with `421`. Add the exact name the scraper uses to
-  `KEYSTONE_MCP_ALLOWED_HOSTS` (e.g. `127.0.0.1:8080` for a scraper on the
-  same host). A pod IP assigned at pod start cannot be listed in advance,
-  so scraping each pod by IP is not supported.
+- `HostGuardMiddleware` exempts only `/healthz` and `/readyz` from the Host
+  check entirely. On `/metrics` and `/internal/*`, hostnames must still be
+  on the allowlist, but an IP-literal `Host` is accepted so Prometheus can
+  scrape each pod by its assigned IP. Source-address checks
+  (`KEYSTONE_MCP_INTERNAL_ALLOWED_CIDRS`) still apply.
 
 ## Checklist by profile
 

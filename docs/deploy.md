@@ -146,6 +146,10 @@ migrations). Use `/readyz` to confirm the replica can serve traffic — it stays
 `503` until upstream discovery and policy load finish. A Kubernetes
 `startupProbe` on `/healthz` (see `examples/kubernetes/deployment.yaml` once
 group E adds it) still helps during long migrations.
+When running the published image, use `docker run --init` (or Compose
+`init: true`) so stdio upstream subprocesses are reaped, and allow at least
+35 s on shutdown (`docker stop -t 35`). The container healthcheck reads
+`.env` and `KEYSTONE_MCP_HOST` the same way the server does.
 
 Connect your MCP client to the public base URL and sign in — see
 [production-docker.md, step 9](paths/production-docker.md#9-add-people) for
