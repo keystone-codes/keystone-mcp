@@ -578,6 +578,20 @@ def validate_upstream_registry(
         ):
             errors.append(f"{prefix}.enabled must be a boolean")
 
+        publish_resources = item.get("publish_resources")
+        if publish_resources is not None and not isinstance(publish_resources, bool):
+            errors.append(f"{prefix}.publish_resources must be a boolean")
+
+        for field_name in ("resource_include_prefixes", "resource_exclude_prefixes"):
+            raw = item.get(field_name)
+            if raw is None:
+                continue
+            if isinstance(raw, str):
+                continue
+            if isinstance(raw, list) and all(isinstance(entry, str) for entry in raw):
+                continue
+            errors.append(f"{prefix}.{field_name} must be a string or array of strings")
+
     errors.extend(namespace_errors(all_namespaces))
     errors.extend(identity_secret_reuse_errors(entries))
 

@@ -658,6 +658,7 @@ class SurfaceReconciler:
         if resources_raw is None or templates_raw is None:
             return False
         namespace = cfg.namespace
+        self.upstreams.maybe_warn_unfiltered_resources(cfg, resources_raw, templates_raw)
         previous_res = self._namespace_resource_fingerprints.get(namespace, {})
         previous_tpl = self._namespace_template_fingerprints.get(namespace, {})
         resource_specs = build_upstream_resource_specs(cfg, resources_raw)
@@ -695,8 +696,12 @@ class SurfaceReconciler:
             raw_resources,
             raw_templates,
         )
-        self._namespace_resource_fingerprints[namespace] = dict(desired_res)
-        self._namespace_template_fingerprints[namespace] = dict(desired_tpl)
+        self._namespace_resource_fingerprints[namespace] = self._fingerprint_resources_namespace(
+            namespace
+        )
+        self._namespace_template_fingerprints[namespace] = self._fingerprint_templates_namespace(
+            namespace
+        )
         return changed
 
     def _fingerprint_namespace(self, namespace: str) -> dict[str, str]:

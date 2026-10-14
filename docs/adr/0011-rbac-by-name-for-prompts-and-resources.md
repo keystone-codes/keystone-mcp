@@ -52,6 +52,10 @@ checked against the resources and templates of the namespace the URI belongs
 to (`scheme://<namespace>/…`). When the URI matches more than one of them,
 every matching RBAC name must be allowed.
 
+An upstream resource or template whose RBAC name (`<namespace>_<name>`) equals
+a published tool or prompt name from the same upstream is not published, so one
+policy rule cannot grant both by accident (`reason="rbac_name_collision"`).
+
 ## Alternatives considered
 
 **Separate `prompts:` block in the policy file** — More YAML for operators and

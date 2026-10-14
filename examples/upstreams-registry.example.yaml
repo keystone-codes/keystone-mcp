@@ -10,6 +10,8 @@ entries:
     include_prefixes:
       - reports_
     strip_prefix: reports_
+    # publish_resources: true
+    # resource_include_prefixes: [handbook]
     discovery_timeout_seconds: 10
     tool_timeout_seconds: 180
     route_mode: live

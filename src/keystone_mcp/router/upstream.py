@@ -536,9 +536,13 @@ def build_upstream_resource_specs(
 ) -> dict[str, UpstreamResourceSpec]:
     """Map upstream resource URIs to specs (tool filters do not apply)."""
     specs: dict[str, UpstreamResourceSpec] = {}
+    if not cfg.publish_resources:
+        return specs
     for resource in resources:
         uri = str(resource.uri)
         name = resource.name
+        if cfg.resource_filter is not None and not cfg.resource_filter(name):
+            continue
         published = namespaced_uri(cfg.namespace, uri)
         if published is None:
             logger.warning(
@@ -579,9 +583,13 @@ def build_upstream_template_specs(
 ) -> dict[str, UpstreamTemplateSpec]:
     """Map upstream template URI templates to specs (tool filters do not apply)."""
     specs: dict[str, UpstreamTemplateSpec] = {}
+    if not cfg.publish_resources:
+        return specs
     for template in templates:
         uri_template = template.uri_template
         name = template.name
+        if cfg.resource_filter is not None and not cfg.resource_filter(name):
+            continue
         published = namespaced_uri(cfg.namespace, uri_template)
         if published is None:
             logger.warning(
@@ -632,6 +640,8 @@ class UpstreamConfig:
     args: tuple[str, ...] = ()
     env_from: tuple[tuple[str, str], ...] = ()
     cwd: str | None = None
+    publish_resources: bool = True
+    resource_filter: ToolFilter | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -702,6 +712,7 @@ class UpstreamRegistry:
     _unpublishable: dict[str, set[str]] = field(default_factory=dict)
     _connections: dict[str, UpstreamConnection] = field(default_factory=dict, repr=False)
     _legacy_prompt_warnings_logged: set[str] = field(default_factory=set, repr=False)
+    _resource_filter_hint_logged: set[str] = field(default_factory=set, repr=False)
 
     def __post_init__(self) -> None:
         pem = self._identity_signing_key_pem.strip()
@@ -731,6 +742,8 @@ class UpstreamRegistry:
         args: tuple[str, ...] = (),
         env_from: tuple[tuple[str, str], ...] = (),
         cwd: str | None = None,
+        publish_resources: bool = True,
+        resource_filter: ToolFilter | None = None,
     ) -> UpstreamConfig:
         """Register an upstream MCP API and mount its namespace sub-server.
 
@@ -815,6 +828,8 @@ class UpstreamRegistry:
             args=args,
             env_from=env_from,
             cwd=cwd,
+            publish_resources=publish_resources,
+            resource_filter=resource_filter,
         )
         self._upstreams.append(cfg)
 
@@ -1472,6 +1487,8 @@ class UpstreamRegistry:
 
         changed = False
         tool_timeout = self._tool_timeout_for(cfg)
+        catalog_resource_specs = dict(resource_specs)
+        catalog_template_specs = dict(template_specs)
 
         for uri in sorted(set(prev_res) - set(desired_res)):
             spec = previous_resources[uri]
@@ -1486,6 +1503,20 @@ class UpstreamRegistry:
         for uri in sorted(desired_res):
             spec = resource_specs[uri]
             if uri in prev_res and prev_res[uri] == spec.fingerprint:
+                continue
+            if self._rbac_name_collides_with_tool_or_prompt(spec.rbac_name):
+                logger.warning(
+                    "upstream %s refused namespace=%s name=%s: RBAC name %s is also a "
+                    "published tool or prompt; one policy rule would grant both",
+                    "resource",
+                    namespace,
+                    spec.name,
+                    spec.rbac_name,
+                )
+                record_upstream_item_rejected(
+                    namespace=namespace, kind="resource", reason="rbac_name_collision"
+                )
+                catalog_resource_specs.pop(uri, None)
                 continue
             owner = self.content.owner_of_resource_rbac(spec.rbac_name)
             owner_key = f"{namespace}:{spec.uri}"
@@ -1524,6 +1555,20 @@ class UpstreamRegistry:
             spec = template_specs[uri_template]
             if uri_template in prev_tpl and prev_tpl[uri_template] == spec.fingerprint:
                 continue
+            if self._rbac_name_collides_with_tool_or_prompt(spec.rbac_name):
+                logger.warning(
+                    "upstream %s refused namespace=%s name=%s: RBAC name %s is also a "
+                    "published tool or prompt; one policy rule would grant both",
+                    "template",
+                    namespace,
+                    spec.name,
+                    spec.rbac_name,
+                )
+                record_upstream_item_rejected(
+                    namespace=namespace, kind="template", reason="rbac_name_collision"
+                )
+                catalog_template_specs.pop(uri_template, None)
+                continue
             owner = self.content.owner_of_template_rbac(spec.rbac_name)
             owner_key = f"{namespace}:{spec.uri_template}"
             if owner is not None and owner != owner_key:
@@ -1557,9 +1602,42 @@ class UpstreamRegistry:
             sub.add_template(proxy)
             changed = True
 
-        self.content.set_resources(namespace, resource_specs)
-        self.content.set_templates(namespace, template_specs)
+        self.content.set_resources(namespace, catalog_resource_specs)
+        self.content.set_templates(namespace, catalog_template_specs)
         return changed
+
+    def _rbac_name_collides_with_tool_or_prompt(self, rbac_name: str) -> bool:
+        if self.registry.owner_of_published_name(rbac_name) is not None:
+            return True
+        return self.content.owner_of_published_prompt(rbac_name) is not None
+
+    def maybe_warn_unfiltered_resources(
+        self,
+        cfg: UpstreamConfig,
+        resources_raw: list[Any] | None,
+        templates_raw: list[Any] | None,
+    ) -> None:
+        namespace = cfg.namespace
+        if namespace in self._resource_filter_hint_logged:
+            return
+        if cfg.tool_filter is None:
+            return
+        if not cfg.publish_resources:
+            return
+        if cfg.resource_filter is not None:
+            return
+        resource_count = len(resources_raw) if resources_raw else 0
+        template_count = len(templates_raw) if templates_raw else 0
+        total = resource_count + template_count
+        if total <= 0:
+            return
+        self._resource_filter_hint_logged.add(namespace)
+        logger.warning(
+            "upstream namespace=%s filters tools but publishes all %d resources and "
+            "templates; set resource_include_prefixes or publish_resources: false to limit them",
+            namespace,
+            total,
+        )
 
     async def _discover_one(self, cfg: UpstreamConfig) -> int:
         if cfg.mode != "proxy_1to1":
@@ -1640,6 +1718,7 @@ class UpstreamRegistry:
             self._apply_prompt_specs(cfg, prompt_specs, raw_by_name)
 
         if resources_raw is not None and templates_raw is not None:
+            self.maybe_warn_unfiltered_resources(cfg, resources_raw, templates_raw)
             resource_specs = build_upstream_resource_specs(cfg, resources_raw)
             template_specs = build_upstream_template_specs(cfg, templates_raw)
             raw_resources = {str(r.uri): r for r in resources_raw}

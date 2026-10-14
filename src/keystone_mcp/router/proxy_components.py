@@ -26,7 +26,7 @@ from mcp_types.version import MODERN_PROTOCOL_VERSIONS
 from pydantic import PrivateAttr
 
 from keystone_mcp.identity import make_task_id, upstream_identity_headers
-from keystone_mcp.identity_assertion import IDENTITY_HEADER
+from keystone_mcp.identity_assertion import IDENTITY_HEADER, IDENTITY_META_KEY
 
 if TYPE_CHECKING:
     from fastmcp.server.context import Context
@@ -106,7 +106,8 @@ class UpstreamProxyPrompt(ProxyPrompt):
             raise ToolError("no verified identity")
 
         headers = {**self._extra_headers}
-        if self._identity_signer is not None and self._transport == "http":
+        call_meta: dict[str, str] | None = None
+        if self._identity_signer is not None:
             token = self._identity_signer.sign(
                 identity=identity,
                 task_id=make_task_id(
@@ -120,19 +121,23 @@ class UpstreamProxyPrompt(ProxyPrompt):
                 timeout_seconds=self._tool_timeout,
                 rbac_mode=self._rbac_mode,
             )
-            headers[IDENTITY_HEADER] = token
+            if self._transport == "http":
+                headers[IDENTITY_HEADER] = token
+            else:
+                call_meta = {IDENTITY_META_KEY: token}
         if self._transport == "http":
             headers.update(upstream_identity_headers(identity))
 
         from keystone_mcp.router.stdio_process import UpstreamProcessUnavailableError
 
         try:
-            return self._registry.connection(self._namespace).call_client(
+            client = self._registry.connection(self._namespace).call_client(
                 headers=headers,
                 timeout=self._tool_timeout,
             )
         except UpstreamProcessUnavailableError:
             raise ToolError(f"upstream {self._namespace} is unavailable") from None
+        return client, call_meta
 
     async def render(self, arguments: dict[str, Any]) -> PromptResult:  # type: ignore[override]
         """Render via the upstream without forwarding the client's request ``_meta``."""
@@ -144,7 +149,7 @@ class UpstreamProxyPrompt(ProxyPrompt):
             prompt_name=backend_name,
         ) as span:
             span.set_attribute("fastmcp.provider.type", "UpstreamProxyPrompt")
-            client = await self._get_client()
+            client, call_meta = await self._get_client()
             ctx = get_context()
             async with client:
                 _stash_proxy_request_context(client, ctx)
@@ -155,6 +160,7 @@ class UpstreamProxyPrompt(ProxyPrompt):
                         client,
                         backend_name,
                         arguments,
+                        meta=call_meta,
                         input_responses=ctx.input_responses if ctx else None,
                         request_state=ctx.request_state if ctx else None,
                     )
@@ -162,7 +168,7 @@ class UpstreamProxyPrompt(ProxyPrompt):
                         return InputRequiredPromptResult(raw)
                     result = raw
                 else:
-                    result = await client.get_prompt(backend_name, arguments, meta=None)
+                    result = await client.get_prompt(backend_name, arguments, meta=call_meta)
             messages = [Message(content=m.content, role=m.role) for m in result.messages]
             return PromptResult(
                 messages=messages,
@@ -221,7 +227,8 @@ class _UpstreamProxyClientMixin:
 
         mcp_target = _template_read_backend_uri.get() or self._backend_uri
         headers = {**self._extra_headers}
-        if self._identity_signer is not None and self._transport == "http":
+        call_meta: dict[str, str] | None = None
+        if self._identity_signer is not None:
             token = self._identity_signer.sign(
                 identity=identity,
                 task_id=make_task_id(
@@ -235,19 +242,23 @@ class _UpstreamProxyClientMixin:
                 timeout_seconds=self._tool_timeout,
                 rbac_mode=self._rbac_mode,
             )
-            headers[IDENTITY_HEADER] = token
+            if self._transport == "http":
+                headers[IDENTITY_HEADER] = token
+            else:
+                call_meta = {IDENTITY_META_KEY: token}
         if self._transport == "http":
             headers.update(upstream_identity_headers(identity))
 
         from keystone_mcp.router.stdio_process import UpstreamProcessUnavailableError
 
         try:
-            return self._registry.connection(self._namespace).call_client(
+            client = self._registry.connection(self._namespace).call_client(
                 headers=headers,
                 timeout=self._tool_timeout,
             )
         except UpstreamProcessUnavailableError:
             raise ToolError(f"upstream {self._namespace} is unavailable") from None
+        return client, call_meta
 
 
 class UpstreamProxyResource(_UpstreamProxyClientMixin, ProxyResource):
@@ -305,7 +316,7 @@ class UpstreamProxyResource(_UpstreamProxyClientMixin, ProxyResource):
             resource_uri=backend_uri,
         ) as span:
             span.set_attribute("fastmcp.provider.type", "UpstreamProxyResource")
-            client = await self._get_client()
+            client, call_meta = await self._get_client()
             ctx = get_context()
             async with client:
                 _stash_proxy_request_context(client, ctx)
@@ -314,6 +325,7 @@ class UpstreamProxyResource(_UpstreamProxyClientMixin, ProxyResource):
                 result = await call_upstream_resource_read(
                     client,
                     backend_uri,
+                    meta=call_meta,
                     input_responses=ctx.input_responses if ctx else None,
                     request_state=ctx.request_state if ctx else None,
                 )
@@ -379,7 +391,7 @@ class UpstreamProxyTemplate(_UpstreamProxyClientMixin, ProxyTemplate):
         parameterized_uri = forward_uri(backend_template, params, uri)
         token = _template_read_backend_uri.set(parameterized_uri)
         try:
-            client = await self._get_client()
+            client, call_meta = await self._get_client()
             ctx = context or get_context()
             async with client:
                 _stash_proxy_request_context(client, ctx)
@@ -388,6 +400,7 @@ class UpstreamProxyTemplate(_UpstreamProxyClientMixin, ProxyTemplate):
                 result = await call_upstream_resource_read(
                     client,
                     parameterized_uri,
+                    meta=call_meta,
                     input_responses=ctx.input_responses if ctx else None,
                     request_state=ctx.request_state if ctx else None,
                 )

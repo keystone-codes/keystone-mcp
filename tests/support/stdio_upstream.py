@@ -200,6 +200,69 @@ async def _run_tool(
     raise ValueError(f"unknown tool: {name}")
 
 
+def _meta_payload(params: Any) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    call_meta = getattr(params, "meta", None) or getattr(params, "_meta", None)
+    if call_meta is not None:
+        if hasattr(call_meta, "model_dump"):
+            payload = call_meta.model_dump(by_alias=True)
+        elif isinstance(call_meta, dict):
+            payload = call_meta
+    return payload
+
+
+async def _on_list_prompts(_ctx: Any, _params: Any) -> types.ListPromptsResult:
+    return types.ListPromptsResult(
+        prompts=[
+            types.Prompt(
+                name="whoami",
+                description="Echo Keystone identity assertion from request _meta.",
+                arguments=[],
+            )
+        ]
+    )
+
+
+async def _on_get_prompt(_ctx: Any, params: types.GetPromptRequestParams) -> types.GetPromptResult:
+    if params.name != "whoami":
+        raise ValueError(f"unknown prompt: {params.name}")
+    text = json.dumps(_meta_payload(params))
+    return types.GetPromptResult(
+        messages=[
+            types.PromptMessage(role="user", content=types.TextContent(type="text", text=text))
+        ]
+    )
+
+
+async def _on_list_resources(_ctx: Any, _params: Any) -> types.ListResourcesResult:
+    return types.ListResourcesResult(
+        resources=[
+            types.Resource(
+                uri="meta://whoami",
+                name="identity",
+                description="Echo Keystone identity assertion from request _meta.",
+                mime_type="text/plain",
+            )
+        ]
+    )
+
+
+async def _on_list_resource_templates(_ctx: Any, _params: Any) -> types.ListResourceTemplatesResult:
+    return types.ListResourceTemplatesResult(resource_templates=[])
+
+
+async def _on_read_resource(
+    _ctx: Any, params: types.ReadResourceRequestParams
+) -> types.ReadResourceResult:
+    uri = str(params.uri)
+    if uri != "meta://whoami":
+        raise ValueError(f"unknown resource: {uri}")
+    text = json.dumps(_meta_payload(params))
+    return types.ReadResourceResult(
+        contents=[types.TextResourceContents(uri=uri, text=text, mime_type="text/plain")]
+    )
+
+
 async def _on_call_tool(ctx: Any, params: types.CallToolRequestParams) -> types.CallToolResult:
     try:
         content = await _run_tool(
@@ -221,6 +284,11 @@ async def main() -> None:
         "stdio-upstream",
         on_list_tools=_on_list_tools,
         on_call_tool=_on_call_tool,
+        on_list_prompts=_on_list_prompts,
+        on_get_prompt=_on_get_prompt,
+        on_list_resources=_on_list_resources,
+        on_list_resource_templates=_on_list_resource_templates,
+        on_read_resource=_on_read_resource,
     )
     async with stdio_server() as (read_stream, write_stream):
         await server.run(read_stream, write_stream, server.create_initialization_options())
