@@ -8,6 +8,27 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ## [Unreleased]
 
+### Fixed
+
+- With `KEYSTONE_MCP_LOG_FORMAT=json`, stderr contains only JSON lines: no
+  FastMCP banner, uvicorn and FastMCP messages and tracebacks go through the
+  Keystone formatter and redaction.
+- `initialize` reports the Keystone version in `serverInfo.version`.
+- `.env`: a quoted value followed by a comment no longer keeps its quotes; an
+  unterminated quote is refused with the line number.
+
+### Changed
+
+- JSON log lines are compact (`"stream":"access"`, no spaces); field names are
+  unchanged.
+- A `FORWARDED_ALLOW_IPS` line in `.env` is reported as ignored.
+
+### Migration
+
+- If a log pipeline matched JSON text with spaces (`"stream": "access"`), match
+  the field instead (`jq`) or drop the space. A `.env` value with an
+  unterminated quote now stops startup.
+
 ## [0.5.0] - 2026-10-13
 
 ### Added
