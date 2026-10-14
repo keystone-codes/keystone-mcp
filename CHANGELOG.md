@@ -6,9 +6,117 @@ this project uses [Semantic Versioning](https://semver.org/).
 
 Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatibility.md).
 
-## [Unreleased]
+## [0.6.0] - 2026-10-14
 
+0.6.0 fixes security issues in 0.5.x. Upgrade; read ### Migration and [upgrading.md](docs/upgrading.md#05x-060) first.
+
+### Security
+
+- Service accounts whose roles reached `users_*`, `service_accounts_*`, `api_keys_*`, or mutating `policy_*` could change people, machines, API keys, and the RBAC policy through MCP with a service key. This affects deployments with `KEYSTONE_MCP_RBAC_MODE=enforce` and a local directory where machines were given broad roles. In 0.6.0, mutating administration tools return `forbidden` for service accounts in code regardless of policy; reads and `policy_read` still follow policy. On 0.5.x, give service accounts no role that reaches these tools and perform administration from a human session or the host CLI.
+- A person allowed `users_*` or `policy_*` without being a full administrator could grant the built-in administrator role or a role with `*`, block or demote full administrators, and widen their own rights through `policy_*` including `policy_rollback`. This affects any policy that delegated these tools. In 0.6.0, management roles and full administrators are derived from the active policy and only a full administrator may change them. On 0.5.x, do not delegate `users_*` or `policy_*` to non-administrators.
+- A person with delegated `users_*` who was not a full administrator could grant any ordinary role from the policy, including roles with broader data access than their own templates. In 0.6.0, such a person may grant only roles whose permissions they already hold; removing roles is unchanged. On 0.5.x, do not give `users_*` to anyone who must not pass on every permission listed in the policy.
+- With an empty OAuth redirect allowlist (the default), an error on `/authorize` could send the browser to any registered client's `redirect_uri` without showing the consent screen. This affects default OAuth setups. In 0.6.0, error redirects go only to loopback and allowlisted hosts; other clients get a local error page on the Keystone host. On 0.5.x, set `KEYSTONE_MCP_OAUTH_ALLOWED_REDIRECT_HOSTS`.
+- `KEYSTONE_MCP_GOOGLE_ALLOWED_DOMAIN` from 0.4.x was ignored in 0.5.0, so any Google account whose e-mail already existed in the users directory could sign in. In 0.6.0 the domain restriction applies again, including when set only through environment variables. On 0.5.x, move the domain into the login providers file (`allowed_domain`).
+- Revoking a person's API key did not end sessions opened with that key, and refresh tokens kept extending them. In 0.6.0, revoking or expiring the key ends those sessions; token refresh re-checks the directory and key, and session length is capped by `KEYSTONE_MCP_SESSION_MAX_AGE_SECONDS` (default 30 days). On 0.5.x, call `users_logout` for the person after revoking the key.
+- An upstream resource template without a URI scheme could let one service influence access checks for resources belonging to other services. In 0.6.0, such templates are refused at discovery and a resource's access name comes only from its own namespace. On 0.5.x, remove upstreams that publish scheme-less templates.
+- A session refresh with no session marker could continue as a non-interactive API-key login. In 0.6.0 that refresh is refused with `invalid_grant`, and the marker is written in the same Redis transaction as the token pair. This affects sessions that lack the marker. On 0.5.x there is no workaround beyond upgrading; live sessions that already have a marker survive the upgrade.
+- OAuth refresh always wrote `"subject_type": "human"` into the access token, so a session for a service account could stop being treated as a machine after refresh and, with `KEYSTONE_MCP_RBAC_MODE` in `observe` or `off`, reach mutating administration tools that machines are otherwise refused. In 0.6.0 the token carries the session subject type. On 0.5.x, do not run `observe` or `off` if service accounts hold mutating administration roles.
+- Concurrent `policy_*` changes could overwrite each other, a background reload could restore an older policy, and `policy_rollback` did not verify the on-disk hash or whether a role was still in use. In 0.6.0 writes are serialized, rollback checks hash and role occupancy, and a failed reload keeps both file generations. On 0.5.x, do not edit the policy from two sessions at once.
+- A policy change made through `policy_*` on one replica could take up to five minutes to reach other replicas, or indefinitely without a shared policy volume. In 0.6.0 a revision is published in Redis, peers reload on the next call, and mismatch is visible in metrics and `/readyz` details. On 0.5.x, keep the policy file on a shared volume or copy it to every replica and send `SIGHUP` after each change.
+- With login identity binding off (the default), any configured interactive sign-in provider could complete sign-in for any e-mail address present in the users directory. In 0.6.0, `KEYSTONE_MCP_LOGIN_IDENTITY_BINDING=bind` records the first `(iss, sub)` pair and rejects a different provider identity for the same person. This does not cover API-key sign-in, DEV tokens, HTTP directories without binding support, or one person signing in through multiple providers to the same address. On 0.5.x there is no configuration switch for this behaviour.
+- MCP requests with `Authorization: Bearer ksk_…` did not require an account name: each key was verified against the database, refusals were cached in process memory without a bound, and a stream of invalid keys could evict legitimate machine keys from the cache. In 0.6.0 malformed keys are dropped immediately, unknown built-in `key_id` values never hit the database, verified keys sit in a bounded cache, and a replica that changes the directory clears its cache even when Redis cannot record the revision. This affects any deployment whose MCP endpoint is reachable without prior authentication. On 0.5.x, do not expose the MCP endpoint to untrusted networks.
+- A users directory could declare a capability name Keystone did not know and still start; contract tests could claim `admin` without running administrator rules. In 0.6.0 unknown capability names refuse startup, and each declared capability requires the matching contract class or an explicit `keystone_contract_lenient` marker with a reason. On 0.5.x, do not treat a green contract run as proof that declared directory capabilities were tested.
+- Before 0.6.0 a person could only be blocked; the e-mail address remained in the directory. In 0.6.0 a full administrator may call `users_delete` with a confirmation code to anonymize the record by default, revoking sessions and API keys. On 0.5.x there is no delete command; blocking does not remove the address from the database.
+- In `observe` mode, a resource read that matched several RBAC names was signed using the last matching name, so upstreams could see `allow` with the caller's roles even when `enforce` would require every name to allow the read. In 0.6.0 the signed assertion is a denial with empty roles when any matching name would be denied; in `enforce` the call still does not reach the upstream. On 0.5.x, do not use `observe` where upstreams trust the signed identity header for authorization.
+- In `observe` mode, calls RBAC would deny still reached upstreams with the caller's full role list in `X-Keystone-Identity`, so a service that trusted that list could grant access policy denied. In 0.6.0 such calls carry an empty `roles` list and `rbac_decision: "deny"` while still reaching the upstream for observation. On 0.5.x, do not use `observe` where upstreams authorize from the role list in the assertion.
+- `users block`, `users logout`, and re-import of a blocked person could exit with code 0 while Redis was unavailable and leave OAuth sessions active. In 0.6.0 these commands revoke sessions through the same mechanism as API-key revocation and exit with code 3 when Redis cannot complete revocation. On 0.5.x, after blocking someone, revoke their sessions separately.
+- An administrator signed in only with an API key could attach `requires_human_identity` to administration tools and leave the deployment without a working interactive sign-in path; safeguards for the last administrator and self-demotion looked only for a role literally named `administrator`. In 0.6.0 such policy edits are refused, a role is not deleted while a blocked holder still has it, and a full administrator cannot block or demote themselves through the built-in adapters. On 0.5.x, do not grant `policy_*` or mutating `users_*` to machine API keys.
+- OAuth access and refresh tokens were stored in Redis under keys that included the raw token values, so anyone with read access to Redis could recover live sessions. In 0.6.0 new tokens are stored only under SHA-256 hashes and legacy keys migrate on first use; rolling back to 0.5.x after 0.6.0 ends every session because 0.5.x cannot read the hashed layout. On 0.5.x, restrict Redis to trusted networks and use a password.
+- Log redaction missed API keys ending in `-` or `_`, left Keystone access and refresh tokens visible in free text, used unsalted e-mail hashes in some lines, and recorded service-account refusals with a null subject. In 0.6.0 those values are masked, audit pseudonyms use `KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT`, refusals name the subject and type, and tool calls carry `task_id` in audit events. On 0.5.x, treat logs as sensitive and avoid printing debug `repr` of settings.
+- `POST /login/{provider}` with a valid CSRF token but a foreign `Origin` header returned 302 and started the provider redirect, so another site could begin sign-in using the victim's session cookie. In 0.6.0 the same `Origin` check as other login forms rejects the request; requests without a session cookie are still rejected. On 0.5.x there is no configuration workaround.
+- The HTTP users directory accepted a `resolve` response whose `email` field did not match the requested subject, treating foreign data as the answer about the requested person. In 0.6.0 that response is treated as nonexistent with empty roles. On 0.5.x, ensure the directory backend only returns consistent resolve bodies.
+- Log redaction masks API keys that end with `-` or `_`, and Keystone access and refresh tokens (`km_at_…`, `km_rt_…`) in free text.
+- Every subject pseudonym written to logs uses `KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT`.
+- `Settings` no longer includes secrets in its `repr`.
+- `KEYSTONE_MCP_USERS_BACKEND_CONFIG` refuses secret-like keys anywhere in the file (`client_secret`, `api_key`, `private_key`, keys inside lists), not only `secret`/`password`/`token` at mapping level.
+- Stdio upstream stderr is rate-limited and masked (the entry's own `env` values and well-known token formats).
+- keystone-mcp no longer re-validates an upstream's tool result against the upstream's own `outputSchema` on its event loop, so a pathological schema can no longer stall the whole process (including `/healthz`).
+- Upstream answers, catalogs and tool schemas are bounded: `KEYSTONE_MCP_UPSTREAM_MAX_RESPONSE_BYTES`, `KEYSTONE_MCP_UPSTREAM_MAX_CATALOG_ITEMS`, `KEYSTONE_MCP_UPSTREAM_MAX_SCHEMA_BYTES`.
+- Refresh-token rotation is atomic: a refresh token is exchanged at most once. A second exchange within `KEYSTONE_MCP_OAUTH_REFRESH_GRACE_SECONDS` (default 10 s) gets the same response; a reuse after that revokes every token of that person at that OAuth client and is audited (`oauth_session`). Reusing an authorization code returns `invalid_grant` and revokes the tokens issued from it.
+- Release images are scanned by Trivy per platform (amd64 and arm64) on the exact digest that is then tagged; base images are pinned by digest and updated by Dependabot.
+- The HTTP users directory's `resolve` answer is checked strictly: a non-boolean `exists`, `is_blocked` or a non-string role is treated as the directory being unavailable instead of granting access. `0`/`1` are still accepted with a warning; a missing `is_blocked` is read as `false` with a warning.
+- A sign-in e-mail whose characters become ASCII letters only after lower-casing or Unicode normalisation is refused.
+- An OIDC provider with `email_claim` other than `email` must name the claim that confirms it (`email_verified_claim`) while `require_email_verified` is on.
+- Dynamic client registration limits client metadata (request ≤ 16 KB, `client_name` ≤ 100 characters, ≤ 10 `redirect_uris` of ≤ 2 KB, unlisted RFC 7591 fields dropped); a client that never completes a sign-in expires after 24 hours; at `KEYSTONE_MCP_OAUTH_MAX_CLIENTS` the oldest unused client is evicted instead of refusing everyone; IPv6 registration attempts are counted per /64.
+- `/readyz` shows per-check details only when the caller's address is internal and its `Host` header is allowed.
+- An upstream that keeps asking for input can no longer hold a tool call (and keystone-mcp's CPU) forever: at most 10 rounds per call, all within the tool timeout.
+- Boolean settings accept `1/true/yes/on` and `0/false/no/off` in any case; any other non-empty value refuses startup instead of being read as false.
+- In `production`, an API-key sign-in provider is refused next to any interactive sign-in provider, including one from a plugin.
+- An upstream resource whose RBAC name equals a published tool or prompt name is no longer published, so one policy rule cannot open both by accident.
+- In `enforce` mode a resource without an RBAC name is no longer listed.
+- OAuth access and refresh tokens are stored in Redis under their SHA-256 hash; production warns when `KEYSTONE_MCP_REDIS_URL` has no password on a non-loopback host.
+- Client-visible proxy errors no longer include upstream transport details, upstream tool names or upstream resource URIs.
+- The language choice cookie is kept over https (`__Host-km_lang` now uses `Path=/`).
+- A sign-in provider title with `&` is shown correctly on the login button.
+
+### Fixed
+
+- A half-open upstream probe that never reaches the service does not hold the only probe slot.
+- Docs no longer describe the `policy_*` tools and service-account subjects as future work; deprecation notes say "removed in 2.0" everywhere.
+- The release workflow no longer creates a GitHub Release when publishing to PyPI failed.
+- The users-directory circuit breaker lets one probe request through after the pause instead of all waiting requests.
+- SQLite users directory (local profile): writes take the lock at transaction start, so two processes on one file cannot both remove an administrator.
+- Two concurrent `users_add` / `service_accounts_add` / `users_grant_role` with the same data return `conflict` or `changed: false` instead of `service_unavailable`.
+- Skills: `users_block` reports `service_unavailable` when sessions could not be
+  revoked; `keystone-policy-admin` passes `file_hash` as `expected_hash`; error
+  tables list only codes the tools return; service accounts and API keys are
+  covered.
+- Docs: `features.md` and README describe stdio upstreams, the signed identity
+  header and OIDC sign-in as shipped.
+- In `observe` mode, a resource read that matches several RBAC names is signed as a denial when any of those names would be denied.
+- Minimum versions: `redis>=5.0.1` (5.0.0 has no `Redis.aclose()`, used after every users-directory change from the CLI) and `pyyaml>=6.0.1` (6.0 does not build on Python 3.12).
+- Startup refuses a users directory that declares an unknown capability name.
+- The HTTP users directory treats a resolve response whose `email` field does not match the requested subject as nonexistent.
+- POST `/login/{provider}` rejects a cross-site `Origin`.
+- `keystone-mcp keys …` and `keystone-mcp service-accounts …` report a configuration problem or an unknown role in one line instead of a traceback, and close the database.
+- `docs/compatibility.md` lists the error codes the built-in tools actually return.
+- Contract test `test_provider_unavailable_on_complete` no longer touches a private field of the provider.
+- The OAuth client limit counts client records left by 0.3.x; they also get an expiry instead of living forever.
+- A `KEYSTONE_MCP_BASE_URL` written as `HTTPS://…` gets `Secure`, `__Host-` sign-in cookies like `https://…`.
+- The error code a sign-in provider returns is logged only when it is a short plain token.
+- A hung stdio upstream with a call in flight is now detected within one ping interval of the third missed ping: calls in flight fail at once and the process is restarted; a single slow ping no longer restarts it.
+- A stdio upstream is reported available only once its catalog has been read; a process that comes up after a failed discovery is discovered immediately instead of on the next refresh tick.
+- Startup no longer spawns throwaway stdio processes for discovery; stdio processes start in parallel.
+- Concurrent `policy_*` changes are applied one at a time (in-process lock plus a lock file next to the policy); a change can no longer overwrite another one made at the same time. A background reload can no longer bring back an older policy.
+- `policy_rollback` runs the same checks as other changes, including `role_in_use`, and keeps both file generations when the reload after it fails. A role name with surrounding spaces is trimmed. Refusals of `policy_*` calls are audited.
+- OAuth refresh now keeps the access token `subject_type` aligned with the session subject.
+- An upstream's `serverInfo` stamp no longer reaches the client in tool and prompt results.
+- `service_accounts_list`, `service_accounts_add` and `service_accounts_update` work when called over MCP.
+- The HTTP port opens right after the users-directory migrations; upstream discovery, login provider warm-up (now in parallel) and policy loading run in the background, so a hanging upstream no longer keeps the port closed long enough for a liveness probe to restart the pod.
+- A replica that changes a user or service account forgets its own cached decisions at once, even when Redis could not record the change.
+
+- Host install (`docs/deploy.md`, `scripts/deploy.sh`): install straight into `/opt` without editable mode; `deploy.sh` deploys a tag (`DEPLOY_REF`), refuses a directory without git and waits for `/readyz`.
+- With `KEYSTONE_MCP_LOG_FORMAT=json`, stderr contains only JSON lines: no
+  FastMCP banner, uvicorn and FastMCP messages and tracebacks go through the
+  Keystone formatter and redaction.
+- `initialize` reports the Keystone version in `serverInfo.version`.
+- `.env`: a quoted value followed by a comment no longer keeps its quotes; an
+  unterminated quote is refused with the line number.
+- A resource, resource template or prompt that an upstream renames, edits or removes after startup no longer makes the reconciler mark the whole namespace unavailable (which, with `KEYSTONE_MCP_UPSTREAM_REQUIRE_ALL=true`, failed `/readyz` on every replica).
+- A failed `prompts/list` or `resources/list` keeps the previous prompts or resources instead of counting as an empty list.
+- Policy validation of a prompt from an upstream with `strip_prefix` uses the name clients see; removing such a prompt upstream no longer crashes the refresh.
+- `KEYSTONE_MCP_UPSTREAM_TOOL_TIMEOUTS` keys are matched against the published tool name, as documented.
+- Tools whose `inputSchema` uses `x-mcp-header` can be called on MCP 2026-07-28 upstreams.
+- `docs/compatibility.md` matched to the code: `KEYSTONE_MCP_ENV_FILE` is listed; `KEYSTONE_MCP_USERS_SERVICE_*` are not deprecated; the policy `version` is any non-empty string; `/login/<provider>` and `/login/redirect-not-allowed` are listed; `users import` never had `--email`; `catalog export` has no `--live-url`.
+- `users block`, `users logout` and `users import` report sessions that could not be revoked because Redis was down and exit with `3` instead of a traceback or `0`; `users import` revokes the sessions of every user blocked in the source on each run.
+- The first-administrator startup message says whether the account was created or already present.
+- `keystone-mcp serve` reads `.env` once and logs how many settings it loaded.
+- A relative stdio `command` is checked against the entry's `cwd`.
+- `KEYSTONE_MCP_UPSTREAMS` (JSON) is validated like the registry file.
+- An upstream asking for sampling or roots fails the call with a clear error instead of receiving a malformed answer.
+- Errors from an upstream reach the client as short, neutral messages (unavailable, timed out, returned an error); details stay in keystone-mcp's log.
 ### Added
+
 
 - Issue templates for upgrade reports; feature requests ask whether the change would alter a frozen contract.
 - `keystone-mcp oauth register-client`: register a public OAuth client when self-registration is off, with the same redirect-host and metadata checks as `POST /register`.
@@ -68,8 +176,8 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 - `docs/upgrading.md`: what to check before upgrading and how to roll back.
 - Alert rule examples for the behaviour added in 0.6.0 (administration refusals, refresh replays, API-key and DCR limits, upstream limits) in `docs/observability-rbac.md`.
 - Metric `keystone_mcp_http_origin_null_total`.
-
 ### Changed
+
 
 - The identity-assertion examples refuse a JWKS URL over plain `http` (loopback excepted).
 - CI checkouts do not keep the job token in the git config (`persist-credentials: false`).
@@ -100,98 +208,17 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 - Startup errors (settings, upstream registry, policy file, users directory) are reported in one line.
 - CLI commands ignore invalid settings they do not use and say so.
 - Failed sign-in attempts are limited per e-mail and source network, in Redis: someone else's failed attempts no longer lock a person out, and the limit is shared by all replicas.
-
 ### Deprecated
+
 
 - `KEYSTONE_MCP_UPSTREAM_TOOL_TIMEOUTS` keys that name the upstream's own tool name (deprecated since 0.6.0; use the published name).
 - JSON log lines are compact (`"stream":"access"`, no spaces); field names are
   unchanged.
 - A `FORWARDED_ALLOW_IPS` line in `.env` is reported as ignored.
-
-### Fixed
-
-- A half-open upstream probe that never reaches the service does not hold the only probe slot.
-- Docs no longer describe the `policy_*` tools and service-account subjects as future work; deprecation notes say "removed in 2.0" everywhere.
-- The release workflow no longer creates a GitHub Release when publishing to PyPI failed.
-- The users-directory circuit breaker lets one probe request through after the pause instead of all waiting requests.
-- SQLite users directory (local profile): writes take the lock at transaction start, so two processes on one file cannot both remove an administrator.
-- Two concurrent `users_add` / `service_accounts_add` / `users_grant_role` with the same data return `conflict` or `changed: false` instead of `service_unavailable`.
-- Skills: `users_block` reports `service_unavailable` when sessions could not be
-  revoked; `keystone-policy-admin` passes `file_hash` as `expected_hash`; error
-  tables list only codes the tools return; service accounts and API keys are
-  covered.
-- Docs: `features.md` and README describe stdio upstreams, the signed identity
-  header and OIDC sign-in as shipped.
-- In `observe` mode, a resource read that matches several RBAC names is signed as a denial when any of those names would be denied.
-- Minimum versions: `redis>=5.0.1` (5.0.0 has no `Redis.aclose()`, used after every users-directory change from the CLI) and `pyyaml>=6.0.1` (6.0 does not build on Python 3.12).
-- Startup refuses a users directory that declares an unknown capability name.
-- The HTTP users directory treats a resolve response whose `email` field does not match the requested subject as nonexistent.
-- POST `/login/{provider}` rejects a cross-site `Origin`.
-- `keystone-mcp keys …` and `keystone-mcp service-accounts …` report a configuration problem or an unknown role in one line instead of a traceback, and close the database.
-- `docs/compatibility.md` lists the error codes the built-in tools actually return.
-- Contract test `test_provider_unavailable_on_complete` no longer touches a private field of the provider.
-- The OAuth client limit counts client records left by 0.3.x; they also get an expiry instead of living forever.
-- A `KEYSTONE_MCP_BASE_URL` written as `HTTPS://…` gets `Secure`, `__Host-` sign-in cookies like `https://…`.
-- The error code a sign-in provider returns is logged only when it is a short plain token.
-- A hung stdio upstream with a call in flight is now detected within one ping interval of the third missed ping: calls in flight fail at once and the process is restarted; a single slow ping no longer restarts it.
-- A stdio upstream is reported available only once its catalog has been read; a process that comes up after a failed discovery is discovered immediately instead of on the next refresh tick.
-- Startup no longer spawns throwaway stdio processes for discovery; stdio processes start in parallel.
-- Concurrent `policy_*` changes are applied one at a time (in-process lock plus a lock file next to the policy); a change can no longer overwrite another one made at the same time. A background reload can no longer bring back an older policy.
-- `policy_rollback` runs the same checks as other changes, including `role_in_use`, and keeps both file generations when the reload after it fails. A role name with surrounding spaces is trimmed. Refusals of `policy_*` calls are audited.
-- OAuth refresh now keeps the access token `subject_type` aligned with the session subject.
-- An upstream's `serverInfo` stamp no longer reaches the client in tool and prompt results.
-- `service_accounts_list`, `service_accounts_add` and `service_accounts_update` work when called over MCP.
-- The HTTP port opens right after the users-directory migrations; upstream discovery, login provider warm-up (now in parallel) and policy loading run in the background, so a hanging upstream no longer keeps the port closed long enough for a liveness probe to restart the pod.
-- A replica that changes a user or service account forgets its own cached decisions at once, even when Redis could not record the change.
-
-- Host install (`docs/deploy.md`, `scripts/deploy.sh`): install straight into `/opt` without editable mode; `deploy.sh` deploys a tag (`DEPLOY_REF`), refuses a directory without git and waits for `/readyz`.
-- With `KEYSTONE_MCP_LOG_FORMAT=json`, stderr contains only JSON lines: no
-  FastMCP banner, uvicorn and FastMCP messages and tracebacks go through the
-  Keystone formatter and redaction.
-- `initialize` reports the Keystone version in `serverInfo.version`.
-- `.env`: a quoted value followed by a comment no longer keeps its quotes; an
-  unterminated quote is refused with the line number.
-- A resource, resource template or prompt that an upstream renames, edits or removes after startup no longer makes the reconciler mark the whole namespace unavailable (which, with `KEYSTONE_MCP_UPSTREAM_REQUIRE_ALL=true`, failed `/readyz` on every replica).
-- A failed `prompts/list` or `resources/list` keeps the previous prompts or resources instead of counting as an empty list.
-- Policy validation of a prompt from an upstream with `strip_prefix` uses the name clients see; removing such a prompt upstream no longer crashes the refresh.
-- `KEYSTONE_MCP_UPSTREAM_TOOL_TIMEOUTS` keys are matched against the published tool name, as documented.
-- Tools whose `inputSchema` uses `x-mcp-header` can be called on MCP 2026-07-28 upstreams.
-- `docs/compatibility.md` matched to the code: `KEYSTONE_MCP_ENV_FILE` is listed; `KEYSTONE_MCP_USERS_SERVICE_*` are not deprecated; the policy `version` is any non-empty string; `/login/<provider>` and `/login/redirect-not-allowed` are listed; `users import` never had `--email`; `catalog export` has no `--live-url`.
-- `users block`, `users logout` and `users import` report sessions that could not be revoked because Redis was down and exit with `3` instead of a traceback or `0`; `users import` revokes the sessions of every user blocked in the source on each run.
-- The first-administrator startup message says whether the account was created or already present.
-- `keystone-mcp serve` reads `.env` once and logs how many settings it loaded.
-- A relative stdio `command` is checked against the entry's `cwd`.
-- `KEYSTONE_MCP_UPSTREAMS` (JSON) is validated like the registry file.
-- An upstream asking for sampling or roots fails the call with a clear error instead of receiving a malformed answer.
-- Errors from an upstream reach the client as short, neutral messages (unavailable, timed out, returned an error); details stay in keystone-mcp's log.
-
-### Security
-
-- Log redaction masks API keys that end with `-` or `_`, and Keystone access and refresh tokens (`km_at_…`, `km_rt_…`) in free text.
-- Every subject pseudonym written to logs uses `KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT`.
-- `Settings` no longer includes secrets in its `repr`.
-- `KEYSTONE_MCP_USERS_BACKEND_CONFIG` refuses secret-like keys anywhere in the file (`client_secret`, `api_key`, `private_key`, keys inside lists), not only `secret`/`password`/`token` at mapping level.
-- Stdio upstream stderr is rate-limited and masked (the entry's own `env` values and well-known token formats).
-- keystone-mcp no longer re-validates an upstream's tool result against the upstream's own `outputSchema` on its event loop, so a pathological schema can no longer stall the whole process (including `/healthz`).
-- Upstream answers, catalogs and tool schemas are bounded: `KEYSTONE_MCP_UPSTREAM_MAX_RESPONSE_BYTES`, `KEYSTONE_MCP_UPSTREAM_MAX_CATALOG_ITEMS`, `KEYSTONE_MCP_UPSTREAM_MAX_SCHEMA_BYTES`.
-- Refresh-token rotation is atomic: a refresh token is exchanged at most once. A second exchange within `KEYSTONE_MCP_OAUTH_REFRESH_GRACE_SECONDS` (default 10 s) gets the same response; a reuse after that revokes every token of that person at that OAuth client and is audited (`oauth_session`). Reusing an authorization code returns `invalid_grant` and revokes the tokens issued from it.
-- Release images are scanned by Trivy per platform (amd64 and arm64) on the exact digest that is then tagged; base images are pinned by digest and updated by Dependabot.
-- The HTTP users directory's `resolve` answer is checked strictly: a non-boolean `exists`, `is_blocked` or a non-string role is treated as the directory being unavailable instead of granting access. `0`/`1` are still accepted with a warning; a missing `is_blocked` is read as `false` with a warning.
-- A sign-in e-mail whose characters become ASCII letters only after lower-casing or Unicode normalisation is refused.
-- An OIDC provider with `email_claim` other than `email` must name the claim that confirms it (`email_verified_claim`) while `require_email_verified` is on.
-- Dynamic client registration limits client metadata (request ≤ 16 KB, `client_name` ≤ 100 characters, ≤ 10 `redirect_uris` of ≤ 2 KB, unlisted RFC 7591 fields dropped); a client that never completes a sign-in expires after 24 hours; at `KEYSTONE_MCP_OAUTH_MAX_CLIENTS` the oldest unused client is evicted instead of refusing everyone; IPv6 registration attempts are counted per /64.
-- `/readyz` shows per-check details only when the caller's address is internal and its `Host` header is allowed.
-- An upstream that keeps asking for input can no longer hold a tool call (and keystone-mcp's CPU) forever: at most 10 rounds per call, all within the tool timeout.
-- Boolean settings accept `1/true/yes/on` and `0/false/no/off` in any case; any other non-empty value refuses startup instead of being read as false.
-- In `production`, an API-key sign-in provider is refused next to any interactive sign-in provider, including one from a plugin.
-- An upstream resource whose RBAC name equals a published tool or prompt name is no longer published, so one policy rule cannot open both by accident.
-- In `enforce` mode a resource without an RBAC name is no longer listed.
-- OAuth access and refresh tokens are stored in Redis under their SHA-256 hash; production warns when `KEYSTONE_MCP_REDIS_URL` has no password on a non-loopback host (W22).
-- Client-visible proxy errors no longer include upstream transport details, upstream tool names or upstream resource URIs.
-- The language choice cookie is kept over https (`__Host-km_lang` now uses `Path=/`).
-- A sign-in provider title with `&` is shown correctly on the login button.
+### Removed
 
 ### Migration
+
 
 - `KEYSTONE_MCP_LOGIN_THROTTLE_EMAIL_MAX` now counts per e-mail and source network; no configuration change is needed.
 - Roles that list administration tools by name (instead of `users_*`) need `users_delete` and `users_export` to remain full administrators.
@@ -240,7 +267,6 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 - Startup refuses a non-positive `KEYSTONE_MCP_TOKEN_TTL`, `_AUTH_CODE_TTL`, `_REFRESH_TOKEN_TTL`, `_LOGIN_PENDING_TXN_TTL`; a `KEYSTONE_MCP_PORT` outside 1–65535; a `KEYSTONE_MCP_BASE_URL` without an http(s) scheme or host; an empty or invalid `KEYSTONE_MCP_LOG_REQUEST_ID_HEADER`; with metrics on, a `KEYSTONE_MCP_METRICS_PATH` without a leading "/" or equal to `KEYSTONE_MCP_HTTP_PATH`. None of these worked before.
 - `KEYSTONE_MCP_REDIS_URL` is checked at settings time in every RBAC mode (it was already required to start).
 - A plugin sign-in provider with `interactive=True` next to `api_key` in `production`: move people to the interactive provider; machines keep Bearer keys.
-
 ## [0.5.0] - 2026-10-13
 
 ### Added
