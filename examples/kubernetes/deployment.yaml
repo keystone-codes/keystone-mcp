@@ -17,6 +17,8 @@ spec:
       labels:
         app: keystone
     spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 40
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001
@@ -46,13 +48,12 @@ spec:
               value: "/etc/keystone-mcp/rbac-policy.yaml"
             - name: KEYSTONE_MCP_UPSTREAMS_PATH
               value: "/etc/keystone-mcp/upstreams.yaml"
-            - name: KEYSTONE_MCP_ENABLED_LOGIN_METHODS
-              value: "google"
-            - name: KEYSTONE_MCP_PRIMARY_LOGIN_METHOD
-              value: "google"
-            # From the Google Cloud OAuth client; see docs/google-oauth.md.
-            - name: KEYSTONE_MCP_GOOGLE_CLIENT_ID
-              value: "CHANGE_ME.apps.googleusercontent.com"
+            - name: KEYSTONE_MCP_LOGIN_PROVIDERS_PATH
+              value: "/etc/keystone-mcp/login-providers.yaml"
+            - name: KEYSTONE_MCP_POLICY_TOOLS
+              value: "read-only"
+            - name: KEYSTONE_MCP_SHUTDOWN_GRACE_SECONDS
+              value: "25"
             # Email of the first administrator; created or restored at every start.
             - name: KEYSTONE_MCP_SUPERADMIN_EMAIL
               value: "admin@example.com"
@@ -85,6 +86,17 @@ spec:
             limits:
               cpu: "500m"
               memory: "256Mi"
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sleep", "5"]
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+            failureThreshold: 36
+            timeoutSeconds: 5
           readinessProbe:
             httpGet:
               path: /readyz
@@ -97,7 +109,6 @@ spec:
             httpGet:
               path: /healthz
               port: http
-            initialDelaySeconds: 10
             periodSeconds: 15
             timeoutSeconds: 5
             failureThreshold: 3

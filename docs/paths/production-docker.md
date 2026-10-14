@@ -1,8 +1,10 @@
 # Deploy Keystone-MCP with Docker
 
-What you get: Keystone-MCP behind TLS on your own domain, Google sign-in, a
-Postgres users directory, and your own services on a private network nothing
-public can reach. About an hour, most of it waiting on DNS.
+What you get: Keystone-MCP behind TLS on your own domain, interactive sign-in
+through a providers file (Google or any OIDC issuer), a Postgres users
+directory, and your own services on a private network nothing public can
+reach. API keys remain the path for machines. About an hour, most of it
+waiting on DNS.
 
 ## What you need
 
@@ -26,8 +28,9 @@ Five files, each doing one job:
 
 | File | What it does |
 |---|---|
-| `docker-compose.yml` | Keystone-MCP, Redis, and Postgres. Pinned image tag, loopback-only port. |
+| `docker-compose.yml` | Keystone-MCP, Redis, and Postgres. Pinned image tag, loopback-only port, `init: true`, `stop_grace_period: 35s`. |
 | `.env` | Every setting Keystone-MCP reads (copied from the repository's `.env.example`). |
+| `login-providers.yaml` | Sign-in providers (Google, OIDC, optional API key). Mounted read-only. |
 | `policy/rbac-policy.yaml` | Who may call which tools. The `policy/` directory is mounted read-write so `policy_*` tools can update the file. |
 | `upstreams.yaml` | The MCP services behind Keystone-MCP. Mounted read-only, starts empty. |
 | `Caddyfile` | TLS reverse proxy config (step 7). |
@@ -62,11 +65,18 @@ for this deployment. Required:
 | `KEYSTONE_MCP_RBAC_POLICY_PATH` | `/etc/keystone-mcp/policy/rbac-policy.yaml` |
 | `KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT` | output of `openssl rand -hex 32` |
 | `KEYSTONE_MCP_SUPERADMIN_EMAIL` | the first administrator's email |
-| `KEYSTONE_MCP_GOOGLE_CLIENT_ID` / `_SECRET` | from step 2 |
-| `KEYSTONE_MCP_ENABLED_LOGIN_METHODS` / `_PRIMARY_LOGIN_METHOD` | `google` |
+| `KEYSTONE_MCP_LOGIN_PROVIDERS_PATH` | `/etc/keystone-mcp/login-providers.yaml` |
+| `KEYSTONE_MCP_LOGIN_GOOGLE_SECRET` | Google client secret from step 2 (name must match `client_secret_env` in the providers file) |
 | `KEYSTONE_MCP_UPSTREAMS_PATH` | `/etc/keystone-mcp/upstreams.yaml` |
 
-`KEYSTONE_MCP_AUTH_SERVICE_URL` / `_TOKEN`: deprecated, leave empty.
+Edit `login-providers.yaml` with your Google `client_id` (and optional
+`allowed_domain`). Removed in 0.5.0: delete any `KEYSTONE_MCP_AUTH_SERVICE_*`
+lines from `.env` — startup refuses them.
+
+The `keystone` service uses `init: true` so orphaned stdio upstream
+processes are reaped, and `stop_grace_period: 35s` so in-flight requests can
+finish after SIGTERM (see `KEYSTONE_MCP_SHUTDOWN_GRACE_SECONDS` in
+[environment.md](../environment.md)).
 
 Add two more lines — Compose reads this same `.env` file to fill in
 `docker-compose.yml`, separately from the variables above that Keystone-MCP

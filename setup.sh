@@ -749,8 +749,40 @@ else
 fi
 
 POLICY_PATH="${SCRIPT_DIR}/config/rbac-policy.yaml"
+PROVIDERS_PATH="${SCRIPT_DIR}/login-providers.yaml"
 export PROFILE ADMIN_EMAIL ADMIN_TOKEN BASE_URL GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET \
-  GOOGLE_ALLOWED_DOMAIN USERS_DB_URL POLICY_PATH REDIS_URL
+  GOOGLE_ALLOWED_DOMAIN USERS_DB_URL POLICY_PATH REDIS_URL PROVIDERS_PATH
+if [[ "$PROFILE" == "production" ]]; then
+  python3 - <<'PY'
+import os
+import sys
+from pathlib import Path
+
+path = Path(os.environ["PROVIDERS_PATH"])
+domain = os.environ.get("GOOGLE_ALLOWED_DOMAIN", "").strip()
+lines = [
+    "version: 1",
+    "providers:",
+    "  - name: google",
+    "    type: google",
+    f"    client_id: {os.environ['GOOGLE_CLIENT_ID']}",
+    "    client_secret_env: KEYSTONE_MCP_LOGIN_GOOGLE_SECRET",
+]
+if domain:
+    lines.append(f"    allowed_domain: {domain}")
+desired = "\n".join(lines) + "\n"
+if path.exists():
+    existing = path.read_text(encoding="utf-8")
+    if existing != desired:
+        print(
+            f"login-providers.yaml already exists at {path} with different content; leaving it unchanged.",
+            file=sys.stderr,
+        )
+else:
+    path.write_text(desired, encoding="utf-8")
+    os.chmod(path, 0o600)
+PY
+fi
 python3 - <<'PY'
 import ipaddress
 import os
@@ -797,29 +829,19 @@ else:
 values = {
     "KEYSTONE_MCP_DEPLOYMENT_PROFILE": profile,
     "KEYSTONE_MCP_BASE_URL": base_url,
-    "KEYSTONE_MCP_ENABLED_LOGIN_METHODS": "api_key" if profile == "local" else "google",
-    "KEYSTONE_MCP_PRIMARY_LOGIN_METHOD": "api_key" if profile == "local" else "google",
     "KEYSTONE_MCP_DEV_TOKENS": os.environ.get("ADMIN_TOKEN", "") if profile == "local" else "",
-    "KEYSTONE_MCP_GOOGLE_CLIENT_ID": (
-        os.environ.get("GOOGLE_CLIENT_ID", "") if profile == "production" else ""
-    ),
-    "KEYSTONE_MCP_GOOGLE_CLIENT_SECRET": (
-        os.environ.get("GOOGLE_CLIENT_SECRET", "") if profile == "production" else ""
-    ),
-    "KEYSTONE_MCP_GOOGLE_ALLOWED_DOMAIN": (
-        os.environ.get("GOOGLE_ALLOWED_DOMAIN", "") if profile == "production" else ""
-    ),
     "KEYSTONE_MCP_RBAC_MODE": "enforce",
     "KEYSTONE_MCP_RBAC_POLICY_PATH": os.environ["POLICY_PATH"],
     "KEYSTONE_MCP_REDIS_URL": os.environ["REDIS_URL"],
     "KEYSTONE_MCP_USERS_BACKEND": "local",
     "KEYSTONE_MCP_USERS_DB_URL": os.environ["USERS_DB_URL"],
     "KEYSTONE_MCP_SUPERADMIN_EMAIL": os.environ["ADMIN_EMAIL"],
-    "KEYSTONE_MCP_USERS_SERVICE_URL": "",
-    "KEYSTONE_MCP_USERS_SERVICE_TOKEN": "",
-    "KEYSTONE_MCP_AUTH_SERVICE_URL": "",
-    "KEYSTONE_MCP_AUTH_SERVICE_TOKEN": "",
 }
+if profile == "production":
+    values["KEYSTONE_MCP_LOGIN_PROVIDERS_PATH"] = str(
+        Path(os.environ["PROVIDERS_PATH"]).resolve()
+    )
+    values["KEYSTONE_MCP_LOGIN_GOOGLE_SECRET"] = os.environ.get("GOOGLE_CLIENT_SECRET", "")
 
 if not current("KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT"):
     values["KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT"] = secrets.token_hex(32)

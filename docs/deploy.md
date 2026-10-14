@@ -75,9 +75,12 @@ two differences for a bare host instead of containers:
 | `KEYSTONE_MCP_REDIS_URL` | `redis://:<password>@redis:6379/0` | `redis://:<password>@127.0.0.1:6379/0`, or wherever Redis actually runs |
 | `KEYSTONE_MCP_USERS_DB_URL` | `postgresql+psycopg://keystone:<password>@postgres:5432/keystone` | same, with your Postgres host in place of `postgres` |
 
-Register the Google OAuth redirect URI,
-`{KEYSTONE_MCP_BASE_URL}/login/google/callback` — see
-[google-oauth.md](google-oauth.md). Pre-flight checklist:
+Configure sign-in in a providers file (`KEYSTONE_MCP_LOGIN_PROVIDERS_PATH`;
+see [login-providers.md](login-providers.md) and
+`./setup.sh` for production). Register each redirect provider's callback URI,
+for example `{KEYSTONE_MCP_BASE_URL}/login/google/callback` for Google — see
+[google-oauth.md](google-oauth.md). API keys are for machines, not people.
+Pre-flight checklist:
 [production-checklist.md](production-checklist.md).
 
 Place the RBAC policy file where `KEYSTONE_MCP_RBAC_POLICY_PATH` points (for

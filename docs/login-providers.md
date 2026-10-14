@@ -6,6 +6,13 @@ directory; Keystone never creates accounts from an identity provider.
 
 Why: [ADR 0007](adr/0007-login-providers.md).
 
+Examples shipped with the repository:
+
+- Kubernetes: `login-providers.yaml` inside
+  [`examples/kubernetes/configmap.yaml`](../examples/kubernetes/configmap.yaml)
+- Docker production stack:
+  [`examples/production/login-providers.yaml`](../examples/production/login-providers.yaml)
+
 Each redirect provider gets its own callback URL:
 
 ```text
