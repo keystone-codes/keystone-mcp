@@ -37,7 +37,9 @@ see [plugins.md](plugins.md).
 People sign in through **LoginProvider** implementations listed in a YAML
 file (`KEYSTONE_MCP_LOGIN_PROVIDERS_PATH`): Google, any OpenID Connect issuer
 (Okta, Microsoft Entra ID, Keycloak), and the built-in API-key form. Setup for
-each provider is in [login-providers.md](login-providers.md). DEV tokens remain
+each provider is in [login-providers.md](login-providers.md). Built-in and
+provider secrets may be passed as files (`KEYSTONE_MCP_<NAME>_FILE`; see
+[environment.md#secrets-from-files](environment.md#secrets-from-files)). DEV tokens remain
 a local-profile shortcut. Additional provider types install as packages that
 declare a `keystone_mcp.login_providers` entry point; see [plugins.md](plugins.md).
 

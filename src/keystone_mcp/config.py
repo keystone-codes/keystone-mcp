@@ -58,6 +58,26 @@ def _env(name: str, default: str) -> str:
     return os.environ.get(name, default)
 
 
+def _env_secret(name: str, default: str) -> str:
+    from keystone_mcp.secrets import read_secret
+
+    value = read_secret(name)
+    if value is None:
+        return default
+    return value
+
+
+SECRET_VARIABLES: tuple[str, ...] = (
+    "KEYSTONE_MCP_DEV_TOKENS",
+    "KEYSTONE_MCP_GOOGLE_CLIENT_SECRET",
+    "KEYSTONE_MCP_IDENTITY_SIGNING_KEY",
+    "KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT",
+    "KEYSTONE_MCP_REDIS_URL",
+    "KEYSTONE_MCP_USERS_DB_URL",
+    "KEYSTONE_MCP_USERS_SERVICE_TOKEN",
+)
+
+
 class ConfigError(ValueError):
     """Raised when platform settings are missing or inconsistent at startup."""
 
@@ -977,7 +997,7 @@ class Settings:
     )
 
     # OAuth session store (required at runtime outside tests).
-    redis_url: str = field(default_factory=lambda: _env("KEYSTONE_MCP_REDIS_URL", ""))
+    redis_url: str = field(default_factory=lambda: _env_secret("KEYSTONE_MCP_REDIS_URL", ""))
     redis_key_prefix: str = field(
         default_factory=lambda: _env("KEYSTONE_MCP_REDIS_KEY_PREFIX", "km:oauth:")
     )
@@ -989,7 +1009,7 @@ class Settings:
     )
 
     # Comma-separated api_tokens accepted on the sign-in page (local profile only).
-    dev_tokens: str = field(default_factory=lambda: _env("KEYSTONE_MCP_DEV_TOKENS", ""))
+    dev_tokens: str = field(default_factory=lambda: _env_secret("KEYSTONE_MCP_DEV_TOKENS", ""))
 
     # ── Login methods and RBAC ────────────────────────────────────────────
     # Independent switches: how users sign in vs whether per-tool RBAC runs.
@@ -1017,7 +1037,7 @@ class Settings:
     # Google OIDC (required when google login is enabled).
     google_client_id: str = field(default_factory=lambda: _env("KEYSTONE_MCP_GOOGLE_CLIENT_ID", ""))
     google_client_secret: str = field(
-        default_factory=lambda: _env("KEYSTONE_MCP_GOOGLE_CLIENT_SECRET", "")
+        default_factory=lambda: _env_secret("KEYSTONE_MCP_GOOGLE_CLIENT_SECRET", "")
     )
     google_allowed_domain: str = field(
         default_factory=lambda: _env("KEYSTONE_MCP_GOOGLE_ALLOWED_DOMAIN", "")
@@ -1047,7 +1067,9 @@ class Settings:
         default_factory=lambda: _env("KEYSTONE_MCP_USERS_BACKEND_CONFIG", "")
     )
     users_db_url: str = field(
-        default_factory=lambda: _env("KEYSTONE_MCP_USERS_DB_URL", "sqlite:///./keystone-users.db")
+        default_factory=lambda: _env_secret(
+            "KEYSTONE_MCP_USERS_DB_URL", "sqlite:///./keystone-users.db"
+        )
     )
     superadmin_email: str = field(default_factory=lambda: _env("KEYSTONE_MCP_SUPERADMIN_EMAIL", ""))
 
@@ -1056,7 +1078,7 @@ class Settings:
         default_factory=lambda: _env("KEYSTONE_MCP_USERS_SERVICE_URL", "")
     )
     users_service_token: str = field(
-        default_factory=lambda: _env("KEYSTONE_MCP_USERS_SERVICE_TOKEN", "")
+        default_factory=lambda: _env_secret("KEYSTONE_MCP_USERS_SERVICE_TOKEN", "")
     )
     users_service_timeout_seconds: float = field(
         default_factory=lambda: _env_float("KEYSTONE_MCP_USERS_SERVICE_TIMEOUT_SECONDS", 3.0)
@@ -1103,7 +1125,7 @@ class Settings:
         default_factory=lambda: _env_float("KEYSTONE_MCP_RBAC_AUDIT_LIST_TOOLS_SAMPLE_RATE", 0.1)
     )
     rbac_audit_subject_salt: str = field(
-        default_factory=lambda: _env("KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT", "")
+        default_factory=lambda: _env_secret("KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT", "")
     )
     # Whether the policy_* tools (V02) may change the policy file through this
     # process: "full" reads and writes, "read-only" reads and validates only
@@ -1239,7 +1261,7 @@ class Settings:
     # Empty means ES256 is unavailable; upstream entries with
     # ``auth.identity_alg: ES256`` refuse to start without it.
     identity_signing_key: str = field(
-        default_factory=lambda: _env("KEYSTONE_MCP_IDENTITY_SIGNING_KEY", "")
+        default_factory=lambda: _env_secret("KEYSTONE_MCP_IDENTITY_SIGNING_KEY", "")
     )
 
     @property
@@ -2102,6 +2124,11 @@ def startup_warnings(settings: Settings, *, environ: Mapping[str, str] | None = 
         warnings.append(forwarded)
     warnings.extend(_warn_empty_bool_variables(env_map))
 
+    from keystone_mcp.secrets import secret_sources_conflicts
+
+    for name in secret_sources_conflicts(SECRET_VARIABLES, env_map):
+        warnings.append(f"{name} and {name}_FILE are both set; using the file")
+
     return warnings
 
 
@@ -2175,6 +2202,10 @@ def check_configuration(
                 f"{name} was removed in {removed.removed_in} and has no effect. "
                 f"{removed.replacement}"
             )
+
+    from keystone_mcp.secrets import check_secret_files
+
+    errors.extend(check_secret_files(env_map))
 
     settings, parse_errors, incomplete = _build_settings_for_check(env_map)
     errors.extend(parse_errors)
@@ -2255,6 +2286,14 @@ def load_settings() -> Settings:
             for name, removed in fatal
         ]
         raise ConfigError(" ".join(messages))
+    from keystone_mcp.secrets import check_secret_files
+
+    file_errors = check_secret_files(os.environ)
+    if file_errors:
+        raise ConfigError(
+            file_errors[0] if len(file_errors) == 1 else "; ".join(file_errors),
+            problems=tuple(file_errors),
+        )
     settings = Settings()
     validate_settings(settings)
     return settings

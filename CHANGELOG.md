@@ -10,6 +10,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ### Added
 
+- Secrets can be passed as files: `KEYSTONE_MCP_<X>_FILE` for every secret variable (list in `docs/environment.md#secrets-from-files`), and `<NAME>_FILE` for variables named by the upstream registry, stdio `env` and sign-in provider options. The file wins when both are set.
 - `KEYSTONE_MCP_SESSION_MAX_AGE_SECONDS` (default `2592000`, 30 days; `0` means no limit): a session is renewed for at most this long after sign-in.
 - `api_keys_revoke` and `keystone-mcp keys revoke` report `revoked_tokens`.
 - CI runs the test suite on Python 3.14 and enforces 86 % line-and-branch coverage.

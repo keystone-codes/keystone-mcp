@@ -18,7 +18,6 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
-import os
 import secrets
 import time
 from dataclasses import dataclass, field
@@ -102,7 +101,9 @@ def ec_public_key_jwk_thumbprint(public_key: EllipticCurvePublicKey) -> str:
 
 def identity_signing_key_from_env() -> EllipticCurvePrivateKey | None:
     """Return the deployment ES256 signing key, or ``None`` when unset."""
-    raw = os.environ.get("KEYSTONE_MCP_IDENTITY_SIGNING_KEY", "")
+    from keystone_mcp.secrets import read_secret
+
+    raw = read_secret("KEYSTONE_MCP_IDENTITY_SIGNING_KEY") or ""
     if not raw.strip():
         return None
     return load_ec_p256_private_key(raw)
@@ -131,7 +132,9 @@ def resolve_identity_secret(name: str, var: str) -> bytes:
     its value — when the variable is unset, empty, or shorter than
     :data:`MIN_SECRET_BYTES` bytes (UTF-8).
     """
-    value = os.environ.get(var, "")
+    from keystone_mcp.secrets import read_secret
+
+    value = read_secret(var) or ""
     if not value.strip():
         raise ValueError(
             f"upstream {name!r}: auth.identity_secret_env names {var}, which is not set or empty"
