@@ -38,7 +38,7 @@ def _rbac_env(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.delenv("KEYSTONE_MCP_USERS_SERVICE_TOKEN", raising=False)
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_POLICY_PATH", str(policy))
     monkeypatch.setenv("KEYSTONE_MCP_REDIS_URL", UNUSED_REDIS_URL)
-    monkeypatch.setenv("KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT", "test-salt")
+    monkeypatch.setenv("KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT", "a" * 32)
     # P5 (production refuses a SQLite users directory) only matters to the
     # tests in that section below; every other test that reaches this helper
     # and ends up accepted under `production` needs a Postgres-shaped URL so
@@ -227,6 +227,7 @@ def test_local_accepts_sqlite_users_db(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("KEYSTONE_MCP_DEPLOYMENT_PROFILE", "local")
     monkeypatch.delenv("KEYSTONE_MCP_USERS_BACKEND", raising=False)
     monkeypatch.setenv("KEYSTONE_MCP_USERS_DB_URL", f"sqlite:///{tmp_path}/keystone-users.db")
+    monkeypatch.setenv("KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT", "a" * 32)
     settings = load_settings()
     assert startup_warnings(settings) == []
 
@@ -401,6 +402,7 @@ def test_local_warnings_empty_with_rbac_off(monkeypatch, dev_tokens: str):
     monkeypatch.setenv("KEYSTONE_MCP_DEPLOYMENT_PROFILE", "local")
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_MODE", "off")
     monkeypatch.setenv("KEYSTONE_MCP_DEV_TOKENS", dev_tokens)
+    monkeypatch.setenv("KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT", "a" * 32)
     settings = load_settings()
     assert startup_warnings(settings) == []
 
@@ -410,6 +412,7 @@ def test_local_warnings_empty_with_rbac_observe_and_no_dev_tokens(monkeypatch, t
     monkeypatch.setenv("KEYSTONE_MCP_DEPLOYMENT_PROFILE", "local")
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_MODE", "observe")
     monkeypatch.delenv("KEYSTONE_MCP_DEV_TOKENS", raising=False)
+    monkeypatch.setenv("KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT", "a" * 32)
     settings = load_settings()
     assert startup_warnings(settings) == []
 
@@ -454,7 +457,7 @@ def test_stage_like_production_configuration_is_accepted(monkeypatch, tmp_path: 
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_MODE", "enforce")
     monkeypatch.setenv("KEYSTONE_MCP_RBAC_POLICY_PATH", str(policy))
     monkeypatch.setenv("KEYSTONE_MCP_REDIS_URL", UNUSED_REDIS_URL)
-    monkeypatch.setenv("KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT", "test-salt")
+    monkeypatch.setenv("KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT", "a" * 32)
     monkeypatch.delenv("KEYSTONE_MCP_DEV_TOKENS", raising=False)
 
     settings = load_settings()
@@ -477,6 +480,9 @@ def test_stage_like_production_configuration_is_accepted(monkeypatch, tmp_path: 
         or "KEYSTONE_MCP_OAUTH_ALLOWED_REDIRECT_HOSTS is empty" in w
         for w in warnings
     )
+    for warning in warnings:
+        assert "KEYSTONE_MCP_DEV_TOKENS" not in warning
+        assert "uses http on a non-public host" not in warning
 
 
 @pytest.mark.parametrize(
@@ -561,6 +567,7 @@ def test_local_no_warning_for_all_interfaces_without_dev_tokens(monkeypatch):
     monkeypatch.setenv("KEYSTONE_MCP_DEPLOYMENT_PROFILE", "local")
     monkeypatch.setenv("KEYSTONE_MCP_HOST", "0.0.0.0")
     monkeypatch.delenv("KEYSTONE_MCP_DEV_TOKENS", raising=False)
+    monkeypatch.setenv("KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT", "a" * 32)
     settings = load_settings()
     assert startup_warnings(settings) == []
 

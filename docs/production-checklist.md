@@ -5,6 +5,7 @@ Keystone-MCP.
 
 - [ ] `KEYSTONE_MCP_DEPLOYMENT_PROFILE=production` (the default; set it
       explicitly anyway, see [environment.md](environment.md#deployment-profile)).
+- [ ] Run `keystone-mcp config check` and fix every warning you do not accept.
 
 ## Network and URL
 
