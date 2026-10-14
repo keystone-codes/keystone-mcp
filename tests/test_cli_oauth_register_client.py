@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import contextlib
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlparse, urlunparse
 
 import httpx
 import pytest
@@ -26,6 +26,12 @@ from support.test_env import redis_key_prefix, require_redis_url
 
 _CLAUDE_REDIRECT = "https://claude.ai/api/mcp/auth_callback"
 _CLIENT_ID = "claude-desktop"
+_OAUTH_CLI_TEST_REDIS_DB = 11
+
+
+def _redis_url_for_oauth_cli_tests() -> str:
+    parsed = urlparse(require_redis_url())
+    return urlunparse(parsed._replace(path=f"/{_OAUTH_CLI_TEST_REDIS_DB}"))
 
 
 @pytest.fixture(autouse=True)
@@ -46,7 +52,7 @@ def _register_argv(*extra: str) -> list[str]:
 
 
 def test_register_client_writes_a_public_client(capsys, monkeypatch: pytest.MonkeyPatch) -> None:
-    redis_url = require_redis_url()
+    redis_url = _redis_url_for_oauth_cli_tests()
     prefix = redis_key_prefix("oauth-cli")
     monkeypatch.setenv("KEYSTONE_MCP_REDIS_URL", redis_url)
     monkeypatch.setenv("KEYSTONE_MCP_REDIS_KEY_PREFIX", prefix)
@@ -78,7 +84,7 @@ def test_register_client_writes_a_public_client(capsys, monkeypatch: pytest.Monk
 
 
 def test_register_client_twice_reports_update(capsys, monkeypatch: pytest.MonkeyPatch) -> None:
-    redis_url = require_redis_url()
+    redis_url = _redis_url_for_oauth_cli_tests()
     prefix = redis_key_prefix("oauth-cli2")
     monkeypatch.setenv("KEYSTONE_MCP_REDIS_URL", redis_url)
     monkeypatch.setenv("KEYSTONE_MCP_REDIS_KEY_PREFIX", prefix)
@@ -94,7 +100,7 @@ def test_register_client_twice_reports_update(capsys, monkeypatch: pytest.Monkey
 def test_register_client_refuses_redirect_outside_allowlist(
     capsys, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    redis_url = require_redis_url()
+    redis_url = _redis_url_for_oauth_cli_tests()
     prefix = redis_key_prefix("oauth-cli-deny")
     monkeypatch.setenv("KEYSTONE_MCP_REDIS_URL", redis_url)
     monkeypatch.setenv("KEYSTONE_MCP_REDIS_KEY_PREFIX", prefix)
@@ -137,7 +143,7 @@ def test_register_client_requires_redis(capsys, monkeypatch: pytest.MonkeyPatch)
 
 
 def test_register_client_reports_redis_down(capsys, monkeypatch: pytest.MonkeyPatch) -> None:
-    redis_url = require_redis_url()
+    redis_url = _redis_url_for_oauth_cli_tests()
     monkeypatch.setenv("KEYSTONE_MCP_REDIS_URL", redis_url)
     monkeypatch.setenv("KEYSTONE_MCP_REDIS_KEY_PREFIX", redis_key_prefix("oauth-cli-down"))
 
@@ -167,7 +173,7 @@ def test_register_client_reports_redis_down(capsys, monkeypatch: pytest.MonkeyPa
 
 
 def test_register_client_rejects_bad_client_id(capsys, monkeypatch: pytest.MonkeyPatch) -> None:
-    redis_url = require_redis_url()
+    redis_url = _redis_url_for_oauth_cli_tests()
     monkeypatch.setenv("KEYSTONE_MCP_REDIS_URL", redis_url)
     code = main(
         [
@@ -211,7 +217,7 @@ async def _dcr_disabled_server(*, redis_url: str, prefix: str):
 
 
 async def test_registered_client_can_sign_in(capsys, monkeypatch: pytest.MonkeyPatch) -> None:
-    redis_url = require_redis_url()
+    redis_url = _redis_url_for_oauth_cli_tests()
     prefix = redis_key_prefix("oauth-cli-e2e")
     monkeypatch.setenv("KEYSTONE_MCP_REDIS_URL", redis_url)
     monkeypatch.setenv("KEYSTONE_MCP_REDIS_KEY_PREFIX", prefix)
