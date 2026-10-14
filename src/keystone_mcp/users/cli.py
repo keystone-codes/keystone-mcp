@@ -21,14 +21,22 @@ from __future__ import annotations
 import argparse
 import asyncio
 import getpass
+import json
 import logging
 import sys
+from pathlib import Path
 
 import httpx
 
 from keystone_mcp.auth.oauth_store import build_shared_auth_stores
 from keystone_mcp.auth.sessions import SessionRevoker
 from keystone_mcp.config import Settings
+from keystone_mcp.rbac.management import (
+    AdminsReport,
+    build_admins_report,
+    full_administrator_roles,
+    is_full_administrator,
+)
 from keystone_mcp.rbac.policy import PolicyContractError, load_policy_file
 from keystone_mcp.users.db import (
     UsersConfigError,
@@ -39,6 +47,7 @@ from keystone_mcp.users.db import (
 from keystone_mcp.users.errors import InvalidUserFieldError, LastAdministratorError, UsersError
 from keystone_mcp.users.factory import build_users_store
 from keystone_mcp.users.importer import ImportSourceError, fetch_source_users
+from keystone_mcp.users.roles import ROLE_ADMINISTRATOR
 from keystone_mcp.users.store import MutationResult, UsersStore
 
 logger = logging.getLogger(__name__)
@@ -149,38 +158,119 @@ def _revoke_sessions(settings: Settings, email: str) -> int:
     return asyncio.run(_run())
 
 
-def _describe_grant_admin(before: MutationResult) -> str:
-    was_admin = "administrator" in before.roles_before
+def _role_suffix(role: str) -> str:
+    if role == ROLE_ADMINISTRATOR:
+        return ""
+    return f" (role '{role}')"
+
+
+def _describe_grant_admin(before: MutationResult, role: str) -> str:
+    suffix = _role_suffix(role)
+    was_admin = role in (before.roles_before or ())
     was_blocked = before.blocked_before
 
     if before.created:
-        return f"Created administrator: {before.user.email}"
+        return f"Created administrator: {before.user.email}{suffix}"
     if not was_admin and was_blocked:
-        return f"Granted administrator and unblocked: {before.user.email}"
+        return f"Granted administrator and unblocked: {before.user.email}{suffix}"
     if not was_admin:
-        return f"Granted administrator: {before.user.email}"
+        return f"Granted administrator: {before.user.email}{suffix}"
     if was_blocked:
-        return f"Unblocked administrator: {before.user.email}"
-    return f"Administrator already active: {before.user.email}"
+        return f"Unblocked administrator: {before.user.email}{suffix}"
+    return f"Administrator already active: {before.user.email}{suffix}"
+
+
+def _resolve_grant_admin_role(settings: Settings, args: argparse.Namespace) -> tuple[str, list[str]]:
+    """Pick the role to grant; stderr warnings are returned for the caller to print."""
+    warnings: list[str] = []
+    policy_path = settings.rbac_policy_path.strip()
+    explicit_role = getattr(args, "role", None)
+
+    def fallback_administrator(reason: str) -> str:
+        warnings.append(f"cannot read the RBAC policy ({reason}); granting 'administrator'")
+        return ROLE_ADMINISTRATOR
+
+    policy = None
+    if policy_path:
+        try:
+            policy = load_policy_file(policy_path)
+        except (PolicyContractError, OSError) as exc:
+            if explicit_role:
+                warnings.append(
+                    f"cannot read the RBAC policy ({exc}); granting '{explicit_role.strip()}'"
+                )
+                return explicit_role.strip(), warnings
+            return fallback_administrator(str(exc)), warnings
+    elif explicit_role:
+        warnings.append(
+            f"cannot read the RBAC policy (no policy path); granting '{explicit_role.strip()}'"
+        )
+        return explicit_role.strip(), warnings
+    else:
+        warnings.append("cannot read the RBAC policy (no policy path); granting 'administrator'")
+        return ROLE_ADMINISTRATOR, warnings
+
+    assert policy is not None
+    path_label = policy_path
+
+    if explicit_role:
+        role_name = explicit_role.strip()
+        if role_name not in policy.role_names or not is_full_administrator(policy, {role_name}):
+            print(
+                f"role '{role_name}' does not grant every administration tool in {path_label}",
+                file=sys.stderr,
+            )
+            raise _CliExit(EXIT_USAGE)
+        return role_name, warnings
+
+    if ROLE_ADMINISTRATOR in policy.role_names:
+        return ROLE_ADMINISTRATOR, warnings
+
+    candidates = sorted(full_administrator_roles(policy))
+    if len(candidates) == 1:
+        return candidates[0], warnings
+
+    if len(candidates) == 0:
+        warnings.append(
+            f"'administrator' is not in {path_label}; "
+            "no single role grants every administration tool (candidates: none); "
+            "rerun with --role"
+        )
+    else:
+        warnings.append(
+            f"'administrator' is not in {path_label}; "
+            f"no single role grants every administration tool (candidates: {', '.join(candidates)}); "
+            "rerun with --role"
+        )
+    return ROLE_ADMINISTRATOR, warnings
 
 
 def _cmd_grant_admin(args: argparse.Namespace) -> int:
     settings = Settings()
+    email = args.email
+    if not email:
+        email = input("Administrator email: ").strip()
+    if not email:
+        print("an email is required", file=sys.stderr)
+        return EXIT_USAGE
+
+    try:
+        grant_role, warnings = _resolve_grant_admin_role(settings, args)
+    except _CliExit as exc:
+        return exc.code
+    for line in warnings:
+        print(line, file=sys.stderr)
+
     try:
         store = _open_store(settings, allow_create=args.create)
     except _CliExit as exc:
         return exc.code
 
     try:
-        email = args.email
-        if not email:
-            email = input("Administrator email: ").strip()
-        if not email:
-            print("an email is required", file=sys.stderr)
-            return EXIT_USAGE
-
         try:
-            result = asyncio.run(store.ensure_administrator(email, created_by="system:cli"))
+            result = asyncio.run(
+                store.ensure_administrator(email, created_by="system:cli", role=grant_role)
+            )
         except InvalidUserFieldError as exc:
             print(str(exc), file=sys.stderr)
             return EXIT_USAGE
@@ -188,7 +278,81 @@ def _cmd_grant_admin(args: argparse.Namespace) -> int:
             print(str(exc), file=sys.stderr)
             return EXIT_STORE
 
-        print(_describe_grant_admin(result))
+        print(_describe_grant_admin(result, grant_role))
+        return EXIT_OK
+    finally:
+        store.dispose()
+
+
+def _format_admins_report_text(report: AdminsReport) -> str:
+    lines: list[str] = []
+    lines.append("Full administrators:")
+    if report.full_administrators:
+        for email in report.full_administrators:
+            lines.append(f"  {email}")
+    else:
+        lines.append("  (none active)")
+    lines.append("Management roles:")
+    for role in report.management_roles:
+        holders = report.holders.get(role, ())
+        lines.append(f"  {role}:")
+        if holders:
+            for holder in holders:
+                lines.append(f"    {holder}")
+        else:
+            lines.append("    (no holders)")
+    lines.append("Roles that give full administration on their own:")
+    if report.full_administrator_roles:
+        for role in report.full_administrator_roles:
+            lines.append(f"  {role}")
+    else:
+        lines.append("  (none)")
+    return "\n".join(lines)
+
+
+def _cmd_admins(args: argparse.Namespace) -> int:
+    settings = Settings()
+    if settings.users_backend != "local":
+        print("users admins needs the built-in users directory", file=sys.stderr)
+        return EXIT_USAGE
+
+    policy_path = settings.rbac_policy_path.strip()
+    if not policy_path or not Path(policy_path).is_file():
+        print(f"RBAC policy is not readable: {policy_path or '(empty path)'}", file=sys.stderr)
+        return EXIT_USAGE
+
+    try:
+        policy = load_policy_file(policy_path)
+    except (PolicyContractError, OSError) as exc:
+        print(f"RBAC policy is not readable: {exc}", file=sys.stderr)
+        return EXIT_USAGE
+
+    try:
+        store = _open_store(settings)
+    except _CliExit as exc:
+        return exc.code
+
+    try:
+        people = asyncio.run(store.list_users(is_blocked=None))
+        services = asyncio.run(store.list_service_accounts(is_blocked=None))
+        report = build_admins_report(policy, people, services)
+        if args.json:
+            payload = {
+                "full_administrators": list(report.full_administrators),
+                "management_roles": list(report.management_roles),
+                "full_administrator_roles": list(report.full_administrator_roles),
+                "holders": {k: list(v) for k, v in report.holders.items()},
+            }
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            print(_format_admins_report_text(report))
+        if not report.full_administrators:
+            print(
+                "no active full administrator; recover with "
+                "'keystone-mcp users grant-admin --email …'",
+                file=sys.stderr,
+            )
+            return EXIT_USAGE
         return EXIT_OK
     finally:
         store.dispose()
@@ -450,7 +614,24 @@ def add_users_commands(subparsers: argparse._SubParsersAction) -> None:
             "wrong directory)"
         ),
     )
+    grant_admin.add_argument(
+        "--role",
+        default=None,
+        metavar="NAME",
+        help="Grant this policy role when it gives full administration",
+    )
     grant_admin.set_defaults(handler=_cmd_grant_admin)
+
+    admins_cmd = users_sub.add_parser(
+        "admins",
+        help="List full administrators, management roles, and their holders",
+    )
+    admins_cmd.add_argument(
+        "--json",
+        action="store_true",
+        help="Print the report as one JSON object",
+    )
+    admins_cmd.set_defaults(handler=_cmd_admins)
 
     import_cmd = users_sub.add_parser(
         "import",

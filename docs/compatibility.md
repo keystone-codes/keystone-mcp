@@ -265,7 +265,7 @@ Frozen since 0.5.0. Exit codes are part of the contract; command output text is 
 |---|---|
 | `keystone-mcp catalog validate|diff|export` | `0` success; `1` validation error; `3` `--live-url` unreachable |
 | `keystone-mcp upstream validate --path <file>` | `0` ok; `1` validation or I/O error |
-| `keystone-mcp users grant-admin|import` (and `block`, `unblock`, `logout` where implemented) | per `users/cli.py` (`0` success, non-zero documented failures) |
+| `keystone-mcp users grant-admin|import|admins` (and `block`, `unblock`, `logout` where implemented) | per `users/cli.py` (`0` success, non-zero documented failures; `users admins` exits `1` when no active full administrator) |
 | `keystone-mcp keys …`, `keystone-mcp service-accounts …`, `keystone-mcp plugins list` | `0` on success, non-zero on failure |
 | `keystone-mcp serve` | runs until stopped; configuration errors refuse startup |
 | `python -m keystone_mcp.server` | same entry point as `keystone-mcp serve` |
@@ -273,7 +273,9 @@ Frozen since 0.5.0. Exit codes are part of the contract; command output text is 
 
 Flags for `catalog` (`--policy`, `--snapshot`, `--live-file`, `--live-url`,
 `--strict-unreachable`, `--tier`) and `users import` (`--email`, `--from-url`,
-`--token`, `--policy`, `--dry-run`) are frozen.
+`--token`, `--policy`, `--dry-run`) are frozen. `users grant-admin` accepts an
+optional `--role <name>` (must grant full administration). `users admins`
+accepts `--json`.
 
 ## Users directory database
 

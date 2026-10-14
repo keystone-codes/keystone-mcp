@@ -46,6 +46,14 @@ async def test_build_server_passes_store_and_policy_roles_to_users_tools(
     policy_path.write_text(POLICY_YAML, encoding="utf-8")
 
     store, _revision = await make_users_store(tmp_path)
+    await store.create_user(
+        email="admin@example.com",
+        full_name="Admin",
+        roles=["administrator"],
+        note=None,
+        created_by="system:test",
+        allowed_roles=None,
+    )
 
     settings = Settings(
         base_url="http://localhost:8080",

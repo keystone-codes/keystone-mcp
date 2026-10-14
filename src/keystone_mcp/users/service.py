@@ -436,7 +436,13 @@ def seed_superadmin(session: Session, email: str) -> Mutation:
     return Mutation(user=user, changed=changed, created=created)
 
 
-def ensure_administrator(session: Session, email: str, *, created_by: str | None) -> Mutation:
+def ensure_administrator(
+    session: Session,
+    email: str,
+    *,
+    created_by: str | None,
+    role: str = ROLE_ADMINISTRATOR,
+) -> Mutation:
     """Emergency access recovery: grant administrator and clear any block.
 
     Like ``seed_superadmin``, but it also unblocks the user if blocked — this
@@ -462,13 +468,14 @@ def ensure_administrator(session: Session, email: str, *, created_by: str | None
         )
         session.add(user)
 
+    grant_role = check_role_name(role)
     roles_before = tuple(role_names(user)) if not created else ()
-    had_admin = ROLE_ADMINISTRATOR in roles_before
+    had_admin = grant_role in roles_before
     was_blocked = user.is_blocked
     changed = created
 
     if not had_admin:
-        user.roles.append(UserRoleRow(email=user.email, role=ROLE_ADMINISTRATOR))
+        user.roles.append(UserRoleRow(email=user.email, role=grant_role))
         changed = True
 
     if was_blocked:

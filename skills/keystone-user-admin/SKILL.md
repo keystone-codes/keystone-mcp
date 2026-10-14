@@ -9,8 +9,11 @@ The Keystone-MCP connector exposes nine `users_*` tools backed by the shared use
 directory. Pick the tool from the table below and call it once with exactly the
 listed arguments. Do not probe other tools and do not guess argument names.
 
-Only administrators can call these tools. Changes take effect immediately — no
-restart or re-login is needed on the server side.
+Only a **full administrator** (every administration tool allowed by policy,
+whatever the role names) may grant or revoke a **management role** or change,
+block, unblock, log out, or manage API keys for an account that holds a
+management role. Other allowed changes follow ordinary RBAC. Changes take
+effect immediately — no restart or re-login is needed on the server side.
 
 ## Roles
 
@@ -87,7 +90,7 @@ Report the resulting roles and blocked status back to the user — do not just s
 | `validation_error` | Missing or malformed argument, unknown role | Fix the argument; verify the role exists in the deployment's RBAC policy |
 | `last_administrator` | Would leave no active administrator | Refuse; ask for another administrator to be appointed first |
 | `self_admin_mutation_forbidden` | Actor is removing their own administrator access | Refuse; another administrator must do it |
-| `forbidden` | The caller is a service account; administration changes need a person. Stop and report. |
+| `forbidden` | You are not a full administrator, and the change touches a management role or a person/service account holding one. Stop and report; do not retry. |
 | `service_timeout`, `service_unavailable` | Directory unreachable | Report it; see the retry rule below |
 | `service_unconfigured` | Server is missing directory settings | Report to whoever operates the server |
 
