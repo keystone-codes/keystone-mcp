@@ -387,11 +387,12 @@ the same Host/Origin guard and OAuth IP throttle as `/token`.
 
 ## Known limits
 
-- The tool-call and login throttles are counted **per process**, not per
-  cluster: behind a load balancer with several replicas, a single identity's
-  effective budget multiplies by the replica count. See
-  [environment.md#more-than-one-replica](environment.md#more-than-one-replica)
-  for the per-process throttle note.
+- The tool-call and sign-in IP throttles are counted **per process** when
+  `KEYSTONE_MCP_THROTTLE_BACKEND=memory` (the default): behind a load balancer
+  with several replicas, a single identity's effective budget multiplies by the
+  replica count. Set `KEYSTONE_MCP_THROTTLE_BACKEND=redis` to share one budget
+  in Redis. See
+  [environment.md#more-than-one-replica](environment.md#more-than-one-replica).
 - The per-identity tool throttle counts `tools/call`, `prompts/get`,
   `resources/read`, and MCP list requests (`tools/list`, `prompts/list`,
   `resources/list`, `resources/templates/list`) toward the same

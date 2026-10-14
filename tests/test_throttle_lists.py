@@ -17,7 +17,7 @@ from fastmcp.server.middleware import MiddlewareContext
 from mcp.shared.exceptions import MCPError
 from mcp.types import GetPromptRequestParams
 
-from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
+from keystone_mcp.auth.oauth_store import InMemoryOAuthStore, build_shared_auth_stores
 from keystone_mcp.auth.throttle import PerIdentityThrottle
 from keystone_mcp.config import Settings
 from keystone_mcp.identity import VerifiedIdentity
@@ -30,7 +30,7 @@ from support.lowlevel_upstream import (
     asgi_http_client_factory,
     build_lowlevel_upstream_app,
 )
-from support.test_env import require_redis_url
+from support.test_env import redis_key_prefix, require_redis_url
 
 SUBJECT = "throttle-lists@example.com"
 THROTTLE_LIMIT = 3
@@ -62,14 +62,17 @@ def patch_identity(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(f"{module}.resolve_verified_identity", lambda: identity)
 
 
-def _settings(policy_path: Path) -> Settings:
+def _settings(policy_path: Path, *, throttle_backend: str = "memory") -> Settings:
     return Settings(
         base_url="http://localhost:8080",
         rbac_mode="enforce",
         rbac_policy_path=str(policy_path),
         throttle_max_requests=THROTTLE_LIMIT,
         throttle_window_seconds=60,
+        throttle_backend=throttle_backend,  # type: ignore[arg-type]
         redis_url=require_redis_url(),
+        redis_key_prefix=redis_key_prefix("oauth"),
+        login_pending_key_prefix=redis_key_prefix("login"),
         users_service_url="http://users:8000",
         users_service_token="token",
         rbac_audit_subject_salt="throttle-list-salt",
@@ -77,8 +80,12 @@ def _settings(policy_path: Path) -> Settings:
 
 
 @asynccontextmanager
-async def _list_harness(policy_path: Path) -> AsyncIterator[Client]:
-    settings = _settings(policy_path)
+async def _list_harness(
+    policy_path: Path,
+    *,
+    throttle_backend: str = "memory",
+) -> AsyncIterator[Client]:
+    settings = _settings(policy_path, throttle_backend=throttle_backend)
     upstreams_json = json.dumps(
         [
             {
@@ -102,12 +109,20 @@ async def _list_harness(policy_path: Path) -> AsyncIterator[Client]:
         observed=observed,
     )
 
+    build_kwargs: dict = {
+        "settings": settings,
+        "user_resolver": resolver,
+        "login_providers": [dev_token_login({"dev"})],
+        "register_builtin_catalog": False,
+    }
+    if throttle_backend == "memory":
+        build_kwargs["oauth_store"] = InMemoryOAuthStore()
+    else:
+        oauth_store, pending = build_shared_auth_stores(settings)
+        build_kwargs["oauth_store"] = oauth_store
+        build_kwargs["login_pending_store"] = pending
     mcp, registry, _oauth, upstreams, policy_manager, observability, _reconciler = build_server(
-        settings=settings,
-        user_resolver=resolver,
-        oauth_store=InMemoryOAuthStore(),
-        login_providers=[dev_token_login({"dev"})],
-        register_builtin_catalog=False,
+        **build_kwargs
     )
     factory = asgi_http_client_factory(upstream_app)
     upstreams.http_client_factory = factory
@@ -132,11 +147,13 @@ async def _list_harness(policy_path: Path) -> AsyncIterator[Client]:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("throttle_backend", ["memory", "redis"])
 async def test_list_requests_consume_throttle_budget(
     policy_path: Path,
     patch_identity: None,
+    throttle_backend: str,
 ) -> None:
-    async with _list_harness(policy_path) as client:
+    async with _list_harness(policy_path, throttle_backend=throttle_backend) as client:
         for _ in range(THROTTLE_LIMIT):
             tools = await client.list_tools()
             assert len(tools) > 0

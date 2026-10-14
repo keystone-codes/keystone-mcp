@@ -308,11 +308,12 @@ ExecStart=/opt/keystone-mcp/.venv/bin/python -m keystone_mcp.server
 | `KEYSTONE_MCP_OAUTH_REFRESH_GRACE_SECONDS` | `10` | How long a second exchange of the same refresh token gets the same response instead of `invalid_grant`. A later reuse is treated as theft: every token of that person at that OAuth client is revoked. `0` disables the window. 0–60. |
 | `KEYSTONE_MCP_THROTTLE_MAX` | `120` | Max requests per identity within the throttle window (`tools/call`, `prompts/get`, `resources/read`, and `tools/list`, `prompts/list`, `resources/list`, `resources/templates/list`); `0` disables. |
 | `KEYSTONE_MCP_THROTTLE_WINDOW` | `60` | Throttle sliding-window length, seconds. |
+| `KEYSTONE_MCP_THROTTLE_BACKEND` | `memory` | `memory` (per-replica counters) or `redis` (shared tool-call and sign-in IP limits across replicas under `KEYSTONE_MCP_REDIS_KEY_PREFIX`; values are timestamps, key names are hashes). |
 | `KEYSTONE_MCP_LOGIN_THROTTLE_IP_MAX` | `30` | Max `POST /login`, `POST /login/google` and `POST /register` attempts per client IP in the login throttle window; `0` disables the IP limit. |
 | `KEYSTONE_MCP_LOGIN_THROTTLE_EMAIL_MAX` | `10` | Max failed `POST /login` attempts per email in the window; successful logins do not count; `0` disables the email limit. |
 | `KEYSTONE_MCP_LOGIN_THROTTLE_WINDOW` | `300` | Login throttle sliding-window length, seconds. |
 | `KEYSTONE_MCP_OAUTH_DCR_ENABLED` | `true` | Dynamic client registration (RFC 7591). `false` removes `POST /register` and the `registration_endpoint` entry from `/.well-known/oauth-authorization-server`; register clients manually instead (see [Registering a client manually](#registering-a-client-manually) below). The `/register` IP throttle (`KEYSTONE_MCP_LOGIN_THROTTLE_IP_MAX`) is unaffected. When enabled, `POST /register` accepts at most 16 KB of JSON; `client_name` ≤ 100 characters; ≤ 10 `redirect_uris` of ≤ 2 KB each; unlisted RFC 7591 fields are dropped. A client that never completes sign-in expires after 24 hours. |
-| `KEYSTONE_MCP_OAUTH_THROTTLE_IP_MAX` | `120` | Max `GET`/`POST /authorize` and `POST /token` requests per client IP in the login throttle window; `0` disables. In-process: each replica counts separately. |
+| `KEYSTONE_MCP_OAUTH_THROTTLE_IP_MAX` | `120` | Max `GET`/`POST /authorize` and `POST /token` requests per client IP in the login throttle window; `0` disables. Each replica counts separately unless `KEYSTONE_MCP_THROTTLE_BACKEND=redis`. |
 | `KEYSTONE_MCP_OAUTH_MAX_CLIENTS` | `10000` | Soft cap on the number of live (non-expired) registered OAuth clients. Past the cap, the oldest client that never completed a sign-in is evicted to admit the new one; if every client has been used, registration is refused with `invalid_client_metadata`. `0` means unlimited; a negative value is a startup error. Checked against the shared Redis client count, so the cap holds across replicas, though two replicas registering at the same instant can both pass the check (soft limit). |
 | `KEYSTONE_MCP_OAUTH_ALLOWED_REDIRECT_HOSTS` | `` (empty) | Comma-separated bare hostnames (no scheme, no port, no path — e.g. `claude.ai,localhost`), or an IPv6 literal (`::1`, or bracketed, `[::1]`); lower-cased, exact match only, no subdomains or wildcards. Empty means no restriction, the 0.3.1 behaviour. When set, `POST /register` refuses a client whose `redirect_uris` include a disallowed combination (`invalid_redirect_uri`) — including `redirect_uris: null`/empty, which is refused rather than treated as "no redirect_uris to check" — and both `/authorize` and `POST /token` (authorization-code and refresh-token exchange) refuse one whose client is not allowed, even for a client registered before the restriction was turned on or tightened. `/authorize`'s refusal does **not** redirect to the client's (disallowed) `redirect_uri`, under any error condition — including a client-side validation error such as an unregistered `scope`, which the MCP SDK itself would otherwise redirect to that `redirect_uri` before Keystone's own check ever ran: it 302s to this server's own `/login/redirect-not-allowed`, which renders a 400 page, so the browser never visits the disallowed host. A bare host entry matches `https` for that host, and `http` only when the host is also loopback (`localhost`/`127.0.0.1`/`::1`) — `http://claude.ai/...` is refused even if `claude.ai` is listed. A custom (non-http(s)) URI scheme, e.g. a native app's `cursor://...`, is matched only against an explicit `scheme://host` entry in the same list (e.g. `cursor://anysphere.cursor-retrieval`); `http://`/`https://` are refused in that form (they are already covered by the bare-host rule, and allowing them here would bypass the loopback-only rule for `http`). An entry containing `/`, or `:` that is not part of a valid IPv6 literal or a `scheme://host` form, is a startup error (`ConfigError`), as is a malformed `scheme://host` entry. |
 
@@ -403,8 +404,9 @@ Redis-backed state is shared across replicas:
 
 | In each process | Shared in Redis |
 |---|---|
-| Tool-call throttle (`KEYSTONE_MCP_THROTTLE_MAX`) | OAuth clients, codes and tokens |
-| Login/registration and `/authorize`/`/token` IP throttles | Pending logins |
+| Tool-call throttle (`KEYSTONE_MCP_THROTTLE_MAX`) when `KEYSTONE_MCP_THROTTLE_BACKEND=memory` | OAuth clients, codes and tokens |
+| Login/registration and `/authorize`/`/token` IP throttles when `KEYSTONE_MCP_THROTTLE_BACKEND=memory` | Pending logins |
+| — | Tool-call and sign-in IP throttles when `KEYSTONE_MCP_THROTTLE_BACKEND=redis` (`throttle:tool:*`, `throttle:login_ip:*`, `throttle:oauth_ip:*` under `KEYSTONE_MCP_REDIS_KEY_PREFIX`; hashed keys, timestamp values) |
 | Users-directory allow/deny cache | Users-directory revision marker (`km:users:revision`) invalidates every replica's cache at once |
 | Circuit breaker for the users directory | — |
 | Live upstream tool catalog | — |
@@ -425,10 +427,13 @@ Consequences:
 - The RBAC policy file is re-read independently by each replica; a `SIGHUP`
   must reach every replica, not just one.
 
-What to do: either divide the limit you want by the replica count
-(`KEYSTONE_MCP_THROTTLE_MAX = <target> / N`) or pin each client to one
-replica with sticky sessions on the load balancer. A shared, cluster-wide
-limit in Redis is on the roadmap, no date yet.
+What to do: either set `KEYSTONE_MCP_THROTTLE_BACKEND=redis` so every replica
+shares one counter in Redis, or divide the limit you want by the replica count
+(`KEYSTONE_MCP_THROTTLE_MAX = <target> / N`), or pin each client to one
+replica with sticky sessions on the load balancer. Active throttle keys hold up
+to the configured limit of timestamps per identity (on the order of 10 KiB per
+active person at the default `KEYSTONE_MCP_THROTTLE_MAX=120`) and expire with
+the window.
 
 The users directory itself (`KEYSTONE_MCP_USERS_DB_URL`) is a single
 database, not per-process state, so it is already shared across replicas

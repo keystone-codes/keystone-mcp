@@ -98,7 +98,8 @@ The `production` deployment profile is not a suggestion: startup refuses
 to run with DEV tokens set, with a SQLite users directory, or with a
 plain-`http` `KEYSTONE_MCP_BASE_URL` on a publicly reachable host. The
 full rule table is in
-[environment.md](environment.md#deployment-profile).
+[environment.md](environment.md#deployment-profile). Limits can be shared
+across replicas through Redis (`KEYSTONE_MCP_THROTTLE_BACKEND=redis`).
 
 ## Metrics and audit
 

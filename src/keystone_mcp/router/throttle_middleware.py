@@ -76,7 +76,7 @@ class ThrottleMiddleware(Middleware):
         if identity is None:
             return await call_next(context)
 
-        if self._throttle.check(identity.subject):
+        if await self._throttle.acheck(identity.subject):
             return await call_next(context)
 
         self._record_throttled(
@@ -96,7 +96,7 @@ class ThrottleMiddleware(Middleware):
         if identity is None:
             return await call_next(context)
 
-        if self._throttle.check(identity.subject):
+        if await self._throttle.acheck(identity.subject):
             return await call_next(context)
 
         self._record_throttled(
@@ -113,7 +113,7 @@ class ThrottleMiddleware(Middleware):
         if identity is None:
             return await call_next(context)
 
-        if self._throttle.check(identity.subject):
+        if await self._throttle.acheck(identity.subject):
             return await call_next(context)
 
         self._record_throttled(
@@ -130,7 +130,7 @@ class ThrottleMiddleware(Middleware):
         if identity is None:
             return await call_next(context)
 
-        if self._throttle.check(identity.subject):
+        if await self._throttle.acheck(identity.subject):
             return await call_next(context)
 
         self._record_throttled(
@@ -147,7 +147,7 @@ class ThrottleMiddleware(Middleware):
         if identity is None:
             return await call_next(context)
 
-        if self._throttle.check(identity.subject):
+        if await self._throttle.acheck(identity.subject):
             return await call_next(context)
 
         self._record_throttled(
@@ -167,7 +167,7 @@ class ThrottleMiddleware(Middleware):
         if identity is None:
             return await call_next(context)
 
-        if self._throttle.check(identity.subject):
+        if await self._throttle.acheck(identity.subject):
             return await call_next(context)
 
         self._record_throttled(
@@ -187,7 +187,7 @@ class ThrottleMiddleware(Middleware):
         if identity is None:
             return await call_next(context)
 
-        if self._throttle.check(identity.subject):
+        if await self._throttle.acheck(identity.subject):
             return await call_next(context)
 
         self._record_throttled(
