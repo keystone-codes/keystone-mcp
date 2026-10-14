@@ -19,6 +19,7 @@ in [environment.md](environment.md). This page names what is frozen.
 | `KEYSTONE_MCP_DEPLOYMENT_PROFILE` | 0.5.0 | stable |
 | `KEYSTONE_MCP_DEV_TOKENS` | 0.5.0 | stable |
 | `KEYSTONE_MCP_ENABLED_LOGIN_METHODS` | 0.5.0 | deprecated (since 0.5.0, use KEYSTONE_MCP_LOGIN_PROVIDERS_PATH) |
+| `KEYSTONE_MCP_ENV_FILE` | 0.5.0 | stable |
 | `KEYSTONE_MCP_GOOGLE_ALLOWED_DOMAIN` | 0.5.0 | deprecated (since 0.5.0, use KEYSTONE_MCP_LOGIN_PROVIDERS_PATH) |
 | `KEYSTONE_MCP_GOOGLE_CLIENT_ID` | 0.5.0 | deprecated (since 0.5.0, use KEYSTONE_MCP_LOGIN_PROVIDERS_PATH) |
 | `KEYSTONE_MCP_GOOGLE_CLIENT_SECRET` | 0.5.0 | deprecated (since 0.5.0, use KEYSTONE_MCP_LOGIN_PROVIDERS_PATH) |
@@ -87,9 +88,9 @@ in [environment.md](environment.md). This page names what is frozen.
 | `KEYSTONE_MCP_USERS_CIRCUIT_RECOVERY_SECONDS` | 0.5.0 | stable |
 | `KEYSTONE_MCP_USERS_DB_URL` | 0.5.0 | stable |
 | `KEYSTONE_MCP_USERS_REDIS_REVISION_KEY` | 0.5.0 | stable |
-| `KEYSTONE_MCP_USERS_SERVICE_TIMEOUT_SECONDS` | 0.5.0 | deprecated (since 0.5.0, use KEYSTONE_MCP_USERS_BACKEND=http) |
-| `KEYSTONE_MCP_USERS_SERVICE_TOKEN` | 0.5.0 | deprecated (since 0.5.0, use KEYSTONE_MCP_USERS_BACKEND=http) |
-| `KEYSTONE_MCP_USERS_SERVICE_URL` | 0.5.0 | deprecated (since 0.5.0, use KEYSTONE_MCP_USERS_BACKEND=http) |
+| `KEYSTONE_MCP_USERS_SERVICE_TIMEOUT_SECONDS` | 0.5.0 | stable |
+| `KEYSTONE_MCP_USERS_SERVICE_TOKEN` | 0.5.0 | stable |
+| `KEYSTONE_MCP_USERS_SERVICE_URL` | 0.5.0 | stable |
 
 What is frozen for each variable: its name, meaning, default, and the set of
 allowed values. Adding a new allowed value is not a breaking change.
@@ -107,8 +108,7 @@ Frozen since 0.5.0. Normative format:
 [rbac-policy-format.md](rbac-policy-format.md); loader contract:
 `src/keystone_mcp/rbac/policy.py`.
 
-- `version: "2.0.0"` in shipped examples; the loader accepts policy files
-  whose `version` field is any `2.*` string.
+- `version` is any non-empty string; Keystone does not interpret it.
 - Top-level keys (unknown keys are rejected): `version`, `default_deny`
   (must be `true`), `roles` (`<name>: {description, allow: [...]}`), `deny`,
   `requires_human_identity`, `critical_tools`, `reserved_allow_patterns`,
@@ -117,9 +117,8 @@ Frozen since 0.5.0. Normative format:
   effective allow is the union of all roles held; global `deny` overrides any
   `allow`; anything that does not match an allow is denied when
   `default_deny` is `true`.
-- Format versioning: a new optional top-level key is a `2.x.0` policy-format
-  change; Keystone accepts older `2.*` files. Removing or changing the meaning
-  of a key requires policy format `3.0.0` and a Keystone major release.
+- Format versioning: a new optional top-level key is not breaking. Removing a
+  key or changing its meaning requires a Keystone major release.
 
 ## Upstream registry
 
@@ -247,6 +246,8 @@ optional port) of `KEYSTONE_MCP_BASE_URL`, its loopback aliases, and
 | `/register` | POST | Dynamic client registration when `KEYSTONE_MCP_OAUTH_DCR_ENABLED=true` |
 | `/revoke` | POST | Token revocation (RFC 7009) |
 | `/login` | GET, POST | Sign-in page |
+| `/login/<provider>` | GET, POST | Sign-in page for one provider |
+| `/login/redirect-not-allowed` | GET | Error page when the client's redirect host is not allowed |
 | `/login/<provider>/callback` | GET | Redirect provider callback; Google uses `/login/google/callback` when the provider name is `google` |
 | `/healthz` | GET | Liveness: `{"status": "ok"}`, always `200` |
 | `/readyz` | GET | Readiness: `{"status": "ok"|"degraded"}`, `200` or `503` |
@@ -261,17 +262,21 @@ Frozen since 0.5.0. Exit codes are part of the contract; command output text is 
 
 | Command | Exit codes |
 |---|---|
-| `keystone-mcp catalog validate|diff|export` | `0` success; `1` validation error; `3` `--live-url` unreachable |
+| `keystone-mcp catalog validate`, `keystone-mcp catalog diff` | `0` success; `1` validation error; `3` `--live-url` unreachable |
+| `keystone-mcp catalog export` | `0` success; `1` validation error |
 | `keystone-mcp upstream validate --path <file>` | `0` ok; `1` validation or I/O error |
-| `keystone-mcp users grant-admin|import` (and `block`, `unblock`, `logout` where implemented) | per `users/cli.py` (`0` success, non-zero documented failures) |
-| `keystone-mcp keys …`, `keystone-mcp service-accounts …`, `keystone-mcp plugins list` | `0` on success, non-zero on failure |
+| `keystone-mcp users grant-admin`, `users import`, `users block`, `users unblock`, `users logout` | per `users/cli.py` (`0` success, non-zero documented failures) |
+| `keystone-mcp keys issue`, `keys list`, `keys revoke` | `0` on success, non-zero on failure |
+| `keystone-mcp service-accounts add`, `service-accounts list`, `service-accounts update` | `0` on success, non-zero on failure |
+| `keystone-mcp upstream validate` | `0` ok; `1` validation or I/O error |
+| `keystone-mcp plugins list` | `0` on success, non-zero on failure |
 | `keystone-mcp serve` | runs until stopped; configuration errors refuse startup |
 | `python -m keystone_mcp.server` | same entry point as `keystone-mcp serve` |
 | `python -m keystone_mcp.healthcheck <path>` | `0` when the HTTP probe succeeds, non-zero otherwise |
 
 Flags for `catalog` (`--policy`, `--snapshot`, `--live-file`, `--live-url`,
-`--strict-unreachable`, `--tier`) and `users import` (`--email`, `--from-url`,
-`--token`, `--policy`, `--dry-run`) are frozen.
+`--strict-unreachable`, `--tier`) and `users import` (`--from-url`, `--token`,
+`--policy`, `--dry-run`) are frozen.
 
 ## Users directory database
 
@@ -320,8 +325,8 @@ Frozen since 0.5.0. Metric names and label keys (not log message text):
 |---|---|
 | `keystone_mcp_rbac_decisions_total` | `decision`, `reason`, `tool_family`, `operation` |
 | `keystone_mcp_tool_call_attempts_total` | `tool_family`, `namespace`, `tool`, `auth_method`, `oauth_client_id` |
-| `keystone_mcp_tool_invocations_total` | above + `outcome` |
-| `keystone_mcp_tool_invocation_seconds` | above + `outcome` |
+| `keystone_mcp_tool_invocations_total` | `tool_family`, `namespace`, `tool`, `auth_method`, `oauth_client_id`, `outcome` |
+| `keystone_mcp_tool_invocation_seconds` | `tool_family`, `namespace`, `tool`, `auth_method`, `oauth_client_id`, `outcome` |
 | `keystone_mcp_rbac_directory_resolve_total` | `outcome` |
 | `keystone_mcp_rbac_directory_resolve_seconds` | (histogram) |
 | `keystone_mcp_rbac_policy_reload_total` | `success` |
@@ -390,7 +395,8 @@ From 0.5.0 onward:
    `config.py`, [environment.md#removed-variables](environment.md#removed-variables),
    and `### Removed` in the changelog.
 
-Enforced in CI by `tests/test_contract_freeze.py`.
+Enforced in CI by `tests/test_contract_freeze.py` against a baseline generated
+from the `v0.5.0` tag.
 
 ## Supported versions
 

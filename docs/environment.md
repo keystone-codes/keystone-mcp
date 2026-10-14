@@ -318,6 +318,7 @@ Why: [ADR 0004](adr/0004-redis-is-required.md).
 | Variable | Default | Meaning |
 |---|---|---|
 | `KEYSTONE_MCP_DEV_TOKENS` | `""` | Local profile only; comma-separated DEV tokens for the sign-in page. In production issue API keys from the users directory instead. |
+| `KEYSTONE_MCP_ENV_FILE` | (unset) | Selects which dotenv-style file to load before settings are read; must be set in the process environment (not inside the file itself). Empty string disables loading; unset uses `.env` in the working directory when present. |
 | `KEYSTONE_MCP_LOGIN_PROVIDERS_PATH` | `""` | Path to a YAML file listing sign-in providers (Google, Okta, any OIDC issuer, API key). When set, it replaces the legacy variables below. See [login-providers.md](login-providers.md). |
 | `KEYSTONE_MCP_PRIMARY_LOGIN_METHOD` | `api_key` | Deprecated since 0.5.0 (kept until the next major version); see [login-providers.md](login-providers.md). Login method shown first; must be in `ENABLED_LOGIN_METHODS`. |
 | `KEYSTONE_MCP_ENABLED_LOGIN_METHODS` | `api_key` | Deprecated since 0.5.0 (kept until the next major version); see [login-providers.md](login-providers.md). Comma-separated set of login methods offered when no providers file is configured. |

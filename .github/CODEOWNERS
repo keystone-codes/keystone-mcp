@@ -2,4 +2,7 @@
 * @keystone-codes/maintainers
 
 /tests/data/frozen-*.txt @keystone-codes/maintainers
+/tests/data/frozen-baseline-*/ @keystone-codes/maintainers
+/tests/support/contract_snapshot.py @keystone-codes/maintainers
+/tests/support/contract_freeze.py @keystone-codes/maintainers
 /docs/compatibility.md @keystone-codes/maintainers

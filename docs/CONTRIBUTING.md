@@ -89,13 +89,19 @@ frozen from 0.5.0.
 
 ## Changing a public contract
 
-Public contracts are listed in [compatibility.md](compatibility.md). A new
-environment variable needs a `config.py` read, `.env.example`,
-[environment.md](environment.md), a row in `compatibility.md`, and an append to
-`tests/data/frozen-env-vars.txt`. Deprecate via the rule in that document; remove
-only in a major release through `REMOVED_VARIABLES` and a `### Removed` changelog
-entry. Policy keys and CLI commands follow the same append-only frozen lists.
-CI enforces this in `tests/test_contract_freeze.py`.
+Public contracts are listed in [compatibility.md](compatibility.md). The
+baseline under `tests/data/frozen-baseline-0.5.0/` is generated from the
+`v0.5.0` tag and must only change when the snapshot generator changes — never
+edit it by hand. A new environment variable needs a `config.py` read,
+`.env.example`, [environment.md](environment.md), a row in `compatibility.md`,
+and an append to `tests/data/frozen-env-vars.txt` (policy keys and CLI commands
+have their own append-only lists). New metrics, built-in tool arguments, and
+plugin protocol members belong in `compatibility.md`; snapshots are regenerated
+automatically. Frozen names cannot be removed or renamed before 2.0; changing a
+default is allowed only as a documented security fix (`### Security` and
+`### Migration` in the current changelog). Run
+`uv run pytest tests/test_contract_freeze.py` locally before opening a pull
+request.
 
 ## Security checks
 
