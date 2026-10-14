@@ -80,10 +80,6 @@ async def test_login_redirect_post_without_csrf_cookie_rejected(attacker_stand) 
         assert r.status_code in (400, 403)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="SEC-06: POST /login/{provider} accepts cross-origin requests when CSRF pair matches",
-)
 async def test_login_redirect_post_with_wrong_origin_rejected(attacker_stand) -> None:
     async with attacker_stand.raw_client() as client:
         txn = await _authorize_txn(client)

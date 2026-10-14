@@ -87,6 +87,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ### Fixed
 
+- POST `/login/{provider}` rejects a cross-site `Origin`.
 - `keystone-mcp keys …` and `keystone-mcp service-accounts …` report a configuration problem or an unknown role in one line instead of a traceback, and close the database.
 - `docs/compatibility.md` lists the error codes the built-in tools actually return.
 - Contract test `test_provider_unavailable_on_complete` no longer touches a private field of the provider.

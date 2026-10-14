@@ -66,7 +66,8 @@ from keystone_mcp.auth.throttle import (
     peer_host,
     wrap_asgi_with_ip_login_throttle,
 )
-from keystone_mcp.config import Settings, resources_equivalent
+from keystone_mcp.config import Settings, effective_allowed_hosts, resources_equivalent
+from keystone_mcp.http.host_guard import cross_site_origin_refusal
 from keystone_mcp.login.pages import FieldView, ProviderView, render_consent_page, render_error_page
 from keystone_mcp.login.protocol import (
     FormField,
@@ -2385,6 +2386,12 @@ class KeystoneOAuthProvider(OAuthProvider):
         provider = self._providers.get(name)
         if provider is None or provider.kind != "redirect":
             return self._html_error(request, lang, "error_provider_disabled", 404)
+
+        origin_refusal = cross_site_origin_refusal(
+            request, effective_allowed_hosts(self._settings)
+        )
+        if origin_refusal is not None:
+            return origin_refusal
 
         allowed_ip, retry_ip = self._login_throttle.check_ip(peer_host(request))
         if not allowed_ip:
