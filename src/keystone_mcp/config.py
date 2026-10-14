@@ -90,6 +90,7 @@ BOOL_VARIABLES: tuple[str, ...] = (
     "KEYSTONE_MCP_PROXY_ELICITATION",
     "KEYSTONE_MCP_UPSTREAM_ALLOW_INSECURE_HTTP",
     "KEYSTONE_MCP_UPSTREAM_EGRESS_ALLOW_PRIVATE",
+    "KEYSTONE_MCP_USERS_SERVICE_ALLOW_INSECURE_HTTP",
 )
 
 LOGGING_VARIABLES = frozenset(
@@ -724,6 +725,9 @@ class UpstreamConfig:
     args: tuple[str, ...] = ()
     env_from: tuple[tuple[str, str], ...] = ()
     cwd: str | None = None
+    publish_resources: bool = True
+    resource_include_prefixes: tuple[str, ...] = ()
+    resource_exclude_prefixes: tuple[str, ...] = ()
 
     def build_tool_filter(self):
         """Return a predicate for downstream tool names (discovery filter)."""
@@ -732,6 +736,15 @@ class UpstreamConfig:
         return build_prefix_tool_filter(
             include_prefixes=self.include_prefixes,
             exclude_prefixes=self.exclude_prefixes,
+        )
+
+    def build_resource_filter(self):
+        """Return a predicate for upstream resource/template names (discovery filter)."""
+        from keystone_mcp.router.upstream import build_prefix_tool_filter
+
+        return build_prefix_tool_filter(
+            include_prefixes=self.resource_include_prefixes,
+            exclude_prefixes=self.resource_exclude_prefixes,
         )
 
 

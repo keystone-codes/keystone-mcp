@@ -81,7 +81,11 @@ warning and its tools appear on the next refresh
 Upstream prompts, resources and resource templates are published like tools:
 the client sees prompts as `<namespace>_<upstream prompt name>` (``strip_prefix``
 and ``tool_prefix`` trim tool names only, not prompts; ``include_prefixes`` /
-``exclude_prefixes`` still apply to prompts by upstream name). Resource URIs receive the
+``exclude_prefixes`` still apply to prompts by upstream name). Tool filters do
+**not** apply to resources or templates — use ``publish_resources``,
+``resource_include_prefixes`` and ``resource_exclude_prefixes`` on the registry
+entry (same prefix rules as ``include_prefixes``; filters match upstream
+``resource.name`` / template ``name``, not the URI). Resource URIs receive the
 namespace (`scheme://<namespace>/...`, e.g. upstream `file:///handbook.md` becomes
 `file://hello//handbook.md`). RBAC uses the same allow patterns as tools —
 `<namespace>_<resource.name>` for both static resources and templates (the policy
@@ -95,15 +99,21 @@ counted in `keystone_mcp_upstream_items_rejected_total`. `resources/read` is
 checked against the resources and templates of the namespace the URI belongs
 to (`scheme://<namespace>/…`). When the URI matches more than one of them,
 every matching RBAC name must be allowed. Any URI that matches nothing published
-is denied in `enforce` mode.
+is denied in `enforce` mode. The RBAC name of a resource must not equal a
+published tool or prompt name — such a resource or template is not published
+(startup warning, metric `reason="rbac_name_collision"`). In `enforce`, a
+resource Keystone-MCP has no RBAC name for is not listed (reading it was already
+refused).
 
 Keystone does not publish `notifications/resources/updated` and does not
 implement `resources/subscribe`. On MCP 2026-07-28 a client may subscribe via
 `subscriptions/listen`, but Keystone never emits resource-update events.
 
-Stdio upstreams do not receive a signed identity assertion on `prompts/get` or
-`resources/read` (HTTP headers are not available on the stdio transport); only
-the unsigned subject headers reach HTTP upstreams as today.
+Stdio upstreams receive the signed identity assertion in
+`params._meta["keystone-mcp/identity"]` on `tools/call`, `prompts/get`, and
+`resources/read` when `auth.identity_secret_env` (or ES256) is configured.
+HTTP upstreams still use `X-Keystone-Identity`; unsigned subject headers on HTTP
+are unchanged.
 
 ## Discovery
 

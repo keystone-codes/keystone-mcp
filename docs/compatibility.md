@@ -141,6 +141,7 @@ Frozen since 0.5.0. Structural validation:
   (required for `transport: http`), `namespace` (1–64 characters
   `A-Za-z0-9_-`, not starting or ending with `_` or `-`), `enabled`,
   `include_prefixes`, `exclude_prefixes`, `strip_prefix`, `tool_prefix`,
+  `publish_resources`, `resource_include_prefixes`, `resource_exclude_prefixes`,
   `discovery_timeout_seconds`, `tool_timeout_seconds`, `route_mode` (`live` or
   `stub`, default `live`), `auth` (`bearer_env`, `identity_secret_env`,
   `identity_alg` with value `ES256`), `transport` (`http` default or `stdio`),
@@ -342,6 +343,7 @@ Frozen since 0.5.0. Metric names and label keys (not log message text):
 | `keystone_mcp_tool_call_attempts_total` | `tool_family`, `namespace`, `tool`, `auth_method`, `oauth_client_id` |
 | `keystone_mcp_tool_invocations_total` | `tool_family`, `namespace`, `tool`, `auth_method`, `oauth_client_id`, `outcome` |
 | `keystone_mcp_tool_invocation_seconds` | `tool_family`, `namespace`, `tool`, `auth_method`, `oauth_client_id`, `outcome` |
+| `keystone_mcp_users_directory_response_issues_total` | `field`, `issue` |
 | `keystone_mcp_rbac_directory_resolve_total` | `outcome` |
 | `keystone_mcp_rbac_directory_resolve_seconds` | (histogram) |
 | `keystone_mcp_rbac_policy_reload_total` | `success` |
@@ -353,8 +355,10 @@ Frozen since 0.5.0. Metric names and label keys (not log message text):
 | `keystone_mcp_list_changed_sessions_total` | `kind` |
 | `keystone_mcp_upstream_available` | `namespace` |
 | `keystone_mcp_upstream_process_restarts_total` | `namespace` |
+| `keystone_mcp_upstream_items_rejected_total` | `namespace`, `kind`, `reason` |
+| `keystone_mcp_upstream_input_rounds_exceeded_total` | `namespace` |
 | `keystone_mcp_upstream_elicitations_total` | `namespace`, `action` |
-| `keystone_mcp_oauth_client_registrations_total` | `outcome` (`created`, `rejected_limit`, `rejected_redirect_host`, `rejected_metadata`) |
+| `keystone_mcp_oauth_client_registrations_total` | `outcome` |
 | `keystone_mcp_oauth_client_evictions_total` | (counter, no labels) |
 | `keystone_mcp_oauth_token_exchange_total` | `grant_type`, `outcome` |
 | `keystone_mcp_oauth_clients` | (gauge, no labels) |

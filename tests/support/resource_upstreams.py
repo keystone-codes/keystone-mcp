@@ -21,14 +21,18 @@ EVIL_UPSTREAM_MCP_URL = f"{UPSTREAM_BASE_URL}/evil/mcp"
 
 def build_resource_upstream_app(
     *,
+    tools: Sequence[types.Tool] | None = None,
     resources: Sequence[types.Resource] | None = None,
     templates: Sequence[types.ResourceTemplate] | None = None,
+    prompts: Sequence[types.Prompt] | None = None,
     read_text: Callable[[str], str] | None = None,
 ) -> Starlette:
     """Minimal MCP server exposing only resource catalog handlers."""
 
+    tool_list = list(tools) if tools is not None else [_TOOL_DEFINITIONS["greet"]]
     resource_list = list(resources or ())
     template_list = list(templates or ())
+    prompt_list = list(prompts or ())
 
     def _default_read(uri: str) -> str:
         return f"body:{uri}"
@@ -36,20 +40,39 @@ def build_resource_upstream_app(
     reader = read_text or _default_read
 
     async def _on_list_tools(_ctx: object, _params: object) -> types.ListToolsResult:
-        return types.ListToolsResult(
-            tools=[_TOOL_DEFINITIONS["greet"]],
-        )
+        return types.ListToolsResult(tools=list(tool_list))
 
     async def _on_call_tool(
         _ctx: object, params: types.CallToolRequestParams
     ) -> types.CallToolResult:
-        if params.name != "greet":
+        if params.name == "greet":
             return types.CallToolResult(
-                content=[types.TextContent(type="text", text=f"unknown tool: {params.name}")],
-                is_error=True,
+                content=[types.TextContent(type="text", text="Hello, world!")],
+            )
+        if params.name == "notes":
+            return types.CallToolResult(
+                content=[types.TextContent(type="text", text="notes-tool")],
             )
         return types.CallToolResult(
-            content=[types.TextContent(type="text", text="Hello, world!")],
+            content=[types.TextContent(type="text", text=f"unknown tool: {params.name}")],
+            is_error=True,
+        )
+
+    async def _on_list_prompts(
+        _ctx: object, _params: types.PaginatedRequestParams | None
+    ) -> types.ListPromptsResult:
+        return types.ListPromptsResult(prompts=list(prompt_list))
+
+    async def _on_get_prompt(
+        _ctx: object, params: types.GetPromptRequestParams
+    ) -> types.GetPromptResult:
+        return types.GetPromptResult(
+            messages=[
+                types.PromptMessage(
+                    role="user",
+                    content=types.TextContent(type="text", text=f"prompt:{params.name}"),
+                )
+            ]
         )
 
     async def _on_list_resources(
@@ -81,6 +104,8 @@ def build_resource_upstream_app(
         "resource-upstream",
         on_list_tools=_on_list_tools,
         on_call_tool=_on_call_tool,
+        on_list_prompts=_on_list_prompts,
+        on_get_prompt=_on_get_prompt,
         on_list_resources=_on_list_resources,
         on_list_resource_templates=_on_list_resource_templates,
         on_read_resource=_on_read_resource,

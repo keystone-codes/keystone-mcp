@@ -272,7 +272,6 @@ class RbacMiddleware(Middleware):
             if catalog is not None:
                 rbac_names = catalog.rbac_names_for_uri(str(resource.uri))
             if not rbac_names:
-                filtered.append(resource)
                 continue
             if all(policy.allows(decision.roles, name) for name in rbac_names):
                 filtered.append(resource)
@@ -304,7 +303,6 @@ class RbacMiddleware(Middleware):
             if catalog is not None:
                 rbac_name = catalog.rbac_name_for_template_listing(template.uri_template)
             if rbac_name is None:
-                filtered.append(template)
                 continue
             if policy.allows(decision.roles, rbac_name):
                 filtered.append(template)
