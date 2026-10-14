@@ -8,7 +8,12 @@ from pathlib import Path
 import httpx
 import pytest
 
-from keystone_mcp.contract_tests import AdminDirectoryContract, seed_contract_dataset
+from keystone_mcp.contract_tests import (
+    AdminDirectoryChecks06,
+    AdminDirectoryContract,
+    UserDirectoryChecks06,
+    seed_contract_dataset,
+)
 from keystone_mcp.user_directory.http import HttpUserDirectory
 from keystone_mcp.user_directory.protocol import UserDirectory
 from support.fake_users_service import build_fake_users_service
@@ -57,5 +62,5 @@ def keystone_unavailable_directory_factory() -> Callable[[], Awaitable[UserDirec
     return factory
 
 
-class TestHttpDirectory(AdminDirectoryContract):
+class TestHttpDirectory(AdminDirectoryContract, AdminDirectoryChecks06, UserDirectoryChecks06):
     pass

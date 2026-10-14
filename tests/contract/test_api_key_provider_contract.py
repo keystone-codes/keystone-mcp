@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from keystone_mcp.contract_tests import (
+    FormLoginProviderChecks06,
     FormLoginProviderContract,
     FormProviderCase,
     seed_contract_dataset,
@@ -60,5 +61,5 @@ def keystone_form_provider_case(tmp_path) -> FormProviderCase:
     )
 
 
-class TestApiKeyLoginProvider(FormLoginProviderContract):
+class TestApiKeyLoginProvider(FormLoginProviderContract, FormLoginProviderChecks06):
     pass

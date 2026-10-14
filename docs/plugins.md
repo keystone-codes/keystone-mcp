@@ -93,6 +93,8 @@ pip install "keystone-mcp-gateway[contract-tests]>=0.5,<2"
 | `keystone_unavailable_directory_factory` | availability tests (optional) | same shape; backend must be down. If omitted, those tests are skipped |
 | `keystone_oidc_provider_factory` | `OidcLoginProviderContract` | `Callable[[FakeOidcIssuer], RedirectLoginProvider]` |
 | `keystone_form_provider_case` | `FormLoginProviderContract` | `FormProviderCase` with async factory, valid form, and invalid samples |
+| `keystone_revision_probe` | `AdminDirectoryChecks06` (optional) | `Callable[[], Awaitable[int]]` — directory revision after mutations |
+| `keystone_advance_clock` | `ApiKeyDirectoryChecks06` (optional) | `Callable[[float], None]` — advance the directory clock for expiry tests |
 
 The built-in plugin fixture `fake_oidc_issuer` supplies an in-process OIDC
 provider; `keystone_oidc_provider` is derived from your factory.
@@ -110,6 +112,22 @@ provider; `keystone_oidc_provider` is derived from your factory.
   it, Keystone rate-limits first-time ids to 20 directory lookups per second
   (burst 50) per replica.
 - `OidcLoginProviderContract` / `FormLoginProviderContract` — sign-in providers.
+
+Opt-in **0.6.0** check classes (mix in alongside the matching base contract; they
+become part of the main contract classes in 2.0):
+
+| Class | Adds |
+| --- | --- |
+| `UserDirectoryChecks06` | Unavailable error codes; `list_users` excludes service accounts |
+| `AdminDirectoryChecks06` | Blocked second administrator; self-demotion via `replace_roles`; e-mail normalization on mutations; invalid input raises `UsersError`; revision bump |
+| `ServiceAccountDirectoryChecks06` | Unknown service account updates; invalid roles; blocked `resolve_user` |
+| `ApiKeyDirectoryChecks06` | Expired keys; service-account key verification; secret suffix never listed |
+| `OidcLoginProviderChecks06` | HS256 rejection, JWKS rotation, token-endpoint errors, discovery tampering, missing `code`, cross-attempt replay, e-mail normalization, wrong-issuer `LoginRejected` coverage |
+| `FormLoginProviderChecks06` | Form metadata; explicit `FormProviderCase.email_field`; empty form rejected |
+
+`FormProviderCase.email_field` names the e-mail input (default `"email"`). Set it when
+your valid form uses another field name so `test_email_normalization_needs_email_field`
+can run.
 
 Helper `seed_contract_dataset(directory)` fills an admin-capable directory with
 the shared `CONTRACT_DATASET` (Alice, Bob, Carol).
