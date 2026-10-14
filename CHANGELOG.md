@@ -8,6 +8,14 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ## [Unreleased]
 
+### Added
+
+- CI: the contract freeze gate now compares the public surface generated from the code — environment variables (found by AST), policy keys, CLI commands, plugin protocol signatures, built-in tool arguments, metrics and their labels — with a baseline generated from the `v0.5.0` tag.
+
+### Fixed
+
+- `docs/compatibility.md` matched to the code: `KEYSTONE_MCP_ENV_FILE` is listed; `KEYSTONE_MCP_USERS_SERVICE_*` are not deprecated; the policy `version` is any non-empty string; `/login/<provider>` and `/login/redirect-not-allowed` are listed; `users import` never had `--email`; `catalog export` has no `--live-url`.
+
 ## [0.5.0] - 2026-10-13
 
 ### Added

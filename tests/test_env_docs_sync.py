@@ -14,6 +14,7 @@ import re
 from pathlib import Path
 
 from support.env_vars import (
+    NOT_IN_ENV_EXAMPLE,
     code_variables,
     contrib_doc_variables,
     contrib_variables,
@@ -63,7 +64,7 @@ def test_environment_md_matches_code() -> None:
 def test_env_example_matches_code() -> None:
     code_names = _variables_read_by_code()
     env_example_names = _variables_in_env_example()
-    missing = code_names - env_example_names
+    missing = code_names - env_example_names - set(NOT_IN_ENV_EXAMPLE)
     extra = env_example_names - code_names
     assert not missing and not extra, _format_diff(missing, extra, ".env.example")
 
