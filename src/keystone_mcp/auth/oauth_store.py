@@ -10,6 +10,7 @@ import asyncio
 import contextlib
 import hashlib
 import json
+import logging
 import time
 from dataclasses import dataclass
 from typing import Protocol, Sequence, runtime_checkable
@@ -18,7 +19,7 @@ from mcp.server.auth.provider import AccessToken, RefreshToken
 from mcp.shared.auth import OAuthClientInformationFull
 from pydantic import ConfigDict, Field
 from redis.asyncio import Redis
-from redis.exceptions import WatchError
+from redis.exceptions import RedisError, WatchError
 
 from keystone_mcp.observability.metrics import record_oauth_token_key_migration
 from keystone_mcp.redis_client import redis_from_url
@@ -26,6 +27,9 @@ from keystone_mcp.user_directory.util import normalize_email
 
 _SUBJECT_INDEX_MAX_MEMBERS = 256
 _COMMIT_MAX_WATCH_RETRIES = 16
+_LEGACY_CLIENT_SCAN_LIMIT = 100_000
+
+logger = logging.getLogger(__name__)
 
 
 @contextlib.contextmanager
@@ -654,6 +658,8 @@ class RedisOAuthStore:
         else:
             self._redis = redis_from_url(redis_url)
             self._owns_redis = True
+        self._legacy_clients_indexed = False
+        self._legacy_clients_index_lock = asyncio.Lock()
 
     @property
     def redis(self) -> Redis:
@@ -939,7 +945,54 @@ class RedisOAuthStore:
             pipe.zrem(self._client_unused_key(), client_id)
             await pipe.execute()
 
+    async def index_legacy_clients(self) -> int:
+        pattern = f"{self._prefix}client:*"
+        client_key_prefix = f"{self._prefix}client:"
+        indexed = 0
+        scanned = 0
+        cursor = 0
+        while True:
+            cursor, keys = await self._redis.scan(cursor, match=pattern, count=500)
+            if keys:
+                scanned += len(keys)
+                async with self._redis.pipeline(transaction=False) as pipe:
+                    for key in keys:
+                        pipe.ttl(key)
+                    ttls = await pipe.execute()
+                expiry = int(time.time()) + self._client_ttl_seconds
+                async with self._redis.pipeline(transaction=False) as pipe:
+                    batch = 0
+                    for key, ttl in zip(keys, ttls, strict=True):
+                        if ttl != -1 or not key.startswith(client_key_prefix):
+                            continue
+                        client_id = key[len(client_key_prefix) :]
+                        pipe.expire(key, self._client_ttl_seconds)
+                        pipe.zadd(self._client_index_key(), {client_id: expiry})
+                        batch += 1
+                    if batch:
+                        await pipe.execute()
+                        indexed += batch
+            if scanned >= _LEGACY_CLIENT_SCAN_LIMIT:
+                logger.warning(
+                    "client index backfill stopped after %d keys; the rest is indexed on read",
+                    scanned,
+                )
+                break
+            if cursor == 0:
+                break
+        if indexed > 0:
+            logger.info("indexed %d OAuth client records written before 0.4.0", indexed)
+        return indexed
+
     async def count_clients(self) -> int:
+        if not self._legacy_clients_indexed:
+            async with self._legacy_clients_index_lock:
+                if not self._legacy_clients_indexed:
+                    try:
+                        await self.index_legacy_clients()
+                        self._legacy_clients_indexed = True
+                    except RedisError as exc:
+                        logger.warning("OAuth client legacy index backfill failed: %s", exc)
         index_key = self._client_index_key()
         unused_key = self._client_unused_key()
         now = int(time.time())
