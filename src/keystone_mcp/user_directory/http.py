@@ -163,6 +163,16 @@ def _parse_resolve_payload(payload: Any, *, subject: str) -> UserResolveResult:
             "users directory returned an invalid resolve response",
             code="catalog_unavailable",
         )
+    if "email" in payload:
+        response_email = normalize_email(str(payload["email"]))
+        if response_email != normalize_email(subject):
+            _warn_directory_response_issue("email", "mismatch", meaning="exists false")
+            return UserResolveResult(
+                exists=False,
+                roles=(),
+                is_blocked=False,
+                subject_type=subject_type_of(subject),
+            )
     return UserResolveResult(
         exists=_parse_resolve_exists(payload),
         roles=_parse_resolve_roles(payload),

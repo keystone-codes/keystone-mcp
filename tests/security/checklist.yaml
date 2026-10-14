@@ -181,8 +181,8 @@
     - tests/security/test_hostile_plugins.py::test_hostile_directory_missing_capability_methods_refused
     - tests/security/test_hostile_plugins.py::test_hostile_directory_delete_capability_without_methods_refused
     - tests/test_user_directory_protocol.py::test_declared_admin_without_methods_is_refused
-  status: open
-  finding: SEC-22
+  status: closed
+  finding: null
 
 - id: SEC-23
   attack: "Directory returns wrong or unnormalized email on resolve"
@@ -190,8 +190,8 @@
   tests:
     - tests/security/test_hostile_plugins.py::test_hostile_http_directory_email_mismatch_refused
     - tests/contract/test_contract_catches_violations.py::test_broken_directory_fails_resolve_contract
-  status: open
-  finding: SEC-23
+  status: closed
+  finding: null
 
 - id: SEC-24
   attack: "Malicious login provider identity or behaviour"

@@ -188,25 +188,25 @@ def test_hostile_directory_missing_capability_methods_refused(capability: str):
         validate_directory_capabilities(HostileCapabilityDirectory(capability))
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-22: delete capability without methods is not refused at startup")
 def test_hostile_directory_delete_capability_without_methods_refused():
     with pytest.raises(ConfigError):
         validate_directory_capabilities(HostileCapabilityDirectory("delete"))
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="SEC-23: HTTP directory does not verify resolve response against requested email",
-)
 @pytest.mark.asyncio
 async def test_hostile_http_directory_email_mismatch_refused():
-    requested = "alice@example.com"
+    requested = "bob@example.com"
 
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.params.get("email") == requested
         return httpx.Response(
             200,
-            json={"exists": True, "roles": ["member"], "is_blocked": False},
+            json={
+                "exists": True,
+                "email": "alice@example.com",
+                "roles": ["member"],
+                "is_blocked": False,
+            },
         )
 
     directory = HttpUserDirectory(
@@ -217,7 +217,7 @@ async def test_hostile_http_directory_email_mismatch_refused():
             transport=httpx.MockTransport(handler), base_url="http://users.test"
         ),
     )
-    result = await directory.resolve_user("bob@example.com")
+    result = await directory.resolve_user(requested)
     assert result.exists is False
     await directory.aclose()
 
