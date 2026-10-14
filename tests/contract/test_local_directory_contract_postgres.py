@@ -19,8 +19,6 @@ from keystone_mcp.users.revision import InProcessRevisionWriter
 from keystone_mcp.users.store import UsersStore
 from support.users_db import postgres_engine  # noqa: F401 -- fixture import
 
-pytest_plugins = ["keystone_mcp.contract_tests"]
-
 
 @pytest.fixture
 def keystone_directory_factory(postgres_engine) -> Callable[[], Awaitable[UserDirectory]]:  # noqa: F811

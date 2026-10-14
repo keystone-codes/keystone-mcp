@@ -17,6 +17,7 @@ from pathlib import Path
 
 import anyio
 import pytest
+from mcp.shared.exceptions import MCPError
 from prometheus_client import REGISTRY
 
 from keystone_mcp.router import stdio_process
@@ -344,7 +345,7 @@ async def test_hang_with_inflight_call_fails_call_and_restarts(monkeypatch):
         async with proc.client() as client:
             pid_before = int((await client.call_tool("pid", {})).content[0].text)
             t0 = anyio.current_time()
-            with pytest.raises(Exception):
+            with pytest.raises(MCPError, match="timed out|Connection closed"):
                 with anyio.fail_after(6):
                     await client.call_tool("block", {"seconds": 8})
             assert anyio.current_time() - t0 <= 3.0

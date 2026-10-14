@@ -14,6 +14,7 @@ from asgi_lifespan import LifespanManager
 from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
 from httpx2 import ASGITransport, AsyncClient
+from mcp.shared.exceptions import MCPError
 from redis.exceptions import RedisError
 
 import keystone_mcp.server as server_module
@@ -33,6 +34,8 @@ from keystone_mcp.user_directory.local import LocalUserDirectory
 from support.login import dev_token_login
 from support.test_env import require_redis_url
 from support.users_store import make_users_store
+
+pytest_plugins = ("support.oauth_stores",)
 
 VALID_TOKEN = "valid-test-token"
 ADMIN = VerifiedIdentity(email="admin@example.com")
@@ -70,7 +73,8 @@ def _transport(app, settings: Settings, token: str):
 
 
 @pytest_asyncio.fixture
-async def session_harness(tmp_path: Path):
+async def session_harness(oauth_store_backend, tmp_path: Path):
+    oauth_store, pending, _base_settings, _backend = oauth_store_backend
     policy_path = tmp_path / "rbac-policy.yaml"
     policy_path.write_text(POLICY_YAML, encoding="utf-8")
 
@@ -85,9 +89,6 @@ async def session_harness(tmp_path: Path):
         superadmin_email=ADMIN.email,
         users_db_url=f"sqlite:///{tmp_path}/keystone-users.db",
     )
-
-    oauth_store = InMemoryOAuthStore()
-    pending = InMemoryLoginPendingStore()
 
     mcp, registry, _oauth, upstreams, policy_manager, observability, _recon = build_server(
         settings=settings,
@@ -147,7 +148,7 @@ async def test_blocked_user_is_rejected_on_next_request(session_harness):
         assert blocked.data["revoked_tokens"] >= 2
 
     transport = _transport(h["app"], h["settings"], h["victim_access"])
-    with pytest.raises(Exception):
+    with pytest.raises(MCPError):
         async with Client(transport) as victim_client:
             await victim_client.call_tool("member_ping", {})
 
@@ -168,7 +169,7 @@ async def test_unblock_does_not_restore_old_tokens(session_harness):
         unblocked = await admin_client.call_tool("users_unblock", {"email": VICTIM_EMAIL})
         assert unblocked.data["state"] == "done"
 
-    with pytest.raises(Exception):
+    with pytest.raises(MCPError):
         async with Client(_transport(h["app"], h["settings"], h["victim_access"])) as victim_client:
             await victim_client.call_tool("member_ping", {})
 
@@ -191,7 +192,7 @@ async def test_logout_ends_sessions_but_allows_new_sign_in(session_harness):
         assert logout.data["state"] == "done"
         assert logout.data["revoked_tokens"] >= 2
 
-    with pytest.raises(Exception):
+    with pytest.raises(MCPError):
         async with Client(_transport(h["app"], h["settings"], h["victim_access"])) as victim_client:
             await victim_client.call_tool("member_ping", {})
 

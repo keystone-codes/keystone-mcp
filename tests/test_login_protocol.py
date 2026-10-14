@@ -19,8 +19,6 @@ from support.fake_login import FakeRedirectProvider
 from support.google_oidc_fixtures import build_mock_google_oidc
 from support.login import dev_token_login
 
-pytestmark = pytest.mark.asyncio
-
 
 def test_protocol_module_is_framework_free():
     code = (
