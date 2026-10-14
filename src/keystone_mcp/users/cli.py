@@ -27,6 +27,7 @@ import sys
 from pathlib import Path
 
 import httpx
+from redis.exceptions import RedisError
 
 from keystone_mcp.auth.oauth_store import build_shared_auth_stores
 from keystone_mcp.auth.sessions import SessionRevoker
@@ -159,7 +160,7 @@ def _open_store(settings: Settings, *, allow_create: bool = True) -> UsersStore:
 _CLI_ACTOR = "system:cli"
 
 
-def _revoke_sessions(settings: Settings, email: str) -> int:
+def _revoke_sessions_or_report(settings: Settings, email: str) -> int | None:
     async def _run() -> int:
         oauth_store, login_store = build_shared_auth_stores(settings)
         revoker = SessionRevoker(oauth_store, login_store)
@@ -168,7 +169,16 @@ def _revoke_sessions(settings: Settings, email: str) -> int:
         finally:
             await oauth_store.aclose()
 
-    return asyncio.run(_run())
+    try:
+        return asyncio.run(_run())
+    except (RedisError, OSError) as exc:
+        print(
+            f"sessions not revoked for {email}: Redis is unavailable "
+            f"({type(exc).__name__}); run 'keystone-mcp users logout --email {email}' "
+            "when it is back",
+            file=sys.stderr,
+        )
+        return None
 
 
 def _role_suffix(role: str) -> str:
@@ -411,7 +421,14 @@ def _cmd_block(args: argparse.Namespace) -> int:
 
         revoked = 0
         if settings.redis_url.strip():
-            revoked = _revoke_sessions(settings, email)
+            revoked_count = _revoke_sessions_or_report(settings, email)
+            if revoked_count is None:
+                if result.blocked_before:
+                    print(f"Already blocked {email}; sessions NOT revoked")
+                else:
+                    print(f"Blocked {email}; sessions NOT revoked")
+                return EXIT_STORE
+            revoked = revoked_count
         else:
             print("sessions not revoked: KEYSTONE_MCP_REDIS_URL is not set", file=sys.stderr)
 
@@ -513,7 +530,9 @@ def _cmd_logout(args: argparse.Namespace) -> int:
         return EXIT_USAGE
 
     try:
-        revoked = _revoke_sessions(settings, email)
+        revoked = _revoke_sessions_or_report(settings, email)
+        if revoked is None:
+            return EXIT_STORE
         print(f"Revoked {revoked} token(s) for {email}")
         return EXIT_OK
     finally:
@@ -618,16 +637,24 @@ def _cmd_import(args: argparse.Namespace) -> int:
         )
 
         revoked_sessions = 0
+        revoke_attempted = 0
+        revoke_failed = 0
         if not args.dry_run and settings.redis_url.strip():
             for outcome in outcomes:
-                if outcome.status == "updated" and outcome.block_reapplied:
-                    revoked_sessions += _revoke_sessions(settings, outcome.email)
+                if outcome.status in ("updated", "unchanged") and outcome.is_blocked:
+                    revoke_attempted += 1
+                    revoked_count = _revoke_sessions_or_report(settings, outcome.email)
+                    if revoked_count is None:
+                        revoke_failed += 1
+                    else:
+                        revoked_sessions += revoked_count
 
         summary = (
             f"created={created} updated={updated} unchanged={unchanged} "
             f"skipped_roles={skipped_role_count} skipped_invalid={len(invalid)} "
             f"admin_or_block_changes={admin_or_block_changes} "
-            f"revoked_sessions={revoked_sessions}"
+            f"revoked_sessions={revoked_sessions} "
+            f"revoke_attempted={revoke_attempted} revoke_failed={revoke_failed}"
         )
         if args.dry_run:
             summary += " (dry run, nothing written)"
@@ -649,6 +676,14 @@ def _cmd_import(args: argparse.Namespace) -> int:
                     "'keystone-mcp users grant-admin --email ...'",
                     file=sys.stderr,
                 )
+
+        if revoke_failed > 0:
+            print(
+                f"sessions of {revoke_failed} blocked user(s) were not revoked; "
+                "re-run the import when Redis is back (it is safe to repeat)",
+                file=sys.stderr,
+            )
+            return EXIT_STORE
 
         return EXIT_OK
     finally:

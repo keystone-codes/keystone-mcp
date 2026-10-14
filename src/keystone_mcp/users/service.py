@@ -528,6 +528,7 @@ class ImportOutcome:
     # `administrator` when it is the role being revoked (`administrator_changed`
     # also covers that case, for a grant as much as a revoke).
     roles_revoked: tuple[str, ...] = ()
+    is_blocked: bool = False
 
 
 def validate_imported_user(imported: ImportedUser, *, allowed_roles: frozenset[str]) -> str | None:
@@ -637,7 +638,12 @@ def upsert_imported_user(
         for role_name in role_list:
             user.roles.append(UserRoleRow(email=normalized, role=role_name))
         session.flush()
-        return ImportOutcome(email=normalized, status="created", skipped_roles=skipped_roles)
+        return ImportOutcome(
+            email=normalized,
+            status="created",
+            skipped_roles=skipped_roles,
+            is_blocked=imported.is_blocked,
+        )
 
     changed = False
     was_blocked = existing.is_blocked
@@ -678,6 +684,7 @@ def upsert_imported_user(
         block_reapplied=(not was_blocked) and imported.is_blocked,
         administrator_changed=was_admin != (ROLE_ADMINISTRATOR in next_roles),
         roles_revoked=tuple(sorted(current_roles - next_roles)),
+        is_blocked=imported.is_blocked,
     )
 
 
