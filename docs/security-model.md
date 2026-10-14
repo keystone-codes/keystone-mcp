@@ -360,7 +360,8 @@ the same Host/Origin guard and OAuth IP throttle as `/token`.
   (`KEYSTONE_MCP_LOG_REDACT=true`, the default).
 - RBAC audit requires `KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT` to be set the
   moment audit is on; without it, subject identifiers in audit records would
-  be guessable from an email and not actually pseudonymous.
+  be guessable from an email and not actually pseudonymous. The same salt
+  applies to every subject pseudonym written to logs, not only audit events.
 - Prefer mounting secrets as files (`KEYSTONE_MCP_<NAME>_FILE` or
   `<NAME>_FILE` for registry and provider variables) over putting values in the
   process environment: file contents are not copied into `os.environ`, so

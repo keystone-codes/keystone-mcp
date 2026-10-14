@@ -78,6 +78,59 @@ def test_ordinary_words_are_not_masked() -> None:
     )
 
 
+def test_api_key_ending_with_dash_is_masked() -> None:
+    key_id = "0123456789ab"
+    secret = "A" * 42 + "-"
+    raw = f"issued ksk_{key_id}_{secret} done"
+    redacted = redact_string(raw)
+    assert secret not in redacted
+    assert f"ksk_{key_id}_***" in redacted
+
+
+def test_api_key_ending_with_underscore_is_masked() -> None:
+    key_id = "0123456789ab"
+    secret = "A" * 42 + "_"
+    raw = f"token ksk_{key_id}_{secret}"
+    redacted = redact_string(raw)
+    assert secret not in redacted
+    assert f"ksk_{key_id}_***" in redacted
+
+
+def test_keystone_access_and_refresh_tokens_are_masked() -> None:
+    at = "km_at_" + "x" * 43
+    rt = "km_rt_" + ("y" * 42) + "-"
+    for token in (at, rt):
+        redacted = redact_string(f"prefix {token}")
+        assert token not in redacted
+        assert token[:6] + "***" in redacted
+    end_line = redact_string(f"done {rt}")
+    assert rt not in end_line
+    assert "km_rt_***" in end_line
+
+
+def test_bearer_token_ending_with_dash_is_masked() -> None:
+    token = "a" * 20 + "-"
+    raw = f"Authorization: Bearer {token}"
+    redacted = redact_string(raw)
+    assert token not in redacted
+    assert "***REDACTED***" in redacted
+
+
+def test_jwt_and_identity_header_are_masked() -> None:
+    jwt_line = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhbm4ifQ.c2ln"
+    assert jwt_line not in redact_string(f"log {jwt_line} end")
+    payload = {"x-keystone-identity": jwt_line, "path": "/mcp"}
+    out = redact_dict(payload)
+    assert out["x-keystone-identity"] == "***REDACTED***"
+
+
+def test_longer_random_string_is_not_masked_as_key() -> None:
+    key_id = "0123456789ab"
+    too_long = "A" * 44
+    raw = f"ksk_{key_id}_{too_long}"
+    assert raw in redact_string(raw)
+
+
 def test_redact_bare_jwt_outside_bearer_prefix() -> None:
     """A JWT logged as a raw header value (no "Bearer " prefix, no key=value
 

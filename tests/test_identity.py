@@ -58,13 +58,13 @@ def test_idempotency_token_forks_task_id():
 def test_human_subject_keeps_task_id_and_hash():
     email = "a@b.c"
     expected_task = make_task_id(VerifiedIdentity(email=email), "register_project", {"code": "X"})
-    expected_hash = hash_subject(email)
+    expected_hash = hash_subject(email, salt="")
     legacy = VerifiedIdentity(email=email)
     explicit = VerifiedIdentity(email)
     assert make_task_id(legacy, "register_project", {"code": "X"}) == expected_task
     assert make_task_id(explicit, "register_project", {"code": "X"}) == expected_task
-    assert hash_subject(legacy.subject) == expected_hash
-    assert hash_subject(explicit.subject) == expected_hash
+    assert hash_subject(legacy.subject, salt="") == expected_hash
+    assert hash_subject(explicit.subject, salt="") == expected_hash
 
 
 def test_service_identity_has_no_email():
