@@ -54,6 +54,21 @@ _KEYSTONE_REQUEST_STATE_VERSION = 1
 _MAX_INPUT_ROUNDS = 10
 
 
+async def _accept_upstream_tool_result(_name: str, _result: Any) -> None:
+    return None
+
+
+def skip_upstream_output_validation(client: "Client") -> None:
+    """Disable the MCP client's synchronous outputSchema validation for this session.
+
+    Keystone forwards upstream answers transparently; validating on Keystone's
+    event loop against a hostile upstream ``pattern`` can stall the process.
+    """
+    session = getattr(client, "session", None)
+    if session is not None:
+        session.validate_tool_result = _accept_upstream_tool_result
+
+
 @dataclass(frozen=True, slots=True)
 class DownstreamCall:
     """The client request that is waiting for this upstream call."""
@@ -409,6 +424,8 @@ async def call_upstream_tool(
     modern_upstream = (
         upstream_version in MODERN_PROTOCOL_VERSIONS if upstream_version is not None else False
     )
+
+    skip_upstream_output_validation(client)
 
     try:
         if proxy_elicitation and modern_downstream and modern_upstream:

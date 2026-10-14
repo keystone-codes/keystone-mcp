@@ -8,11 +8,17 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ## [Unreleased]
 
+### Security
+
+- keystone-mcp no longer re-validates an upstream's tool result against the upstream's own `outputSchema` on its event loop, so a pathological schema can no longer stall the whole process (including `/healthz`).
+- Upstream answers, catalogs and tool schemas are bounded: `KEYSTONE_MCP_UPSTREAM_MAX_RESPONSE_BYTES`, `KEYSTONE_MCP_UPSTREAM_MAX_CATALOG_ITEMS`, `KEYSTONE_MCP_UPSTREAM_MAX_SCHEMA_BYTES`.
+
 ### Added
 
 - `keystone-mcp users admins` lists full administrators, management roles and their holders; exits 1 when there is no active full administrator.
 - `keystone-mcp users grant-admin --role <name>` grants a named role that gives full administration. Without the flag, when the policy has no `administrator` role but exactly one role that gives full administration, that role is granted.
 - `KEYSTONE_MCP_OAUTH_REFRESH_GRACE_SECONDS`; metric `keystone_mcp_oauth_token_exchange_total`; audit event `oauth_session`.
+- `KEYSTONE_MCP_UPSTREAM_MAX_RESPONSE_BYTES` (default 16 MiB), `KEYSTONE_MCP_UPSTREAM_MAX_SCHEMA_BYTES` (default 64 KiB), `KEYSTONE_MCP_UPSTREAM_MAX_CATALOG_ITEMS` (default 2000).
 - Metric `keystone_mcp_admin_refusals_total`; audit field `actor_subject_type` on `rbac_policy_mutation`.
 - `LoginIdentity.key_id` and `LoginIdentity.key_expires_at` (optional) for form providers that sign people in with a Keystone API key.
 - `docs/clients.md` lists the client versions tested with this release and known
@@ -56,6 +62,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ### Fixed
 
+- An upstream's `serverInfo` stamp no longer reaches the client in tool and prompt results.
 - `service_accounts_list`, `service_accounts_add` and `service_accounts_update` work when called over MCP.
 - The HTTP port opens right after the users-directory migrations; upstream discovery, login provider warm-up (now in parallel) and policy loading run in the background, so a hanging upstream no longer keeps the port closed long enough for a liveness probe to restart the pod.
 - A replica that changes a user or service account forgets its own cached decisions at once, even when Redis could not record the change.
@@ -91,6 +98,9 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 - Upstream resources and templates whose URI has no `scheme://` part are no longer published (a startup warning names each one). Give them a scheme, e.g. `file:///…` or `myapp://…`.
 - A read of a URI that matches several templates of one upstream now needs all of their names allowed; add the missing names (or a glob such as `ns_*`) to roles that read such URIs.
+- A tool whose schema exceeds 64 KiB, has a `pattern` longer than 512 characters or nests deeper than 64 levels is no longer published (warning and metric); raise `KEYSTONE_MCP_UPSTREAM_MAX_SCHEMA_BYTES` if needed.
+- An upstream with more than 2000 tools (or prompts, resources, templates) keeps its previous catalog; raise `KEYSTONE_MCP_UPSTREAM_MAX_CATALOG_ITEMS`.
+- Discovery no longer follows HTTP redirects (proxied calls never did); point the registry `url` at the final address.
 - Host installs from 0.5 docs: reinstall with `uv sync --locked --no-dev --no-editable` in the deployed checkout and change `ExecStart` to `.venv/bin/python -m keystone_mcp.server`. `scripts/deploy.sh` now stops when run outside a git clone; set `DEPLOY_REF` to the release tag.
 - Before upgrading, list who holds management roles: run `keystone-mcp users admins` on the new version (before switching traffic) — it lists full administrators, management roles and their holders. People in delegated roles (for example `users_*` only) keep managing ordinary accounts but get `forbidden` on management roles and their holders. If your administrator role is not named `administrator`, recovery is `keystone-mcp users grant-admin --email … [--role <name>]`.
 - A client that reuses an old refresh token more than `KEYSTONE_MCP_OAUTH_REFRESH_GRACE_SECONDS` after rotating it now loses its session (the person signs in again). While 0.5.x and 0.6.0 replicas run side by side, a token rotated by a 0.5.x replica is not recognised as reused; detection holds once every replica runs 0.6.0. Rolling back to 0.5.x restores the old 60-second behaviour; nothing is lost.
