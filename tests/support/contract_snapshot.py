@@ -424,11 +424,9 @@ def generate_routes(_src_root: Path) -> dict[str, str]:
     from support.fake_login import FakeFormProvider, FakeRedirectProvider
     from support.test_env import UNUSED_REDIS_URL
 
-    signing_pem = """-----BEGIN PRIVATE KEY-----
-MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgAAASNFZ4kKvN7xI0
-VniQq83vEjRWeJCrze8SNFZ4kKuhRANCAASz4IlGK3RL3RBRnQF+nI0mGeh5oUm9
-0Nw9WnsV7MhcHuDOfAtt6zB8ntgq44aZEiUDMF99mUUG5VgYkbtTBVOC
------END PRIVATE KEY-----"""
+    signing_pem = (
+        Path(__file__).resolve().parents[1] / "data" / "test-keys" / "es256-test-vector.pem"
+    ).read_text(encoding="utf-8")
     providers = [FakeRedirectProvider("example"), FakeFormProvider("formstub")]
     provider_names = {provider.name for provider in providers}
     settings = Settings(

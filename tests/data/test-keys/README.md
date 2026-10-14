@@ -1,0 +1,1 @@
+Test-only key material. None of these keys protects anything: they exist so that tests and the published identity-assertion test vector are reproducible. Do not reuse them. Secret scanners are told to skip this folder (`.gitleaks.toml`).
