@@ -76,7 +76,7 @@ class JsonFormatter(logging.Formatter):
             payload["exc_info"] = redact_string(record.exc_text)
         payload["msg"] = redact_string(str(payload["msg"]))
         payload = redact_dict(payload)
-        return json.dumps(payload, ensure_ascii=False, default=str)
+        return json.dumps(payload, ensure_ascii=False, default=str, separators=(",", ":"))
 
 
 class TextFormatter(logging.Formatter):
