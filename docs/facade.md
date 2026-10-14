@@ -12,10 +12,12 @@ not in it. The service trusts the header only on a private network Keystone-MCP
 can reach, and it does not publish its MCP port on a public interface.
 
 Keystone-MCP itself exposes the same `/healthz` convention, plus `GET /readyz`:
-`/healthz` means the process is alive (liveness) and always answers `200`;
+`/healthz` means the process is alive (liveness) and always answers `200`
+once the users-directory migrations have finished and the HTTP port is open;
 `/readyz` means this replica can actually serve work right now (readiness) —
-it checks Redis, the active RBAC policy, and the built-in users database, and
-answers `503` while any of them is down. Detail per check is in
+it checks Redis, the active RBAC policy, the built-in users database, and
+whether background startup (upstream discovery and policy load) has finished,
+and answers `503` while any of them is down. Detail per check is in
 [observability-logging.md](observability-logging.md#readiness).
 
 The full contract is [connecting-services.md](connecting-services.md).
@@ -98,6 +100,16 @@ the unsigned subject headers reach HTTP upstreams as today.
 
 ## Discovery
 
+Startup order: migrate/seed the built-in users directory, open the HTTP port,
+then run login-provider warm-up, stdio connection startup, upstream discovery,
+and RBAC policy load in a background task. Until that task finishes,
+`/readyz` answers `503` (`checks.bootstrap: pending` for internal callers),
+including when `KEYSTONE_MCP_RBAC_MODE=off`. Startup refusals
+(`KEYSTONE_MCP_UPSTREAM_REQUIRE_ALL=true` with an unreachable upstream, or an
+invalid policy) still exit with code `1` and the same message as before, but
+only after `/healthz` has started answering — use `/readyz`, not an open port,
+to know the replica is ready.
+
 Keystone-MCP calls `list_tools()` on every enabled upstream and registers a live
 proxy route for each tool that passes the filters. You do not register proxy
 tools one by one.
@@ -112,7 +124,13 @@ disabled), there is no refresh tick to retry it: the WARNING says so
 unreachable for the life of the process. Startup is refused only when every
 configured upstream is unreachable with RBAC on, or when
 `KEYSTONE_MCP_UPSTREAM_REQUIRE_ALL=true` and at least one upstream is
-unreachable. Each upstream's reachability is exposed as
+unreachable. With `KEYSTONE_MCP_UPSTREAM_REQUIRE_ALL=false` (default), an
+unreachable upstream does not remove readiness after startup — `/readyz` stays
+`503` only until discovery and policy load finish, then retries the upstream on
+refresh ticks. With `KEYSTONE_MCP_UPSTREAM_REQUIRE_ALL=true`, any upstream
+still unreachable at startup ends the process (after `/healthz` responds), and
+after startup `/readyz` answers `503` while any configured upstream is
+unavailable. Each upstream's reachability is exposed as
 `keystone_mcp_upstream_available{namespace}` (1 = reachable).
 
 **Stdio upstreams** (`transport: stdio` in the registry) are discovered the same

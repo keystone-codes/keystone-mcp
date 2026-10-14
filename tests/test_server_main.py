@@ -26,12 +26,14 @@ def test_main_loads_env_file_before_settings(tmp_path, monkeypatch):
     def _fake_build_server(*, settings):
         return (fake_mcp, None, None, None, None, None, None)
 
-    async def _fake_bootstrap_platform(*args, **kwargs):
+    async def _fake_bootstrap_users_store(*args, **kwargs):
         return None
 
     monkeypatch.setattr(server, "build_server", _fake_build_server)
-    monkeypatch.setattr(server, "bootstrap_platform", _fake_bootstrap_platform)
+    monkeypatch.setattr(server, "bootstrap_users_store", _fake_bootstrap_users_store)
     monkeypatch.setattr(server, "install_policy_reload_signal", lambda *a, **k: None)
+    server._startup_failure_holder["error"] = None
+    server._deferred_bootstrap_holder["factory"] = None
 
     server.main()
 
@@ -65,12 +67,14 @@ def test_main_logs_deployment_profile_and_startup_warnings(monkeypatch, capsys, 
     def _fake_build_server(*, settings):
         return (fake_mcp, None, None, None, None, None, None)
 
-    async def _fake_bootstrap_platform(*args, **kwargs):
+    async def _fake_bootstrap_users_store(*args, **kwargs):
         return None
 
     monkeypatch.setattr(server, "build_server", _fake_build_server)
-    monkeypatch.setattr(server, "bootstrap_platform", _fake_bootstrap_platform)
+    monkeypatch.setattr(server, "bootstrap_users_store", _fake_bootstrap_users_store)
     monkeypatch.setattr(server, "install_policy_reload_signal", lambda *a, **k: None)
+    server._startup_failure_holder["error"] = None
+    server._deferred_bootstrap_holder["factory"] = None
 
     server.main()
 
