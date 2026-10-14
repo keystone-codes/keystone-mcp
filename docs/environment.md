@@ -135,7 +135,7 @@ ExecStart=/opt/keystone-mcp/.venv/bin/python -m keystone_mcp.server
 | `KEYSTONE_MCP_TOKEN_TTL` | `86400` | Access-token lifetime, seconds. |
 | `KEYSTONE_MCP_AUTH_CODE_TTL` | `600` | Authorization-code lifetime, seconds. |
 | `KEYSTONE_MCP_REFRESH_TOKEN_TTL` | `2592000` (30d) | Idle lifetime of a refresh token before re-login is required. |
-| `KEYSTONE_MCP_THROTTLE_MAX` | `120` | Max requests per identity within the throttle window; `0` disables. |
+| `KEYSTONE_MCP_THROTTLE_MAX` | `120` | Max requests per identity within the throttle window (`tools/call`, `prompts/get`, `resources/read`, and `tools/list`, `prompts/list`, `resources/list`, `resources/templates/list`); `0` disables. |
 | `KEYSTONE_MCP_THROTTLE_WINDOW` | `60` | Throttle sliding-window length, seconds. |
 | `KEYSTONE_MCP_LOGIN_THROTTLE_IP_MAX` | `30` | Max `POST /login`, `POST /login/google` and `POST /register` attempts per client IP in the login throttle window; `0` disables the IP limit. |
 | `KEYSTONE_MCP_LOGIN_THROTTLE_EMAIL_MAX` | `10` | Max failed `POST /login` attempts per email in the window; successful logins do not count; `0` disables the email limit. |
@@ -168,7 +168,7 @@ Keystone-MCP sits behind a reverse proxy or runs as more than one replica.
 
 | Limit | Counts per | Variables | Default | `0` means |
 |---|---|---|---|---|
-| Tool calls | person (verified email) | `KEYSTONE_MCP_THROTTLE_MAX` / `_WINDOW` | `120` / `60` s | no limit |
+| Tool calls and MCP lists | person (verified email) | `KEYSTONE_MCP_THROTTLE_MAX` / `_WINDOW` | `120` / `60` s | no limit |
 | Login and registration attempts | client IP | `KEYSTONE_MCP_LOGIN_THROTTLE_IP_MAX` / `KEYSTONE_MCP_LOGIN_THROTTLE_WINDOW` | `30` / `300` s | no IP limit |
 | Failed login attempts | email | `KEYSTONE_MCP_LOGIN_THROTTLE_EMAIL_MAX` / same window | `10` | no email limit |
 | `/authorize` and `/token` | client IP | `KEYSTONE_MCP_OAUTH_THROTTLE_IP_MAX` / same window as login | `120` | no limit |

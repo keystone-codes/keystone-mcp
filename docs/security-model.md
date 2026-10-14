@@ -323,6 +323,11 @@ the same Host/Origin guard and OAuth IP throttle as `/token`.
   effective budget multiplies by the replica count. See
   [environment.md#more-than-one-replica](environment.md#more-than-one-replica)
   for the per-process throttle note.
+- The per-identity tool throttle counts `tools/call`, `prompts/get`,
+  `resources/read`, and MCP list requests (`tools/list`, `prompts/list`,
+  `resources/list`, `resources/templates/list`) toward the same
+  `KEYSTONE_MCP_THROTTLE_MAX` budget; a throttled list returns an error, not
+  an empty catalog.
 - Blocking a person in the users directory, or calling `users_logout`, revokes
   every OAuth access and refresh token for that person immediately. The next
   request with an old token is rejected; unblocking does not bring old
