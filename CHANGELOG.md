@@ -8,6 +8,14 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ## [Unreleased]
 
+### Security
+
+- Release images are scanned by Trivy per platform (amd64 and arm64) on the exact digest that is then tagged; base images are pinned by digest and updated by Dependabot.
+
+### Changed
+
+- `latest` moves only when the released version is the highest one; a patch to an older line no longer moves it back.
+
 ## [0.5.0] - 2026-10-13
 
 ### Added
