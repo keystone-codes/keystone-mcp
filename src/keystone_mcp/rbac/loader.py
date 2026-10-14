@@ -25,6 +25,7 @@ from keystone_mcp.rbac.policy import (
     RbacPolicy,
     load_policy_file_with_hash,
     log_unreachable_tools,
+    parse_policy_yaml,
     validate_policy_against_catalog,
 )
 from keystone_mcp.rbac.upstream_state import (
@@ -39,6 +40,23 @@ logger = logging.getLogger(__name__)
 
 class PolicyLoadError(RuntimeError):
     """Raised when the configured policy cannot be loaded or validated."""
+
+
+def preflight_rbac_policy_file(settings: Settings) -> None:
+    """Refuse startup before listening when the policy file cannot be read or parsed."""
+    if not settings.rbac_enabled:
+        return
+    path_raw = settings.rbac_policy_path.strip()
+    if not path_raw:
+        return
+    path = Path(path_raw)
+    try:
+        raw = path.read_bytes().decode("utf-8")
+        parse_policy_yaml(raw, source_path=path)
+    except PolicyContractError as exc:
+        raise PolicyLoadError(str(exc)) from exc
+    except OSError as exc:
+        raise PolicyLoadError(str(exc)) from exc
 
 
 @dataclass(frozen=True, slots=True)
