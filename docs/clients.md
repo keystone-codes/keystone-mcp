@@ -15,17 +15,27 @@ norm. Column **How**: `manual (stage)` or `CI`.
 
 | Client | Version | MCP protocol | Sign-in | Token refresh | Tools | `list_changed` | Progress | Cancel | Elicitation | Checked with Keystone-MCP | Date | How |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| Claude Code | — | — | — | — | — | — | — | — | — | — | — | — |
+| Claude Code | 2.1.x | — | — | — | — | — | — | — | — | — | — | manual (stage)¹ |
 | Claude Desktop (connector) | — | — | — | — | — | — | — | — | — | — | — | — |
 | Claude Desktop (`mcp-remote`) | — | — | — | — | — | — | — | — | — | — | — | — |
 | Cursor (desktop) | — | — | — | — | — | — | — | — | — | — | — | — |
-| MCP Inspector | — | — | — | — | — | — | — | — | — | — | — | — |
-| Python `mcp` SDK | — | — | — | — | — | — | — | — | — | — | — | CI |
-| MCP 2026-07-28 client | — | 2026-07-28 | — | — | — | — | — | — | — | — | — | — |
-| Handshake-protocol client | — | handshake | — | — | — | — | — | — | — | — | — | — |
+| MCP Inspector | — | — | — | — | — | — | — | — | — | — | — | manual (stage)² |
+| Python `mcp` SDK | 2.3.0 | 2026-07-28 | yes | yes | yes | yes | yes | yes | yes | 0.6.0 | 2026-10-14 | CI |
+| MCP 2026-07-28 client | 2.3.0 | 2026-07-28 | yes | yes | yes | yes | yes | yes | yes | 0.6.0 | 2026-10-14 | CI |
+| Handshake-protocol client | 2.3.0 | handshake | yes | yes | yes | yes | yes | yes | n/a³ | 0.6.0 | 2026-10-14 | CI |
 
 When one product supports both protocol eras, add separate rows and note the
 era in **MCP protocol**.
+
+¹ `claude mcp add` / `claude mcp list` work without Anthropic credentials (Keystone
+shows as “Needs authentication”); CI does not run this yet — Node.js in CI is
+blocked on product-owner decision OV-F6.
+
+² MCP Inspector `--cli` accepts a Bearer service-account key for `tools/list` and
+`tools/call`; OAuth browser sign-in is not supported in CLI mode.
+
+³ Handshake-era run: demo `hello-upstream` (SDK 1.28) does not expose elicitation;
+`scripts/client_e2e.py` skips that step (`skip elicitation`).
 
 ### How this table is maintained
 

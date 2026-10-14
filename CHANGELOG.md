@@ -10,6 +10,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ### Added
 
+- Developers: CI signs in with the official MCP Python SDK OAuth client against the demo stack (both protocol eras) and checks tools, token refresh, `list_changed`, progress, cancellation and elicitation.
 - Developers: hostile sign-in provider, users directory and upstream test suites; property-based fuzzing of RBAC, redirect checks, registry and policy parsing, with a daily long run in CI.
 - Developers: `tests/security/` — an attacker's checklist for sign-in, OAuth and RBAC with a test for every item; CI fails when an item has no test.
 - Secrets can be passed as files: `KEYSTONE_MCP_<X>_FILE` for every secret variable (list in `docs/environment.md#secrets-from-files`), and `<NAME>_FILE` for variables named by the upstream registry, stdio `env` and sign-in provider options. The file wins when both are set.
