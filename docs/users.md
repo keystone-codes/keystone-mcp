@@ -168,7 +168,7 @@ directory declares about itself.
 | `conflict` | The account or the role is already there. |
 | `validation_error` | A required argument is missing, or the role is not in the policy file. |
 | `last_administrator` | This would leave no active administrator. |
-| `self_admin_mutation_forbidden` | The signed-in administrator is removing their own administrator access. |
+| `self_admin_mutation_forbidden` | The signed-in full administrator is removing their own full administration (see [§2.10](rbac-policy-format.md#210-management-roles-and-full-administrators)). |
 | `forbidden` | You are not a full administrator and the change touches a management role or its holder (see [§2.10](rbac-policy-format.md#210-management-roles-and-full-administrators)), the role grants more than you have, or the caller is a service account. |
 | `service_unconfigured` | Built-in directory: the store is not wired (report a bug). HTTP directory: `KEYSTONE_MCP_USERS_SERVICE_URL` or the token is empty. |
 | `service_timeout` | The request to an HTTP directory timed out. |
