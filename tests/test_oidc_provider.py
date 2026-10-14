@@ -156,7 +156,7 @@ async def test_expired_token_is_refused():
     assert exc.value.reason == "identity_invalid"
 
 
-async def test_hs256_and_none_are_refused():
+async def test_hs256_is_refused():
     fake = FakeOidcIssuer()
     provider = _provider(fake)
     redirect = await provider.begin(state="st", callback_url="http://app/cb")
@@ -244,6 +244,53 @@ async def test_key_rotation_refetches_jwks_once():
         params=params, callback_url="http://app/cb", attempt=redirect.attempt
     )
     assert identity.email == fake.user.email
+
+
+async def test_none_alg_is_refused():
+    fake = FakeOidcIssuer()
+    provider = _provider(fake)
+    redirect = await provider.begin(state="st", callback_url="http://app/cb")
+    fake.tamper.alg_none = True
+    params = await fake.authorize(redirect.url)
+    with pytest.raises(LoginRejected) as exc:
+        await provider.complete(
+            params=params, callback_url="http://app/cb", attempt=redirect.attempt
+        )
+    assert exc.value.reason == "identity_invalid"
+
+
+async def test_token_response_without_id_token_is_refused(caplog):
+    caplog.set_level(logging.WARNING)
+    fake = FakeOidcIssuer()
+    provider = _provider(fake)
+    redirect = await provider.begin(state="st", callback_url="http://app/cb")
+    fake.tamper.omit_id_token = True
+    params = await fake.authorize(redirect.url)
+    with pytest.raises(LoginRejected) as exc:
+        await provider.complete(
+            params=params, callback_url="http://app/cb", attempt=redirect.attempt
+        )
+    assert exc.value.reason == "identity_invalid"
+    blob = caplog.text + " ".join(r.getMessage() for r in caplog.records)
+    assert "fake-access" not in blob
+
+
+async def test_token_endpoint_error_code_is_sanitized_in_log(caplog):
+    caplog.set_level(logging.WARNING)
+    fake = FakeOidcIssuer()
+    provider = _provider(fake)
+    redirect = await provider.begin(state="st", callback_url="http://app/cb")
+    fake.tamper.token_endpoint_status = 400
+    fake.tamper.token_endpoint_error = "x" * 200 + "\n"
+    params = await fake.authorize(redirect.url)
+    with pytest.raises(LoginRejected):
+        await provider.complete(
+            params=params, callback_url="http://app/cb", attempt=redirect.attempt
+        )
+    messages = " ".join(r.getMessage() for r in caplog.records)
+    assert "error=unrecognized" in messages
+    assert "x" * 200 not in messages
+    assert "\n" not in messages
 
 
 async def test_token_endpoint_error_is_identity_invalid():

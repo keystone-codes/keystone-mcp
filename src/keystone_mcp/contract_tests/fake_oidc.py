@@ -41,7 +41,10 @@ class FakeTamper:
     wrong_audience: bool = False
     expired: bool = False
     alg_hs256: bool = False
+    alg_none: bool = False
+    omit_id_token: bool = False
     token_endpoint_status: int | None = None
+    token_endpoint_error: str | None = None
     discovery_status: int | None = None
     discovery_issuer: str | None = None
     discovery_authorization_endpoint: str | None = None
@@ -57,7 +60,10 @@ class FakeTamper:
         self.wrong_audience = False
         self.expired = False
         self.alg_hs256 = False
+        self.alg_none = False
+        self.omit_id_token = False
         self.token_endpoint_status = None
+        self.token_endpoint_error = None
         self.discovery_status = None
         self.discovery_issuer = None
         self.discovery_authorization_endpoint = None
@@ -257,8 +263,9 @@ class FakeOidcIssuer:
         if self.tamper.unavailable:
             return JSONResponse({"error": "unavailable"}, status_code=503)
         if self.tamper.token_endpoint_status is not None:
+            error = self.tamper.token_endpoint_error or "temporarily_unavailable"
             return JSONResponse(
-                {"error": "temporarily_unavailable"},
+                {"error": error},
                 status_code=self.tamper.token_endpoint_status,
             )
 
@@ -279,15 +286,14 @@ class FakeOidcIssuer:
             return JSONResponse({"error": "invalid_grant"}, status_code=400)
 
         self._used_codes.add(code)
-        id_token = self._mint_id_token(pending["nonce"])
-        return JSONResponse(
-            {
-                "access_token": "fake-access",
-                "id_token": id_token,
-                "token_type": "Bearer",
-                "expires_in": 300,
-            }
-        )
+        body: dict[str, Any] = {
+            "access_token": "fake-access",
+            "token_type": "Bearer",
+            "expires_in": 300,
+        }
+        if not self.tamper.omit_id_token:
+            body["id_token"] = self._mint_id_token(pending["nonce"])
+        return JSONResponse(body)
 
     def _mint_id_token(self, nonce: str) -> str:
         now = int(time.time())
@@ -313,6 +319,9 @@ class FakeOidcIssuer:
         for key, value in self.user.extra_claims.items():
             if key != "email_verified":
                 payload[key] = value
+
+        if self.tamper.alg_none:
+            return jwt.encode(payload, key=None, algorithm="none")
 
         if self.tamper.alg_hs256:
             return jwt.encode(payload, "hs-secret", algorithm="HS256")
