@@ -87,10 +87,15 @@ async def test_two_parallel_refreshes_rotate_once(oauth_store_backend, caplog):
         assert first.refresh_token == second.refresh_token
         if isinstance(store, RedisOAuthStore):
             prefix = store._prefix
-            keys = [k async for k in store.redis.scan_iter(match=f"{prefix}rt:km_rt_*")]
+            keys = [
+                k
+                async for k in store.redis.scan_iter(match=f"{prefix}rt:*")
+                if ":rt_used:" not in k and ":rt_grace:" not in k and ":rt_revoked:" not in k
+            ]
             new_tokens = {k.split(":rt:", 1)[-1] for k in keys}
         else:
-            new_tokens = {t for t in store._refresh_tokens if t != refresh_str}
+            old_ref = token_digest(refresh_str)
+            new_tokens = {t for t in store._refresh_tokens if t != old_ref}
         assert len(new_tokens) == 1
         grace_events = [
             r
@@ -227,9 +232,9 @@ async def test_rotation_by_old_replica_is_plain_invalid_grant(oauth_store_backen
         old_refresh = res["body"]["refresh_token"]
         client_id = res["client_id"]
         if isinstance(store, RedisOAuthStore):
-            await store.redis.delete(store._refresh_key(old_refresh))
+            await store.redis.delete(store._refresh_key(token_digest(old_refresh)))
         else:
-            store._refresh_tokens.pop(old_refresh, None)
+            store._refresh_tokens.pop(token_digest(old_refresh), None)
         replay = await refresh_access_token(client, client_id, old_refresh, settings.resource_url)
         assert _invalid_grant(replay)
         break

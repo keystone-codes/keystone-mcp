@@ -99,6 +99,7 @@ OAuth rotation and replay events. Fields: `action` (`grace_reissue`,
 | `keystone_mcp_oauth_client_evictions_total` | (counter) | Unused OAuth clients evicted to admit a new registration at `KEYSTONE_MCP_OAUTH_MAX_CLIENTS` |
 | `keystone_mcp_oauth_token_exchange_total` | `grant_type`, `outcome` | OAuth `/token` exchanges (`issued`, `grace_reissue`, `replay_revoked`, `code_replay`, `session_expired`, `key_revoked`, `key_expired`, `user_denied`, `directory_unavailable`, …) |
 | `keystone_mcp_login_identity_binding_total` | `outcome` | OIDC login identity binding (`bound`, `matched`, `mismatch`, `conflict`) |
+| `keystone_mcp_oauth_token_keys_migrated_total` | `kind`, `direction` | Legacy OAuth token keys moved to the hashed layout on first use (`kind` is `access` or `refresh`; `direction` is `to_hashed`) |
 | `keystone_mcp_oauth_clients` | (gauge) | Live registered OAuth clients, refreshed on every registration attempt on this replica |
 | `keystone_mcp_api_key_verifications_total` | `outcome` | API key checks at the directory resolver (`valid`, `invalid`, `malformed`, `unknown_key_id`, `limited`, `unavailable`) |
 | `keystone_mcp_api_key_cache_entries` | `cache` | Entries in the positive/negative API key verification caches (`positive`, `negative`) |

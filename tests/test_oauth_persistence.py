@@ -418,8 +418,10 @@ async def test_crash_after_minting_leaves_a_usable_refresh_token():
 
     # Exactly one new refresh token was persisted, and the old one survives —
     # either way the client can still refresh.
+    from keystone_mcp.auth.oauth_store import token_digest
+
     tokens = set(store._refresh_tokens)
-    assert "km_rt_old" in tokens
+    assert token_digest("km_rt_old") in tokens
     assert len(tokens) == 2
 
 

@@ -2702,7 +2702,10 @@ class KeystoneOAuthProvider(OAuthProvider):
 
     async def _read_refresh_meta(self, refresh_token: str) -> RefreshMeta | None:
         """Return parsed session metadata for a refresh token's marker."""
-        raw = await self._pending_store.get(_NS_REFRESH_AUTH, refresh_token)
+        digest = token_digest(refresh_token)
+        raw = await self._pending_store.get(_NS_REFRESH_AUTH, digest)
+        if raw is None:
+            raw = await self._pending_store.get(_NS_REFRESH_AUTH, refresh_token)
         return parse_refresh_meta(raw)
 
 
