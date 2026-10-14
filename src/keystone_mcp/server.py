@@ -33,7 +33,7 @@ from keystone_mcp.auth.oauth_store import (
     OAuthStore,
     build_shared_auth_stores,
 )
-from keystone_mcp.auth.rate_window import RedisSlidingWindow
+from keystone_mcp.auth.rate_window import InMemorySlidingWindow, RedisSlidingWindow, SlidingWindow
 from keystone_mcp.auth.sessions import SessionRevoker
 from keystone_mcp.auth.throttle import LoginAttemptThrottle, PerIdentityThrottle
 from keystone_mcp.catalog import register_catalog
@@ -406,6 +406,7 @@ def build_server(
     login_throttle: LoginAttemptThrottle | None = None
     oauth_endpoint_throttle: LoginAttemptThrottle | None = None
     tool_sliding_window: RedisSlidingWindow | None = None
+    upstream_sliding_window: SlidingWindow = InMemorySlidingWindow()
     if settings.throttle_backend == "redis":
         redis_client = getattr(store, "redis", None)
         if redis_client is None:
@@ -414,6 +415,9 @@ def build_server(
             )
         prefix = settings.redis_key_prefix
         tool_sliding_window = RedisSlidingWindow(redis_client, key_prefix=prefix, kind="tool")
+        upstream_sliding_window = RedisSlidingWindow(
+            redis_client, key_prefix=prefix, kind="upstream"
+        )
         login_throttle = LoginAttemptThrottle(
             settings.login_throttle_ip_max,
             settings.login_throttle_email_max,
@@ -539,6 +543,7 @@ def build_server(
         identity_issuer=settings.base_url.rstrip("/"),
         _identity_signing_key_pem=settings.identity_signing_key,
         _identity_signing_key_previous_pem=settings.identity_signing_key_previous,
+        sliding_window=upstream_sliding_window,
     )
     upstreams.observability = rbac_observability
     upstreams.rbac_mode = settings.rbac_mode
@@ -884,6 +889,7 @@ def _register_default_upstreams(upstreams: UpstreamRegistry, settings: Settings)
             cwd=cfg.cwd,
             publish_resources=cfg.publish_resources,
             resource_filter=cfg.build_resource_filter(),
+            limits=cfg.limits,
         )
 
 

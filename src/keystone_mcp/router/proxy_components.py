@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import base64
 import contextvars
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping
+from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any, Literal
 
 import mcp.types as mcp_types
 from fastmcp.client.telemetry import client_span
-from fastmcp.exceptions import ResourceError, ToolError
+from fastmcp.exceptions import PromptError, ResourceError, ToolError
 from fastmcp.prompts import Message, PromptArgument, PromptResult
 from fastmcp.prompts.base import InputRequiredPromptResult
 from fastmcp.resources.base import InputRequiredResourceResult, ResourceContent, ResourceResult
@@ -38,6 +39,27 @@ _template_read_backend_uri: contextvars.ContextVar[str | None] = contextvars.Con
     "_template_read_backend_uri",
     default=None,
 )
+
+@asynccontextmanager
+async def _upstream_guard_scope(
+    registry: "UpstreamRegistry",
+    namespace: str,
+    timeout: float,
+    *,
+    limit_error_type: type[Exception] = ToolError,
+) -> AsyncIterator[None]:
+    from keystone_mcp.router.upstream_guard import UpstreamLimitError
+
+    guard = registry.upstream_guard(namespace)
+    if guard is None:
+        yield
+        return
+    try:
+        async with guard.call(timeout=timeout):
+            yield
+    except UpstreamLimitError as exc:
+        raise limit_error_type(str(exc)) from exc
+
 
 _CONNECTION_META_KEYS = frozenset(
     {
@@ -166,26 +188,32 @@ class UpstreamProxyPrompt(ProxyPrompt):
             prompt_name=backend_name,
         ) as span:
             span.set_attribute("fastmcp.provider.type", "UpstreamProxyPrompt")
-            client, call_meta = await self._get_client()
-            ctx = get_context()
-            async with client:
-                _stash_proxy_request_context(client, ctx)
-                if client.protocol_version in MODERN_PROTOCOL_VERSIONS:
-                    from keystone_mcp.router.upstream_call import call_upstream_prompt_modern
+            async with _upstream_guard_scope(
+                self._registry,
+                self._namespace,
+                self._tool_timeout,
+                limit_error_type=PromptError,
+            ):
+                client, call_meta = await self._get_client()
+                ctx = get_context()
+                async with client:
+                    _stash_proxy_request_context(client, ctx)
+                    if client.protocol_version in MODERN_PROTOCOL_VERSIONS:
+                        from keystone_mcp.router.upstream_call import call_upstream_prompt_modern
 
-                    raw = await call_upstream_prompt_modern(
-                        client,
-                        backend_name,
-                        arguments,
-                        meta=call_meta,
-                        input_responses=ctx.input_responses if ctx else None,
-                        request_state=ctx.request_state if ctx else None,
-                    )
-                    if isinstance(raw, mcp_types.InputRequiredResult):
-                        return InputRequiredPromptResult(raw)
-                    result = raw
-                else:
-                    result = await client.get_prompt(backend_name, arguments, meta=call_meta)
+                        raw = await call_upstream_prompt_modern(
+                            client,
+                            backend_name,
+                            arguments,
+                            meta=call_meta,
+                            input_responses=ctx.input_responses if ctx else None,
+                            request_state=ctx.request_state if ctx else None,
+                        )
+                        if isinstance(raw, mcp_types.InputRequiredResult):
+                            return InputRequiredPromptResult(raw)
+                        result = raw
+                    else:
+                        result = await client.get_prompt(backend_name, arguments, meta=call_meta)
             messages = [Message(content=m.content, role=m.role) for m in result.messages]
             return PromptResult(
                 messages=messages,
@@ -333,19 +361,25 @@ class UpstreamProxyResource(_UpstreamProxyClientMixin, ProxyResource):
             resource_uri=backend_uri,
         ) as span:
             span.set_attribute("fastmcp.provider.type", "UpstreamProxyResource")
-            client, call_meta = await self._get_client()
-            ctx = get_context()
-            async with client:
-                _stash_proxy_request_context(client, ctx)
-                from keystone_mcp.router.upstream_call import call_upstream_resource_read
+            async with _upstream_guard_scope(
+                self._registry,
+                self._namespace,
+                self._tool_timeout,
+                limit_error_type=ResourceError,
+            ):
+                client, call_meta = await self._get_client()
+                ctx = get_context()
+                async with client:
+                    _stash_proxy_request_context(client, ctx)
+                    from keystone_mcp.router.upstream_call import call_upstream_resource_read
 
-                result = await call_upstream_resource_read(
-                    client,
-                    backend_uri,
-                    meta=call_meta,
-                    input_responses=ctx.input_responses if ctx else None,
-                    request_state=ctx.request_state if ctx else None,
-                )
+                    result = await call_upstream_resource_read(
+                        client,
+                        backend_uri,
+                        meta=call_meta,
+                        input_responses=ctx.input_responses if ctx else None,
+                        request_state=ctx.request_state if ctx else None,
+                    )
             if isinstance(result, mcp_types.InputRequiredResult):
                 return InputRequiredResourceResult(result)
             return _resource_result_from_read(result, backend_uri=backend_uri)
@@ -408,19 +442,25 @@ class UpstreamProxyTemplate(_UpstreamProxyClientMixin, ProxyTemplate):
         parameterized_uri = forward_uri(backend_template, params, uri)
         token = _template_read_backend_uri.set(parameterized_uri)
         try:
-            client, call_meta = await self._get_client()
-            ctx = context or get_context()
-            async with client:
-                _stash_proxy_request_context(client, ctx)
-                from keystone_mcp.router.upstream_call import call_upstream_resource_read
+            async with _upstream_guard_scope(
+                self._registry,
+                self._namespace,
+                self._tool_timeout,
+                limit_error_type=ResourceError,
+            ):
+                client, call_meta = await self._get_client()
+                ctx = context or get_context()
+                async with client:
+                    _stash_proxy_request_context(client, ctx)
+                    from keystone_mcp.router.upstream_call import call_upstream_resource_read
 
-                result = await call_upstream_resource_read(
-                    client,
-                    parameterized_uri,
-                    meta=call_meta,
-                    input_responses=ctx.input_responses if ctx else None,
-                    request_state=ctx.request_state if ctx else None,
-                )
+                    result = await call_upstream_resource_read(
+                        client,
+                        parameterized_uri,
+                        meta=call_meta,
+                        input_responses=ctx.input_responses if ctx else None,
+                        request_state=ctx.request_state if ctx else None,
+                    )
         finally:
             _template_read_backend_uri.reset(token)
 

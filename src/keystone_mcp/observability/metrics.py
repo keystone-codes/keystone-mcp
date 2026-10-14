@@ -131,6 +131,22 @@ _UPSTREAM_INPUT_ROUNDS_EXCEEDED = Counter(
     "Tool calls stopped because the upstream kept requesting input",
     ["namespace"],
 )
+_UPSTREAM_LIMIT_REJECTIONS = Counter(
+    "keystone_mcp_upstream_limit_rejections_total",
+    "Proxied upstream calls refused by per-service limits",
+    ["namespace", "reason"],
+)
+_UPSTREAM_CIRCUIT_STATE = Gauge(
+    "keystone_mcp_upstream_circuit_state",
+    "Upstream circuit breaker state (0=closed, 1=open, 2=half_open)",
+    ["namespace"],
+)
+_UPSTREAM_INFLIGHT = Gauge(
+    "keystone_mcp_upstream_inflight",
+    "Proxied upstream calls in progress on this replica",
+    ["namespace"],
+)
+_CIRCUIT_STATE_VALUE = {"closed": 0, "open": 1, "half_open": 2}
 _OAUTH_CLIENT_REGISTRATIONS = Counter(
     "keystone_mcp_oauth_client_registrations_total",
     "Dynamic client registration (POST /register) outcomes",
@@ -333,6 +349,21 @@ class RbacMetrics:
         if not self._enabled:
             return
         _UPSTREAM_ELICITATIONS.labels(namespace=namespace, action=action).inc()
+
+    def record_upstream_limit_rejection(self, *, namespace: str, reason: str) -> None:
+        if not self._enabled:
+            return
+        _UPSTREAM_LIMIT_REJECTIONS.labels(namespace=namespace, reason=reason).inc()
+
+    def set_upstream_circuit_state(self, *, namespace: str, state: str) -> None:
+        if not self._enabled:
+            return
+        _UPSTREAM_CIRCUIT_STATE.labels(namespace=namespace).set(_CIRCUIT_STATE_VALUE[state])
+
+    def set_upstream_inflight(self, *, namespace: str, inflight: int) -> None:
+        if not self._enabled:
+            return
+        _UPSTREAM_INFLIGHT.labels(namespace=namespace).set(inflight)
 
     def record_upstream_input_rounds_exceeded(self, *, namespace: str) -> None:
         if not self._enabled:

@@ -123,6 +123,13 @@ Keystone-MCP, Redis, and a sample upstream service, with a policy that
 shows the whole facade/router/authorization story in one sitting. Walk
 through: [paths/local-compose.md](paths/local-compose.md).
 
+## Services are protected from a looping agent
+
+Optional per-upstream `limits` in the registry cap concurrent calls on each
+replica, share a call budget across all callers (and replicas when Redis
+backends throttles), and open a circuit breaker after repeated transport
+failures. Refusals use distinct error text from personal rate limits.
+
 ## Related
 
 - [docs/README.md](README.md) — every guide, grouped by who reads it
