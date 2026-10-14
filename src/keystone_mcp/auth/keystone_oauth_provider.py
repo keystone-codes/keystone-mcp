@@ -237,18 +237,18 @@ def _meta_carry_forward(old: RefreshMeta, *, resource: str | None) -> RefreshMet
 
 
 def _human_access_claims(
-    email: str,
+    subject: str,
     auth_method: str,
     interactive: bool,
     now: int,
     key_id: str | None,
 ) -> dict[str, object]:
     claims: dict[str, object] = {
-        "email": email,
+        "email": subject,
         "auth_method": auth_method,
         "interactive": interactive,
         "iat": now,
-        "subject_type": "human",
+        "subject_type": subject_type_of(subject),
     }
     if isinstance(key_id, str):
         claims["key_id"] = key_id
