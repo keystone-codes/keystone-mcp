@@ -626,6 +626,7 @@ def build_server(
                 observability=rbac_observability,
                 content_catalog=upstreams.content,
                 policy_revision_watcher=policy_revision_watcher,
+                route_lookup=registry.route_for_published_name,
             )
         )
 

@@ -32,6 +32,7 @@ from redis.exceptions import RedisError
 from keystone_mcp.auth.oauth_store import build_shared_auth_stores
 from keystone_mcp.auth.sessions import SessionRevoker
 from keystone_mcp.config import USERS_CLI_VARIABLES, ConfigError, Settings, settings_for_command
+from keystone_mcp.observability.subject import configure_subject_salt
 from keystone_mcp.rbac.management import (
     AdminsReport,
     build_admins_report,
@@ -74,7 +75,9 @@ class _CliExit(Exception):
 
 def _settings_for_users_cli() -> Settings:
     try:
-        return settings_for_command(USERS_CLI_VARIABLES)
+        settings = settings_for_command(USERS_CLI_VARIABLES)
+        configure_subject_salt(settings.rbac_audit_subject_salt)
+        return settings
     except ConfigError as exc:
         print(f"keystone-mcp: {exc}", file=sys.stderr)
         raise _CliExit(EXIT_USAGE)

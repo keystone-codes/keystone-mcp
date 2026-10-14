@@ -44,10 +44,14 @@ subject identifiers that are guessable from an email address — see
 ### `rbac_authz_decision`
 
 Emitted on RBAC middleware allow/deny (list-tools and call-tool). Subject is
-`sub_<16 hex>` (never raw email). Includes `policy_version`, `policy_content_hash`,
-`reason`, `cache_hit`, `operation`, `login_provider` (the sign-in method's
-name, e.g. `google` or `api_key` — lets a `human_identity_required` denial be
-read without a separate token lookup).
+`sub_<16 hex>` (never raw email). `subject_type` is always present (for example
+`human` or `service`; `null` only when there is no verified identity).
+`task_id` is set for `call_tool` when the published tool name resolves to a
+route (same value as in `X-Keystone-Identity` and mutation audit events).
+Includes `policy_version`, `policy_content_hash`, `reason`, `cache_hit`,
+`operation`, `login_provider` (the sign-in method's name, e.g. `google` or
+`api_key` — lets a `human_identity_required` denial be read without a separate
+token lookup).
 
 ### `rbac_users_mutation`
 

@@ -41,6 +41,15 @@ REDIRECT_URI = "http://localhost:9999/callback"
 
 
 @pytest.fixture(autouse=True)
+def _reset_subject_salt():
+    from keystone_mcp.observability.subject import configure_subject_salt
+
+    configure_subject_salt("")
+    yield
+    configure_subject_salt("")
+
+
+@pytest.fixture(autouse=True)
 def _isolated_keystone_env(monkeypatch, tmp_path):
     """Scrub stray ``KEYSTONE_MCP_*`` from the shell and set known-good defaults."""
     for key in list(os.environ):

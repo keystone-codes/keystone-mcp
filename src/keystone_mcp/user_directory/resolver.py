@@ -11,6 +11,7 @@ from typing import Protocol, runtime_checkable
 
 import httpx
 
+from keystone_mcp.observability.subject import normalize_subject
 from keystone_mcp.user_directory.cache import ApiKeyVerificationCache, ResolutionCache
 from keystone_mcp.user_directory.circuit_breaker import CircuitBreaker
 from keystone_mcp.user_directory.errors import UserDirectoryUnavailableError
@@ -25,7 +26,6 @@ from keystone_mcp.user_directory.types import (
     ApiKeyVerification,
     UserResolveResult,
     parse_api_key,
-    parse_service_subject,
 )
 from keystone_mcp.user_directory.util import normalize_email
 
@@ -61,12 +61,6 @@ class _UnknownKeyRateLimiter:
             self._tokens -= 1.0
             return True
         return False
-
-
-def _normalize_subject(subject: str) -> str:
-    if parse_service_subject(subject) is not None:
-        return subject.strip().lower()
-    return normalize_email(subject)
 
 
 class CachedUserDirectoryResolver:
@@ -118,7 +112,7 @@ class CachedUserDirectoryResolver:
         self._key_id_index_loaded_at = 0.0
 
     async def resolve(self, email: str, *, critical: bool = False) -> UserResolveResult:
-        normalized = _normalize_subject(email)
+        normalized = normalize_subject(email)
         revision = await self._revision_reader.current()
         await self._sync_revision(revision)
 

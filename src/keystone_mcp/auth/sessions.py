@@ -8,7 +8,7 @@ import time
 from keystone_mcp.auth.keystone_oauth_provider import parse_refresh_meta
 from keystone_mcp.auth.login_pending_store import LoginPendingStore
 from keystone_mcp.auth.oauth_store import OAuthStore
-from keystone_mcp.observability.subject import hash_subject
+from keystone_mcp.observability.subject import subject_pseudonym
 from keystone_mcp.user_directory.util import normalize_email
 
 logger = logging.getLogger(__name__)
@@ -32,7 +32,7 @@ class SessionRevoker:
         count = revoked.access + len(revoked.refresh_tokens)
         logger.info(
             "sessions revoked subject=%s tokens=%d",
-            hash_subject(normalized),
+            subject_pseudonym(normalized),
             count,
         )
         return count
@@ -72,7 +72,7 @@ class SessionRevoker:
             count += await self.revoke_subject(normalized)
             logger.info(
                 "legacy api-key sessions revoked subject=%s key_id=%s",
-                hash_subject(normalized),
+                subject_pseudonym(normalized),
                 key_id,
             )
         return count
