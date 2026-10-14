@@ -15,7 +15,7 @@ follow up with next steps as we investigate.
 | Version | Supported |
 |---|---|
 | latest `0.6.x` | yes |
-| `0.5.x` and older | no |
+| `0.5.x` and older | no — on 0.5.x, upgrade to 0.6.0; it fixes security issues (see [CHANGELOG](CHANGELOG.md)) |
 
 Only the latest released minor version receives security fixes.
 See [docs/compatibility.md](docs/compatibility.md#supported-versions).
