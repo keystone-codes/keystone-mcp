@@ -1,0 +1,50 @@
+# Demo hello-upstream for CI kind smoke only (not part of the Helm chart).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hello-upstream
+  labels:
+    app: hello-upstream
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: hello-upstream
+  template:
+    metadata:
+      labels:
+        app: hello-upstream
+    spec:
+      containers:
+        - name: hello-upstream
+          image: keystone-hello-upstream:ci
+          imagePullPolicy: Never
+          ports:
+            - name: http
+              containerPort: 8081
+          env:
+            - name: HELLO_IDENTITY_SECRET
+              value: demo-identity-secret-change-me-0123456789
+            - name: HELLO_IDENTITY_AUDIENCE
+              value: hello-upstream
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: hello-upstream
+  labels:
+    app: hello-upstream
+spec:
+  selector:
+    app: hello-upstream
+  ports:
+    - name: http
+      port: 8081
+      targetPort: http
