@@ -80,6 +80,9 @@ OAuth rotation and replay events. Fields: `action` (`grace_reissue`,
 | `keystone_mcp_rbac_directory_resolve_total` | `outcome` | `cache_hit`, `miss`, `unavailable`, `error` |
 | `keystone_mcp_rbac_directory_resolve_seconds` | (histogram) | Resolve latency |
 | `keystone_mcp_rbac_policy_reload_total` | `success` | Policy load/reload (`true` / `false`) |
+| `keystone_mcp_rbac_policy_info` | `content_hash` | Active policy identity (gauge value always `1`; one series at a time) |
+| `keystone_mcp_rbac_policy_in_sync` | — | `1` when this replica's file matches the last published revision (or nothing was published yet); `0` when diverged |
+| `keystone_mcp_rbac_policy_revision_checks_total` | `outcome` | Cross-replica revision checks (`reloaded`, `diverged`, `unavailable`) |
 | `keystone_mcp_catalog_refresh_total` | `outcome` | Upstream catalog refresh (`unchanged` / `held` / `applied`) |
 | `keystone_mcp_catalog_refresh_changes_total` | `direction` | Tools added or removed (`added` / `removed`; counts only, no tool names) |
 | `keystone_mcp_upstream_available` | `namespace` | 1 if the upstream is considered available, else 0. For HTTP: last discovery or refresh succeeded. **For stdio: the catalog has been read successfully** (the process may still be in `backoff` while a previous catalog is kept). |
@@ -185,6 +188,20 @@ Alert when reload attempts fail (previous snapshot kept):
 
 ```promql
 sum(rate(keystone_mcp_rbac_policy_reload_total{success="false"}[15m])) > 0
+```
+
+### Policy replicas diverged
+
+Replicas enforcing different policy files (no shared volume, or a stale mount):
+
+```promql
+count(count by (content_hash) (keystone_mcp_rbac_policy_info)) > 1
+```
+
+Or a replica knows its file does not match the last `policy_*` change:
+
+```promql
+min(keystone_mcp_rbac_policy_in_sync) == 0
 ```
 
 ### Tool call volume and errors

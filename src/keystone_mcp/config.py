@@ -108,6 +108,7 @@ USERS_CLI_VARIABLES = frozenset(
         "KEYSTONE_MCP_USERS_DB_URL",
         "KEYSTONE_MCP_REDIS_URL",
         "KEYSTONE_MCP_USERS_REDIS_REVISION_KEY",
+        "KEYSTONE_MCP_POLICY_REDIS_REVISION_KEY",
         "KEYSTONE_MCP_REDIS_KEY_PREFIX",
         "KEYSTONE_MCP_LOGIN_PENDING_KEY_PREFIX",
         "KEYSTONE_MCP_RBAC_MODE",
@@ -1050,6 +1051,11 @@ class Settings:
     )
     users_redis_revision_key: str = field(
         default_factory=lambda: _env("KEYSTONE_MCP_USERS_REDIS_REVISION_KEY", "km:users:revision")
+    )
+    policy_redis_revision_key: str = field(
+        default_factory=lambda: _env(
+            "KEYSTONE_MCP_POLICY_REDIS_REVISION_KEY", "km:rbac:policy:revision"
+        )
     )
     users_circuit_failure_threshold: int = field(
         default_factory=lambda: _env_int("KEYSTONE_MCP_USERS_CIRCUIT_FAILURE_THRESHOLD", 5)

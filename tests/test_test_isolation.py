@@ -47,4 +47,5 @@ def test_run_prefix_is_applied() -> None:
     assert settings.redis_key_prefix.startswith("km:test:")
     assert settings.login_pending_key_prefix.startswith("km:test:")
     assert settings.users_redis_revision_key.startswith("km:test:")
+    assert settings.policy_redis_revision_key.startswith("km:test:")
     assert settings.redis_key_prefix.startswith(RUN_KEY_ROOT)

@@ -48,17 +48,35 @@ role `description` fields, or in your runbook.
 
 ## Several replicas
 
-- **Shared volume:** every replica that mounts the same policy directory sees
-  new bytes; each process reloads on its refresh timer
-  (`KEYSTONE_MCP_REFRESH_INTERVAL_SECONDS`) or on `SIGHUP` when the content
-  hash changes. The file lock next to the policy coordinates writers when the
-  filesystem supports `flock` (local disk, most CSI volumes). On NFS, locking
-  only helps when the NFS server honours `flock`; otherwise keep
-  `KEYSTONE_MCP_POLICY_TOOLS=full` on a single replica that owns the volume.
-- **No shared volume:** only one replica should have `KEYSTONE_MCP_POLICY_TOOLS=full`
-  and a writable mount; set `read-only` (or `off`) on the others so
-  administrators do not get silent `policy_readonly` failures on random pods.
+- **Agent-driven changes (`policy_*`):** a successful write bumps a revision
+  marker in Redis (`KEYSTONE_MCP_POLICY_REDIS_REVISION_KEY`, default
+  `km:rbac:policy:revision`). Every other replica reloads its **local** policy
+  file on the next MCP call (at most about one second later). On a **shared
+  volume** that is enough — all replicas read the same bytes after the writer
+  commits.
+- **No shared volume:** replicas can enforce different files. That shows up as
+  `keystone_mcp_rbac_policy_in_sync 0`, in trusted `/readyz` details as
+  `policy_in_sync: false`, and once per revision in the log. To realign: copy
+  the policy file to every replica and send `SIGHUP` to each process.
+- **Operational layout:** keep `KEYSTONE_MCP_POLICY_TOOLS=full` on one replica
+  (writable mount) and `read-only` (or `off`) on the others so administrators
+  do not hit silent `policy_readonly` on random pods.
+- **Shared volume (manual edits):** without `policy_*`, new bytes still appear
+  on the refresh timer (`KEYSTONE_MCP_REFRESH_INTERVAL_SECONDS`) or on
+  `SIGHUP` when the content hash changes. The file lock next to the policy
+  coordinates writers when the filesystem supports `flock`. On NFS, locking
+  only helps when the NFS server honours `flock`.
 - **Windows:** file locking is in-process only; use a single writer replica.
+
+Example Prometheus alert when replicas diverge:
+
+```yaml
+- alert: KeystonePolicyReplicasDiverged
+  expr: min(keystone_mcp_rbac_policy_in_sync) == 0 or count(count by (content_hash) (keystone_mcp_rbac_policy_info)) > 1
+  for: 5m
+  annotations:
+    summary: "Keystone replicas enforce different RBAC policy files"
+```
 
 ## Kubernetes
 

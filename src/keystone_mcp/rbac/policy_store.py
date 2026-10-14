@@ -43,7 +43,7 @@ import tempfile
 import time
 from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -83,6 +83,7 @@ if TYPE_CHECKING:
     from keystone_mcp.config import Settings
     from keystone_mcp.observability.service import RbacObservability
     from keystone_mcp.rbac.loader import RbacPolicyManager
+    from keystone_mcp.rbac.policy_revision import PolicyRevisionWatcher
     from keystone_mcp.router.registry import RouterRegistry
     from keystone_mcp.user_directory.protocol import UserDirectory
 
@@ -219,6 +220,7 @@ class PolicyStore:
     registry: RouterRegistry
     observability: RbacObservability | None = None
     directory: UserDirectory | None = None
+    revision_watcher: PolicyRevisionWatcher | None = None
     clock: Callable[[], datetime] = field(default=_default_clock, repr=False)
     file_lock_timeout_seconds: float = 10.0
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
@@ -255,8 +257,7 @@ class PolicyStore:
                         os.close(fd)
                         raise PolicyChangeError(
                             "policy_conflict",
-                            "another writer holds the policy file lock; "
-                            "call policy_read and retry",
+                            "another writer holds the policy file lock; call policy_read and retry",
                         )
                     time.sleep(0.05)
 
@@ -410,6 +411,7 @@ class PolicyStore:
                 warnings_count=0,
             )
             raise
+        result = await self._publish_revision_after_write(result)
         self._audit(
             operation=operation,
             actor=actor,
@@ -491,6 +493,7 @@ class PolicyStore:
                 warnings_count=0,
             )
             raise
+        result = await self._publish_revision_after_write(result)
         self._audit(
             operation="policy_rollback",
             actor=actor,
@@ -505,6 +508,18 @@ class PolicyStore:
             warnings_count=len(result.warnings),
         )
         return result
+
+    async def _publish_revision_after_write(self, result: PolicyChangeResult) -> PolicyChangeResult:
+        if not result.changed or not result.reloaded or self.revision_watcher is None:
+            return result
+        published = await self.revision_watcher.publish(result.content_hash_after)
+        if published is not None:
+            return result
+        extra = (
+            "other replicas were not notified (Redis unavailable); "
+            "they pick the change up on their next refresh"
+        )
+        return replace(result, warnings=(*result.warnings, extra))
 
     def _safe_current_version(self) -> str | None:
         try:
@@ -580,9 +595,7 @@ class PolicyStore:
             raise _WriteFailed(f"policy file could not be written: {exc.strerror}") from exc
 
         try:
-            reload_result = await asyncio.to_thread(
-                self.policy_manager.reload, self.registry
-            )
+            reload_result = await asyncio.to_thread(self.policy_manager.reload, self.registry)
         except OSError as exc:
             with contextlib.suppress(OSError):
                 await asyncio.to_thread(_atomic_write, path, raw_bytes, mode_from=path)
@@ -598,9 +611,7 @@ class PolicyStore:
 
         identity = self.policy_manager.identity
         content_hash_after = (
-            identity.content_hash
-            if identity is not None
-            else hash_policy_bytes(new_bytes)
+            identity.content_hash if identity is not None else hash_policy_bytes(new_bytes)
         )
         return PolicyChangeResult(
             changed=True,
@@ -655,9 +666,7 @@ class PolicyStore:
             raise _WriteFailed(f"policy file could not be written: {exc.strerror}") from exc
 
         try:
-            reload_result = await asyncio.to_thread(
-                self.policy_manager.reload, self.registry
-            )
+            reload_result = await asyncio.to_thread(self.policy_manager.reload, self.registry)
         except OSError as exc:
             with contextlib.suppress(OSError):
                 await asyncio.to_thread(_atomic_write, path, current_bytes, mode_from=path)
@@ -784,9 +793,7 @@ class PolicyStore:
                 warnings_count=warnings_count,
             )
         except Exception:  # pragma: no cover - audit must never break a mutation
-            logger.warning(
-                "rbac policy mutation observability failed", exc_info=True
-            )
+            logger.warning("rbac policy mutation observability failed", exc_info=True)
 
 
 def _is_writable(path: Path) -> bool:
