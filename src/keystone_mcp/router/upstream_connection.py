@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Literal, Protocol
 
 from fastmcp import Client
-from fastmcp.client.transports import StdioTransport, StreamableHttpTransport
+from fastmcp.client.transports import StreamableHttpTransport
 
 from keystone_mcp.router.stdio_process import StdioUpstreamProcess
 
@@ -22,7 +22,7 @@ class UpstreamConnection(Protocol):
 
     def catalog_client(self, *, timeout: float) -> Client: ...
 
-    async def start(self, *, wait: float) -> None: ...
+    async def start(self, *, wait: float) -> bool: ...
 
     async def stop(self) -> None: ...
 
@@ -69,8 +69,8 @@ class HttpUpstreamConnection:
     def catalog_client(self, *, timeout: float) -> Client:
         return self._build_client({}, timeout)
 
-    async def start(self, *, wait: float) -> None:
-        return None
+    async def start(self, *, wait: float) -> bool:
+        return True
 
     async def stop(self) -> None:
         return None
@@ -95,27 +95,8 @@ class StdioUpstreamConnection:
     def catalog_client(self, *, timeout: float) -> Client:
         return self._process.client()
 
-    async def start(self, *, wait: float) -> None:
-        await self._process.start(wait=wait)
+    async def start(self, *, wait: float) -> bool:
+        return await self._process.start(wait=wait)
 
     async def stop(self) -> None:
         await self._process.stop()
-
-
-def temporary_stdio_client(
-    *,
-    command: str,
-    args: Sequence[str],
-    env: Mapping[str, str],
-    cwd: str | None,
-    init_timeout: float,
-) -> Client:
-    """Client for one-shot bootstrap discovery (``keep_alive=False``)."""
-    transport = StdioTransport(
-        command,
-        list(args),
-        env=dict(env),
-        cwd=cwd,
-        keep_alive=False,
-    )
-    return Client(transport, init_timeout=init_timeout, mode="legacy")

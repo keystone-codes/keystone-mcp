@@ -53,6 +53,31 @@ def test_api_key_is_masked_keeping_key_id() -> None:
     assert f"ksk_{key_id}_***" in redacted
 
 
+def test_well_known_tokens_are_masked() -> None:
+    samples = [
+        "ghp_" + "a" * 36,
+        "gho_" + "b" * 36,
+        "ghu_" + "c" * 36,
+        "ghs_" + "d" * 36,
+        "ghr_" + "e" * 36,
+        "github_pat_" + "f" * 36,
+        "glpat-" + "g" * 36,
+        "xoxb-" + "h" * 36,
+        "sk-" + "i" * 36,
+        "sk-proj-" + "j" * 36,
+        "sk-ant-" + "k" * 36,
+        "AKIA" + "L" * 16,
+    ]
+    for token in samples:
+        assert token not in redact_string(f"leak {token} end")
+
+
+def test_ordinary_words_are_not_masked() -> None:
+    assert redact_string("use sk-learn for risk-free modeling") == (
+        "use sk-learn for risk-free modeling"
+    )
+
+
 def test_redact_bare_jwt_outside_bearer_prefix() -> None:
     """A JWT logged as a raw header value (no "Bearer " prefix, no key=value
 

@@ -21,13 +21,17 @@ Tools:
 - ``meta`` — returns JSON of the request ``_meta`` dict (for identity assertion).
 - ``count`` — counts to ``n`` with progress notifications when a token is set.
 - ``slow`` — sleeps; on cancel writes ``slow-cancelled`` to stderr.
+- ``block`` — ``time.sleep(seconds)`` on the server event loop (hangs pings).
+- ``spam`` — writes ``lines`` lines to stderr (one includes ``NOTES_TOKEN``).
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import sys
+import time
 from typing import Any
 
 import anyio
@@ -95,6 +99,24 @@ _TOOL_DEFINITIONS: dict[str, types.Tool] = {
         description="Ask the client a question when elicitation is available.",
         inputSchema=_EMPTY_SCHEMA,
     ),
+    "block": types.Tool(
+        name="block",
+        description="Block the server event loop for seconds (hang simulation).",
+        inputSchema={
+            "type": "object",
+            "properties": {"seconds": {"type": "number"}},
+            "required": ["seconds"],
+        },
+    ),
+    "spam": types.Tool(
+        name="spam",
+        description="Write many lines to stderr.",
+        inputSchema={
+            "type": "object",
+            "properties": {"lines": {"type": "integer"}},
+            "required": ["lines"],
+        },
+    ),
 }
 
 _TOOL_ORDER: tuple[str, ...] = (
@@ -107,6 +129,8 @@ _TOOL_ORDER: tuple[str, ...] = (
     "count",
     "slow",
     "ask",
+    "block",
+    "spam",
 )
 
 
@@ -197,6 +221,20 @@ async def _run_tool(
         )
         return [types.TextContent(type="text", text=f"answer={result.action}")]
 
+    if name == "block":
+        time.sleep(float(arguments["seconds"]))
+        return [types.TextContent(type="text", text="unblocked")]
+
+    if name == "spam":
+        lines = int(arguments["lines"])
+        token = os.environ.get("NOTES_TOKEN", "<no-token>")
+        for i in range(lines):
+            if i == lines // 2:
+                print(f"token-dump {token}", file=sys.stderr, flush=True)
+            else:
+                print(f"spam-line-{i}", file=sys.stderr, flush=True)
+        return [types.TextContent(type="text", text=f"spammed {lines}")]
+
     raise ValueError(f"unknown tool: {name}")
 
 
@@ -216,7 +254,22 @@ async def _on_call_tool(ctx: Any, params: types.CallToolRequestParams) -> types.
     return types.CallToolResult(content=content)
 
 
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Test stdio MCP upstream")
+    parser.add_argument(
+        "--init-delay",
+        type=float,
+        default=0.0,
+        help="Seconds to sleep before accepting MCP initialize",
+    )
+    return parser.parse_args()
+
+
 async def main() -> None:
+    args = _parse_args()
+    if args.init_delay > 0:
+        await anyio.sleep(args.init_delay)
+
     server: Server = Server(
         "stdio-upstream",
         on_list_tools=_on_list_tools,

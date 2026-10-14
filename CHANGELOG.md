@@ -10,6 +10,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ### Added
 
+- Metric `keystone_mcp_upstream_stderr_suppressed_total{namespace}`; process state `stopping`.
 - `keystone-mcp users admins` lists full administrators, management roles and their holders; exits 1 when there is no active full administrator.
 - `keystone-mcp users grant-admin --role <name>` grants a named role that gives full administration. Without the flag, when the policy has no `administrator` role but exactly one role that gives full administration, that role is granted.
 - `KEYSTONE_MCP_OAUTH_REFRESH_GRACE_SECONDS`; metric `keystone_mcp_oauth_token_exchange_total`; audit event `oauth_session`.
@@ -30,6 +31,20 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 - Metric `keystone_mcp_upstream_input_rounds_exceeded_total{namespace}`.
 - CI: the contract freeze gate now compares the public surface generated from the code — environment variables (found by AST), policy keys, CLI commands, plugin protocol signatures, built-in tool arguments, metrics and their labels — with a baseline generated from the `v0.5.0` tag.
 - Startup warnings W8–W19 (`docs/environment.md#startup-warnings`).
+
+### Fixed
+
+- A hung stdio upstream with a call in flight is now detected within one ping interval of the third missed ping: calls in flight fail at once and the process is restarted; a single slow ping no longer restarts it.
+- A stdio upstream is reported available only once its catalog has been read; a process that comes up after a failed discovery is discovered immediately instead of on the next refresh tick.
+- Startup no longer spawns throwaway stdio processes for discovery; stdio processes start in parallel.
+
+### Security
+
+- Stdio upstream stderr is rate-limited and masked (the entry's own `env` values and well-known token formats).
+
+### Migration
+
+- A stdio upstream that blocks for more than ~35 s without answering pings is now restarted only after three missed pings (about a minute).
 
 ### Changed
 

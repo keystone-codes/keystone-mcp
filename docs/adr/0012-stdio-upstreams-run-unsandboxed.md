@@ -52,6 +52,29 @@ as the only option.
 **Implicit full environment inheritance** — Would leak `KEYSTONE_MCP_*` secrets
 into untrusted code; rejected in favour of explicit `env` maps.
 
+## Amendment (0.6.0)
+
+The stdio child still runs under the **same OS user** as Keystone, but it does
+not receive Keystone's environment wholesale — only the entry's `env` map (see
+above). That does **not** isolate secrets: on Linux, any process of that user
+may read `/proc/<pid>/environ` for the Keystone parent, and any file readable
+by that user (mounted secrets, a shared `.env`, etc.).
+
+**Operator guidance** (product/security owner decision):
+
+- Run stdio upstream commands under a **dedicated OS user** (wrapper such as
+  `setpriv` / `su-exec`); keep Keystone-owned files accessible only to the
+  Keystone user.
+- Run the Keystone container with **`--init`** (`docker run --init`, `init:
+  true` in Compose) so orphaned upstream children are reaped and do not become
+  zombies.
+- Treat untrusted upstream code as an **HTTP service in a separate container**,
+  not as a stdio child in the gateway process.
+- Keep Keystone secrets in files with mode `0600` (or tighter), not in a shared
+  `.env` visible to upstream users; minimize the container environment.
+
+Process-level sandboxing inside Keystone remains out of scope for this ADR.
+
 ## Links
 
 - [connecting-services.md](../connecting-services.md#running-a-stdio-server)
