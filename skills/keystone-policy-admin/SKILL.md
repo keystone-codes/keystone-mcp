@@ -36,13 +36,13 @@ against the live catalog before it is written.
 | Make T require a human | `policy_list_set` | `{"list": "requires_human_identity", "patterns": [...], "expected_hash": "..."}` |
 | Make T critical (no allow cache) | `policy_list_set` | `{"list": "critical_tools", "patterns": [...], "expected_hash": "..."}` |
 | Delete role | `policy_role_delete` | `{"role": "R", "expected_hash": "..."}` |
-| Undo the last change | `policy_rollback` | `{}` |
+| Undo the last change | `policy_rollback` | `{"expected_hash": "<file_hash from policy_read>"}` |
 
 ## Rules
 
-1. **Always `policy_read` first** and pass `content_hash` as `expected_hash` on
-   every mutation. If the file changed underneath you, retry once after a fresh
-   read.
+1. **Always `policy_read` first** and pass `file_hash` as `expected_hash` on
+   every mutation (including `policy_rollback`). If the file changed underneath
+   you, retry once after a fresh read.
 2. **Never invent tool names.** Take patterns from `policy_catalog`. To grant a
    whole service, use `<namespace>_*`.
 3. **`policy_role_set` replaces the whole role** — description and allow list.
@@ -56,7 +56,8 @@ against the live catalog before it is written.
 8. **Never remove the last path to policy tools** or lock out every role; the
    server refuses (`self_lockout_forbidden`, `policy_invariant`).
 9. **`policy_rollback` undoes exactly one write** and runs the same checks as a
-   normal mutation.
+   normal mutation, including `role_in_use`; pass `expected_hash` from
+   `policy_read`.
 10. **`version` in the file is not touched** by the tools. If the operator
     tracks versions manually, they edit the field themselves.
 
@@ -134,5 +135,5 @@ policy_list_set {"list": "deny", "patterns": ["<existing deny entries>", "files_
 **Undo the last change**:
 
 ```
-policy_rollback {}
+policy_rollback {"expected_hash": "<file_hash from policy_read>"}
 ```

@@ -10,6 +10,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ### Added
 
+- `policy_rollback` accepts `expected_hash`. `policy_catalog` and policy changes see prompt and resource names, as a reload does.
 - Metric `keystone_mcp_upstream_stderr_suppressed_total{namespace}`; process state `stopping`.
 - `keystone-mcp users admins` lists full administrators, management roles and their holders; exits 1 when there is no active full administrator.
 - `keystone-mcp users grant-admin --role <name>` grants a named role that gives full administration. Without the flag, when the policy has no `administrator` role but exactly one role that gives full administration, that role is granted.
@@ -72,6 +73,8 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ### Fixed
 
+- Concurrent `policy_*` changes are applied one at a time (in-process lock plus a lock file next to the policy); a change can no longer overwrite another one made at the same time. A background reload can no longer bring back an older policy.
+- `policy_rollback` runs the same checks as other changes, including `role_in_use`, and keeps both file generations when the reload after it fails. A role name with surrounding spaces is trimmed. Refusals of `policy_*` calls are audited.
 - OAuth refresh now keeps the access token `subject_type` aligned with the session subject.
 - An upstream's `serverInfo` stamp no longer reaches the client in tool and prompt results.
 - `service_accounts_list`, `service_accounts_add` and `service_accounts_update` work when called over MCP.
@@ -109,6 +112,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ### Migration
 
+- The policy directory gets a lock file `<policy>.lock`; do not delete it while the server runs. Temporary files are now named `.<policy>.*.tmp`.
 - Upstream resources and templates whose URI has no `scheme://` part are no longer published (a startup warning names each one). Give them a scheme, e.g. `file:///…` or `myapp://…`.
 - A read of a URI that matches several templates of one upstream now needs all of their names allowed; add the missing names (or a glob such as `ns_*`) to roles that read such URIs.
 - A tool whose schema exceeds 64 KiB, has a `pattern` longer than 512 characters or nests deeper than 64 levels is no longer published (warning and metric); raise `KEYSTONE_MCP_UPSTREAM_MAX_SCHEMA_BYTES` if needed.

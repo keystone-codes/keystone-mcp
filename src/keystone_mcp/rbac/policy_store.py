@@ -19,11 +19,11 @@ Write path, in order (see :meth:`PolicyStore.change`):
 4. Validate the candidate with the same structural and live-catalog gate as a
    hot-reload -- ``policy_invalid`` / ``unmatched_pattern``.
 5. Run the invariants (:mod:`keystone_mcp.rbac.policy_invariants`).
-6. Write atomically: ``.tmp`` in the same directory, ``fsync``, copy the
+6. Write atomically with unique temp files, ``fsync``, copy the
    current file to ``.bak`` (one generation, overwritten), ``os.replace``.
 7. Reload in place through the same ``RbacPolicyManager`` the rest of the
-   process reads from. A reload failure restores ``.bak`` and refuses with
-   ``policy_invalid``.
+   process reads from. A reload failure restores the previous bytes and refuses
+   with ``policy_invalid``.
 8. Audit (``rbac_policy_mutation``) and the ``keystone_mcp_policy_mutation_total``
    metric, whatever the outcome.
 
@@ -34,18 +34,24 @@ survives in ``.bak``.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
+import logging
 import os
 import shutil
-from collections.abc import Callable, Sequence
+import tempfile
+import time
+from collections.abc import AsyncIterator, Callable, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from keystone_mcp.rbac.catalog import collect_live_tool_names
 from keystone_mcp.rbac.loader import (
     PolicyLoadError,
     assert_live_catalog_validation,
+    live_catalog_names,
     split_unverified_allow_patterns,
 )
 from keystone_mcp.rbac.policy import (
@@ -68,12 +74,19 @@ from keystone_mcp.rbac.policy_invariants import (
     check_self_lockout_forbidden,
 )
 
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - Windows
+    fcntl = None  # type: ignore[assignment]
+
 if TYPE_CHECKING:
     from keystone_mcp.config import Settings
     from keystone_mcp.observability.service import RbacObservability
     from keystone_mcp.rbac.loader import RbacPolicyManager
     from keystone_mcp.router.registry import RouterRegistry
     from keystone_mcp.user_directory.protocol import UserDirectory
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "PolicyStore",
@@ -148,6 +161,55 @@ class _ReloadFailedAfterWrite(PolicyChangeError):
         super().__init__("policy_invalid", message)
 
 
+class _WriteFailed(PolicyChangeError):
+    """Disk write failed during a policy mutation."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__("service_unavailable", message)
+
+
+def _fsync_directory(directory: Path) -> None:
+    try:
+        dir_fd = os.open(directory, os.O_RDONLY)
+    except OSError as exc:
+        logger.debug("policy directory fsync skipped: %s", exc)
+        return
+    try:
+        os.fsync(dir_fd)
+    except OSError as exc:
+        logger.debug("policy directory fsync skipped: %s", exc)
+    finally:
+        os.close(dir_fd)
+
+
+def _atomic_write(path: Path, data: bytes, *, mode_from: Path | None = None) -> None:
+    fd, tmp_path_str = tempfile.mkstemp(
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+    )
+    tmp_path = Path(tmp_path_str)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        if mode_from is not None:
+            shutil.copymode(mode_from, tmp_path)
+        os.replace(tmp_path, path)
+        _fsync_directory(path.parent)
+    except Exception:
+        with contextlib.suppress(FileNotFoundError):
+            tmp_path.unlink()
+        raise
+
+
+def _write_with_backup(path: Path, new_bytes: bytes, *, backup: bytes) -> None:
+    bak_path = path.with_suffix(path.suffix + ".bak")
+    _atomic_write(bak_path, backup, mode_from=path)
+    _atomic_write(path, new_bytes, mode_from=path)
+
+
 @dataclass(kw_only=True)
 class PolicyStore:
     """Validated, audited read/write access to the RBAC policy file."""
@@ -158,6 +220,56 @@ class PolicyStore:
     observability: RbacObservability | None = None
     directory: UserDirectory | None = None
     clock: Callable[[], datetime] = field(default=_default_clock, repr=False)
+    file_lock_timeout_seconds: float = 10.0
+    _lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
+    _file_lock_warning_logged: bool = field(default=False, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if fcntl is None and not self._file_lock_warning_logged:
+            logger.warning(
+                "file locking is not available on this platform; "
+                "policy writes are serialized only within this process"
+            )
+            object.__setattr__(self, "_file_lock_warning_logged", True)
+
+    def _live_names(self) -> frozenset[str]:
+        return live_catalog_names(self.policy_manager, self.registry)
+
+    @asynccontextmanager
+    async def _file_lock(self, policy_path: Path) -> AsyncIterator[None]:
+        if fcntl is None:
+            yield
+            return
+
+        lock_path = policy_path.with_suffix(policy_path.suffix + ".lock")
+        deadline = time.monotonic() + self.file_lock_timeout_seconds
+
+        def acquire() -> int:
+            fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+            while True:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    return fd
+                except BlockingIOError:
+                    if time.monotonic() >= deadline:
+                        os.close(fd)
+                        raise PolicyChangeError(
+                            "policy_conflict",
+                            "another writer holds the policy file lock; "
+                            "call policy_read and retry",
+                        )
+                    time.sleep(0.05)
+
+        fd = await asyncio.to_thread(acquire)
+        try:
+            yield
+        finally:
+
+            def release() -> None:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+                os.close(fd)
+
+            await asyncio.to_thread(release)
 
     # ── Public read-only API ────────────────────────────────────────────
 
@@ -193,7 +305,7 @@ class PolicyStore:
                 ok=False, errors=(str(exc),), unreachable_tools=frozenset(), unverified_patterns={}
             )
 
-        live_tools = frozenset(collect_live_tool_names(self.registry))
+        live_tools = self._live_names()
         snapshot = self.policy_manager.catalog_snapshot()
         result = validate_policy_against_catalog(
             policy,
@@ -241,13 +353,33 @@ class PolicyStore:
     ) -> PolicyChangeResult:
         """Apply ``changes`` to the policy file; see the module docstring for the steps."""
         version_before = self._safe_current_version()
+        path = self._policy_path()
+        self._assert_writable_or_raise(path)
         try:
-            result = await self._change_unlocked(
-                changes=changes,
+            async with self._lock:
+                async with self._file_lock(path):
+                    result = await self._change_locked(
+                        path=path,
+                        changes=changes,
+                        actor=actor,
+                        actor_roles=actor_roles,
+                        expected_hash=expected_hash,
+                    )
+        except _WriteFailed as exc:
+            self._audit(
+                operation=operation,
                 actor=actor,
-                actor_roles=actor_roles,
-                expected_hash=expected_hash,
+                outcome="error",
+                code=exc.code,
+                task_id=task_id,
+                version_before=version_before,
+                version_after=None,
+                hash_before=None,
+                hash_after=None,
+                changes=changes,
+                warnings_count=0,
             )
+            raise
         except _ReloadFailedAfterWrite as exc:
             self._audit(
                 operation=operation,
@@ -294,12 +426,41 @@ class PolicyStore:
         return result
 
     async def rollback(
-        self, *, actor: str, actor_roles: frozenset[str], task_id: str
+        self,
+        *,
+        actor: str,
+        actor_roles: frozenset[str],
+        task_id: str,
+        expected_hash: str | None = None,
     ) -> PolicyChangeResult:
         """Restore ``<policy>.bak`` over the current file (one generation deep)."""
         version_before = self._safe_current_version()
+        path = self._policy_path()
+        self._assert_writable_or_raise(path)
         try:
-            result = await self._rollback_unlocked(actor=actor, actor_roles=actor_roles)
+            async with self._lock:
+                async with self._file_lock(path):
+                    result = await self._rollback_locked(
+                        path=path,
+                        actor=actor,
+                        actor_roles=actor_roles,
+                        expected_hash=expected_hash,
+                    )
+        except _WriteFailed as exc:
+            self._audit(
+                operation="policy_rollback",
+                actor=actor,
+                outcome="error",
+                code=exc.code,
+                task_id=task_id,
+                version_before=version_before,
+                version_after=None,
+                hash_before=None,
+                hash_after=None,
+                changes=(),
+                warnings_count=0,
+            )
+            raise
         except _ReloadFailedAfterWrite as exc:
             self._audit(
                 operation="policy_rollback",
@@ -366,18 +527,16 @@ class PolicyStore:
                 "(see docs/policy-admin.md)",
             )
 
-    async def _change_unlocked(
+    async def _change_locked(
         self,
         *,
+        path: Path,
         changes: Sequence[PolicyChange],
         actor: str,
         actor_roles: frozenset[str],
         expected_hash: str | None,
     ) -> PolicyChangeResult:
-        path = self._policy_path()
-        self._assert_writable_or_raise(path)
-
-        raw_bytes = path.read_bytes()
+        raw_bytes = await asyncio.to_thread(path.read_bytes)
         file_hash = hash_policy_bytes(raw_bytes)
         if expected_hash is not None and expected_hash != file_hash:
             raise PolicyChangeError(
@@ -405,20 +564,34 @@ class PolicyStore:
             if isinstance(change, RoleDelete):
                 await check_role_in_use(change, self.directory)
 
-        bak_path = path.with_suffix(path.suffix + ".bak")
-        tmp_path = path.with_suffix(path.suffix + ".tmp")
-        new_text = candidate_document.to_yaml(actor=actor, now=self._now())
-        tmp_path.write_text(new_text, encoding="utf-8")
-        with tmp_path.open("rb") as handle:
-            os.fsync(handle.fileno())
-        shutil.copyfile(path, bak_path)
-        shutil.copymode(path, tmp_path)
-        os.replace(tmp_path, path)
+        current_bytes = await asyncio.to_thread(path.read_bytes)
+        if hash_policy_bytes(current_bytes) != file_hash:
+            raise PolicyChangeError(
+                "policy_conflict",
+                "policy file changed while this change was being prepared; "
+                "call policy_read and retry",
+            )
 
-        reload_result = self.policy_manager.reload(self.registry)
+        new_text = candidate_document.to_yaml(actor=actor, now=self._now())
+        new_bytes = new_text.encode("utf-8")
+        try:
+            await asyncio.to_thread(_write_with_backup, path, new_bytes, backup=raw_bytes)
+        except OSError as exc:
+            raise _WriteFailed(f"policy file could not be written: {exc.strerror}") from exc
+
+        try:
+            reload_result = await asyncio.to_thread(
+                self.policy_manager.reload, self.registry
+            )
+        except OSError as exc:
+            with contextlib.suppress(OSError):
+                await asyncio.to_thread(_atomic_write, path, raw_bytes, mode_from=path)
+            raise _WriteFailed(f"policy file could not be written: {exc.strerror}") from exc
+
         if not reload_result.success:
-            os.replace(bak_path, path)
-            self.policy_manager.reload(self.registry)
+            with contextlib.suppress(OSError):
+                await asyncio.to_thread(_atomic_write, path, raw_bytes, mode_from=path)
+            await asyncio.to_thread(self.policy_manager.reload, self.registry)
             raise _ReloadFailedAfterWrite(
                 f"policy reload failed after write, backup restored: {reload_result.error}",
             )
@@ -427,7 +600,7 @@ class PolicyStore:
         content_hash_after = (
             identity.content_hash
             if identity is not None
-            else hash_policy_bytes(new_text.encode("utf-8"))
+            else hash_policy_bytes(new_bytes)
         )
         return PolicyChangeResult(
             changed=True,
@@ -438,39 +611,67 @@ class PolicyStore:
             reloaded=True,
         )
 
-    async def _rollback_unlocked(
-        self, *, actor: str, actor_roles: frozenset[str]
+    async def _rollback_locked(
+        self,
+        *,
+        path: Path,
+        actor: str,
+        actor_roles: frozenset[str],
+        expected_hash: str | None,
     ) -> PolicyChangeResult:
-        path = self._policy_path()
-        self._assert_writable_or_raise(path)
         bak_path = path.with_suffix(path.suffix + ".bak")
         if not bak_path.is_file():
             raise PolicyChangeError("nothing_to_rollback", "no backup to roll back to")
 
-        current_bytes = path.read_bytes()
+        current_bytes = await asyncio.to_thread(path.read_bytes)
         file_hash_before = hash_policy_bytes(current_bytes)
-        backup_bytes = bak_path.read_bytes()
+        if expected_hash is not None and expected_hash != file_hash_before:
+            raise PolicyChangeError(
+                "policy_conflict",
+                "policy file changed since it was read; call policy_read and retry",
+            )
+
+        backup_bytes = await asyncio.to_thread(bak_path.read_bytes)
+        current_document = PolicyDocument.from_yaml(current_bytes.decode("utf-8"))
         candidate_document = PolicyDocument.from_yaml(backup_bytes.decode("utf-8"))
 
         candidate_policy, warnings = self._validate_candidate(candidate_document)
         self._check_invariants(candidate_policy, actor_roles)
+        for role_name in sorted(set(current_document.roles) - set(candidate_document.roles)):
+            await check_role_in_use(RoleDelete(role_name), self.directory)
 
-        tmp_path = path.with_suffix(path.suffix + ".tmp")
-        tmp_path.write_bytes(backup_bytes)
-        with tmp_path.open("rb") as handle:
-            os.fsync(handle.fileno())
-        shutil.copymode(path, tmp_path)
-        # The file being rolled back becomes the new (sole) backup generation;
-        # the former backup becomes current.
-        os.replace(path, bak_path)
-        os.replace(tmp_path, path)
+        recheck = await asyncio.to_thread(path.read_bytes)
+        if hash_policy_bytes(recheck) != file_hash_before:
+            raise PolicyChangeError(
+                "policy_conflict",
+                "policy file changed while this change was being prepared; "
+                "call policy_read and retry",
+            )
 
-        reload_result = self.policy_manager.reload(self.registry)
+        try:
+            await asyncio.to_thread(_atomic_write, bak_path, current_bytes, mode_from=path)
+            await asyncio.to_thread(_atomic_write, path, backup_bytes, mode_from=path)
+        except OSError as exc:
+            raise _WriteFailed(f"policy file could not be written: {exc.strerror}") from exc
+
+        try:
+            reload_result = await asyncio.to_thread(
+                self.policy_manager.reload, self.registry
+            )
+        except OSError as exc:
+            with contextlib.suppress(OSError):
+                await asyncio.to_thread(_atomic_write, path, current_bytes, mode_from=path)
+                await asyncio.to_thread(_atomic_write, bak_path, backup_bytes, mode_from=path)
+            raise _WriteFailed(f"policy file could not be written: {exc.strerror}") from exc
+
         if not reload_result.success:
-            os.replace(bak_path, path)
-            self.policy_manager.reload(self.registry)
+            with contextlib.suppress(OSError):
+                await asyncio.to_thread(_atomic_write, path, current_bytes, mode_from=path)
+                await asyncio.to_thread(_atomic_write, bak_path, backup_bytes, mode_from=path)
+            await asyncio.to_thread(self.policy_manager.reload, self.registry)
             raise _ReloadFailedAfterWrite(
-                f"policy reload failed after rollback, previous file restored: {reload_result.error}",
+                "policy reload failed after rollback, previous file restored: "
+                f"{reload_result.error}",
             )
 
         identity = self.policy_manager.identity
@@ -502,7 +703,7 @@ class PolicyStore:
         except PolicyContractError as exc:
             raise PolicyChangeError("policy_invalid", str(exc)) from exc
 
-        live_tools = frozenset(collect_live_tool_names(self.registry))
+        live_tools = self._live_names()
         snapshot = self.policy_manager.catalog_snapshot()
         upstream_state = self.policy_manager.upstream_catalog_state()
         try:
@@ -513,9 +714,6 @@ class PolicyStore:
                 upstream_state=upstream_state,
             )
         except PolicyContractError as exc:
-            # assert_live_catalog_validation raises PolicyContractError (not
-            # PolicyLoadError) for unmatched allow patterns -- see the
-            # deviation note in this release's developer report.
             raise PolicyChangeError("unmatched_pattern", str(exc)) from exc
 
         unreachable, unverified = self._catalog_report(candidate_policy)
@@ -525,7 +723,7 @@ class PolicyStore:
         return candidate_policy, tuple(warnings)
 
     def _check_invariants(self, candidate_policy: RbacPolicy, actor_roles: frozenset[str]) -> None:
-        live_tools = frozenset(collect_live_tool_names(self.registry))
+        live_tools = self._live_names()
         check_no_role_can_administer(candidate_policy, live_tools)
         check_self_lockout_forbidden(candidate_policy, actor_roles, live_tools)
 
@@ -533,7 +731,7 @@ class PolicyStore:
         self, policy: RbacPolicy
     ) -> tuple[frozenset[str], dict[str, tuple[str, ...]]]:
         """Non-fatal catalog findings: unreachable tools, not-yet-verified patterns."""
-        live_tools = frozenset(collect_live_tool_names(self.registry))
+        live_tools = self._live_names()
         snapshot = self.policy_manager.catalog_snapshot()
         result = validate_policy_against_catalog(
             policy,
@@ -586,9 +784,7 @@ class PolicyStore:
                 warnings_count=warnings_count,
             )
         except Exception:  # pragma: no cover - audit must never break a mutation
-            import logging
-
-            logging.getLogger(__name__).warning(
+            logger.warning(
                 "rbac policy mutation observability failed", exc_info=True
             )
 
