@@ -1,4 +1,165 @@
 # section=protocols source=v0.5.0 generator=1
+# module keystone_mcp.login.base absent in source
+# module keystone_mcp.user_directory.base absent in source
+contract_tests.AdminDirectoryContract	kind=class
+contract_tests.AdminDirectoryContract.test_block_visible_in_resolve	async=no kind=method returns=
+contract_tests.AdminDirectoryContract.test_block_visible_in_resolve(keystone_directory_factory)	annotation=Callable[[], default=- kind=positional_or_keyword required=yes
+contract_tests.AdminDirectoryContract.test_create_user	async=no kind=method returns=
+contract_tests.AdminDirectoryContract.test_create_user(keystone_directory_factory)	annotation=Callable[[], default=- kind=positional_or_keyword required=yes
+contract_tests.AdminDirectoryContract.test_create_user_conflict	async=no kind=method returns=
+contract_tests.AdminDirectoryContract.test_create_user_conflict(keystone_directory_factory)	annotation=Callable[[], default=- kind=positional_or_keyword required=yes
+contract_tests.AdminDirectoryContract.test_idempotent_mutations	async=no kind=method returns=
+contract_tests.AdminDirectoryContract.test_idempotent_mutations(keystone_directory_factory)	annotation=Callable[[], default=- kind=positional_or_keyword required=yes
+contract_tests.AdminDirectoryContract.test_invalid_role_name	async=no kind=method returns=
+contract_tests.AdminDirectoryContract.test_invalid_role_name(keystone_directory_factory)	annotation=Callable[[], default=- kind=positional_or_keyword required=yes
+contract_tests.AdminDirectoryContract.test_last_administrator_guard	async=no kind=method returns=
+contract_tests.AdminDirectoryContract.test_last_administrator_guard(keystone_directory_factory)	annotation=Callable[[], default=- kind=positional_or_keyword required=yes
+contract_tests.AdminDirectoryContract.test_self_admin_mutation_forbidden	async=no kind=method returns=
+contract_tests.AdminDirectoryContract.test_self_admin_mutation_forbidden(keystone_directory_factory)	annotation=Callable[[], default=- kind=positional_or_keyword required=yes
+contract_tests.AdminDirectoryContract.test_unknown_email_mutations	async=no kind=method returns=
+contract_tests.AdminDirectoryContract.test_unknown_email_mutations(keystone_directory_factory)	annotation=Callable[[], default=- kind=positional_or_keyword required=yes
+contract_tests.ApiKeyDirectoryContract	kind=class
+contract_tests.ApiKeyDirectoryContract.pytestmark	async=no kind=method returns=
+contract_tests.ApiKeyDirectoryContract.pytestmark(args)	annotation=object default=- kind=var_positional required=yes
+contract_tests.ApiKeyDirectoryContract.pytestmark(kwargs)	annotation=object default=- kind=var_keyword required=yes
+contract_tests.ApiKeyDirectoryContract.test_issue_and_verify_human_key	async=no kind=method returns=
+contract_tests.ApiKeyDirectoryContract.test_issue_and_verify_human_key(keystone_directory_factory)	annotation=Callable[[], default=- kind=positional_or_keyword required=yes
+contract_tests.ApiKeyDirectoryContract.test_issue_for_blocked_user	async=no kind=method returns=
+contract_tests.ApiKeyDirectoryContract.test_issue_for_blocked_user(keystone_directory_factory)	annotation=Callable[[], default=- kind=positional_or_keyword required=yes
+contract_tests.ApiKeyDirectoryContract.test_issue_zero_expiry_rejected	async=no kind=method returns=
+contract_tests.ApiKeyDirectoryContract.test_issue_zero_expiry_rejected(keystone_directory_factory)	annotation=Callable[[], default=- kind=positional_or_keyword required=yes
+contract_tests.ApiKeyDirectoryContract.test_list_api_keys_never_leaks_secret	async=no kind=method returns=
+contract_tests.ApiKeyDirectoryContract.test_list_api_keys_never_leaks_secret(keystone_directory_factory)	annotation=Callable[[], default=- kind=positional_or_keyword required=yes
+contract_tests.ApiKeyDirectoryContract.test_revoke_idempotent	async=no kind=method returns=
+contract_tests.ApiKeyDirectoryContract.test_revoke_idempotent(keystone_directory_factory)	annotation=Callable[[], default=- kind=positional_or_keyword required=yes
+contract_tests.ApiKeyDirectoryContract.test_verify_bad_and_revoked_keys	async=no kind=method returns=
+contract_tests.ApiKeyDirectoryContract.test_verify_bad_and_revoked_keys(keystone_directory_factory)	annotation=Callable[[], default=- kind=positional_or_keyword required=yes
+contract_tests.ContractPerson	kind=dataclass
+contract_tests.FakeOidcIssuer	kind=class
+contract_tests.FakeOidcIssuer.authorize	async=yes kind=method returns=dict[str,
+contract_tests.FakeOidcIssuer.authorize(url)	annotation=str default=- kind=positional_or_keyword required=yes
+contract_tests.FakeOidcIssuer.config	async=no kind=method returns=OidcProviderConfig
+contract_tests.FakeOidcIssuer.config(name)	annotation=str default='fake' kind=keyword_only required=no
+contract_tests.FakeOidcIssuer.config(overrides)	annotation=Any default=- kind=var_keyword required=yes
+contract_tests.FakeOidcIssuer.http_client	async=no kind=method returns=httpx.AsyncClient
+contract_tests.FakeTamper	kind=dataclass
+contract_tests.FakeTamper.reset	async=no kind=method returns=None
+contract_tests.FormLoginProviderContract	kind=class
+contract_tests.FormLoginProviderContract.pytestmark	async=no kind=method returns=
+contract_tests.FormLoginProviderContract.pytestmark(args)	annotation=object default=- kind=var_positional required=yes
+contract_tests.FormLoginProviderContract.pytestmark(kwargs)	annotation=object default=- kind=var_keyword required=yes
+contract_tests.FormLoginProviderContract.test_email_normalization	async=no kind=method returns=
+contract_tests.FormLoginProviderContract.test_email_normalization(keystone_form_provider_case)	annotation=FormProviderCase default=- kind=positional_or_keyword required=yes
+contract_tests.FormLoginProviderContract.test_form_metadata	async=no kind=method returns=
+contract_tests.FormLoginProviderContract.test_form_metadata(keystone_form_provider_case)	annotation=FormProviderCase default=- kind=positional_or_keyword required=yes
+contract_tests.FormLoginProviderContract.test_invalid_forms	async=no kind=method returns=
+contract_tests.FormLoginProviderContract.test_invalid_forms(keystone_form_provider_case)	annotation=FormProviderCase default=- kind=positional_or_keyword required=yes
+contract_tests.FormLoginProviderContract.test_valid_form	async=no kind=method returns=
+contract_tests.FormLoginProviderContract.test_valid_form(keystone_form_provider_case)	annotation=FormProviderCase default=- kind=positional_or_keyword required=yes
+contract_tests.FormProviderCase	kind=dataclass
+contract_tests.OidcLoginProviderContract	kind=class
+contract_tests.OidcLoginProviderContract.pytestmark	async=no kind=method returns=
+contract_tests.OidcLoginProviderContract.pytestmark(args)	annotation=object default=- kind=var_positional required=yes
+contract_tests.OidcLoginProviderContract.pytestmark(kwargs)	annotation=object default=- kind=var_keyword required=yes
+contract_tests.OidcLoginProviderContract.test_access_denied_rejected	async=no kind=method returns=
+contract_tests.OidcLoginProviderContract.test_access_denied_rejected(fake_oidc_issuer)	annotation=FakeOidcIssuer default=- kind=positional_or_keyword required=yes
+contract_tests.OidcLoginProviderContract.test_access_denied_rejected(keystone_oidc_provider)	annotation=RedirectLoginProvider default=- kind=positional_or_keyword required=yes
+contract_tests.OidcLoginProviderContract.test_bad_signature_rejected	async=no kind=method returns=
+contract_tests.OidcLoginProviderContract.test_bad_signature_rejected(fake_oidc_issuer)	annotation=FakeOidcIssuer default=- kind=positional_or_keyword required=yes
+contract_tests.OidcLoginProviderContract.test_bad_signature_rejected(keystone_oidc_provider)	annotation=RedirectLoginProvider default=- kind=positional_or_keyword required=yes
+contract_tests.OidcLoginProviderContract.test_complete_only_raises_login_rejected	async=no kind=method returns=
+contract_tests.OidcLoginProviderContract.test_complete_only_raises_login_rejected(fake_oidc_issuer)	annotation=FakeOidcIssuer default=- kind=positional_or_keyword required=yes
+contract_tests.OidcLoginProviderContract.test_complete_only_raises_login_rejected(keystone_oidc_provider)	annotation=RedirectLoginProvider default=- kind=positional_or_keyword required=yes
+contract_tests.OidcLoginProviderContract.test_expired_token_rejected	async=no kind=method returns=
+contract_tests.OidcLoginProviderContract.test_expired_token_rejected(fake_oidc_issuer)	annotation=FakeOidcIssuer default=- kind=positional_or_keyword required=yes
+contract_tests.OidcLoginProviderContract.test_expired_token_rejected(keystone_oidc_provider)	annotation=RedirectLoginProvider default=- kind=positional_or_keyword required=yes
+contract_tests.OidcLoginProviderContract.test_provider_unavailable_on_complete	async=no kind=method returns=
+contract_tests.OidcLoginProviderContract.test_provider_unavailable_on_complete(fake_oidc_issuer)	annotation=FakeOidcIssuer default=- kind=positional_or_keyword required=yes
+contract_tests.OidcLoginProviderContract.test_provider_unavailable_on_complete(keystone_oidc_provider)	annotation=RedirectLoginProvider default=- kind=positional_or_keyword required=yes
+contract_tests.OidcLoginProviderContract.test_redirect_metadata	async=no kind=method returns=
+contract_tests.OidcLoginProviderContract.test_redirect_metadata(keystone_oidc_provider)	annotation=RedirectLoginProvider default=- kind=positional_or_keyword required=yes
+contract_tests.OidcLoginProviderContract.test_successful_oidc_flow	async=no kind=method returns=
+contract_tests.OidcLoginProviderContract.test_successful_oidc_flow(fake_oidc_issuer)	annotation=FakeOidcIssuer default=- kind=positional_or_keyword required=yes
+contract_tests.OidcLoginProviderContract.test_successful_oidc_flow(keystone_oidc_provider)	annotation=RedirectLoginProvider default=- kind=positional_or_keyword required=yes
+contract_tests.OidcLoginProviderContract.test_unverified_email_rejected	async=no kind=method returns=
+contract_tests.OidcLoginProviderContract.test_unverified_email_rejected(fake_oidc_issuer)	annotation=FakeOidcIssuer default=- kind=positional_or_keyword required=yes
+contract_tests.OidcLoginProviderContract.test_unverified_email_rejected(keystone_oidc_provider)	annotation=RedirectLoginProvider default=- kind=positional_or_keyword required=yes
+contract_tests.OidcLoginProviderContract.test_warm_up_tolerates_unavailable_discovery	async=no kind=method returns=
+contract_tests.OidcLoginProviderContract.test_warm_up_tolerates_unavailable_discovery(fake_oidc_issuer)	annotation=FakeOidcIssuer default=- kind=positional_or_keyword required=yes
+contract_tests.OidcLoginProviderContract.test_warm_up_tolerates_unavailable_discovery(keystone_oidc_provider)	annotation=RedirectLoginProvider default=- kind=positional_or_keyword required=yes
+contract_tests.OidcLoginProviderContract.test_wrong_audience_rejected	async=no kind=method returns=
+contract_tests.OidcLoginProviderContract.test_wrong_audience_rejected(fake_oidc_issuer)	annotation=FakeOidcIssuer default=- kind=positional_or_keyword required=yes
+contract_tests.OidcLoginProviderContract.test_wrong_audience_rejected(keystone_oidc_provider)	annotation=RedirectLoginProvider default=- kind=positional_or_keyword required=yes
+contract_tests.OidcLoginProviderContract.test_wrong_issuer_rejected	async=no kind=method returns=
+contract_tests.OidcLoginProviderContract.test_wrong_issuer_rejected(fake_oidc_issuer)	annotation=FakeOidcIssuer default=- kind=positional_or_keyword required=yes
+contract_tests.OidcLoginProviderContract.test_wrong_issuer_rejected(keystone_oidc_provider)	annotation=RedirectLoginProvider default=- kind=positional_or_keyword required=yes
+contract_tests.OidcLoginProviderContract.test_wrong_nonce_rejected	async=no kind=method returns=
+contract_tests.OidcLoginProviderContract.test_wrong_nonce_rejected(fake_oidc_issuer)	annotation=FakeOidcIssuer default=- kind=positional_or_keyword required=yes
+contract_tests.OidcLoginProviderContract.test_wrong_nonce_rejected(keystone_oidc_provider)	annotation=RedirectLoginProvider default=- kind=positional_or_keyword required=yes
+contract_tests.ServiceAccountDirectoryContract	kind=class
+contract_tests.ServiceAccountDirectoryContract.pytestmark	async=no kind=method returns=
+contract_tests.ServiceAccountDirectoryContract.pytestmark(args)	annotation=object default=- kind=var_positional required=yes
+contract_tests.ServiceAccountDirectoryContract.pytestmark(kwargs)	annotation=object default=- kind=var_keyword required=yes
+contract_tests.ServiceAccountDirectoryContract.test_service_account_administrator_role_rejected	async=no kind=method returns=
+contract_tests.ServiceAccountDirectoryContract.test_service_account_administrator_role_rejected(keystone_directory_factory)	annotation=Callable[[], default=- kind=positional_or_keyword required=yes
+contract_tests.ServiceAccountDirectoryContract.test_service_account_bad_name	async=no kind=method returns=
+contract_tests.ServiceAccountDirectoryContract.test_service_account_bad_name(keystone_directory_factory)	annotation=Callable[[], default=- kind=positional_or_keyword required=yes
+contract_tests.ServiceAccountDirectoryContract.test_service_account_block_and_list	async=no kind=method returns=
+contract_tests.ServiceAccountDirectoryContract.test_service_account_block_and_list(keystone_directory_factory)	annotation=Callable[[], default=- kind=positional_or_keyword required=yes
+contract_tests.ServiceAccountDirectoryContract.test_service_account_duplicate	async=no kind=method returns=
+contract_tests.ServiceAccountDirectoryContract.test_service_account_duplicate(keystone_directory_factory)	annotation=Callable[[], default=- kind=positional_or_keyword required=yes
+contract_tests.ServiceAccountDirectoryContract.test_service_account_lifecycle	async=no kind=method returns=
+contract_tests.ServiceAccountDirectoryContract.test_service_account_lifecycle(keystone_directory_factory)	annotation=Callable[[], default=- kind=positional_or_keyword required=yes
+contract_tests.UserDirectoryContract	kind=class
+contract_tests.UserDirectoryContract.pytestmark	async=no kind=method returns=
+contract_tests.UserDirectoryContract.pytestmark(args)	annotation=object default=- kind=var_positional required=yes
+contract_tests.UserDirectoryContract.pytestmark(kwargs)	annotation=object default=- kind=var_keyword required=yes
+contract_tests.UserDirectoryContract.test_list_users_blocked_filter	async=no kind=method returns=
+contract_tests.UserDirectoryContract.test_list_users_blocked_filter(keystone_directory_factory)	annotation=Callable[[], default=- kind=positional_or_keyword required=yes
+contract_tests.UserDirectoryContract.test_list_users_defaults	async=no kind=method returns=
+contract_tests.UserDirectoryContract.test_list_users_defaults(keystone_directory_factory)	annotation=Callable[[], default=- kind=positional_or_keyword required=yes
+contract_tests.UserDirectoryContract.test_list_users_email_contains	async=no kind=method returns=
+contract_tests.UserDirectoryContract.test_list_users_email_contains(keystone_directory_factory)	annotation=Callable[[], default=- kind=positional_or_keyword required=yes
+contract_tests.UserDirectoryContract.test_list_users_lowercase_emails	async=no kind=method returns=
+contract_tests.UserDirectoryContract.test_list_users_lowercase_emails(keystone_directory_factory)	annotation=Callable[[], default=- kind=positional_or_keyword required=yes
+contract_tests.UserDirectoryContract.test_list_users_role_filter	async=no kind=method returns=
+contract_tests.UserDirectoryContract.test_list_users_role_filter(keystone_directory_factory)	annotation=Callable[[], default=- kind=positional_or_keyword required=yes
+contract_tests.UserDirectoryContract.test_name_and_capabilities	async=no kind=method returns=
+contract_tests.UserDirectoryContract.test_name_and_capabilities(keystone_directory_factory)	annotation=Callable[[], default=- kind=positional_or_keyword required=yes
+contract_tests.UserDirectoryContract.test_ping	async=no kind=method returns=
+contract_tests.UserDirectoryContract.test_ping(keystone_directory_factory)	annotation=Callable[[], default=- kind=positional_or_keyword required=yes
+contract_tests.UserDirectoryContract.test_resolve_blocked_user	async=no kind=method returns=
+contract_tests.UserDirectoryContract.test_resolve_blocked_user(keystone_directory_factory)	annotation=Callable[[], default=- kind=positional_or_keyword required=yes
+contract_tests.UserDirectoryContract.test_resolve_known_user	async=no kind=method returns=
+contract_tests.UserDirectoryContract.test_resolve_known_user(keystone_directory_factory)	annotation=Callable[[], default=- kind=positional_or_keyword required=yes
+contract_tests.UserDirectoryContract.test_resolve_normalizes_email	async=no kind=method returns=
+contract_tests.UserDirectoryContract.test_resolve_normalizes_email(keystone_directory_factory)	annotation=Callable[[], default=- kind=positional_or_keyword required=yes
+contract_tests.UserDirectoryContract.test_resolve_unknown_service_without_capability	async=no kind=method returns=
+contract_tests.UserDirectoryContract.test_resolve_unknown_service_without_capability(keystone_directory_factory)	annotation=Callable[[], default=- kind=positional_or_keyword required=yes
+contract_tests.UserDirectoryContract.test_resolve_unknown_user	async=no kind=method returns=
+contract_tests.UserDirectoryContract.test_resolve_unknown_user(keystone_directory_factory)	annotation=Callable[[], default=- kind=positional_or_keyword required=yes
+contract_tests.UserDirectoryContract.test_unavailable_ping_raises	async=no kind=method returns=
+contract_tests.UserDirectoryContract.test_unavailable_ping_raises(request)	annotation=pytest.FixtureRequest default=- kind=positional_or_keyword required=yes
+contract_tests.UserDirectoryContract.test_unavailable_resolve_raises	async=no kind=method returns=
+contract_tests.UserDirectoryContract.test_unavailable_resolve_raises(request)	annotation=pytest.FixtureRequest default=- kind=positional_or_keyword required=yes
+contract_tests.UserDirectoryContract.test_user_record_to_dict_keys	async=no kind=method returns=
+contract_tests.UserDirectoryContract.test_user_record_to_dict_keys(keystone_directory_factory)	annotation=Callable[[], default=- kind=positional_or_keyword required=yes
+login.oidc.OidcLoginProvider	kind=class
+login.oidc.OidcLoginProvider.aclose	async=yes kind=method returns=None
+login.oidc.OidcLoginProvider.begin	async=yes kind=method returns=LoginRedirect
+login.oidc.OidcLoginProvider.begin(callback_url)	annotation=str default=- kind=keyword_only required=yes
+login.oidc.OidcLoginProvider.begin(state)	annotation=str default=- kind=keyword_only required=yes
+login.oidc.OidcLoginProvider.complete	async=yes kind=method returns=LoginIdentity
+login.oidc.OidcLoginProvider.complete(attempt)	annotation=Mapping[str, default=- kind=keyword_only required=yes
+login.oidc.OidcLoginProvider.complete(callback_url)	annotation=str default=- kind=keyword_only required=yes
+login.oidc.OidcLoginProvider.complete(params)	annotation=Mapping[str, default=- kind=keyword_only required=yes
+login.oidc.OidcLoginProvider.config	kind=property returns=OidcProviderConfig
+login.oidc.OidcLoginProvider.interactive	kind=property returns=bool
+login.oidc.OidcLoginProvider.kind	kind=property returns=Literal['redirect']
+login.oidc.OidcLoginProvider.name	kind=property returns=str
+login.oidc.OidcLoginProvider.title	kind=property returns=str
+login.oidc.OidcLoginProvider.warm_up	async=yes kind=method returns=None
+login.oidc.OidcProviderConfig	kind=dataclass
 login.protocol.FormField	kind=dataclass
 login.protocol.FormLoginProvider	kind=protocol
 login.protocol.FormLoginProvider.form_fields	async=no kind=method returns=Sequence[FormField]

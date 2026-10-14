@@ -34,19 +34,28 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 - Metric `keystone_mcp_upstream_input_rounds_exceeded_total{namespace}`.
 - CI: the contract freeze gate now compares the public surface generated from the code — environment variables (found by AST), policy keys, CLI commands, plugin protocol signatures, built-in tool arguments, metrics and their labels — with a baseline generated from the `v0.5.0` tag.
 - Startup warnings W8–W19 (`docs/environment.md#startup-warnings`).
+- Plugin API: base classes `UserDirectoryBase`, `UserDirectoryAdminBase`, `ServiceAccountDirectoryBase`, `ApiKeyDirectoryBase`, `LoginProviderBase`, `RedirectLoginProviderBase`, `FormLoginProviderBase`; `keystone_mcp.user_directory.normalize_email`; `FakeTamper.unavailable`; marker `keystone_contract_lenient(reason=…)`; `docs/compatibility.md#plugin-api` lists the frozen plugin surface, including `OidcLoginProvider` and `OidcProviderConfig` as the base for OIDC plugins.
+
+### Changed
+
+- Keystone checks a plugin against the method list of the 0.5 protocols instead of `isinstance`; the startup error names missing methods. The plugin template depends on `keystone-mcp-gateway>=0.5,<2`.
+- Contract tests: a directory that declares `admin`, `service_accounts` or `api_keys` must run the matching contract class, and the availability tests are no longer skipped silently. In 0.5 a test class that mixed in only `UserDirectoryContract` passed without checking the administrator rules its directory claimed — a gap in the contract tests, fixed here. Opt out only with `@pytest.mark.keystone_contract_lenient(reason=...)`.
 
 ### Fixed
 
+- Contract test `test_provider_unavailable_on_complete` no longer touches a private field of the provider.
 - A hung stdio upstream with a call in flight is now detected within one ping interval of the third missed ping: calls in flight fail at once and the process is restarted; a single slow ping no longer restarts it.
 - A stdio upstream is reported available only once its catalog has been read; a process that comes up after a failed discovery is discovered immediately instead of on the next refresh tick.
 - Startup no longer spawns throwaway stdio processes for discovery; stdio processes start in parallel.
 
 ### Security
 
+- `KEYSTONE_MCP_USERS_BACKEND_CONFIG` refuses secret-like keys anywhere in the file (`client_secret`, `api_key`, `private_key`, keys inside lists), not only `secret`/`password`/`token` at mapping level.
 - Stdio upstream stderr is rate-limited and masked (the entry's own `env` values and well-known token formats).
 
 ### Migration
 
+- Plugin authors: change `keystone-mcp-gateway<0.6` to `<2`; mix in the contract class for every declared capability and add a `keystone_unavailable_directory_factory` fixture (or mark the class `keystone_contract_lenient` with a reason). Directory config files with inline secrets under keys like `client_secret` or inside lists now refuse startup: move the value to an environment variable and reference it with `<key>_env`.
 - A stdio upstream that blocks for more than ~35 s without answering pings is now restarted only after three missed pings (about a minute).
 
 ### Changed

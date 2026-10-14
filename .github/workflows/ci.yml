@@ -73,7 +73,7 @@ jobs:
 
       - name: Install plugin template and run contract tests
         run: |
-          uv pip install --python /tmp/tpl/bin/python --no-deps ./examples/plugin-template
+          uv pip install --python /tmp/tpl/bin/python ./examples/plugin-template
           cd examples/plugin-template && /tmp/tpl/bin/python -m pytest -q
 
       - name: List plugin entry points

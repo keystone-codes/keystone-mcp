@@ -33,6 +33,7 @@ class FakeUser:
 
 @dataclass
 class FakeTamper:
+    unavailable: bool = False
     wrong_nonce: bool = False
     bad_signature: bool = False
     wrong_issuer: str | None = None
@@ -48,6 +49,7 @@ class FakeTamper:
     rotate_key: bool = False
 
     def reset(self) -> None:
+        self.unavailable = False
         self.wrong_nonce = False
         self.bad_signature = False
         self.wrong_issuer = None
@@ -111,6 +113,11 @@ class FakeOidcIssuer:
         )
 
     def config(self, *, name: str = "fake", **overrides: Any) -> OidcProviderConfig:
+        """Build ``OidcProviderConfig`` for tests and extension authors.
+
+        Custom redirect providers that do not subclass ``OidcLoginProvider`` need
+        only ``issuer``, ``client_id``, ``client_secret``, and an HTTP client factory.
+        """
         base = {
             "name": name,
             "title": name.title(),
@@ -168,6 +175,8 @@ class FakeOidcIssuer:
 
     async def _discovery(self, request: Request) -> Response:
         del request
+        if self.tamper.unavailable:
+            return JSONResponse({"error": "unavailable"}, status_code=503)
         if self.tamper.discovery_status is not None:
             return JSONResponse({"error": "unavailable"}, status_code=self.tamper.discovery_status)
         issuer = self.tamper.discovery_issuer or self.issuer
@@ -192,6 +201,8 @@ class FakeOidcIssuer:
 
     async def _jwks(self, request: Request) -> Response:
         del request
+        if self.tamper.unavailable:
+            return JSONResponse({"error": "unavailable"}, status_code=503)
         return JSONResponse(self._jwks_dict())
 
     async def _authorize(self, request: Request) -> Response:
@@ -242,6 +253,8 @@ class FakeOidcIssuer:
         return derived == challenge
 
     async def _token(self, request: Request) -> Response:
+        if self.tamper.unavailable:
+            return JSONResponse({"error": "unavailable"}, status_code=503)
         if self.tamper.token_endpoint_status is not None:
             return JSONResponse(
                 {"error": "temporarily_unavailable"},

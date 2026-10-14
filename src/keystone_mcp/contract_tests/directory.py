@@ -24,9 +24,47 @@ from keystone_mcp.user_directory.types import service_subject
 
 _NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 _ALLOWED_CAPABILITIES = frozenset({"admin", "service_accounts", "api_keys"})
-_UNAVAILABLE_SKIP = (
-    "add a keystone_unavailable_directory_factory fixture to run availability contract tests"
+_UNAVAILABLE_FIXTURE_HINT = (
+    "add keystone_unavailable_directory_factory fixture to run availability contract tests"
 )
+
+
+def _contract_lenient_reason_for_class(cls: type | None) -> str | None:
+    if cls is None:
+        return None
+    marks = getattr(cls, "pytestmark", [])
+    if not isinstance(marks, list):
+        marks = [marks]
+    for mark in marks:
+        if mark.name == "keystone_contract_lenient":
+            reason = mark.kwargs.get("reason")
+            if reason is None and mark.args:
+                reason = mark.args[0]
+            if not str(reason or "").strip():
+                pytest.fail("keystone_contract_lenient needs a reason")
+            return str(reason)
+    return None
+
+
+def _contract_lenient_reason(request: pytest.FixtureRequest) -> str | None:
+    return _contract_lenient_reason_for_class(request.cls)
+
+
+def _require_capability_contract_class(
+    test_cls: type | None,
+    capability: str,
+    contract_cls: type,
+) -> None:
+    reason = _contract_lenient_reason_for_class(test_cls)
+    if reason:
+        pytest.skip(f"keystone_contract_lenient: {reason}")
+    cls = test_cls
+    if cls is None or not issubclass(cls, contract_cls):
+        pytest.fail(
+            f"directory declares {capability!r}: inherit {contract_cls.__name__} in "
+            f"{cls.__name__ if cls else '<class>'} (or mark the class "
+            "keystone_contract_lenient(reason=...))"
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,10 +112,14 @@ def _run(factory: Callable[[], Awaitable[UserDirectory]], body: Any) -> None:
     asyncio.run(_exercise())
 
 
-def _optional_unavailable_factory(request: pytest.FixtureRequest) -> Any:
-    if "keystone_unavailable_directory_factory" not in request.fixturenames:
-        pytest.skip(_UNAVAILABLE_SKIP)
-    return request.getfixturevalue("keystone_unavailable_directory_factory")
+def _require_unavailable_factory(request: pytest.FixtureRequest) -> Any:
+    reason = _contract_lenient_reason(request)
+    if reason:
+        pytest.skip(f"keystone_contract_lenient: {reason}")
+    try:
+        return request.getfixturevalue("keystone_unavailable_directory_factory")
+    except pytest.FixtureLookupError:
+        pytest.fail(_UNAVAILABLE_FIXTURE_HINT)
 
 
 def _person(email: str) -> ContractPerson:
@@ -91,8 +133,11 @@ class UserDirectoryContract:
     pytestmark = pytest.mark.keystone_contract
 
     def test_name_and_capabilities(
-        self, keystone_directory_factory: Callable[[], Awaitable[UserDirectory]]
+        self,
+        keystone_directory_factory: Callable[[], Awaitable[UserDirectory]],
     ):
+        test_cls = type(self)
+
         async def body(directory: UserDirectory) -> None:
             assert _NAME_RE.fullmatch(directory.name), (
                 f"directory name {directory.name!r} must match {_NAME_RE.pattern}"
@@ -101,11 +146,13 @@ class UserDirectoryContract:
                 f"unknown capabilities: {directory.capabilities - _ALLOWED_CAPABILITIES}"
             )
             if "admin" in directory.capabilities:
-                assert isinstance(directory, UserDirectoryAdmin)
+                _require_capability_contract_class(test_cls, "admin", AdminDirectoryContract)
             if "service_accounts" in directory.capabilities:
-                assert isinstance(directory, ServiceAccountDirectory)
+                _require_capability_contract_class(
+                    test_cls, "service_accounts", ServiceAccountDirectoryContract
+                )
             if "api_keys" in directory.capabilities:
-                assert isinstance(directory, ApiKeyDirectory)
+                _require_capability_contract_class(test_cls, "api_keys", ApiKeyDirectoryContract)
 
         _run(keystone_directory_factory, body)
 
@@ -264,7 +311,7 @@ class UserDirectoryContract:
         self,
         request: pytest.FixtureRequest,
     ):
-        factory = _optional_unavailable_factory(request)
+        factory = _require_unavailable_factory(request)
 
         async def body(directory: UserDirectory) -> None:
             try:
@@ -286,7 +333,7 @@ class UserDirectoryContract:
         self,
         request: pytest.FixtureRequest,
     ):
-        factory = _optional_unavailable_factory(request)
+        factory = _require_unavailable_factory(request)
 
         async def body(directory: UserDirectory) -> None:
             try:

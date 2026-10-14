@@ -10,13 +10,13 @@ from typing import Any
 import yaml
 
 from keystone_mcp.plugins import PluginContext
+from keystone_mcp.user_directory import UserDirectoryBase, normalize_email
 from keystone_mcp.user_directory.types import UserRecord, UserResolveResult
-from keystone_mcp.user_directory.util import normalize_email
 
 _EPOCH = datetime(2026, 1, 1, tzinfo=UTC)
 
 
-class StaticFileUserDirectory:
+class StaticFileUserDirectory(UserDirectoryBase):
     """Read-only directory that loads people from a YAML list."""
 
     def __init__(self, people: list[dict[str, Any]]) -> None:

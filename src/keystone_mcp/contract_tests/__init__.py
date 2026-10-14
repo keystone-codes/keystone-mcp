@@ -44,6 +44,11 @@ def pytest_configure(config: pytest.Config) -> None:
         "markers",
         "keystone_contract: Keystone-MCP extension contract test",
     )
+    config.addinivalue_line(
+        "markers",
+        "keystone_contract_lenient(reason): opt out of capability/contract-class "
+        "match and mandatory availability tests; reason is required",
+    )
 
 
 @pytest.fixture

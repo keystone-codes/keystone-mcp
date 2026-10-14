@@ -255,8 +255,7 @@ class PolicyStore:
                         os.close(fd)
                         raise PolicyChangeError(
                             "policy_conflict",
-                            "another writer holds the policy file lock; "
-                            "call policy_read and retry",
+                            "another writer holds the policy file lock; call policy_read and retry",
                         )
                     time.sleep(0.05)
 
@@ -580,9 +579,7 @@ class PolicyStore:
             raise _WriteFailed(f"policy file could not be written: {exc.strerror}") from exc
 
         try:
-            reload_result = await asyncio.to_thread(
-                self.policy_manager.reload, self.registry
-            )
+            reload_result = await asyncio.to_thread(self.policy_manager.reload, self.registry)
         except OSError as exc:
             with contextlib.suppress(OSError):
                 await asyncio.to_thread(_atomic_write, path, raw_bytes, mode_from=path)
@@ -598,9 +595,7 @@ class PolicyStore:
 
         identity = self.policy_manager.identity
         content_hash_after = (
-            identity.content_hash
-            if identity is not None
-            else hash_policy_bytes(new_bytes)
+            identity.content_hash if identity is not None else hash_policy_bytes(new_bytes)
         )
         return PolicyChangeResult(
             changed=True,
@@ -655,9 +650,7 @@ class PolicyStore:
             raise _WriteFailed(f"policy file could not be written: {exc.strerror}") from exc
 
         try:
-            reload_result = await asyncio.to_thread(
-                self.policy_manager.reload, self.registry
-            )
+            reload_result = await asyncio.to_thread(self.policy_manager.reload, self.registry)
         except OSError as exc:
             with contextlib.suppress(OSError):
                 await asyncio.to_thread(_atomic_write, path, current_bytes, mode_from=path)
@@ -784,9 +777,7 @@ class PolicyStore:
                 warnings_count=warnings_count,
             )
         except Exception:  # pragma: no cover - audit must never break a mutation
-            logger.warning(
-                "rbac policy mutation observability failed", exc_info=True
-            )
+            logger.warning("rbac policy mutation observability failed", exc_info=True)
 
 
 def _is_writable(path: Path) -> bool:

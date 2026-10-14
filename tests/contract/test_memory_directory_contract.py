@@ -27,5 +27,6 @@ def keystone_directory_factory() -> Callable[[], Awaitable[UserDirectory]]:
     return factory
 
 
+@pytest.mark.keystone_contract_lenient(reason="in-memory directory cannot be unavailable")
 class TestMemoryDirectory(AdminDirectoryContract, ServiceAccountDirectoryContract):
     pass

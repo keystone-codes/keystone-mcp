@@ -181,9 +181,7 @@ class OidcLoginProviderContract:
             provider = keystone_oidc_provider
             redirect = await provider.begin(state="s", callback_url="http://app.test/cb")
             params = await fake_oidc_issuer.authorize(redirect.url)
-            if hasattr(provider, "_discovery_cache"):
-                provider._discovery_cache = None
-            fake_oidc_issuer.tamper.discovery_status = 503
+            fake_oidc_issuer.tamper.unavailable = True
             with pytest.raises(LoginRejected) as exc:
                 await provider.complete(
                     params=params, callback_url="http://app.test/cb", attempt=redirect.attempt

@@ -37,7 +37,6 @@ def keystone_oidc_provider_factory() -> Callable[[FakeOidcIssuer], RedirectLogin
         return ExampleOidcProvider(
             issuer.config(name="example-oidc", title="Example OIDC", groups_claim="roles"),
             http_client_factory=issuer.http_client,
-            cache_ttl_seconds=0.0,
         )
 
     return factory

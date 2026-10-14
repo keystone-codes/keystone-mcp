@@ -94,7 +94,12 @@ async def test_local_and_http_satisfy_admin_protocol(tmp_path: Path) -> None:
 
 
 def test_declared_admin_without_methods_is_refused() -> None:
-    with pytest.raises(ConfigError, match="declares 'admin'"):
+    with pytest.raises(ConfigError, match="grant_role"):
+        validate_directory_capabilities(_AdminlessDirectory())
+
+
+def test_missing_admin_methods_are_named() -> None:
+    with pytest.raises(ConfigError, match="grant_role"):
         validate_directory_capabilities(_AdminlessDirectory())
 
 

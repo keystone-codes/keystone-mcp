@@ -29,10 +29,14 @@ SECTIONS = (
 
 PYTHON_SURFACE = (
     "keystone_mcp.login.protocol",
+    "keystone_mcp.login.base",
+    "keystone_mcp.login.oidc",
     "keystone_mcp.user_directory.protocol",
+    "keystone_mcp.user_directory.base",
     "keystone_mcp.user_directory.types",
     "keystone_mcp.user_directory.errors",
     "keystone_mcp.plugins",
+    "keystone_mcp.contract_tests",
 )
 
 
@@ -239,7 +243,11 @@ def _member_rows(module_name: str, cls: type) -> dict[str, str]:
 def generate_protocols(_src_root: Path) -> dict[str, str]:
     rows: dict[str, str] = {}
     for module_name in PYTHON_SURFACE:
-        module = importlib.import_module(module_name)
+        try:
+            module = importlib.import_module(module_name)
+        except ModuleNotFoundError:
+            rows[f"# module {module_name} absent in source"] = ""
+            continue
         for name in _module_public_names(module):
             obj = getattr(module, name)
             if inspect.isclass(obj):

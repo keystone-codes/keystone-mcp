@@ -65,3 +65,4 @@ Keep each record under roughly 80 lines. Use short sentences and present tense.
 | [0010](0010-fastmcp-major-version.md) | Why Keystone runs on fastmcp 4 | Accepted (0.5.0) |
 | [0011](0011-rbac-by-name-for-prompts-and-resources.md) | Prompts and resources are authorised by name with the tool patterns | Accepted (0.5.0) |
 | [0012](0012-stdio-upstreams-run-unsandboxed.md) | A stdio upstream is trusted like Keystone itself | Accepted (0.5.0) |
+| [0014](0014-plugin-protocols-grow-by-new-protocols.md) | Plugin protocols stay fixed until 2.0; new capabilities use new optional protocols | Accepted (0.6.0) |

@@ -4,12 +4,12 @@ version = "0.1.0"
 description = "Example Keystone-MCP plugin with contract tests"
 requires-python = ">=3.11"
 dependencies = [
-    "keystone-mcp-gateway>=0.5,<0.6",
+    "keystone-mcp-gateway>=0.5,<2",
     "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
-test = ["keystone-mcp-gateway[contract-tests]>=0.5,<0.6"]
+test = ["keystone-mcp-gateway[contract-tests]>=0.5,<2"]
 
 [project.entry-points."keystone_mcp.user_directories"]
 static-file = "keystone_plugin_example.directory:create_directory"

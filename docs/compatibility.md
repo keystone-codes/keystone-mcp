@@ -330,12 +330,40 @@ Frozen since 0.5.0.
 
 | Mechanism | Contract |
 |---|---|
-| `LoginProvider` protocols (`RedirectLoginProvider`, `FormLoginProvider`) | Module `keystone_mcp.login.protocol`; adding a method with a default implementation is not breaking; a new required method or signature change requires a major release |
+| `LoginProvider` protocols (`RedirectLoginProvider`, `FormLoginProvider`) | Module `keystone_mcp.login.protocol`; see [Plugin API](#plugin-api) |
 | `LoginIdentity` | `LoginIdentity` gained optional `key_id`, `key_expires_at` in 0.6.0 (additive; providers that do not set them are unaffected) |
 | `UserDirectory` and related protocols | Module `keystone_mcp.user_directory.protocol`; optional `ApiKeyIdIndex` (since 0.6.0) |
 | Entry point group `keystone_mcp.login_providers` | Built-in: `oidc`, `google`, `api_key` |
 | Entry point group `keystone_mcp.user_directories` | Built-in: `local`, `http` |
 | Pytest plugin `keystone_mcp.contract_tests` | Contract tests for providers and directories (`pytest -p keystone_mcp.contract_tests`, optional extra `contract-tests`) |
+
+## Plugin API
+
+Frozen since 0.6.0 for names listed here; login and user-directory **protocols** in
+`keystone_mcp.login.protocol` and `keystone_mcp.user_directory.protocol` are frozen
+since 0.5.0 (member names and signatures until 2.0).
+
+**Frozen surface:** protocol classes above; `keystone_mcp.plugins.{PluginContext,
+LoginProviderConfig, LoginProviderFactory, UserDirectoryFactory, PluginConflictError}`;
+`keystone_mcp.user_directory.types` and `.errors`; `keystone_mcp.user_directory.normalize_email`;
+base classes in `keystone_mcp.user_directory.base` and `keystone_mcp.login.base`;
+`keystone_mcp.login.oidc.{OidcLoginProvider, OidcProviderConfig}` as the OIDC plugin base;
+classes and fixtures in `keystone_mcp.contract_tests` (including `FakeTamper.unavailable`).
+
+**Growth rule:** The 0.5 protocols never gain members before 2.0. A new capability
+arrives as a new optional protocol (and, for directories, a new `capabilities` value);
+Keystone uses it only when a plugin implements it. New dataclass fields always have
+defaults. Base classes provide defaults for new optional protocols; inheriting them is
+optional.
+
+**Validation:** Keystone checks a plugin against the frozen 0.5 method list
+(`PROTOCOL_MEMBERS_0_5`), not `isinstance`; startup errors name missing methods.
+
+**Contract tests (since 0.6.0):** A test class must inherit the contract class for every
+declared directory capability; availability tests require
+`keystone_unavailable_directory_factory` (or
+`@pytest.mark.keystone_contract_lenient(reason=…)` on the class). Other 0.5.0 contract
+checks are unchanged; new checks ship in separate opt-in classes.
 
 ## Observability
 
