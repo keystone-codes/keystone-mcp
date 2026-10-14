@@ -17,6 +17,8 @@ find there, not just the file name.
 ## I build an agent application or a service behind Keystone-MCP
 
 - [Connect an MCP client](clients.md) — Claude Code, Cursor, Claude Desktop
+- [Release checklist — tested clients](clients-checklist.md) — verify clients
+  before each release
 - [Connect your service](connecting-services.md) — the contract an upstream
   MCP service has to meet
 - [How sections, discovery and the proxy work](facade.md)

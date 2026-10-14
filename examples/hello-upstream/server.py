@@ -32,8 +32,10 @@ import json
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from typing import Any
 
+import anyio
 import uvicorn
 
 # Copied verbatim from examples/keystone-identity/python/keystone_identity.py
@@ -49,6 +51,11 @@ from starlette.applications import Starlette
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 from starlette.types import Receive, Scope, Send
+
+try:
+    from mcp_types.version import MODERN_PROTOCOL_VERSIONS
+except ImportError:  # pragma: no cover -- MCP SDK 1.x in the demo image
+    MODERN_PROTOCOL_VERSIONS = frozenset()
 
 HOST = "0.0.0.0"
 PORT = 8081
@@ -91,6 +98,27 @@ SEARCH_SCHEMA: dict[str, Any] = {
     "required": ["query", "filter"],
 }
 
+SLOW_COUNT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "n": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 120,
+            "description": "Count up to n, reporting progress once per second",
+        },
+    },
+    "required": ["n"],
+}
+
+ASK_NAME_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "name": {"type": "string", "description": "Your name"},
+    },
+    "required": ["name"],
+}
+
 _EMPTY_SCHEMA: dict[str, Any] = {"type": "object", "properties": {}}
 
 _TOOLS: list[types.Tool] = [
@@ -101,13 +129,47 @@ _TOOLS: list[types.Tool] = [
         description="Return the verified caller identity, if X-Keystone-Identity checking is on.",
         inputSchema=_EMPTY_SCHEMA,
     ),
+    types.Tool(
+        name="slow_count",
+        description="Count up to n with progress notifications; respects cancellation.",
+        inputSchema=SLOW_COUNT_SCHEMA,
+    ),
+    types.Tool(
+        name="ask_name",
+        description="Ask the connected client for a name via form elicitation when supported.",
+        inputSchema=_EMPTY_SCHEMA,
+    ),
 ]
+
+
+@dataclass
+class _ToolCtx:
+    session: Any
+    meta: Any
+    call_meta: Any
+    request_id: Any
+    protocol_version: str
+    params: Any
+    headers: dict[str, str]
 
 
 def _headers_from_request(request: Any) -> dict[str, str]:
     if request is None:
         return {}
     return {k.lower(): v for k, v in request.headers.items()}
+
+
+def _progress_token(*sources: Any) -> Any:
+    for meta in sources:
+        if meta is None:
+            continue
+        if isinstance(meta, dict):
+            token = meta.get("progressToken") or meta.get("progress_token")
+        else:
+            token = getattr(meta, "progress_token", None) or getattr(meta, "progressToken", None)
+        if token is not None:
+            return token
+    return None
 
 
 def _verify_identity(headers: dict[str, str]) -> KeystoneIdentity | None:
@@ -182,16 +244,140 @@ def _whoami(headers: dict[str, str]) -> str:
     )
 
 
-def _run_tool(
-    name: str, arguments: dict[str, Any], headers: dict[str, str]
-) -> list[types.ContentBlock]:
+def _client_supports_elicitation(session: Any) -> bool:
+    if session is None:
+        return False
+    return session.check_client_capability(
+        types.ClientCapabilities(
+            elicitation=types.ElicitationCapability(
+                form=types.FormElicitationCapability(),
+            )
+        )
+    )
+
+
+def _format_elicit_answer(result: types.ElicitResult) -> str:
+    content = result.content
+    if isinstance(content, dict):
+        payload = json.dumps(content, sort_keys=True)
+    elif content is None:
+        payload = ""
+    else:
+        payload = str(content)
+    return f"answer={result.action}:{payload}"
+
+
+async def _slow_count(arguments: dict[str, Any], ctx: _ToolCtx | None) -> list[types.ContentBlock]:
+    n = int(arguments["n"])
+    token = _progress_token(
+        *((
+            ctx.call_meta,
+            ctx.meta,
+        )
+        if ctx
+        else ())
+    )
+    try:
+        for i in range(1, n + 1):
+            if token is not None and ctx and ctx.session is not None:
+                await ctx.session.report_progress(i, n, f"tick {i}/{n}")
+            await anyio.sleep(1)
+    except anyio.get_cancelled_exc_class():
+        raise
+    return [types.TextContent(type="text", text=f"counted to {n}")]
+
+
+async def _ask_name(ctx: _ToolCtx | None) -> list[types.ContentBlock] | types.InputRequiredResult:
+    if ctx is None or ctx.session is None:
+        return [types.TextContent(type="text", text="elicitation not available in this SDK")]
+
+    if not _client_supports_elicitation(ctx.session):
+        return [types.TextContent(type="text", text="no-elicitation")]
+
+    message = "What is your name?"
+    modern = ctx.protocol_version in MODERN_PROTOCOL_VERSIONS
+    if modern and ctx.params is not None:
+        if ctx.params.input_responses is None:
+            request = types.ElicitRequest(
+                params=types.ElicitRequestFormParams(
+                    message=message,
+                    requested_schema=ASK_NAME_SCHEMA,
+                )
+            )
+            return types.InputRequiredResult(input_requests={"name": request})
+        response = ctx.params.input_responses.get("name")
+        if not isinstance(response, types.ElicitResult):
+            return [types.TextContent(type="text", text="no-answer")]
+        return [types.TextContent(type="text", text=_format_elicit_answer(response))]
+
+    elicit_form = getattr(ctx.session, "elicit_form", None)
+    if elicit_form is not None:
+        result = await elicit_form(
+            message,
+            ASK_NAME_SCHEMA,
+            related_request_id=ctx.request_id,
+        )
+        return [types.TextContent(type="text", text=_format_elicit_answer(result))]
+
+    elicit = getattr(ctx.session, "elicit", None)
+    if elicit is not None:
+        result = await elicit(message, ASK_NAME_SCHEMA)
+        return [types.TextContent(type="text", text=_format_elicit_answer(result))]
+
+    return [types.TextContent(type="text", text="elicitation not available in this SDK")]
+
+
+async def _run_tool(
+    name: str,
+    arguments: dict[str, Any],
+    headers: dict[str, str],
+    *,
+    ctx: _ToolCtx | None = None,
+) -> list[types.ContentBlock] | types.InputRequiredResult:
     if name == "greet":
         return [types.TextContent(type="text", text=_greet(arguments, headers))]
     if name == "search":
         return [types.TextContent(type="text", text=_search(arguments))]
     if name == "whoami":
         return [types.TextContent(type="text", text=_whoami(headers))]
+    if name == "slow_count":
+        return await _slow_count(arguments, ctx)
+    if name == "ask_name":
+        return await _ask_name(ctx)
     raise ValueError(f"unknown tool: {name}")
+
+
+def _tool_ctx_from_server_request(server: Server, headers: dict[str, str]) -> _ToolCtx | None:
+    rc = getattr(server, "request_context", None)
+    if rc is None:
+        return None
+    session = getattr(rc, "session", None)
+    params = getattr(rc, "params", None)
+    call_meta = None
+    if params is not None:
+        call_meta = getattr(params, "meta", None) or getattr(params, "_meta", None)
+    return _ToolCtx(
+        session=session,
+        meta=getattr(rc, "meta", None),
+        call_meta=call_meta,
+        request_id=getattr(rc, "request_id", None),
+        protocol_version=getattr(rc, "protocol_version", ""),
+        params=params,
+        headers=headers,
+    )
+
+
+def _tool_ctx_from_handler(ctx: Any, headers: dict[str, str], params: Any) -> _ToolCtx:
+    call_meta = getattr(params, "meta", None) or getattr(params, "_meta", None)
+    return _ToolCtx(
+        session=getattr(ctx, "session", None),
+        meta=getattr(ctx, "meta", None),
+        call_meta=call_meta,
+        request_id=getattr(ctx, "request_id", None),
+        protocol_version=getattr(ctx, "protocol_version", ""),
+        params=params,
+        headers=headers,
+    )
 
 
 def _build_server() -> Server:
@@ -209,7 +395,12 @@ def _build_server() -> Server:
         @server.call_tool()
         async def _call_tool(name: str, arguments: dict[str, Any]) -> list[types.ContentBlock]:
             request = server.request_context.request
-            return _run_tool(name, arguments, _headers_from_request(request))
+            headers = _headers_from_request(request)
+            tool_ctx = _tool_ctx_from_server_request(server, headers)
+            result = await _run_tool(name, arguments, headers, ctx=tool_ctx)
+            if isinstance(result, types.InputRequiredResult):
+                raise ValueError("elicitation not available in this SDK")
+            return result
 
         return server
 
@@ -220,16 +411,21 @@ def _build_server() -> Server:
     async def _on_list_tools(_ctx: Any, _params: Any) -> types.ListToolsResult:
         return types.ListToolsResult(tools=_TOOLS)
 
-    async def _on_call_tool(ctx: Any, params: Any) -> types.CallToolResult:
+    async def _on_call_tool(
+        ctx: Any, params: Any
+    ) -> types.CallToolResult | types.InputRequiredResult:
         headers = _headers_from_request(getattr(ctx, "request", None))
+        tool_ctx = _tool_ctx_from_handler(ctx, headers, params)
         try:
-            content = _run_tool(params.name, params.arguments or {}, headers)
+            result = await _run_tool(params.name, params.arguments or {}, headers, ctx=tool_ctx)
         except Exception as exc:  # noqa: BLE001 -- mirrors SDK 1.x's auto-wrap
             return types.CallToolResult(
                 content=[types.TextContent(type="text", text=str(exc))],
                 is_error=True,
             )
-        return types.CallToolResult(content=content)
+        if isinstance(result, types.InputRequiredResult):
+            return result
+        return types.CallToolResult(content=result)
 
     return Server("hello-upstream", on_list_tools=_on_list_tools, on_call_tool=_on_call_tool)
 

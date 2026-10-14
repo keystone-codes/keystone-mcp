@@ -29,6 +29,50 @@ body:
       required: false
 
   - type: dropdown
+    id: client
+    attributes:
+      label: MCP client
+      description: Which client connected to Keystone-MCP.
+      options:
+        - Claude Code
+        - Claude Desktop (connector)
+        - Claude Desktop (mcp-remote)
+        - Cursor
+        - MCP Inspector
+        - Other / own code
+    validations:
+      required: true
+
+  - type: input
+    id: client_version
+    attributes:
+      label: Client version
+      description: e.g. Claude Code 2.x — see the client's About or `--version`.
+      placeholder: e.g. Cursor 0.45.0
+    validations:
+      required: true
+
+  - type: input
+    id: mcp_protocol
+    attributes:
+      label: MCP protocol version (optional)
+      description: Shown in the Keystone-MCP log line for the session, if you have access.
+      placeholder: e.g. 2026-07-28
+    validations:
+      required: false
+
+  - type: dropdown
+    id: deployment_profile
+    attributes:
+      label: Deployment profile
+      options:
+        - local
+        - production
+        - don't know
+    validations:
+      required: false
+
+  - type: dropdown
     id: environment
     attributes:
       label: How are you running it?

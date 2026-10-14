@@ -12,6 +12,10 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 - Metric `keystone_mcp_admin_refusals_total`; audit field `actor_subject_type` on `rbac_policy_mutation`.
 - `LoginIdentity.key_id` and `LoginIdentity.key_expires_at` (optional) for form providers that sign people in with a Keystone API key.
+- `docs/clients.md` lists the client versions tested with this release and known
+  client behaviour; `docs/clients-checklist.md` is the release check. The bug
+  report template asks for the client and its version. The demo upstream has a
+  progress tool and an elicitation tool.
 
 ### Changed
 
