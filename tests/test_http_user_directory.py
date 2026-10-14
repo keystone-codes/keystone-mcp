@@ -16,13 +16,21 @@ from typing import Any
 import httpx
 import pytest
 
+from keystone_mcp.user_directory.cache import ApiKeyVerificationCache, ResolutionCache
+from keystone_mcp.user_directory.circuit_breaker import CircuitBreaker
 from keystone_mcp.user_directory.errors import (
     DirectoryTimeoutError,
+    UserDirectoryUnavailableError,
     UsersError,
     UsersStoreUnavailableError,
 )
-from keystone_mcp.user_directory.http import HttpUserDirectory
+from keystone_mcp.user_directory.http import (
+    HttpUserDirectory,
+    reset_directory_response_issue_warnings,
+)
 from keystone_mcp.user_directory.local import LocalUserDirectory
+from keystone_mcp.user_directory.resolver import CachedUserDirectoryResolver
+from keystone_mcp.user_directory.revision import InMemoryRevisionReader
 from support.fake_users_service import build_fake_users_service
 from support.users_store import make_users_store
 
@@ -411,4 +419,153 @@ async def test_list_users_is_blocked_none_requests_all() -> None:
     directory = _directory_with_handler(handler)
     await directory.list_users(is_blocked=None)
     assert "is_blocked" not in captured["params"]
+    await directory.aclose()
+
+
+def _metric_value(field: str, issue: str) -> float | None:
+    from prometheus_client import REGISTRY
+
+    return REGISTRY.get_sample_value(
+        "keystone_mcp_users_directory_response_issues_total",
+        {"field": field, "issue": issue},
+    )
+
+
+@pytest.mark.asyncio
+async def test_resolve_exists_string_is_unavailable() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"exists": "false", "roles": ["administrator"], "is_blocked": False},
+        )
+
+    directory = _directory_with_handler(handler)
+    with pytest.raises(UserDirectoryUnavailableError) as exc_info:
+        await directory.resolve_user("user@example.com")
+    assert exc_info.value.code == "catalog_unavailable"
+    await directory.aclose()
+
+
+@pytest.mark.asyncio
+async def test_resolve_missing_exists_is_unavailable() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"roles": [], "is_blocked": False})
+
+    directory = _directory_with_handler(handler)
+    with pytest.raises(UserDirectoryUnavailableError):
+        await directory.resolve_user("user@example.com")
+    await directory.aclose()
+
+
+@pytest.mark.asyncio
+async def test_resolve_exists_integer_is_accepted_with_warning(caplog) -> None:
+    reset_directory_response_issue_warnings()
+    before = _metric_value("exists", "integer") or 0.0
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"exists": 1, "roles": ["member"], "is_blocked": 0})
+
+    directory = _directory_with_handler(handler)
+    with caplog.at_level("WARNING", logger="keystone_mcp.user_directory.http"):
+        first = await directory.resolve_user("user@example.com")
+        second = await directory.resolve_user("user@example.com")
+    assert first.exists is True
+    assert first.is_blocked is False
+    assert second.exists is True
+    integer_warnings = [
+        r.message
+        for r in caplog.records
+        if r.levelname == "WARNING" and "exists is integer" in r.message
+    ]
+    assert len(integer_warnings) == 1
+    after = _metric_value("exists", "integer") or 0.0
+    assert after - before == 2.0
+    await directory.aclose()
+
+
+@pytest.mark.asyncio
+async def test_resolve_missing_is_blocked_warns_once(caplog) -> None:
+    reset_directory_response_issue_warnings()
+    before = _metric_value("is_blocked", "missing") or 0.0
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"exists": True, "roles": ["member"]})
+
+    directory = _directory_with_handler(handler)
+    with caplog.at_level("WARNING", logger="keystone_mcp.user_directory.http"):
+        first = await directory.resolve_user("user@example.com")
+        await directory.resolve_user("user@example.com")
+    assert first.is_blocked is False
+    missing_warnings = [
+        r.message
+        for r in caplog.records
+        if r.levelname == "WARNING" and "is_blocked is missing" in r.message
+    ]
+    assert len(missing_warnings) == 1
+    after = _metric_value("is_blocked", "missing") or 0.0
+    assert after - before == 2.0
+    await directory.aclose()
+
+
+@pytest.mark.asyncio
+async def test_resolve_roles_with_null_is_unavailable() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"exists": True, "roles": [None], "is_blocked": False})
+
+    directory = _directory_with_handler(handler)
+    with pytest.raises(UserDirectoryUnavailableError):
+        await directory.resolve_user("user@example.com")
+    await directory.aclose()
+
+
+@pytest.mark.asyncio
+async def test_resolve_subject_type_read_and_checked() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"exists": True, "roles": ["member"], "is_blocked": False})
+
+    directory = _directory_with_handler(handler)
+    human = await directory.resolve_user("user@example.com")
+    assert human.subject_type == "human"
+
+    def service_mismatch(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "exists": True,
+                "roles": ["member"],
+                "is_blocked": False,
+                "subject_type": "service",
+            },
+        )
+
+    bad = _directory_with_handler(service_mismatch)
+    with pytest.raises(UserDirectoryUnavailableError):
+        await bad.resolve_user("user@example.com")
+    await bad.aclose()
+    await directory.aclose()
+
+
+@pytest.mark.asyncio
+async def test_resolve_invalid_responses_trip_circuit_breaker() -> None:
+    reset_directory_response_issue_warnings()
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"exists": "false", "roles": [], "is_blocked": False})
+
+    directory = _directory_with_handler(handler)
+    resolver = CachedUserDirectoryResolver(
+        directory,
+        revision_reader=InMemoryRevisionReader(),
+        cache=ResolutionCache(allow_ttl_seconds=60, deny_ttl_seconds=30),
+        circuit_breaker=CircuitBreaker(failure_threshold=2, recovery_seconds=30),
+        api_key_cache=ApiKeyVerificationCache(allow_ttl_seconds=60, deny_ttl_seconds=30),
+    )
+    for _ in range(2):
+        with pytest.raises(UserDirectoryUnavailableError) as exc_info:
+            await resolver.resolve("user@example.com")
+        assert exc_info.value.code == "catalog_unavailable"
+    with pytest.raises(UserDirectoryUnavailableError) as exc_info:
+        await resolver.resolve("user@example.com")
+    assert exc_info.value.code == "circuit_open"
+    await resolver.aclose()
     await directory.aclose()

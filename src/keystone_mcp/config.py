@@ -932,6 +932,9 @@ class Settings:
     users_service_timeout_seconds: float = field(
         default_factory=lambda: _env_float("KEYSTONE_MCP_USERS_SERVICE_TIMEOUT_SECONDS", 3.0)
     )
+    users_service_allow_insecure_http: bool = field(
+        default_factory=lambda: _env_bool("KEYSTONE_MCP_USERS_SERVICE_ALLOW_INSECURE_HTTP", False)
+    )
     users_cache_allow_ttl_seconds: int = field(
         default_factory=lambda: _env_int("KEYSTONE_MCP_USERS_CACHE_ALLOW_TTL_SECONDS", 60)
     )
@@ -1498,6 +1501,22 @@ def startup_warnings(settings: Settings, *, environ: Mapping[str, str] | None = 
                 "KEYSTONE_MCP_UPSTREAM_ALLOW_INSECURE_HTTP=true: upstream calls "
                 "are not encrypted; keep upstreams on a private network"
             )
+        # W20
+        users_url = settings.users_service_url.strip()
+        if settings.users_backend == "http" and users_url:
+            users_parsed = urlparse(users_url)
+            users_host = (users_parsed.hostname or "").lower()
+            if (
+                users_parsed.scheme == "http"
+                and not _is_loopback_host(users_host)
+                and not settings.users_service_allow_insecure_http
+            ):
+                warnings.append(
+                    "KEYSTONE_MCP_USERS_SERVICE_URL uses http: the users directory token "
+                    "and every answer about roles travel unencrypted. Use https, or set "
+                    "KEYSTONE_MCP_USERS_SERVICE_ALLOW_INSECURE_HTTP=true if the directory "
+                    "is on a private network you trust."
+                )
         # W3
         if settings.upstream_egress_allow_private:
             warnings.append(

@@ -16,6 +16,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
   client behaviour; `docs/clients-checklist.md` is the release check. The bug
   report template asks for the client and its version. The demo upstream has a
   progress tool and an elicitation tool.
+- `KEYSTONE_MCP_USERS_SERVICE_ALLOW_INSECURE_HTTP`; production warning for an `http://` users directory; metric `keystone_mcp_users_directory_response_issues_total`; OIDC option `email_verified_claim`.
 
 ### Changed
 
@@ -34,6 +35,9 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 ### Security
 
 - Release images are scanned by Trivy per platform (amd64 and arm64) on the exact digest that is then tagged; base images are pinned by digest and updated by Dependabot.
+- The HTTP users directory's `resolve` answer is checked strictly: a non-boolean `exists`, `is_blocked` or a non-string role is treated as the directory being unavailable instead of granting access. `0`/`1` are still accepted with a warning; a missing `is_blocked` is read as `false` with a warning.
+- A sign-in e-mail whose characters become ASCII letters only after lower-casing or Unicode normalisation is refused.
+- An OIDC provider with `email_claim` other than `email` must name the claim that confirms it (`email_verified_claim`) while `require_email_verified` is on.
 
 ### Migration
 
@@ -41,6 +45,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 - Sessions opened on 0.4.x/0.5.x keep working after the upgrade. Rolling back to 0.5.x keeps sessions opened on 0.6.0: 0.5.x ignores the new marker fields. While replicas of both versions run side by side, a session renewed by a 0.5.x replica loses the new fields again; session max-age and key checks apply once every replica runs 0.6.0.
 - Each list request now uses one slot of `KEYSTONE_MCP_THROTTLE_MAX` (default 120 per 60 s). If a client lists very often, raise the limit. Metric series for names that are not published are now reported as `tool="unknown"`.
 - Startup refusals (`KEYSTONE_MCP_UPSTREAM_REQUIRE_ALL=true` with an unavailable upstream, an invalid policy) still exit with code 1 and the same message, but after `/healthz` has started answering — rely on `/readyz`, not on the port being open, to know the replica is ready.
+- An HTTP users directory that answers `exists`/`is_blocked` with strings stops working — return JSON booleans. A providers file with `email_claim` other than `email` and `require_email_verified` on fails to load until `email_verified_claim` is set (or `require_email_verified: false` with `allowed_domains`). Run `keystone-mcp config check` before upgrading.
 
 ## [0.5.0] - 2026-10-13
 

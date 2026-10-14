@@ -69,7 +69,7 @@ from keystone_mcp.observability.service import RbacObservability
 from keystone_mcp.user_directory.errors import UserDirectoryUnavailableError
 from keystone_mcp.user_directory.protocol import UserDirectoryResolver
 from keystone_mcp.user_directory.types import subject_type_of
-from keystone_mcp.user_directory.util import normalize_email
+from keystone_mcp.user_directory.util import email_folds_to_ascii, normalize_email
 
 logger = logging.getLogger(__name__)
 
@@ -863,6 +863,11 @@ class KeystoneOAuthProvider(OAuthProvider):
                 "login provider %s reported provider=%r; refusing the sign-in",
                 route_name,
                 identity.provider,
+            )
+            return None
+        if email_folds_to_ascii(identity.email):
+            logger.warning(
+                "login identity email contains characters that fold to ASCII; refusing the sign-in"
             )
             return None
         normalized = replace(identity, email=normalize_email(identity.email))

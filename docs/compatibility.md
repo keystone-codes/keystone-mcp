@@ -87,6 +87,7 @@ in [environment.md](environment.md). This page names what is frozen.
 | `KEYSTONE_MCP_USERS_CIRCUIT_RECOVERY_SECONDS` | 0.5.0 | stable |
 | `KEYSTONE_MCP_USERS_DB_URL` | 0.5.0 | stable |
 | `KEYSTONE_MCP_USERS_REDIS_REVISION_KEY` | 0.5.0 | stable |
+| `KEYSTONE_MCP_USERS_SERVICE_ALLOW_INSECURE_HTTP` | 0.6.0 | stable |
 | `KEYSTONE_MCP_USERS_SERVICE_TIMEOUT_SECONDS` | 0.5.0 | deprecated (since 0.5.0, use KEYSTONE_MCP_USERS_BACKEND=http) |
 | `KEYSTONE_MCP_USERS_SERVICE_TOKEN` | 0.5.0 | deprecated (since 0.5.0, use KEYSTONE_MCP_USERS_BACKEND=http) |
 | `KEYSTONE_MCP_USERS_SERVICE_URL` | 0.5.0 | deprecated (since 0.5.0, use KEYSTONE_MCP_USERS_BACKEND=http) |

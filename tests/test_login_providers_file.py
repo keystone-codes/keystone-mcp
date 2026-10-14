@@ -374,3 +374,117 @@ def test_production_providers_file_api_key_with_http_directory_refuses_despite_e
     monkeypatch.setenv("KEYSTONE_MCP_PRIMARY_LOGIN_METHOD", "google")
     with pytest.raises(ConfigError, match="API-key sign-in in production needs"):
         load_settings()
+
+
+def test_email_claim_other_than_email_requires_verified_claim(tmp_path, monkeypatch):
+    monkeypatch.setenv("KEYSTONE_MCP_LOGIN_ENTRA_SECRET", "secret")
+    path = _write(
+        tmp_path,
+        """
+        version: 1
+        providers:
+          - name: entra
+            type: oidc
+            issuer: https://idp.test
+            client_id: cid
+            client_secret_env: KEYSTONE_MCP_LOGIN_ENTRA_SECRET
+            email_claim: preferred_username
+        """,
+    )
+    settings = Settings(login_providers_path=path)
+    with pytest.raises(ConfigError) as exc_info:
+        build_login_providers(settings, resolver=None)
+    message = str(exc_info.value)
+    assert "email_verified_claim" in message
+    assert "require_email_verified: false" in message
+
+
+@pytest.mark.asyncio
+async def test_email_verified_claim_is_used(tmp_path, monkeypatch):
+    from keystone_mcp.contract_tests.fake_oidc import FakeOidcIssuer
+    from keystone_mcp.login.oidc import OidcLoginProvider
+
+    monkeypatch.setenv("KEYSTONE_MCP_LOGIN_ENTRA_SECRET", "secret")
+    path = _write(
+        tmp_path,
+        """
+        version: 1
+        providers:
+          - name: entra
+            type: oidc
+            issuer: https://idp.test
+            client_id: cid
+            client_secret_env: KEYSTONE_MCP_LOGIN_ENTRA_SECRET
+            email_claim: upn
+            email_verified_claim: upn_verified
+        """,
+    )
+    settings = Settings(login_providers_path=path)
+    built = build_login_providers(settings, resolver=None)[0]
+    assert isinstance(built, OidcLoginProvider)
+
+    fake = FakeOidcIssuer(
+        issuer=built.config.issuer,
+        client_id=built.config.client_id,
+        client_secret=built.config.client_secret,
+    )
+    provider = OidcLoginProvider(built.config, http_client_factory=fake.http_client)
+    fake.user.extra_claims = {
+        "upn": "alice@example.com",
+        "upn_verified": True,
+        "email_verified": True,
+    }
+    redirect = await provider.begin(state="st", callback_url="http://app/cb")
+    params = await fake.authorize(redirect.url)
+    identity = await provider.complete(
+        params=params, callback_url="http://app/cb", attempt=redirect.attempt
+    )
+    assert identity.email == "alice@example.com"
+
+    fake.user.extra_claims = {"upn": "alice@example.com", "email_verified": True}
+    redirect2 = await provider.begin(state="st2", callback_url="http://app/cb")
+    params2 = await fake.authorize(redirect2.url)
+    with pytest.raises(Exception) as exc_info:
+        await provider.complete(
+            params=params2, callback_url="http://app/cb", attempt=redirect2.attempt
+        )
+    from keystone_mcp.login.protocol import LoginRejected
+
+    assert isinstance(exc_info.value, LoginRejected)
+    assert exc_info.value.reason == "email_unverified"
+
+
+@pytest.mark.asyncio
+async def test_email_claim_email_unchanged(tmp_path, monkeypatch):
+    from keystone_mcp.contract_tests.fake_oidc import FakeOidcIssuer
+    from keystone_mcp.login.oidc import OidcLoginProvider
+
+    monkeypatch.setenv("KEYSTONE_MCP_LOGIN_OKTA_SECRET", "secret")
+    path = _write(
+        tmp_path,
+        """
+        version: 1
+        providers:
+          - name: okta
+            type: oidc
+            issuer: https://idp.test
+            client_id: cid
+            client_secret_env: KEYSTONE_MCP_LOGIN_OKTA_SECRET
+        """,
+    )
+    settings = Settings(login_providers_path=path)
+    built = build_login_providers(settings, resolver=None)[0]
+    assert isinstance(built, OidcLoginProvider)
+    fake = FakeOidcIssuer(
+        issuer="https://idp.test",
+        client_id=built.config.client_id,
+        client_secret=built.config.client_secret,
+    )
+    provider = OidcLoginProvider(built.config, http_client_factory=fake.http_client)
+    fake.user.email = "alice@example.com"
+    redirect = await provider.begin(state="st", callback_url="http://app/cb")
+    params = await fake.authorize(redirect.url)
+    identity = await provider.complete(
+        params=params, callback_url="http://app/cb", attempt=redirect.attempt
+    )
+    assert identity.email == "alice@example.com"

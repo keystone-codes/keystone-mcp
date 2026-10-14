@@ -8,7 +8,7 @@ say so instead of implying open user administration.
 from __future__ import annotations
 
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
-from keystone_mcp.config import Settings
+from keystone_mcp.config import Settings, startup_warnings
 from keystone_mcp.server import build_server
 from support.login import dev_token_login
 from support.test_env import UNUSED_REDIS_URL
@@ -106,3 +106,45 @@ def _in_memory_resolver():
     from keystone_mcp.user_directory import build_in_memory_user_directory_resolver
 
     return build_in_memory_user_directory_resolver()
+
+
+def test_users_service_http_in_production_warns():
+    settings = Settings(
+        deployment_profile="production",
+        users_backend="http",
+        users_service_url="http://users.internal",
+        users_service_token="token",
+    )
+    warnings = startup_warnings(settings)
+    assert any("KEYSTONE_MCP_USERS_SERVICE_URL" in w for w in warnings)
+
+
+def test_users_service_http_flag_silences_warning():
+    settings = Settings(
+        deployment_profile="production",
+        users_backend="http",
+        users_service_url="http://users.internal",
+        users_service_token="token",
+        users_service_allow_insecure_http=True,
+    )
+    warnings = startup_warnings(settings)
+    assert not any("KEYSTONE_MCP_USERS_SERVICE_URL uses http" in w for w in warnings)
+
+
+def test_users_service_http_loopback_no_warning():
+    settings = Settings(
+        deployment_profile="production",
+        users_backend="http",
+        users_service_url="http://127.0.0.1:8080",
+        users_service_token="token",
+    )
+    assert not any(
+        "KEYSTONE_MCP_USERS_SERVICE_URL uses http" in w for w in startup_warnings(settings)
+    )
+    local = Settings(
+        deployment_profile="local",
+        users_backend="http",
+        users_service_url="http://users.internal",
+        users_service_token="token",
+    )
+    assert not any("KEYSTONE_MCP_USERS_SERVICE_URL uses http" in w for w in startup_warnings(local))
