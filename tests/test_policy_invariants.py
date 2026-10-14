@@ -12,6 +12,7 @@ import pytest
 from keystone_mcp.rbac.policy import parse_policy_yaml
 from keystone_mcp.rbac.policy_document import PolicyChangeError, RoleDelete, VersionSet
 from keystone_mcp.rbac.policy_invariants import (
+    check_full_administrator_remains,
     check_no_role_can_administer,
     check_role_in_use,
     check_self_lockout_forbidden,
@@ -124,6 +125,46 @@ def test_self_lockout_forbidden_ignores_other_administrators() -> None:
     check_self_lockout_forbidden(policy, frozenset({"administrator"}), LIVE_TOOLS)
 
 
+def test_self_lockout_when_non_interactive_actor_gates_policy_tools() -> None:
+    policy = _policy(
+        """
+        version: "1"
+        default_deny: true
+        roles:
+          administrator:
+            allow: ["*"]
+        requires_human_identity: ["policy_*"]
+        """
+    )
+    with pytest.raises(PolicyChangeError) as exc_info:
+        check_self_lockout_forbidden(
+            policy, frozenset({"administrator"}), LIVE_TOOLS, actor_interactive=False
+        )
+    assert exc_info.value.code == "self_lockout_forbidden"
+    assert "not signed in interactively" in str(exc_info.value)
+    check_self_lockout_forbidden(
+        policy, frozenset({"administrator"}), LIVE_TOOLS, actor_interactive=True
+    )
+
+
+def test_no_role_can_administer_when_gate_has_no_interactive_provider() -> None:
+    policy = _policy(
+        """
+        version: "1"
+        default_deny: true
+        roles:
+          administrator:
+            allow: ["*"]
+        requires_human_identity: ["users_*", "policy_*"]
+        """
+    )
+    with pytest.raises(PolicyChangeError) as exc_info:
+        check_no_role_can_administer(policy, LIVE_TOOLS, interactive_login_available=False)
+    assert exc_info.value.code == "policy_invariant"
+    assert "interactive sign-in" in str(exc_info.value)
+    check_no_role_can_administer(policy, LIVE_TOOLS, interactive_login_available=True)
+
+
 # ── role_in_use ──────────────────────────────────────────────────────────────
 
 
@@ -145,10 +186,13 @@ async def test_role_in_use_refuses_deleting_a_role_held_by_an_active_account() -
 
 
 @pytest.mark.asyncio
-async def test_role_in_use_ignores_a_blocked_holder() -> None:
+async def test_role_in_use_counts_a_blocked_holder() -> None:
     directory = InMemoryUserDirectory()
     directory.seed("editor@example.com", roles=("editor",), is_blocked=True)
-    await check_role_in_use(RoleDelete("editor"), directory)  # does not raise
+    with pytest.raises(PolicyChangeError) as exc_info:
+        await check_role_in_use(RoleDelete("editor"), directory)
+    assert exc_info.value.code == "role_in_use"
+    assert "blocked" in str(exc_info.value)
 
 
 @pytest.mark.asyncio
@@ -174,3 +218,95 @@ async def test_role_in_use_directory_error_is_service_unavailable() -> None:
     with pytest.raises(PolicyChangeError) as exc_info:
         await check_role_in_use(RoleDelete("editor"), _BrokenDirectory())
     assert exc_info.value.code == "service_unavailable"
+
+
+# ── full_administrator_remains ───────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_full_administrator_remains_refuses_last_active_full_admin() -> None:
+    before = _policy(
+        """
+        version: "1"
+        default_deny: true
+        roles:
+          owner:
+            allow: ["*"]
+          member:
+            allow: ["docs_read"]
+        """
+    )
+    candidate = _policy(
+        """
+        version: "1"
+        default_deny: true
+        roles:
+          owner:
+            allow: ["docs_read"]
+          member:
+            allow: ["docs_read"]
+        """
+    )
+    directory = InMemoryUserDirectory()
+    directory.seed("owner@example.com", roles=("owner",), is_blocked=False)
+    with pytest.raises(PolicyChangeError) as exc_info:
+        await check_full_administrator_remains(before, candidate, directory)
+    assert exc_info.value.code == "policy_invariant"
+    assert "full administration" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_full_administrator_remains_passes_with_two_full_admins() -> None:
+    before = _policy(
+        """
+        version: "1"
+        default_deny: true
+        roles:
+          owner:
+            allow: ["*"]
+          boss:
+            allow: ["*"]
+        """
+    )
+    candidate = _policy(
+        """
+        version: "1"
+        default_deny: true
+        roles:
+          owner:
+            allow: ["docs_read"]
+          boss:
+            allow: ["*"]
+        """
+    )
+    directory = InMemoryUserDirectory()
+    directory.seed("o1@example.com", roles=("owner",), is_blocked=False)
+    directory.seed("o2@example.com", roles=("boss",), is_blocked=False)
+    await check_full_administrator_remains(before, candidate, directory)
+
+
+@pytest.mark.asyncio
+async def test_full_administrator_remains_passes_when_none_before() -> None:
+    before = _policy(
+        """
+        version: "1"
+        default_deny: true
+        roles:
+          owner:
+            allow: ["docs_read"]
+          member:
+            allow: ["docs_read"]
+        """
+    )
+    candidate = _policy(
+        """
+        version: "1"
+        default_deny: true
+        roles:
+          member:
+            allow: ["docs_read"]
+        """
+    )
+    directory = InMemoryUserDirectory()
+    directory.seed("m@example.com", roles=("member",), is_blocked=False)
+    await check_full_administrator_remains(before, candidate, directory)

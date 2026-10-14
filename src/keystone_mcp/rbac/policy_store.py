@@ -73,6 +73,7 @@ from keystone_mcp.rbac.policy_document import (
     describe_changes,
 )
 from keystone_mcp.rbac.policy_invariants import (
+    check_full_administrator_remains,
     check_no_role_can_administer,
     check_role_in_use,
     check_self_lockout_forbidden,
@@ -225,6 +226,7 @@ class PolicyStore:
     observability: RbacObservability | None = None
     directory: UserDirectory | None = None
     revision_watcher: PolicyRevisionWatcher | None = None
+    interactive_login_available: bool = True
     clock: Callable[[], datetime] = field(default=_default_clock, repr=False)
     file_lock_timeout_seconds: float = 10.0
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
@@ -355,6 +357,7 @@ class PolicyStore:
         expected_hash: str | None,
         operation: str,
         task_id: str,
+        actor_interactive: bool = True,
     ) -> PolicyChangeResult:
         """Apply ``changes`` to the policy file; see the module docstring for the steps."""
         version_before = self._safe_current_version()
@@ -370,6 +373,7 @@ class PolicyStore:
                         actor_roles=actor_roles,
                         expected_hash=expected_hash,
                         operation=operation,
+                        actor_interactive=actor_interactive,
                     )
         except _WriteFailed as exc:
             self._audit(
@@ -439,6 +443,7 @@ class PolicyStore:
         actor_roles: frozenset[str],
         task_id: str,
         expected_hash: str | None = None,
+        actor_interactive: bool = True,
     ) -> PolicyChangeResult:
         """Restore ``<policy>.bak`` over the current file (one generation deep)."""
         version_before = self._safe_current_version()
@@ -452,6 +457,7 @@ class PolicyStore:
                         actor=actor,
                         actor_roles=actor_roles,
                         expected_hash=expected_hash,
+                        actor_interactive=actor_interactive,
                     )
         except _WriteFailed as exc:
             self._audit(
@@ -556,6 +562,7 @@ class PolicyStore:
         actor_roles: frozenset[str],
         expected_hash: str | None,
         operation: str,
+        actor_interactive: bool = True,
     ) -> PolicyChangeResult:
         raw_bytes = await asyncio.to_thread(path.read_bytes)
         file_hash = hash_policy_bytes(raw_bytes)
@@ -581,13 +588,14 @@ class PolicyStore:
             )
 
         candidate_policy, warnings = self._validate_candidate(candidate_document)
-        self._check_invariants(candidate_policy, actor_roles)
+        self._check_invariants(candidate_policy, actor_roles, actor_interactive=actor_interactive)
         self._check_management_authority(
             before=before_policy,
             candidate=candidate_policy,
             actor_roles=actor_roles,
             operation=operation,
         )
+        await check_full_administrator_remains(before_policy, candidate_policy, self.directory)
         for change in changes:
             if isinstance(change, RoleDelete):
                 await check_role_in_use(change, self.directory)
@@ -642,6 +650,7 @@ class PolicyStore:
         actor: str,
         actor_roles: frozenset[str],
         expected_hash: str | None,
+        actor_interactive: bool = True,
     ) -> PolicyChangeResult:
         bak_path = path.with_suffix(path.suffix + ".bak")
         if not bak_path.is_file():
@@ -661,13 +670,14 @@ class PolicyStore:
         candidate_document = PolicyDocument.from_yaml(backup_bytes.decode("utf-8"))
 
         candidate_policy, warnings = self._validate_candidate(candidate_document)
-        self._check_invariants(candidate_policy, actor_roles)
+        self._check_invariants(candidate_policy, actor_roles, actor_interactive=actor_interactive)
         self._check_management_authority(
             before=before_policy,
             candidate=candidate_policy,
             actor_roles=actor_roles,
             operation="policy_rollback",
         )
+        await check_full_administrator_remains(before_policy, candidate_policy, self.directory)
         for role_name in sorted(set(current_document.roles) - set(candidate_document.roles)):
             await check_role_in_use(RoleDelete(role_name), self.directory)
 
@@ -751,10 +761,25 @@ class PolicyStore:
             warnings.append(f"not verified ({namespace}): {', '.join(entries)}")
         return candidate_policy, tuple(warnings)
 
-    def _check_invariants(self, candidate_policy: RbacPolicy, actor_roles: frozenset[str]) -> None:
+    def _check_invariants(
+        self,
+        candidate_policy: RbacPolicy,
+        actor_roles: frozenset[str],
+        *,
+        actor_interactive: bool = True,
+    ) -> None:
         live_tools = self._live_names()
-        check_no_role_can_administer(candidate_policy, live_tools)
-        check_self_lockout_forbidden(candidate_policy, actor_roles, live_tools)
+        check_no_role_can_administer(
+            candidate_policy,
+            live_tools,
+            interactive_login_available=self.interactive_login_available,
+        )
+        check_self_lockout_forbidden(
+            candidate_policy,
+            actor_roles,
+            live_tools,
+            actor_interactive=actor_interactive,
+        )
 
     def _check_management_authority(
         self,

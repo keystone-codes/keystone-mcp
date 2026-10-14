@@ -88,8 +88,8 @@ Failure is `{"state": "error", "code": "...", "message": "..."}`.
 | `unmatched_pattern` | Pattern does not match any published tool | Show `policy_catalog`; ask which name to use |
 | `policy_conflict` | `expected_hash` stale | `policy_read` once, retry the mutation once |
 | `policy_readonly` | File or instance is read-only | Tell the operator; see `docs/policy-admin.md` |
-| `role_in_use` | Role still on accounts | Reassign roles via `keystone-user-admin`, then retry |
-| `self_lockout_forbidden` | Would remove your own policy access | Refuse; another administrator must do it |
+| `role_in_use` | Role still on accounts, including blocked holders | Revoke the role from every holder via `keystone-user-admin` (use `users_list` with `is_blocked: true` and `role`), then retry |
+| `self_lockout_forbidden` | Would remove your own policy access, also when you are not signed in interactively and the change would require it | Refuse; another administrator must do it |
 | `policy_invariant` | Would leave no administering role | Refuse; explain |
 | `forbidden` | A service account called a change, or you are not a full administrator and the change touches administration (a management role, the deny list, or the interactive-sign-in list for administration tools). The message names the reason. Stop and report; do not retry. |
 | `validation_error` | Bad argument or empty pattern list | Fix arguments |
