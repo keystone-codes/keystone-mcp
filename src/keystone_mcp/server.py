@@ -8,10 +8,12 @@ registers the built-in tool catalog.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
+import os
 import signal
 import sys
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -44,7 +46,7 @@ from keystone_mcp.config import (
 from keystone_mcp.env_file import load_env_file
 from keystone_mcp.http.access_log import AccessLogMiddleware
 from keystone_mcp.http.host_guard import HostGuardMiddleware
-from keystone_mcp.http.readiness import ReadinessProbe
+from keystone_mcp.http.readiness import BootstrapState, ReadinessProbe
 from keystone_mcp.login.factory import (
     api_key_login_configured,
     build_login_providers,
@@ -104,17 +106,40 @@ _client_sessions_holder: dict[str, ClientSessionRegistry | None] = {"registry": 
 #: adapter, a CLI). None whenever RBAC does not enforce or POLICY_TOOLS=off.
 _policy_store_holder: dict[str, PolicyStore | None] = {"store": None}
 _session_revoker_holder: dict[str, SessionRevoker | None] = {"revoker": None}
+_bootstrap_state_holder: dict[str, BootstrapState | None] = {"state": None}
+_deferred_bootstrap_holder: dict[str, Callable[[], Awaitable[None]] | None] = {"factory": None}
+_startup_failure_holder: dict[str, BaseException | None] = {"error": None}
+
+
+def _default_request_shutdown() -> None:
+    os.kill(os.getpid(), signal.SIGTERM)
+
+
+_request_shutdown: Callable[[], None] = _default_request_shutdown
 
 
 @asynccontextmanager
 async def _keystone_lifespan(_server: FastMCP):
     upstreams = _upstreams_holder.get("upstreams")
+    reconciler = _reconciler_holder.get("reconciler")
+    deferred_factory = _deferred_bootstrap_holder.get("factory")
+    bootstrap_task: asyncio.Task[None] | None = None
     try:
-        if upstreams is not None:
-            await upstreams.start_connections()
-        async with surface_reconciler_lifespan(_reconciler_holder.get("reconciler")):
+        if deferred_factory is not None:
+            bootstrap_task = asyncio.create_task(deferred_factory(), name="keystone-bootstrap")
             yield {}
+        else:
+            if upstreams is not None:
+                await upstreams.start_connections()
+            async with surface_reconciler_lifespan(reconciler):
+                yield {}
     finally:
+        if bootstrap_task is not None and not bootstrap_task.done():
+            bootstrap_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await bootstrap_task
+        if deferred_factory is not None and reconciler is not None:
+            await reconciler.stop()
         if upstreams is not None:
             await upstreams.stop_connections()
         client_sessions = _client_sessions_holder.get("registry")
@@ -558,12 +583,16 @@ def build_server(
     _readyz_backend = getattr(directory_resolver, "backend", None)
     if getattr(_readyz_backend, "name", None) == "http":
         _readyz_backend = None
+    bootstrap_state = _bootstrap_state_holder.get("state")
+    if bootstrap_state is None:
+        bootstrap_state = BootstrapState()
     readiness_probe = ReadinessProbe(
         redis=getattr(store, "redis", None),
         policy_manager=policy_manager,
         users_backend=_readyz_backend,
         upstreams=upstreams,
         require_all=settings.upstream_require_all,
+        bootstrap_state=bootstrap_state,
     )
 
     @mcp.custom_route("/readyz", methods=["GET"])
@@ -815,6 +844,7 @@ def install_policy_reload_signal(
     *,
     observability: RbacObservability | None = None,
     reconciler: SurfaceReconciler | None = None,
+    bootstrap_state: BootstrapState | None = None,
 ) -> None:
     """Register SIGHUP to queue RBAC policy reload on the reconciler loop."""
     if policy_manager is None:
@@ -833,6 +863,9 @@ def install_policy_reload_signal(
             logger.warning("rbac policy SIGHUP reload rejected: %s", result.error)
 
     def _on_sighup(signum: int, frame: object | None) -> None:  # noqa: ARG001
+        if bootstrap_state is not None and bootstrap_state.is_pending():
+            logger.info("SIGHUP ignored: startup still in progress")
+            return
         if reconciler is not None and reconciler.request_policy_reload():
             return
         _reload_policy_inline()
@@ -841,19 +874,99 @@ def install_policy_reload_signal(
     logger.info("rbac policy SIGHUP hot-reload handler installed")
 
 
+async def _warm_up_one_login_provider(provider: LoginProvider) -> None:
+    try:
+        await asyncio.wait_for(provider.warm_up(), timeout=5)
+    except Exception as exc:  # noqa: BLE001 - logged and intentionally swallowed
+        logger.warning("login provider %s is not ready: %s", provider.name, type(exc).__name__)
+
+
 async def _warm_up_login_providers(login_providers: Sequence[LoginProvider]) -> None:
     """Call ``warm_up()`` on every configured login provider, 5s timeout each.
 
-    A provider that times out or raises does not stop the server from
-    starting (X03): sign-in through it will simply fail until it recovers,
-    the same way an unreachable upstream does not block startup elsewhere in
-    this module.
+    Providers are warmed in parallel. A provider that times out or raises does
+    not stop the server from starting: sign-in through it will simply fail
+    until it recovers, the same way an unreachable upstream does not block
+    startup elsewhere in this module.
     """
-    for provider in login_providers:
-        try:
-            await asyncio.wait_for(provider.warm_up(), timeout=5)
-        except Exception as exc:  # noqa: BLE001 - logged and intentionally swallowed
-            logger.warning("login provider %s is not ready: %s", provider.name, type(exc).__name__)
+    if not login_providers:
+        return
+    await asyncio.gather(*(_warm_up_one_login_provider(p) for p in login_providers))
+
+
+def _enforce_discovery_outcome(
+    settings: Settings,
+    discovery: UpstreamDiscoveryResult,
+) -> None:
+    if settings.upstream_require_all and discovery.unavailable:
+        raise UpstreamUnavailableError(
+            "KEYSTONE_MCP_UPSTREAM_REQUIRE_ALL=true and upstream(s) unavailable: "
+            + ", ".join(f"{ns} ({reason})" for ns, reason in sorted(discovery.unavailable.items()))
+        )
+    if settings.rbac_enabled and discovery.failed:
+        raise PolicyLoadError(
+            "upstream discovery failed for every configured upstream with "
+            "rbac_enabled=true; refusing to start: "
+            + ", ".join(f"{ns} ({reason})" for ns, reason in sorted(discovery.unavailable.items()))
+        )
+
+
+async def _bootstrap_after_users_store(
+    upstreams: UpstreamRegistry,
+    registry: RouterRegistry,
+    settings: Settings,
+    policy_manager: RbacPolicyManager | None,
+    *,
+    observability: RbacObservability | None = None,
+    login_providers: Sequence[LoginProvider] | None = None,
+) -> UpstreamDiscoveryResult:
+    if login_providers:
+        await _warm_up_login_providers(login_providers)
+    discovery = await bootstrap_upstreams(upstreams, settings)
+    _enforce_discovery_outcome(settings, discovery)
+    bootstrap_rbac_policy(
+        policy_manager,
+        registry,
+        discovery=discovery,
+        observability=observability,
+    )
+    return discovery
+
+
+async def run_deferred_bootstrap(
+    upstreams: UpstreamRegistry,
+    registry: RouterRegistry,
+    settings: Settings,
+    policy_manager: RbacPolicyManager | None,
+    *,
+    observability: RbacObservability | None = None,
+    login_providers: Sequence[LoginProvider] | None = None,
+    reconciler: SurfaceReconciler | None = None,
+    state: BootstrapState,
+) -> None:
+    """Warm up login providers, start stdio connections, discover upstreams, load policy."""
+    try:
+        if login_providers:
+            await _warm_up_login_providers(login_providers)
+        await upstreams.start_connections()
+        discovery = await bootstrap_upstreams(upstreams, settings)
+        _enforce_discovery_outcome(settings, discovery)
+        bootstrap_rbac_policy(
+            policy_manager,
+            registry,
+            discovery=discovery,
+            observability=observability,
+        )
+        if reconciler is not None:
+            await reconciler.start()
+        state.mark_ready()
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        logger.critical("startup failed: %s", exc)
+        state.mark_failed(str(exc))
+        _startup_failure_holder["error"] = exc
+        _request_shutdown()
 
 
 async def bootstrap_platform(
@@ -869,27 +982,14 @@ async def bootstrap_platform(
     """Migrate/seed the users directory, warm up login providers, discover upstreams, load RBAC policy."""
     if users_store is not None:
         await bootstrap_users_store(users_store, settings)
-    if login_providers:
-        await _warm_up_login_providers(login_providers)
-    discovery = await bootstrap_upstreams(upstreams, settings)
-    if settings.upstream_require_all and discovery.unavailable:
-        raise UpstreamUnavailableError(
-            "KEYSTONE_MCP_UPSTREAM_REQUIRE_ALL=true and upstream(s) unavailable: "
-            + ", ".join(f"{ns} ({reason})" for ns, reason in sorted(discovery.unavailable.items()))
-        )
-    if settings.rbac_enabled and discovery.failed:
-        raise PolicyLoadError(
-            "upstream discovery failed for every configured upstream with "
-            "rbac_enabled=true; refusing to start: "
-            + ", ".join(f"{ns} ({reason})" for ns, reason in sorted(discovery.unavailable.items()))
-        )
-    bootstrap_rbac_policy(
-        policy_manager,
+    return await _bootstrap_after_users_store(
+        upstreams,
         registry,
-        discovery=discovery,
+        settings,
+        policy_manager,
         observability=observability,
+        login_providers=login_providers,
     )
-    return discovery
 
 
 def _http_asgi_middleware(settings: Settings) -> list:
@@ -933,6 +1033,8 @@ def main() -> None:
             "dynamic client registration is disabled; register OAuth clients "
             "manually (docs/environment.md#registering-a-client-manually)"
         )
+    bootstrap_state = BootstrapState(deferred=True)
+    _bootstrap_state_holder["state"] = bootstrap_state
     try:
         mcp, registry, _oauth, upstreams, policy_manager, observability, reconciler = build_server(
             settings=settings,
@@ -944,25 +1046,32 @@ def main() -> None:
     users_store = _users_store_holder["store"]
     login_providers = _login_providers_holder["providers"]
     try:
-        asyncio.run(
-            bootstrap_platform(
-                upstreams,
-                registry,
-                settings,
-                policy_manager,
-                observability=observability,
-                users_store=users_store,
-                login_providers=login_providers,
-            )
-        )
+        if users_store is not None:
+            asyncio.run(bootstrap_users_store(users_store, settings))
     except UsersBootstrapError as exc:
         logger.error(str(exc))
         raise SystemExit(1) from exc
+
+    async def _deferred_bootstrap() -> None:
+        await run_deferred_bootstrap(
+            upstreams,
+            registry,
+            settings,
+            policy_manager,
+            observability=observability,
+            login_providers=login_providers,
+            reconciler=reconciler,
+            state=bootstrap_state,
+        )
+
+    _deferred_bootstrap_holder["factory"] = _deferred_bootstrap
+
     install_policy_reload_signal(
         registry,
         policy_manager,
         observability=observability,
         reconciler=reconciler,
+        bootstrap_state=bootstrap_state,
     )
     mcp.run(
         transport="http",
@@ -972,6 +1081,8 @@ def main() -> None:
         middleware=_http_asgi_middleware(settings) or None,
         uvicorn_config={"access_log": False},
     )
+    if _startup_failure_holder["error"] is not None:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

@@ -33,11 +33,40 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-CheckResult = Literal["ok", "fail", "skipped"]
+CheckResult = Literal["ok", "fail", "skipped", "pending"]
 
 DEFAULT_TIMEOUT_SECONDS = 1.0
 
-_CHECK_NAMES = ("redis", "rbac_policy", "users_directory")
+_CHECK_NAMES = ("redis", "rbac_policy", "users_directory", "bootstrap")
+
+
+class BootstrapState:
+    """Deferred HTTP startup: upstream discovery and policy load after the port opens."""
+
+    __slots__ = ("_failure_reason", "_status")
+
+    def __init__(self, *, deferred: bool = False) -> None:
+        self._status: Literal["pending", "ready", "failed"] = "pending" if deferred else "ready"
+        self._failure_reason: str | None = None
+
+    @property
+    def status(self) -> Literal["pending", "ready", "failed"]:
+        return self._status
+
+    @property
+    def failure_reason(self) -> str | None:
+        return self._failure_reason
+
+    def is_pending(self) -> bool:
+        return self._status == "pending"
+
+    def mark_ready(self) -> None:
+        self._status = "ready"
+        self._failure_reason = None
+
+    def mark_failed(self, reason: str) -> None:
+        self._status = "failed"
+        self._failure_reason = reason
 
 
 @dataclass(frozen=True)
@@ -65,6 +94,7 @@ class ReadinessProbe:
         timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
         upstreams: UpstreamRegistry | None = None,
         require_all: bool = False,
+        bootstrap_state: BootstrapState | None = None,
     ) -> None:
         self._redis = redis
         self._policy_manager = policy_manager
@@ -72,6 +102,7 @@ class ReadinessProbe:
         self._timeout_seconds = timeout_seconds
         self._upstreams = upstreams
         self._require_all = require_all
+        self._bootstrap_state = bootstrap_state
         # None until the first poll completes, so the very first result never
         # logs a "restored" transition it did not earn.
         self._was_ready: bool | None = None
@@ -81,23 +112,39 @@ class ReadinessProbe:
             (redis_result, redis_exc),
             (rbac_result, rbac_exc),
             (users_result, users_exc),
+            (bootstrap_result, bootstrap_exc),
         ) = await asyncio.gather(
             self._check_redis(),
             self._check_rbac_policy(),
             self._check_users_directory(),
+            self._check_bootstrap(),
         )
         checks: dict[str, CheckResult] = {
             "redis": redis_result,
             "rbac_policy": rbac_result,
             "users_directory": users_result,
+            "bootstrap": bootstrap_result,
         }
         if self._require_all and self._upstreams is not None:
             unavailable = self._upstreams.unavailable_namespaces()
             checks["upstreams"] = "fail" if unavailable else "ok"
-        exceptions = {"redis": redis_exc, "rbac_policy": rbac_exc, "users_directory": users_exc}
-        ready = all(value != "fail" for value in checks.values())
+        exceptions = {
+            "redis": redis_exc,
+            "rbac_policy": rbac_exc,
+            "users_directory": users_exc,
+            "bootstrap": bootstrap_exc,
+        }
+        ready = all(value in ("ok", "skipped") for value in checks.values())
         self._log_transition(ready, checks, exceptions)
         return ReadinessReport(ready=ready, checks=checks)
+
+    async def _check_bootstrap(self) -> tuple[CheckResult, str | None]:
+        state = self._bootstrap_state
+        if state is None or state.status == "ready":
+            return "ok", None
+        if state.status == "pending":
+            return "pending", "BootstrapPending"
+        return "fail", state.failure_reason or "BootstrapFailed"
 
     async def _check_redis(self) -> tuple[CheckResult, str | None]:
         if self._redis is None:
@@ -147,11 +194,15 @@ class ReadinessProbe:
             return
         if self._was_ready is not False:
             for name in _CHECK_NAMES:
-                if checks[name] != "fail":
-                    continue
-                logger.warning(
-                    "readiness degraded: %s=fail (%s)",
-                    name,
-                    exceptions[name] or "Unknown",
-                )
+                value = checks.get(name)
+                if value == "fail":
+                    logger.warning(
+                        "readiness degraded: %s=fail (%s)",
+                        name,
+                        exceptions.get(name) or "Unknown",
+                    )
+                elif value == "pending" and name == "bootstrap":
+                    logger.warning(
+                        "readiness degraded: bootstrap=pending (BootstrapPending)",
+                    )
         self._was_ready = False

@@ -74,16 +74,18 @@ session claims (`jti` / `sid`).
 
 ## Readiness
 
-`GET /healthz` says the process is alive and always answers `200`; it never
+`GET /healthz` says the process is alive and always answers `200` once the
+users-directory migrations have finished and the HTTP port is open; it never
 checks a dependency, so `./scripts/deploy.sh` and the examples in this repo
-keep using it unchanged. `GET /readyz` says this replica can serve work right
-now. It runs three checks in parallel, each under a short timeout:
+keep using it for liveness. `GET /readyz` says this replica can serve work right
+now. It runs four checks in parallel, each under a short timeout:
 
-| Check | `ok` | `fail` | `skipped` |
-| --- | --- | --- | --- |
-| `redis` | `PING` succeeds | error or timeout | no Redis configured (`KEYSTONE_MCP_REDIS_URL` empty and no injected store) |
-| `rbac_policy` | a policy is currently active | no policy has been loaded | `KEYSTONE_MCP_RBAC_MODE=off` |
-| `users_directory` | the built-in database answers `SELECT 1` | the query errors or times out | `KEYSTONE_MCP_USERS_BACKEND=http` (external directory; see below), or no directory is wired at all |
+| Check | `ok` | `fail` | `skipped` | `pending` |
+| --- | --- | --- | --- | --- |
+| `redis` | `PING` succeeds | error or timeout | no Redis configured (`KEYSTONE_MCP_REDIS_URL` empty and no injected store) | — |
+| `rbac_policy` | a policy is currently active | no policy has been loaded | `KEYSTONE_MCP_RBAC_MODE=off` | — |
+| `users_directory` | the built-in database answers `SELECT 1` | the query errors or times out | `KEYSTONE_MCP_USERS_BACKEND=http` (external directory; see below), or no directory is wired at all | — |
+| `bootstrap` | background startup finished | startup failed fatally | — | discovery or policy load still running |
 
 The response is `{"status": "ok"}` (`200`) when every check is `ok` or
 `skipped`, otherwise `{"status": "degraded"}` (`503`). The `checks` object is

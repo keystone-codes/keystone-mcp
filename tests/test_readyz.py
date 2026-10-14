@@ -98,6 +98,7 @@ async def test_readyz_internal_caller_sees_checks():
         "redis": "skipped",
         "rbac_policy": "skipped",
         "users_directory": "skipped",
+        "bootstrap": "ok",
     }
 
 

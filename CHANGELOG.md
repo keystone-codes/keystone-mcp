@@ -24,10 +24,12 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 - Access tokens of people carry `"subject_type": "human"`; a sign-in that resolves to a service-account subject is refused.
 - `latest` moves only when the released version is the highest one; a patch to an older line no longer moves it back.
 - List requests (`tools/list`, `prompts/list`, `resources/list`, `resources/templates/list`) count toward the per-identity rate limit. A throttled `prompts/get` returns a prompt error.
+- `/readyz` reports `503` until startup has finished, also with RBAC off; internal callers see `checks.bootstrap` (`pending`, `ok`, `fail`).
 
 ### Fixed
 
 - `service_accounts_list`, `service_accounts_add` and `service_accounts_update` work when called over MCP.
+- The HTTP port opens right after the users-directory migrations; upstream discovery, login provider warm-up (now in parallel) and policy loading run in the background, so a hanging upstream no longer keeps the port closed long enough for a liveness probe to restart the pod.
 
 ### Security
 
@@ -38,6 +40,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 - Automation that changed users, service accounts or API keys through MCP with a service-account key now gets `forbidden`; do it from a person's session or with the `keystone-mcp` CLI on the host.
 - Sessions opened on 0.4.x/0.5.x keep working after the upgrade. Rolling back to 0.5.x keeps sessions opened on 0.6.0: 0.5.x ignores the new marker fields. While replicas of both versions run side by side, a session renewed by a 0.5.x replica loses the new fields again; session max-age and key checks apply once every replica runs 0.6.0.
 - Each list request now uses one slot of `KEYSTONE_MCP_THROTTLE_MAX` (default 120 per 60 s). If a client lists very often, raise the limit. Metric series for names that are not published are now reported as `tool="unknown"`.
+- Startup refusals (`KEYSTONE_MCP_UPSTREAM_REQUIRE_ALL=true` with an unavailable upstream, an invalid policy) still exit with code 1 and the same message, but after `/healthz` has started answering — rely on `/readyz`, not on the port being open, to know the replica is ready.
 
 ## [0.5.0] - 2026-10-13
 
