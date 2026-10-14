@@ -27,6 +27,8 @@ from keystone_mcp.user_directory import build_in_memory_user_directory_resolver
 from support.login import dev_token_login
 
 STDIO_SERVER = str(Path(__file__).parent / "support" / "stdio_upstream.py")
+STDIO_LAUNCH_COUNTER = str(Path(__file__).parent / "support" / "stdio_launch_counter.py")
+FLAKY_STDIO_SERVER = str(Path(__file__).parent / "support" / "flaky_stdio_upstream.py")
 ANN = VerifiedIdentity(email="ann@example.com")
 
 
@@ -106,26 +108,145 @@ async def _with_stdio_stack(monkeypatch, tmp_path: Path, **build_kw):
     mcp, registry, upstreams = built[0], built[1], built[3]
     policy_manager = built[4]
     settings = Settings(base_url="http://127.0.0.1:8080")
+    await upstreams.start_connections()
     discovery = await bootstrap_upstreams(upstreams, settings)
     if build_kw.get("policy"):
         bootstrap_rbac_policy(policy_manager, registry, discovery=discovery)
+    reconciler = built[6]
+    if reconciler is not None:
+        await reconciler.start()
     async with LifespanManager(mcp.http_app(path="/mcp")):
-        yield mcp, upstreams, built[6]
+        yield mcp, upstreams, reconciler
 
 
 @pytest.mark.asyncio
-async def test_bootstrap_discovers_with_a_temporary_process(monkeypatch, tmp_path):
-    monkeypatch.setenv("KEYSTONE_MCP_UPSTREAMS", json.dumps(_stdio_upstream_payload()))
-    settings = Settings(base_url="http://127.0.0.1:8080")
+async def test_startup_uses_only_the_persistent_process(monkeypatch, tmp_path):
+    marker = tmp_path / "launches.txt"
+    payload = _stdio_upstream_payload(args=[STDIO_LAUNCH_COUNTER, str(marker)])
+    async with _with_stdio_stack(monkeypatch, tmp_path, upstream_payload=payload) as (
+        mcp,
+        upstreams,
+        _reconciler,
+    ):
+        conn = upstreams.connection("notes")
+        assert conn.process.state == "running"
+        launches = marker.read_text(encoding="utf-8").strip().splitlines()
+        assert len(launches) == 1
+        async with Client(mcp) as client:
+            tools = {t.name for t in await client.list_tools()}
+        assert "notes_greet" in tools
+
+
+@pytest.mark.asyncio
+async def test_start_connections_runs_in_parallel(monkeypatch, tmp_path):
+    delay_args = ["--init-delay", "1"]
+    upstreams_payload = [
+        {
+            "name": "notes",
+            "namespace": "notes",
+            "transport": "stdio",
+            "command": sys.executable,
+            "args": [STDIO_SERVER, *delay_args],
+        },
+        {
+            "name": "docs",
+            "namespace": "docs",
+            "transport": "stdio",
+            "command": sys.executable,
+            "args": [STDIO_SERVER, *delay_args],
+        },
+    ]
+    monkeypatch.setenv("KEYSTONE_MCP_UPSTREAMS", json.dumps(upstreams_payload))
+    settings = Settings(base_url="http://127.0.0.1:8080", refresh_interval_seconds=0)
     _mcp, _reg, _oauth, upstreams, *_ = build_server(
         settings=settings,
         register_builtin_catalog=False,
         oauth_store=InMemoryOAuthStore(),
     )
-    result = await bootstrap_upstreams(upstreams, settings)
-    assert result.counts.get("notes", 0) >= 1
-    conn = upstreams.connection("notes")
-    assert conn.process.state != "running"
+    t0 = time.monotonic()
+    await upstreams.start_connections(wait=15)
+    elapsed = time.monotonic() - t0
+    assert elapsed < 1.8
+    for ns in ("notes", "docs"):
+        conn = upstreams.connection(ns)
+        assert conn.process.state == "running"
+
+
+@pytest.mark.asyncio
+async def test_no_warning_when_process_started(monkeypatch, tmp_path, caplog):
+    caplog.set_level(logging.WARNING)
+    async with _with_stdio_stack(monkeypatch, tmp_path) as (_mcp, _upstreams, _reconciler):
+        pass
+    assert not any(
+        "did not reach running" in r.message for r in caplog.records if r.levelno >= logging.WARNING
+    )
+
+
+@pytest.mark.asyncio
+async def test_process_up_after_failed_discovery_publishes_tools_within_seconds(
+    monkeypatch, tmp_path
+):
+    counter = tmp_path / "launch.count"
+    monkeypatch.setenv("KEYSTONE_TEST_STDIO_FAIL_UNTIL", "2")
+    monkeypatch.setenv("KEYSTONE_MCP_METRICS_ENABLED", "true")
+    payload = _stdio_upstream_payload(args=[FLAKY_STDIO_SERVER, str(counter)])
+    async with _with_stdio_stack(
+        monkeypatch,
+        tmp_path,
+        upstream_payload=payload,
+        metrics_enabled=True,
+        refresh_interval_seconds=60,
+        upstream_discovery_retries=0,
+    ) as (mcp, upstreams, _reconciler):
+        assert upstreams._status["notes"].available is False
+        conn = upstreams.connection("notes")
+        deadline = time.monotonic() + 20.0
+        while time.monotonic() < deadline and (
+            conn.process.state != "running" or conn.process.restarts < 2
+        ):
+            await asyncio.sleep(0.05)
+        assert conn.process.state == "running"
+        t0 = time.monotonic()
+        async with Client(mcp) as client:
+            while time.monotonic() - t0 < 5.0:
+                tools = {t.name for t in await client.list_tools()}
+                if "notes_greet" in tools:
+                    break
+                await asyncio.sleep(0.1)
+            else:
+                pytest.fail("tools not published within 5s after process came up")
+        assert upstreams._status["notes"].available is True
+        sample = REGISTRY.get_sample_value(
+            "keystone_mcp_upstream_available", {"namespace": "notes"}
+        )
+        assert sample is not None and sample >= 1.0
+
+
+@pytest.mark.asyncio
+async def test_process_up_without_reconciler_is_discovered(monkeypatch, tmp_path):
+    counter = tmp_path / "launch.count"
+    monkeypatch.setenv("KEYSTONE_TEST_STDIO_FAIL_UNTIL", "2")
+    payload = _stdio_upstream_payload(args=[FLAKY_STDIO_SERVER, str(counter)])
+    async with _with_stdio_stack(
+        monkeypatch,
+        tmp_path,
+        upstream_payload=payload,
+        refresh_interval_seconds=0,
+    ) as (mcp, upstreams, reconciler):
+        assert reconciler is None or reconciler._task is None
+        conn = upstreams.connection("notes")
+        deadline = time.monotonic() + 15.0
+        while conn.process.state != "running" and time.monotonic() < deadline:
+            await asyncio.sleep(0.1)
+        t0 = time.monotonic()
+        async with Client(mcp) as client:
+            while time.monotonic() - t0 < 5.0:
+                tools = {t.name for t in await client.list_tools()}
+                if "notes_greet" in tools:
+                    break
+                await asyncio.sleep(0.1)
+            else:
+                pytest.fail("tools not published within 5s without reconciler tick")
 
 
 @pytest.mark.asyncio

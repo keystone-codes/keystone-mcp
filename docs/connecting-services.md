@@ -330,21 +330,24 @@ entries:
 - **`command` / `args` / `cwd`** — how Keystone-MCP starts the server. Use an
   absolute path to the interpreter if `PATH` in the container is uncertain.
 - **`env`** — maps **child variable name → parent environment variable name**.
-  Only variables listed here are passed into the child; Keystone-MCP never
+  The child gets only the variables listed in `env` plus the MCP SDK's minimal
+  set (`HOME`, `LOGNAME`, `PATH`, `SHELL`, `TERM`, `USER`); Keystone-MCP never
   forwards its whole environment. Values must already be set in the Keystone-MCP
   process (or container) under the names on the right.
 - **`auth.identity_secret_env`** — same HS256 assertion as HTTP, but it is sent
   in `params._meta["keystone-mcp/identity"]` on `tools/call`, not in
   `X-Keystone-Identity`. There is **no** `X-Author-Email` on stdio calls.
-- **Discovery at startup** — before the main server loop, Keystone-MCP may start
-  a **temporary** stdio process (`keep_alive=false`), list tools, and exit. After
-  the server is up, a **persistent** process serves all calls until shutdown.
+- **One process per entry** — started at startup (stdio connections start in
+  parallel), discovered through, and restarted by the supervisor until shutdown.
 - **stderr** from the child is copied into Keystone-MCP's logs (logger
-  `keystone_mcp.upstream.stderr`).
+  `keystone_mcp.upstream.stderr`), rate-limited (50 lines/s, bursts of 200);
+  values of the entry's `env` and well-known token formats are masked.
 - **Restarts** — if the process crashes or stops answering, the supervisor logs
   `upstream process down namespace=…` and restarts after a backoff (1 s, then
-  doubling up to 60 s). After a run stays healthy for one minute, the backoff
-  schedule resets to 1 s.
+  doubling up to 60 s). A hang is detected after **three missed pings in a row**
+  (about a minute with default timings); calls in flight fail at once and the
+  process is restarted. A single slow ping no longer triggers a restart. After
+  a run stays healthy for one minute, the backoff schedule resets to 1 s.
 - **Progress and cancellation** — behave like HTTP upstreams (see "Long-running
   tools" above).
 - **Elicitation** — upstream-to-user prompts are not forwarded for stdio (same

@@ -356,6 +356,7 @@ Frozen since 0.5.0. Metric names and label keys (not log message text):
 | `keystone_mcp_list_changed_sessions_total` | `kind` |
 | `keystone_mcp_upstream_available` | `namespace` |
 | `keystone_mcp_upstream_process_restarts_total` | `namespace` |
+| `keystone_mcp_upstream_stderr_suppressed_total` | `namespace` |
 | `keystone_mcp_upstream_elicitations_total` | `namespace`, `action` |
 | `keystone_mcp_oauth_client_registrations_total` | `outcome` (`created`, `rejected_limit`, `rejected_redirect_host`, `rejected_metadata`) |
 | `keystone_mcp_oauth_client_evictions_total` | (counter, no labels) |
