@@ -43,6 +43,10 @@ logger = logging.getLogger(__name__)
 
 _IDENTITY_BINDING_METHODS = ("get_identity_binding", "bind_identity", "clear_identity_binding")
 
+_KNOWN_DIRECTORY_CAPABILITIES = frozenset(
+    {"admin", "service_accounts", "api_keys", "identity_binding"}
+)
+
 
 def _require_protocol(
     directory: UserDirectory,
@@ -60,6 +64,12 @@ def _require_protocol(
 
 def validate_directory_capabilities(directory: UserDirectory) -> UserDirectory:
     """Refuse a directory that declares ``"admin"`` without implementing it."""
+    for capability in directory.capabilities:
+        if capability not in _KNOWN_DIRECTORY_CAPABILITIES:
+            raise ConfigError(
+                f"users directory {directory.name!r} declares unknown capability "
+                f"{capability!r} (see docs/plugins.md)"
+            )
     if "admin" in directory.capabilities:
         _require_protocol(directory, "admin", UserDirectoryAdmin)
     if "service_accounts" in directory.capabilities:
