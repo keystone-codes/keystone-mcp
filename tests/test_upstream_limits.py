@@ -1,4 +1,4 @@
-"""Acceptance tests for upstream registry ``limits`` (F11)."""
+"""Acceptance tests for upstream registry ``limits``."""
 
 from __future__ import annotations
 

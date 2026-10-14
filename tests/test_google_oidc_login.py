@@ -77,7 +77,7 @@ _CSRF_FIELD_RE = re.compile(r'name="csrf" value="([^"]*)"')
 
 
 async def _start_google_redirect(client, txn: str) -> str:
-    """Walk the consent screen's Google button like a browser would (A13).
+    """Walk the consent screen's Google button like a browser would.
 
     The screen must be shown first: ``GET /login?txn`` returns the consent
     page carrying a hidden ``csrf`` field and setting the matching
@@ -141,7 +141,7 @@ async def test_google_login_redirect_includes_state_nonce_pkce(google_harness):
     assert query["client_id"] == ["test-google-client"]
     assert query["redirect_uri"] == [google_harness["settings"].google_redirect_uri]
 
-    # X03: the pending-attempt namespace is now "login_attempt" (shared by any
+ # The pending-attempt namespace is now "login_attempt" (shared by any
     # redirect provider), not the Google-only "google" it used to be.
     raw = await google_harness["oauth"]._pending_store.get("login_attempt", query["state"][0])
     assert raw is not None
@@ -473,7 +473,7 @@ async def test_api_key_flow_still_works_with_google_enabled(google_harness):
     """api_key login still works alongside Google — for a directory-known email.
 
     ``retry@example.com`` used to work here because /login only checked the
-    token; since A01 also checks the directory, this harness's seeded
+ token; since the directory check also the directory, this harness's seeded
     ``alice@example.com`` is used instead.
     """
     client = google_harness["client"]
@@ -504,7 +504,7 @@ async def test_api_key_flow_still_works_with_google_enabled(google_harness):
 async def test_login_page_shows_consent_when_google_primary(google_harness):
     """Even with Google as the primary method, /login shows the consent screen.
 
-    It must not redirect straight to Google (A13): the screen itself carries
+ It must not redirect straight to Google: the screen itself carries
     the Google button as a form.
     """
     client = google_harness["client"]
@@ -518,7 +518,7 @@ async def test_login_page_shows_consent_when_google_primary(google_harness):
     assert 'method="post"' in page.text
 
 
-# ── finding #1: the Google state is bound to the browser that started it ───
+# ── 1: the Google state is bound to the browser that started it ───
 #
 # Attack this closes: attacker registers a client with their own redirect_uri,
 # runs /authorize + the consent screen + POST /login/google themselves (so
@@ -554,7 +554,7 @@ async def test_google_callback_without_csrf_cookie_is_refused(google_harness):
     # later `Set-Cookie` updates — harmless under the old "reuse the incoming
     # cookie" behaviour (both entries held the same value), but a real
     # mismatch now that every consent-screen render mints a fresh cookie
-    # (finding #4, second review): the jar would hold both the stale restored
+ # (second review): the jar would hold both the stale restored
     # value and the fresh one, and which one the request actually sends
     # becomes ambiguous.
     import httpx
@@ -625,14 +625,14 @@ async def test_google_callback_with_matching_csrf_cookie_succeeds(google_harness
     assert "code=" in response.headers["location"]
 
 
-# ── finding #7: identity.email is normalized in the Google branch too ──────
+# ── 7: identity.email is normalized in the Google branch too ──────
 #
-# google_oidc.verify_id_token already lowercases the email claim (A01's own
+# google_oidc.verify_id_token already lowercases the email claim (the directory-check own
 # note on the Google branch), so this cannot be reproduced end-to-end through
 # the real verification path. This test instead patches verify_id_token to
 # return a non-normalized identity — simulating that upstream guarantee ever
 # being relaxed or bypassed — and checks handle_google_callback's own
-# normalize_email(...) call (matching handle_login, A01) still produces a
+# normalize_email(...) call (matching handle_login) still produces a
 # lower-case, trimmed subject and `email` claim.
 async def test_google_identity_email_is_normalized_defensively(google_harness):
     client = google_harness["client"]

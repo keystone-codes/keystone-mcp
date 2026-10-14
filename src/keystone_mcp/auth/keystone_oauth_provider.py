@@ -5,7 +5,7 @@ Implements the full embedded OAuth server pattern on top of FastMCP's
 emits the discovery/registration/authorize/token endpoints; credentials are
 collected on a login page (``/login`` plus one ``/login/{name}`` pair per
 configured redirect provider) through the pluggable
-:class:`~keystone_mcp.login.protocol.LoginProvider` contract (X03) — this
+:class:`~keystone_mcp.login.protocol.LoginProvider` contract — this
 provider owns the OAuth transaction, the consent screen, the CSRF/browser
 binding and the users-directory check; a provider only proves who signed in.
 A valid login binds the verified ``email`` to the issued access token as a
@@ -316,10 +316,10 @@ def _human_access_claims(
 
 
 # Double-submit CSRF cookie for the consent screen's redirect-provider
-# button forms (A13; generalized from Google-only in X03). Scoped to the
+# button forms (generalized from Google-only redirect flow). Scoped to the
 # /login path and as short-lived as the login transaction it protects.
 #
-# Over https, the cookie carries the `__Host-` prefix instead (finding #4,
+# Over https, the cookie carries the `__Host-` prefix instead (second review:
 # second review): a browser refuses to even store a `__Host-`-prefixed cookie
 # unless it is `Secure`, has `Path=/` and carries no `Domain` attribute — which
 # means only this exact origin can ever set it, not a sibling subdomain (e.g.
@@ -342,7 +342,7 @@ def _hash_csrf_cookie(value: str) -> str:
     """SHA-256 of a ``km_login_csrf`` cookie value, hex-encoded.
 
     Used to bind a redirect provider's ``state`` round trip to the browser
-    that started it (finding #1): the hash travels inside the server-side
+ that started it: the hash travels inside the server-side
     pending envelope keyed by ``state``, and is compared against a hash of
     the cookie presented on ``/login/{name}/callback``. A plain equality
     check on secrets of fixed, known length does not need
@@ -360,7 +360,7 @@ _DEFAULT_SCHEME_PORTS: dict[str, int] = {"http": 80, "https": 443}
 
 
 # Loopback hosts a `http` redirect_uri may use even when a redirect-host
-# allowlist is configured (A17 finding #4): `http` elsewhere is refused
+# allowlist is configured : `http` elsewhere is refused
 # outright, since only a host running on the operator's own machine can be
 # trusted not to leak the authorization code over the network in the clear.
 _LOOPBACK_REDIRECT_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
@@ -369,11 +369,11 @@ _LOOPBACK_REDIRECT_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 def _redirect_uri_allowed(
     uri: str, allowed_hosts: tuple[str, ...], allowed_scheme_hosts: tuple[str, ...]
 ) -> bool:
-    """Whether ``uri`` is allowed by the redirect-host allowlist (A17).
+    """Whether ``uri`` is allowed by the redirect-host allowlist.
 
     An empty allowlist (both tuples empty) means no restriction — the 0.3.1
     behaviour. A non-empty allowlist checks the scheme, not just the host
-    (finding #4): a redirect_uri with no parseable host is always refused,
+ (second review): a redirect_uri with no parseable host is always refused,
     since it cannot be shown to be on an allowed host.
 
     - ``https``: the host must be in ``allowed_hosts``. Any host on the list
@@ -408,12 +408,12 @@ def _client_redirect_uris_allowed(
 ) -> bool:
     """Whether every one of ``client``'s registered redirect_uris is allowed.
 
-    Used at token-exchange time (finding #3) to catch a client that was
+ Used at token-exchange time to catch a client that was
     registered before an allowlist existed, or before it was tightened: such a
     client passed ``register_client``'s check (there was none, or a looser
     one, at the time) and can otherwise keep refreshing its tokens forever.
     An empty ``redirect_uris`` is refused the same way `register_client` would
-    refuse registering it today (finding #5).
+ refuse registering it today.
     """
     if not allowed_hosts and not allowed_scheme_hosts:
         return True
@@ -674,7 +674,7 @@ class _AuthorizeRedirectHostGuard:
     fields) against the client's own registered metadata, and on a validation
     error (``invalid_scope``, ``invalid_request``, ...) redirects straight to
     the client's registered ``redirect_uri`` with ``error``/``state`` query
-    parameters — without ever calling ``provider.authorize()`` (finding #3,
+ parameters — without ever calling ``provider.authorize`` (
     second review). For a client registered before the allowlist existed, or
     before it was tightened (the same class ``_refuse_if_client_redirect_uris_not_allowed``
     guards at token-exchange time), that is a browser redirect to exactly the
@@ -737,7 +737,7 @@ class _AuthorizeRedirectHostGuard:
 
 
 # Anti-framing and content-restriction headers for every login-page HTML
-# response. The login page and the consent screen built on top of it (A13)
+# response. The login page and the consent screen built on top of it
 # carry the api_token / authorization decision, so a third-party
 # site must not be able to render it in a hidden iframe and trick a user into
 # clicking through it (clickjacking). ``frame-ancestors 'none'`` and
@@ -1011,7 +1011,7 @@ class _LoginAttempt:
     """A redirect provider's in-flight sign-in attempt, keyed by ``state``.
 
     Replaces the Google-only ``_GooglePendingState``: the same record shape
-    now serves any ``RedirectLoginProvider`` (X03). ``attempt`` is whatever
+ now serves any ``RedirectLoginProvider``. ``attempt`` is whatever
     private per-attempt data the provider's own ``begin()`` returned (a
     nonce, a PKCE verifier, ...) — Keystone never looks inside it, only
     stores and hands it back to ``complete()``.
@@ -1171,7 +1171,7 @@ class KeystoneOAuthProvider(OAuthProvider):
         ``handle_login``), and refuse the attempt outright when a provider's
         own claim disagrees with it. RBAC's interactive-human gate
         (``rbac/human_identity.py``) no longer trusts ``auth_method ==
-        "google"`` either (X05): it reads the ``interactive`` claim, which
+ "google"`` either: it reads the ``interactive`` claim, which
         ``_complete_login`` derives from the *registered provider's own*
         ``LoginProvider.interactive`` -- looked up by this same route name,
         not from the identity a provider hands back -- so a provider cannot
@@ -1207,7 +1207,7 @@ class KeystoneOAuthProvider(OAuthProvider):
         return normalized
 
     def _csrf_cookie_name(self) -> str:
-        """The ``km_login_csrf`` cookie's name for this deployment (finding #4).
+        """The ``km_login_csrf`` cookie's name for this deployment.
 
         ``__Host-`` only over ``https``: the prefix requires ``Secure``, and
         claiming it on a plain-``http`` deployment (local/demo) would be
@@ -1323,7 +1323,7 @@ class KeystoneOAuthProvider(OAuthProvider):
         allowlist existed, or before it was tightened. Without this check such
         a client can keep renewing its access and refresh tokens forever
         (``touch_client`` plus rotation) even though it could never register
-        or start a fresh ``/authorize`` today (A17, finding #3). Raising
+ or start a fresh ``/authorize`` today. Raising
         ``TokenError`` here is safe for both callers: ``/token`` is a JSON API
         with no redirect to protect against, unlike ``/authorize``.
         """
@@ -1446,7 +1446,7 @@ class KeystoneOAuthProvider(OAuthProvider):
         ):
             # The SDK already matched params.redirect_uri against the client's
             # registered redirect_uris, so this only fires for a client that
-            # registered before the restriction was turned on (A17). No
+ # registered before the restriction was turned on. No
             # transaction is created.
             #
             # This deliberately does not raise AuthorizeError: the SDK's
@@ -2214,7 +2214,7 @@ class KeystoneOAuthProvider(OAuthProvider):
 
     # ── Login page (custom routes, registered by the server) ──────────────
     async def render_login(self, request: Request) -> Response:
-        """Render the consent screen (A13): always a page, never a Google redirect.
+        """Render the consent screen: always a page, never a Google redirect.
 
         Showing the application name and the redirect destination up front, and
         requiring an explicit click on this page before any federated login
@@ -2239,7 +2239,7 @@ class KeystoneOAuthProvider(OAuthProvider):
 
         Reached only when ``KEYSTONE_MCP_OAUTH_ALLOWED_REDIRECT_HOSTS`` is
         configured and a pre-existing client's redirect_uri is not on it
-        (A17, finding #3). No ``txn`` is needed here: by construction nothing
+. No ``txn`` is needed here: by construction nothing
         was ever stashed in the pending store for this request, so there is
         nothing to look up or consume.
         """
@@ -2407,7 +2407,7 @@ class KeystoneOAuthProvider(OAuthProvider):
         )
 
     async def start_login_redirect_get(self, request: Request, name: str) -> Response:
-        """``GET /login/{name}`` no longer redirects straight to the provider (A13).
+        """``GET /login/{name}`` no longer redirects straight to the provider.
 
         A bare link to this route used to skip the consent screen entirely;
         now it bounces to it (303) so the screen cannot be bypassed by a
@@ -2463,8 +2463,8 @@ class KeystoneOAuthProvider(OAuthProvider):
             return self._html_error(request, lang, "error_request", 400)
 
         state = secrets.token_urlsafe(24)
-        # Binds this round trip to the browser that started it (finding #1,
-        # 0.4.0 A13/A17): only a hash travels through the external provider,
+ # Binds this round trip to the browser that started it (browser binding,
+ # 0.4.0 consent and redirect hardening): only a hash travels through the external provider,
         # never the cookie value itself, in case the state envelope ever
         # leaked (it is opaque server-side state, but there is no reason to
         # carry the raw secret).
@@ -2514,7 +2514,7 @@ class KeystoneOAuthProvider(OAuthProvider):
     ) -> Response:
         """Build the consent screen and, if a redirect provider is configured, (re)issue its CSRF cookie.
 
-        A fresh value is minted on every render (finding #4, second review):
+ A fresh value is minted on every render (second review):
         the cookie used to be reused whenever the request already carried one
         at least 32 characters long, from *any* source — including one an
         attacker planted (e.g. over a plain-http same-host endpoint, or a
@@ -2590,7 +2590,7 @@ class KeystoneOAuthProvider(OAuthProvider):
             return self._html_error(request, lang, "error_request", 400)
 
         # Binds this callback to the browser that started the round trip
-        # (finding #1, 0.4.0 A13/A17): without this, a browser that never
+ # (browser binding, 0.4.0 consent and redirect hardening): without this, a browser that never
         # visited /login or POSTed /login/{name} — and so never holds the
         # matching km_login_csrf cookie — could still complete a sign-in
         # whose `state` it only received as a link (e.g. one an attacker
@@ -2755,7 +2755,7 @@ class KeystoneOAuthProvider(OAuthProvider):
 
         ``ttl_seconds`` is overridden to a short grace period when rotation
         rewrites the *old* token's marker instead of deleting it outright
-        (finding #2, see ``exchange_refresh_token``).
+ (see ``exchange_refresh_token``).
         """
         ttl = ttl_seconds if ttl_seconds is not None else self._settings.refresh_token_ttl_seconds
         await self._pending_store.put(
@@ -2881,7 +2881,7 @@ def _parse_login_attempt_raw(raw: str) -> _LoginAttempt | None:
 
     Replaces the Google-only ``_parse_google_pending_raw``: the stored shape
     is now ``{"txn", "provider", "attempt", "csrf_hash"}`` for any redirect
-    provider (X03).
+ redirect login provider.
     """
     try:
         payload = json.loads(raw)
@@ -2896,7 +2896,7 @@ def _parse_login_attempt_raw(raw: str) -> _LoginAttempt | None:
         return None
     # Required, not defaulted: an envelope written before this field existed
     # (a login already in flight across a deploy) has no csrf_hash to check
-    # against, and treating that as "no restriction" would reopen finding #1
+ # against, and treating that as "no restriction" would reopen DNS rebinding
     # for exactly the in-flight logins a deploy is most likely to catch.
     # Failing them closed just means a re-click of the provider's button.
     csrf_hash = str(payload.get("csrf_hash", "")).strip()

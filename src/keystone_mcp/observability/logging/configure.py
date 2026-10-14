@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 
 _last_configured_settings: Settings | None = None
 
-# fastmcp 4 / mcp SDK 2 moved their own HTTP stack to httpx2/httpcore2 (X02);
+# fastmcp 4 / mcp SDK 2 moved their own HTTP stack to httpx2/httpcore2;
 # our own HTTP code still logs under "httpx"/"httpcore", so both pairs are
 # quieted here.
 _NOISY_LOGGERS = (

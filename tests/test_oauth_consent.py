@@ -1,4 +1,4 @@
-"""Consent screen tests (A13).
+"""Consent screen tests.
 
 Before any authorization code is issued, ``GET /login`` must show which
 application is asking for access and where the result will be sent, and the
@@ -145,7 +145,7 @@ async def test_google_primary_shows_consent_instead_of_redirect():
             assert "HttpOnly" in set_cookie
             assert "samesite=lax" in set_cookie.lower()
             # Plain http (this suite's BASE_URL): the unprefixed name, scoped
-            # to /login as before (finding #4, second review).
+ # to /login as before (second review).
             assert not set_cookie.lower().startswith("__host-")
             assert "path=/login" in set_cookie.lower()
 
@@ -227,7 +227,7 @@ async def test_cookie_secure_flag_follows_base_url():
             page = await client.get("/login", params={"txn": txn})
             set_cookie = page.headers.get("set-cookie", "")
             assert "Secure" in set_cookie
-            # finding #4 (second review): the `__Host-` prefix over https,
+ # second review: the `__Host-` prefix over https,
             # which requires `Path=/` — a browser refuses to store the
             # cookie at all otherwise, so the stronger name and the broader
             # path must travel together.
@@ -251,7 +251,7 @@ async def test_cookie_secure_flag_follows_base_url():
 
 
 async def test_csrf_cookie_is_never_echoed_back_from_the_request():
-    """finding #4 (second review): a pre-existing cookie value is never reused.
+    """second review: a pre-existing cookie value is never reused.
 
     Before this fix, any incoming `km_login_csrf` cookie at least 32
     characters long was reused verbatim — including one the browser carried

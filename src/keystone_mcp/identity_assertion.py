@@ -44,10 +44,10 @@ IDENTITY_HEADER = "X-Keystone-Identity"
 IDENTITY_TYP = "keystone-identity+jwt"
 
 #: Key under a stdio ``tools/call`` request's ``params._meta`` the assertion
-#: is carried in instead of an HTTP header (Y09). Defined here, used there.
+#: is carried in instead of an HTTP header. Defined here, used there.
 IDENTITY_META_KEY = "keystone-mcp/identity"
 
-#: Published JWKS document for ES256 identity assertions (Y11).
+#: Published JWKS document for ES256 identity assertions.
 IDENTITY_JWKS_PATH = "/.well-known/keystone-identity-jwks.json"
 
 #: Minimum length, in UTF-8 bytes, of an ``auth.identity_secret_env`` value.
@@ -58,7 +58,7 @@ MIN_SECRET_BYTES = 32
 ASSERTION_SKEW_SECONDS = 60
 
 #: ``sub_type`` values accepted on a :class:`~keystone_mcp.identity.
-#: VerifiedIdentity`; anything else (including absent, pre-X07) defaults to
+#: VerifiedIdentity`; anything else (including absent, before subject-type claims) defaults to
 #: ``"human"``.
 _KNOWN_SUBJECT_TYPES = frozenset({"human", "service"})
 

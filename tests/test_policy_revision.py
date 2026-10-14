@@ -1,4 +1,4 @@
-"""Cross-replica RBAC policy revision propagation (A05 acceptance)."""
+"""Cross-replica RBAC policy revision propagation."""
 
 from __future__ import annotations
 

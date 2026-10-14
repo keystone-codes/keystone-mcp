@@ -863,11 +863,11 @@ class UpstreamRegistry:
     refresh_enabled: bool = True
     observability: "RbacObservability | None" = None
     # ``iss`` claim for every identity assertion signed by any upstream
-    # registered here (Y01) -- set by ``build_server`` from
+ # registered here -- set by ``build_server`` from
     # ``settings.base_url`` (already stripped of a trailing slash).
     identity_issuer: str = ""
     rbac_mode: str = "off"
-    # Deployment-wide ES256 signing key (Y11); never logged or repr'd.
+ # Deployment-wide ES256 signing key; never logged or repr'd.
     _identity_signing_key_pem: str = field(default="", repr=False)
     _identity_signing_key_previous_pem: str = field(default="", repr=False)
     _identity_es256_private_key: Any = field(default=None, repr=False)
@@ -966,7 +966,7 @@ class UpstreamRegistry:
 
         ``identity_secret_env`` names an environment variable holding this
         upstream's identity-assertion secret (``auth.identity_secret_env``,
-        Y01): when set, every proxied call carries a signed
+ identity secret): when set, every proxied call carries a signed
         ``X-Keystone-Identity`` JWT (``aud`` = *name*) alongside
         ``X-Author-Email``. Re-validated and re-read here (never trusted from
         an earlier parse), and kept only inside the

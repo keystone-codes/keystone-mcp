@@ -1,4 +1,4 @@
-"""Login-time users-directory checks for token-based sign-in (A01).
+"""Login-time users-directory checks for token-based sign-in.
 
 Before this check, ``POST /login`` only verified the ``api_token``: any
 holder of a shared DEV-token (or an auth-service-issued one) could sign in as
@@ -220,7 +220,7 @@ async def test_provider_without_resolver_accepts_any_email(harness):
     """Test-only path: a provider built without a resolver skips the directory check.
 
     The production server always wires a user_resolver (built-in users
-    directory, A01's dependency on U02), so this only happens when a test
+ directory, the directory-check dependency on ), so this only happens when a test
     builds the server/provider without supplying one, as ``harness`` does.
     """
     client_id = await register_client(harness.client)
@@ -259,7 +259,7 @@ async def test_unknown_email_counts_as_failed_login():
 async def test_dev_token_login_checks_directory_in_local_profile_with_rbac_off(
     monkeypatch, tmp_path
 ):
-    """A04 coordinator finding: a DEV-token holder must not sign in as anyone.
+    """With RBAC off, a DEV-token holder must not sign in as anyone.
 
     With ``KEYSTONE_MCP_RBAC_MODE=off`` and Google login disabled — the
     ``local`` profile's common case — ``build_server`` used to leave

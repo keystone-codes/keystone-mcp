@@ -154,7 +154,7 @@ async def test_ping_translates_store_unavailable_to_catalog_unavailable() -> Non
 
     vocabulary (``UserDirectoryUnavailableError``, code ``catalog_unavailable``),
     not the store's own ``keystone_mcp.users.errors.UsersStoreUnavailableError``
-    -- the same translation ``resolve_user`` already does (X06 review finding).
+ -- the same translation ``resolve_user`` already does (contract review finding).
     """
     engine = create_users_engine("postgresql+psycopg://u:pass@127.0.0.1:1/db")
     store = UsersStore(engine, revision=NullRevisionWriter())

@@ -7,7 +7,7 @@ a directory implementation can be as small as a dict in memory or a YAML file,
 with no ``fastmcp``, ``httpx``, ``sqlalchemy`` or ``redis`` in sight.
 
 Rules every implementation follows (also checked by the contract tests in
-``keystone_mcp.contract_tests``, see X11):
+``keystone_mcp.contract_tests``):
 
 * The implementation normalizes ``subject`` on input (``strip().lower()`` for
   an email); every email it returns is already lower-cased.

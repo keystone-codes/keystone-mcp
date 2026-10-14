@@ -10,7 +10,7 @@ The admin path (``list_users`` and every
 raises the ``users_*`` skill's own error vocabulary instead (see
 :mod:`keystone_mcp.user_directory.errors`), normalizing whatever the service
 reports: ``invalid_role`` becomes ``validation_error``, ``user_already_exists``
-becomes ``conflict`` (decision S3) -- every other code passes through
+becomes ``conflict`` (HTTP users error-code normalization) -- every other code passes through
 unchanged. See ``docs/user-directory.md`` ("The HTTP directory contract") for
 the full wire contract (paths, bodies, headers, revision).
 """

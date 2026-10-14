@@ -234,7 +234,7 @@
 
 - id: SEC-32
   attack: "Huge upstream bodies and progress floods"
-  expected: "C09 limits; client error; stable memory"
+ expected: "upstream answer limits; client error; stable memory"
   tests:
     - tests/security/test_hostile_upstream.py::test_hostile_upstream_giant_response_rejected
     - tests/test_upstream_answer_limits.py::test_response_over_limit_fails_call_not_process
@@ -243,7 +243,7 @@
 
 - id: SEC-33
   attack: "Infinite upstream input_required rounds"
-  expected: "Stopped at C08 round limit"
+ expected: "Stopped at elicitation round limit"
   tests:
     - tests/security/test_hostile_upstream.py::test_hostile_upstream_input_required_capped
     - tests/test_proxy_call_limits.py::test_url_elicitation_loop_stops_after_max_rounds

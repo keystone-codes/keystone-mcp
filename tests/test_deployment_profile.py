@@ -1,4 +1,4 @@
-"""`KEYSTONE_MCP_DEPLOYMENT_PROFILE` (`local` | `production`, A04).
+"""`KEYSTONE_MCP_DEPLOYMENT_PROFILE` (`local` | `production`).
 
 `local` is a developer's own machine: a loopback-only ``KEYSTONE_MCP_BASE_URL``
 and DEV tokens allowed under any RBAC mode. `production` (the default) is a
@@ -277,7 +277,7 @@ def test_startup_warnings_for_insecure_upstream_flags(monkeypatch, tmp_path: Pat
 
 
 def test_startup_warns_for_upstream_without_identity_secret(monkeypatch, tmp_path: Path):
-    """Y01 (W6): an upstream with no auth.identity_secret_env only ever proves
+    """W6: an upstream with no auth.identity_secret_env only ever proves
 
     who is calling via the unsigned X-Author-Email header."""
     import json
@@ -498,7 +498,7 @@ def test_stage_like_production_configuration_is_accepted(monkeypatch, tmp_path: 
         ("keystone", False),
         ("mcp.example.com", True),
         ("::1", False),
-        # finding #10 (second review): a legacy integer/hex IPv4 literal
+        # second review: a legacy integer/hex IPv4 literal
         # (what a browser or curl would actually connect to) must classify
         # the same as its dotted-quad spelling, not fall through to the
         # bare-name "no dot -> private" rule.
@@ -516,7 +516,7 @@ def test_is_public_host(host: str, expected: bool):
 def test_legacy_integer_ip_literal_refused_as_public_http_in_production(
     monkeypatch, tmp_path: Path
 ):
-    """finding #10: `http://134744072` (decimal for 8.8.8.8) must trip P4."""
+    """public-host parsing: `http://134744072` (decimal for 8.8.8.8) must trip P4."""
     _rbac_env(monkeypatch, tmp_path)
     _production_login_env(monkeypatch)
     monkeypatch.setenv("KEYSTONE_MCP_DEPLOYMENT_PROFILE", "production")
@@ -529,7 +529,7 @@ def test_legacy_integer_ip_literal_refused_as_public_http_in_production(
 
 
 def test_production_refuses_internal_dns_name_over_http_with_guidance(monkeypatch, tmp_path: Path):
-    """finding #10: an internal-looking name (e.g. `*.svc.cluster.local`) is
+    """public-host parsing: an internal-looking name (e.g. `*.svc.cluster.local`) is
 
     still classified public by `_is_public_host` (a DNS suffix is not a
     trust boundary) and P4 still refuses it — deliberately, not loosened —

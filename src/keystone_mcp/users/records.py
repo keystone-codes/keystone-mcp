@@ -1,6 +1,6 @@
 """Immutable, serializable records returned by the users directory service.
 
-``UserRecord`` itself lives in :mod:`keystone_mcp.user_directory.types` (X06):
+``UserRecord`` itself lives in :mod:`keystone_mcp.user_directory.types`:
 it is shared by every ``UserDirectory`` implementation, not just this
 database-backed one. :func:`user_record_from_row` is what used to be
 ``UserRecord.from_row`` -- the one piece of that conversion that is specific

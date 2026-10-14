@@ -1,4 +1,4 @@
-"""OpenTelemetry tracing (F02)."""
+"""OpenTelemetry tracing."""
 
 from __future__ import annotations
 

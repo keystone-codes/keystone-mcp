@@ -16,7 +16,7 @@ answering, once, at the top of the request: the client's ``ServerSession``
 (SDK 2 creates a fresh one per request -- see its class docstring), the
 request id, and the ``progressToken`` the client asked for (if any). Passing
 it down explicitly, rather than reading the active request context again
-later, is what lets a long-lived stdio session (Y09) forward progress for a
+later, is what lets a long-lived stdio session forward progress for a
 call it did not itself receive the request on: the session object is bound to
 *that* request's response stream no matter which task ends up awaiting it.
 
@@ -88,7 +88,7 @@ class DownstreamCall:
         any future caller that runs off the request task (there is none yet).
         Values are captured once here rather than re-read later, which is
         what makes the forwarding work the same way whether the upstream call
-        happens inline in the request task or from a separate one (Y09's
+ happens inline in the request task or from a separate one (stdio upstream wiring
         stdio read loop, shared across many client requests).
         """
         try:

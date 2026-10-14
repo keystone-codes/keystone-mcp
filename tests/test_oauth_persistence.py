@@ -443,7 +443,7 @@ async def test_concurrent_refresh_keeps_google_auth_method(persistence_client):
     # obtain_access_token logs in via the api_key form; overwrite the marker
     # to simulate a session that authenticated through Google. This fixture's
     # server only configures the built-in api_key provider, so "google" is
-    # registered directly on the already-built provider (X05 refuses a
+ # registered directly on the already-built provider (runtime registration refuses a
     # refresh naming a provider that is not currently configured) rather than
     # rebuilding the whole app with Google turned on, which would also pull
     # in a real users-directory resolver and change every other login in
@@ -499,7 +499,7 @@ async def test_old_auth_marker_gets_short_grace_ttl_after_rotation(persistence_c
     """After a successful rotation, the old refresh token's marker is rewritten, not deleted.
 
     This used to assert the marker was gone immediately after rotation. That
-    is exactly what reopened the race this fix (finding #2, below) closes: a
+ is exactly what reopened the race this fix (below) closes: a
     second request that validated the old refresh token concurrently with the
     one that won the rotation would read no marker at all once the first
     request deleted it, and silently downgrade to ("api_key", None). Instead
@@ -530,7 +530,7 @@ async def test_old_auth_marker_gets_short_grace_ttl_after_rotation(persistence_c
 
 
 async def test_second_refresh_keeps_auth_method_after_first_fully_completes(persistence_client):
-    """The residual race finding #2 closes: not two readers racing one write, but a
+    """The residual race the lock closes: not two readers racing one write, but a
     reader that arrives after the writer it raced has already finished.
 
     Both requests for the same old refresh token validate it (the SDK's
@@ -655,7 +655,7 @@ async def test_client_is_touched_before_refresh_token_is_written():
     assert touch_idx < put_idx
 
 
-# ── X05: the interactive claim comes from the provider, and survives refresh ──
+# ── the interactive claim comes from the provider, and survives refresh ──
 
 
 async def test_refresh_keeps_interactive_flag():
@@ -756,7 +756,7 @@ async def test_refresh_marker_from_0_4_is_read():
 async def test_refresh_for_removed_provider_is_refused():
     """A refresh token opened through a provider that was since removed from
     the configuration is refused (``invalid_grant``), not silently downgraded
-    to api_key sign-in -- the old X03 fallback this replaces.
+ to api_key sign-in -- the old redirect-only fallback this replaces.
     """
     settings = Settings(base_url=BASE_URL)
     store = InMemoryOAuthStore()

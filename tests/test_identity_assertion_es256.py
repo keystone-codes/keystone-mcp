@@ -1,4 +1,4 @@
-"""ES256 identity assertions and published JWKS (Y11)."""
+"""ES256 identity assertions and published JWKS."""
 
 from __future__ import annotations
 

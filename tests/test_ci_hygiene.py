@@ -1,4 +1,4 @@
-"""Guard against the 0.4.0 test-stand crutches coming back (Z11).
+"""Guard against the 0.4.0 test-stand crutches coming back.
 
 In 0.3.1/0.4.0, Streamable HTTP end-to-end flakiness was papered over with
 three crutches: forcing a handful of e2e tests to collect first
@@ -6,7 +6,7 @@ three crutches: forcing a handful of e2e tests to collect first
 ``conftest.py``), retrying the MCP client around transient transport errors
 (``retry_transient_mcp_errors``/``mcp_client_session``, up to eight
 attempts), and rerunning the whole suite twice in CI (``pytest-rerunfailures``
-and ``--reruns`` in ``test-gate.yml``). The fastmcp 4.x migration (X02)
+and ``--reruns`` in ``test-gate.yml``). The fastmcp 4.x migration
 removed all three. These tests make sure they do not quietly return — a
 flaky test is a bug to fix, not a retry to add back.
 """

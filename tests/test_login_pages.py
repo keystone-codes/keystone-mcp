@@ -1,4 +1,4 @@
-"""HTML layout and language persistence for built-in sign-in pages (X13)."""
+"""HTML layout and language persistence for built-in sign-in pages."""
 
 from __future__ import annotations
 

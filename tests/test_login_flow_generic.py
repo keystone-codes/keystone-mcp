@@ -1,4 +1,4 @@
-"""The generic login flow, driven entirely through fake ``LoginProvider``s (X03).
+"""The generic login flow, driven entirely through fake ``LoginProvider``s.
 
 These tests never touch Google or the api_key form: they prove that
 ``KeystoneOAuthProvider``'s machinery — the consent screen, the
@@ -342,7 +342,7 @@ async def test_form_provider_claiming_another_name_is_refused():
     assert response.status_code == 401
 
 
-# ── begin() is no longer trusted to never raise (finding #2) ───────────────
+# ── begin is no longer trusted to never raise ───────────────
 
 
 async def test_begin_rejected_provider_unavailable_is_503():
@@ -422,7 +422,7 @@ async def test_acme_callback_without_csrf_cookie_is_refused():
     assert "location" not in response.headers
 
 
-# ── finding #3: a resolver is built whenever any provider other than the
+# ── 3: a resolver is built whenever any provider other than the
 #    built-in api_key form alone is configured, not only for Google ────────
 
 

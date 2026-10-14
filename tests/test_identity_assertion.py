@@ -43,7 +43,7 @@ _EXPECTED_REQUIRED_FIELDS = {
 
 @dataclass
 class _FutureIdentity:
-    """Stands in for a post-X07 VerifiedIdentity (subject, subject_type, client_id)."""
+    """Stands in for a VerifiedIdentity with subject-type claims (subject, subject_type, client_id)."""
 
     email: str
     claims: dict | None = None

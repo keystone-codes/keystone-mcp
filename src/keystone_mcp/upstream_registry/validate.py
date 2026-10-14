@@ -24,7 +24,7 @@ _SECRET_LIKE_AUTH_KEYS = frozenset({"token", "bearer", "secret", "password"})
 #: both.
 _AUTH_ENV_NAME_KEYS = frozenset({"bearer_env", "identity_secret_env"})
 
-#: Non-secret ``auth`` keys (Y11 ``identity_alg``).
+#: Non-secret ``auth`` keys (``identity_alg``).
 _AUTH_PLAIN_KEYS = frozenset({"identity_alg"})
 
 #: ``auth.bearer_env`` (and, identically, ``auth.identity_secret_env``) must
@@ -65,7 +65,7 @@ _PRIVATE_HOSTNAMES = frozenset({"localhost"})
 #: 1-64 chars, A-Z/a-z/0-9/_/-, not starting or ending with '_' or '-'.
 _NAMESPACE_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9_-]{0,62}[A-Za-z0-9])?$")
 
-#: Fields only meaningful for ``transport: stdio`` entries (Y08); forbidden
+#: Fields only meaningful for ``transport: stdio`` entries; forbidden
 #: with ``transport: http`` (the default).
 _STDIO_ONLY_FIELDS = ("command", "args", "env", "cwd")
 

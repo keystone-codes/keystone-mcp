@@ -1,6 +1,6 @@
 """ASGI middleware refusing a request whose ``Host``/``Origin`` is not allowed.
 
-Closes a DNS-rebinding gap (finding #1, second review): fastmcp 3.4.4 ships a
+Closes a DNS-rebinding gap (second review): fastmcp 3.4.4 ships a
 ``Host``/``Origin`` guard (``fastmcp.server.http.HostOriginGuardMiddleware``,
 ``http_host_origin_protection`` in ``FastMCPSettings``) but it defaults to
 off, and even enabled it validates every route uniformly — there is no way to

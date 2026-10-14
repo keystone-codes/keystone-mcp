@@ -1,4 +1,4 @@
-"""F03: hot reload of the upstream registry file and SIGHUP."""
+"""Hot reload of the upstream registry file and SIGHUP."""
 
 from __future__ import annotations
 

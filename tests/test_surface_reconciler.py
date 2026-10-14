@@ -241,7 +241,7 @@ async def test_one_failing_namespace_does_not_block_others(reconciler_stack):
     assert "ledger:do_thing" in registry.routes
 
 
-# --- parallel catalog refresh (C06 step 6) -------------------------------------------
+# --- parallel catalog refresh -------------------------------------------
 
 
 async def test_hanging_namespace_does_not_delay_others(reconciler_stack):

@@ -481,7 +481,7 @@ def _parse_redirect_host_entries(raw: str) -> tuple[tuple[str, ...], tuple[str, 
                 "host name, without scheme or port (example: 'claude.ai,localhost')"
             )
         if ":" in token:
-            # A bare IPv6 literal (finding #9) also contains ':', either
+ # A bare IPv6 literal also contains ':', either
             # bracketed (as a human would copy it out of a URL, e.g. '[::1]')
             # or not (e.g. '::1'). Accept either spelling and normalize to
             # the bracket-free, compressed form: that is what
@@ -516,7 +516,7 @@ def _parse_scheme_host_list(raw: str) -> tuple[str, ...]:
 
 
 def _parse_allowed_hosts(raw: str) -> tuple[str, ...]:
-    """Parse ``KEYSTONE_MCP_ALLOWED_HOSTS`` (comma-separated, finding #1).
+    """Parse ``KEYSTONE_MCP_ALLOWED_HOSTS`` (comma-separated).
 
     Unlike ``KEYSTONE_MCP_OAUTH_ALLOWED_REDIRECT_HOSTS``, a port *is*
     meaningful here (``Host`` headers carry one) and is accepted as part of
@@ -601,7 +601,7 @@ def _legacy_ipv4_literal(value: str) -> ipaddress.IPv4Address | None:
 def _is_unspecified_host(host: str) -> bool:
     """True for ``0.0.0.0``/``::`` (and other spellings of "every interface").
 
-    Used by the ``local``-profile W5 warning (finding #10, second review):
+ Used by the ``local``-profile W5 warning (second review):
     unlike ``KEYSTONE_MCP_BASE_URL``, ``KEYSTONE_MCP_HOST`` has no loopback
     requirement under L1, so a `local`-profile server can still bind every
     interface. An unparseable value (a hostname, never valid for a bind
@@ -796,14 +796,14 @@ class UpstreamConfig:
     # itself, so this dataclass's repr stays safe to log.
     bearer_env: str | None = None
     # Name of the environment variable holding this upstream's identity
-    # assertion secret (``auth.identity_secret_env``, Y01) — again, only the
+ # assertion secret (``auth.identity_secret_env``) — again, only the
     # variable's name, never its value. ``None`` means this upstream receives
     # no ``X-Keystone-Identity`` header, only the unsigned ``X-Author-Email``.
     identity_secret_env: str | None = None
     # When ``"ES256"``, Keystone signs assertions with
     # ``KEYSTONE_MCP_IDENTITY_SIGNING_KEY`` instead of ``identity_secret_env``.
     identity_alg: Literal["ES256"] | None = None
-    # ``transport: stdio`` fields (Y08). ``url`` is ``""`` for a stdio entry.
+ # ``transport: stdio`` fields. ``url`` is ``""`` for a stdio entry.
     # ``env_from`` pairs a name in the child process's environment with the
     # name of the keystone-mcp environment variable that supplies it — never
     # the value itself, for the same reason as ``bearer_env`` above.
@@ -976,7 +976,7 @@ class Settings:
     shutdown_grace_seconds: int = field(
         default_factory=lambda: _env_int("KEYSTONE_MCP_SHUTDOWN_GRACE_SECONDS", 25)
     )
-    # Extra names `HostGuardMiddleware` (finding #1) accepts on the `Host`
+ # Extra names `HostGuardMiddleware` accepts on the `Host`
     # header beyond `KEYSTONE_MCP_BASE_URL` and its loopback aliases — a load
     # balancer's hostname, an internal DNS name, a bare IP a health check
     # reaches this process on. Comma-separated; each entry is either a bare
@@ -1206,7 +1206,7 @@ class Settings:
         default_factory=lambda: _env_secret("KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT", ""),
         repr=False,
     )
-    # Whether the policy_* tools (V02) may change the policy file through this
+ # Whether the policy_* tools may change the policy file through this
     # process: "full" reads and writes, "read-only" reads and validates only
     # (for a replica with no write access to a shared policy volume), "off"
     # publishes no policy_* tools at all.
@@ -1332,7 +1332,7 @@ class Settings:
     )
     # true (default): HTTP upstream elicitation/create (form mode) and upstream
     # InputRequiredResult round-trips reach the Keystone client. false: no
-    # upstream elicitation handler and no InputRequired passthrough (Y03 path).
+ # upstream elicitation handler and no InputRequired passthrough.
     proxy_elicitation: bool = field(
         default_factory=lambda: _env_bool("KEYSTONE_MCP_PROXY_ELICITATION", True)
     )
@@ -1346,7 +1346,7 @@ class Settings:
     upstreams_json: str = field(
         default_factory=lambda: _env("KEYSTONE_MCP_UPSTREAMS", ""), repr=False
     )
-    # Optional EC P-256 PEM private key for ES256 identity assertions (Y11).
+ # Optional EC P-256 PEM private key for ES256 identity assertions.
     # Empty means ES256 is unavailable; upstream entries with
     # ``auth.identity_alg: ES256`` refuse to start without it.
     identity_signing_key: str = field(
@@ -1413,7 +1413,7 @@ class Settings:
 
 
 def effective_allowed_hosts(settings: Settings) -> tuple[str, ...]:
-    """The ``Host``/``Origin`` allowlist for ``HostGuardMiddleware`` (finding #1).
+    """The ``Host``/``Origin`` allowlist for ``HostGuardMiddleware``.
 
     Always includes the host parsed out of ``KEYSTONE_MCP_BASE_URL`` — the
     name a legitimate client is told to reach this server at — on any port
@@ -1894,7 +1894,7 @@ def validate_settings(settings: Settings) -> None:
             )
         # P4: no unencrypted OAuth traffic to a publicly reachable host. This
         # also refuses an internal-looking name such as `*.svc.cluster.local`
-        # or `*.internal` (finding #10, second review): `_is_public_host`
+ # or `*.internal` (second review): `_is_public_host`
         # deliberately does not special-case those suffixes (a DNS suffix is
         # not a trust boundary — nothing stops a public record from using
         # one), so a closed-cluster deployment still needs to terminate TLS
@@ -2079,7 +2079,7 @@ def startup_warnings(settings: Settings, *, environ: Mapping[str, str] | None = 
                 "may point at private addresses; keep the upstream registry "
                 "under operator control"
             )
-        # W6 (Y01): an upstream with no identity_secret_env only ever learns
+ # W6: an upstream with no identity_secret_env only ever learns
         # who is calling from the unsigned, deprecated X-Author-Email header
         # -- except a stdio upstream (D8), which never receives that header
         # at all (there are no HTTP headers to a child process), so its
@@ -2146,7 +2146,7 @@ def startup_warnings(settings: Settings, *, environ: Mapping[str, str] | None = 
                 "administrators. Local profile only; never expose this server "
                 "beyond loopback."
             )
-        # W5 (finding #10, second review): L1 only looks at
+ # W5 (second review): L1 only looks at
         # KEYSTONE_MCP_BASE_URL (which `local` requires to be loopback), so a
         # `local`-profile server that also binds KEYSTONE_MCP_HOST to every
         # interface was never flagged — and this is not hypothetical: the

@@ -1,4 +1,4 @@
-"""Upstream prompt discovery, proxying and RBAC (Y06)."""
+"""Upstream prompt discovery, proxying and RBAC."""
 
 from __future__ import annotations
 

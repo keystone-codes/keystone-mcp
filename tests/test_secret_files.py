@@ -1,4 +1,4 @@
-"""Secrets from ``<NAME>_FILE`` paths (F05)."""
+"""Secrets from ``<NAME>_FILE`` paths."""
 
 from __future__ import annotations
 

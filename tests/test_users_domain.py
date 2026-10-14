@@ -41,7 +41,7 @@ def test_users_package_has_no_back_imports() -> None:
     before this test runs, making an in-process sys.modules check meaningless.
 
     ``keystone_mcp.users.errors``/``.records`` import the dependency-free
-    ``keystone_mcp.user_directory.types``/``.errors`` (X06), so the package
+ ``keystone_mcp.user_directory.types``/``.errors``, so the package
     itself (and its lightweight ``protocol``/``critical`` submodules) is now
     expected in ``sys.modules`` -- but nothing that depends on a concrete
     directory implementation, Redis, or httpx should be.

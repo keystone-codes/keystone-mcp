@@ -75,7 +75,7 @@ def test_support_server_does_not_use_fastmcp():
         .parent.joinpath("support", "lowlevel_upstream.py")
         .read_text(encoding="utf-8")
     )
-    # The upstream app itself must stay on the low-level MCP SDK only; Y04 may
+ # The upstream app itself must stay on the low-level MCP SDK only; cancellation tests may
     # import fastmcp's StreamingASGITransport inside asgi_http_client_factory
     # when streaming=True (cancellation tests), not in the server code path.
     before_client_factory, _after = source.split("def asgi_http_client_factory", 1)
@@ -415,7 +415,7 @@ async def test_bearer_token_is_never_logged(monkeypatch, caplog, patch_verified_
     assert "s3cr3t-value" not in repr(settings.upstreams)
 
 
-# --- signed identity assertion (Y01) -------------------------------------------------
+# --- signed identity assertion -------------------------------------------------
 
 _IDENTITY_SECRET_VALUE = "s3cr3t-identity-" + "v" * 20  # 36 bytes, well over MIN_SECRET_BYTES
 
