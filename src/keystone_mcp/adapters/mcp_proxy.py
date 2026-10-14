@@ -53,6 +53,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_warned_upstream_timeout_keys: set[str] = set()
+
 
 def _http_client_factory(tool_timeout_seconds: float) -> McpHttpClientFactory:
     """Build the transport's HTTP client with the per-tool timeout applied.
@@ -193,8 +195,22 @@ class McpProxyAdapter:
         """
         return self._status_envelope
 
-    def _timeout_for(self, tool_name: str) -> float:
-        return self._tool_timeout_overrides.get(tool_name, self._tool_timeout_seconds)
+    def _timeout_for(self, route: "Route") -> float:
+        published = route.published_name
+        if published in self._tool_timeout_overrides:
+            return self._tool_timeout_overrides[published]
+        upstream_key = route.upstream_tool or route.name
+        if upstream_key in self._tool_timeout_overrides:
+            if upstream_key not in _warned_upstream_timeout_keys:
+                _warned_upstream_timeout_keys.add(upstream_key)
+                logger.warning(
+                    "KEYSTONE_MCP_UPSTREAM_TOOL_TIMEOUTS key %r is an upstream tool name; "
+                    "use the published name %r (upstream names are deprecated since 0.6.0)",
+                    upstream_key,
+                    published,
+                )
+            return self._tool_timeout_overrides[upstream_key]
+        return self._tool_timeout_seconds
 
     async def execute(
         self,
@@ -227,13 +243,27 @@ class McpProxyAdapter:
 
             payload = omit_implicit_null_args(dict(args), route.params)
         tool_name = route.upstream_tool or route.name
-        timeout = self._timeout_for(tool_name)
+        timeout = self._timeout_for(route)
         # AUTHOR_EMAIL_HEADER last: extra_headers (e.g. a bearer token) must
         # not be able to override the verified identity header. The signed
         # assertion is built after extra_headers too, for the same reason —
         # neither can be overridden by a static header from the registry.
         call_meta: dict[str, Any] | None = None
-        headers = {**self._extra_headers}
+        headers: dict[str, str] = {}
+        if self._connection.transport == "http" and route.input_schema:
+            from mcp.shared.inbound import mcp_param_headers, x_mcp_header_map
+
+            header_map = x_mcp_header_map(route.input_schema)
+            if header_map:
+                try:
+                    headers.update(mcp_param_headers(header_map, payload))
+                except Exception as exc:  # noqa: BLE001 — upstream will reject the call
+                    logger.debug(
+                        "Mcp-Param header omitted for %s: %s",
+                        route.published_name,
+                        exc,
+                    )
+        headers.update(self._extra_headers)
         if self._identity_signer is not None:
             token = self._identity_signer.sign(
                 identity=ctx.verified_identity,

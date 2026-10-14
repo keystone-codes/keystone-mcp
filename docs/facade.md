@@ -206,7 +206,7 @@ not implemented yet or deliberately never forwarded.
 
 | Mechanism | Status |
 |---|---|
-| `tools/list`, `tools/call` | yes |
+| `tools/list`, `tools/call` | yes; on `tools/call`, `Mcp-Param-*` headers are derived from the tool's `inputSchema` (`x-mcp-header`) on every HTTP upstream call |
 | `notifications/progress` (upstream → client) | yes, when the client sends a `progressToken`; both protocol eras |
 | `notifications/tools/list_changed` | yes, after a catalog change, an RBAC policy reload or a users-directory change; both protocol eras — see "Discovery" above |
 | `notifications/cancelled` (client → upstream) | yes: a client cancel or a keystone-mcp timeout is forwarded to the upstream request (as `notifications/cancelled` on the handshake protocol, by closing the request stream on MCP 2026-07-28) |
@@ -215,7 +215,7 @@ not implemented yet or deliberately never forwarded.
 | `resources/list`, `resources/read`, `resources/templates/list` | yes |
 | `notifications/resources/list_changed` | yes, after an upstream resource catalog change; both protocol eras |
 | `resources/subscribe`, `notifications/resources/updated` | no |
-| `elicitation/create` (upstream → user) | yes for HTTP upstreams: form mode only, prefixed with `[namespace]`; URL mode is declined; not for stdio upstreams. On MCP 2026-07-28 the question reaches the client as an `input_required` result of the tool call; a 2026-07-28 client cannot be asked by an upstream that speaks the handshake protocol (the upstream gets `decline`) |
+| `elicitation/create` (upstream → user) | yes for HTTP upstreams: form mode only, prefixed with `[namespace]`; URL mode is declined; not for stdio upstreams. On MCP 2026-07-28 the question reaches the client as an `input_required` result of the tool call; a 2026-07-28 client cannot be asked by an upstream that speaks the handshake protocol (the upstream gets `decline`). At most 10 question rounds per tool call (automatic declines and questions to the user alike); the whole exchange counts against the tool timeout |
 | `sampling/createMessage`, `roots/list` | no, by design: needs its own trust model |
 | `notifications/message` (upstream logs) | no: upstream logs stay with the upstream |
 | `completion/complete` | no |
