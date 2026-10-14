@@ -66,8 +66,8 @@ Then connect a client and sign in:
   sections, one per service.
 - **Any users directory.** Built in (SQLite for one host, Postgres for
   production), or your own directory over HTTP.
-- **Any sign-in method.** Google, DEV tokens for local testing, and a
-  deprecated API-key method — all three behind one `LoginProvider` interface.
+- **Any sign-in method.** Google, OIDC (Okta, Entra, Keycloak), DEV tokens,
+  and API keys for machines — one `LoginProvider` interface.
 - **Onboarding and access through the agent.** An administrator adds people,
   changes roles, and manages access by asking the agent — [two agent
   skills](docs/README.md#i-manage-who-has-access) (`users_*` and `policy_*`

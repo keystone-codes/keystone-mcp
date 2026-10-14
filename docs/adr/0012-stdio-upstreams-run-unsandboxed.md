@@ -38,8 +38,9 @@ A compromised or malicious stdio upstream can read any secret present in the
 passed environment and act with Keystone's filesystem and network identity.
 Only vetted commands belong in the registry.
 
-Readiness (`/readyz`) reports stdio process state in `checks` but does not fail
-the probe unless `KEYSTONE_MCP_UPSTREAM_REQUIRE_ALL=true`.
+Readiness (`/readyz`) reports stdio process state under the top-level `upstreams`
+key (and under `checks.upstreams` when `KEYSTONE_MCP_UPSTREAM_REQUIRE_ALL=true`)
+but does not fail the probe unless that flag is set.
 
 ## Alternatives considered
 
@@ -74,6 +75,9 @@ by that user (mounted secrets, a shared `.env`, etc.).
   `.env` visible to upstream users; minimize the container environment.
 
 Process-level sandboxing inside Keystone remains out of scope for this ADR.
+
+The MCP stdio client also passes `HOME`, `LOGNAME`, `PATH`, `SHELL`, `TERM`, and
+`USER` into the child in addition to the entry's explicit `env` map.
 
 ## Links
 
