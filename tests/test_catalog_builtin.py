@@ -193,6 +193,7 @@ def test_read_only_directory_publishes_only_users_list(tmp_path, caplog):
         "users_set_roles",
         "users_grant_role",
         "users_revoke_role",
+        "users_delete",
     ):
         assert reg.get(name) is None, name
     warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
@@ -213,8 +214,33 @@ def test_admin_directory_publishes_all_users_tools(tmp_path):
         "users_set_roles",
         "users_grant_role",
         "users_revoke_role",
+        "users_delete",
     ):
         route = reg.get(name)
         assert route is not None, name
         assert route.mode == "live"
         assert route.admin is True
+
+
+def test_users_delete_not_published_without_delete_capability(tmp_path):
+    settings = _enforce_settings(tmp_path)
+
+    class _AdminOnly:
+        name = "admin-only"
+        capabilities = frozenset({"admin"})
+
+        async def resolve_user(self, subject):  # pragma: no cover
+            raise NotImplementedError
+
+        async def list_users(self, *, is_blocked=False, role=None, email_contains=None):
+            return []
+
+        async def ping(self) -> None:
+            return None
+
+        async def aclose(self) -> None:
+            return None
+
+    reg = _registry(settings)
+    register_catalog(reg, settings, directory=_AdminOnly())
+    assert reg.get("users_delete") is None

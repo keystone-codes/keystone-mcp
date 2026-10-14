@@ -53,6 +53,8 @@ def register_catalog(
     catalog_names_source: CatalogNamesSource | None = None,
     policy_store: object | None = None,
     session_revoker: object | None = None,
+    login_pending_store: object | None = None,
+    oauth_store: object | None = None,
 ) -> None:
     """``policy_store``, when given, is a ``keystone_mcp.rbac.policy_store.PolicyStore``."""
     resolved_management = management_source
@@ -77,6 +79,10 @@ def register_catalog(
         management_source=resolved_management,
         catalog_names_source=resolved_catalog_names,
         session_revoker=session_revoker,
+        login_pending_store=login_pending_store,
+        oauth_store=oauth_store,
+        users_delete_mode=settings.users_delete_mode,
+        rbac_audit_subject_salt=settings.rbac_audit_subject_salt,
     )
     service_accounts_admin = ServiceAccountsAdminAdapter(
         directory=directory,
@@ -175,6 +181,18 @@ def register_catalog(
             ],
         ),
     ]
+    _delete_tools: list[tuple[str, str, list[Param]]] = [
+        (
+            "users_delete",
+            "Delete a person from the users directory, or anonymize the record "
+            "(per KEYSTONE_MCP_USERS_DELETE_MODE). Two calls: the first returns a summary "
+            "and a confirmation code; show the summary to a human and call again with the code.",
+            [
+                P("email", str),
+                P("confirmation", str, required=False, default=None),
+            ],
+        ),
+    ]
     for tool_name, description, params in _read_only_tools:
         registry.add_route(
             tool_name,
@@ -201,6 +219,18 @@ def register_catalog(
             "users directory %s is read-only: users_* administration tools are not published",
             directory.name,
         )
+
+    if "delete" in directory.capabilities:
+        for tool_name, description, params in _delete_tools:
+            registry.add_route(
+                tool_name,
+                users_admin,
+                pattern=Pattern.SYNC,
+                params=params,
+                description=description,
+                mode="live",
+                admin=True,
+            )
 
     if "service_accounts" in directory.capabilities:
         _service_tools: list[tuple[str, str, list[Param]]] = [

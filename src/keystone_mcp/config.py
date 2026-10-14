@@ -36,6 +36,7 @@ logger = logging.getLogger(__name__)
 LoginMethod = Literal["google", "api_key"]
 RbacMode = Literal["off", "observe", "enforce"]
 LoginIdentityBindingMode = Literal["off", "bind"]
+UsersDeleteMode = Literal["anonymize", "delete"]
 LogFormat = Literal["json", "text"]
 UsersBackend = str
 DeploymentProfile = Literal["local", "production"]
@@ -138,6 +139,7 @@ USERS_CLI_VARIABLES = frozenset(
         "KEYSTONE_MCP_RBAC_MODE",
         "KEYSTONE_MCP_RBAC_POLICY_PATH",
         "KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT",
+        "KEYSTONE_MCP_USERS_DELETE_MODE",
     }
 )
 
@@ -326,6 +328,18 @@ def _parse_login_identity_binding(
         return value  # type: ignore[return-value]
     raise ConfigError(
         f"{field_name} must be 'off' or 'bind'; got {raw!r}",
+        variable=field_name,
+    )
+
+
+def _parse_users_delete_mode(
+    raw: str, *, field_name: str = "KEYSTONE_MCP_USERS_DELETE_MODE"
+) -> UsersDeleteMode:
+    value = raw.strip().lower()
+    if value in ("anonymize", "delete"):
+        return value  # type: ignore[return-value]
+    raise ConfigError(
+        f"{field_name} must be 'anonymize' or 'delete'; got {raw!r}",
         variable=field_name,
     )
 
@@ -1068,6 +1082,11 @@ class Settings:
     login_identity_binding: LoginIdentityBindingMode = field(
         default_factory=lambda: _parse_login_identity_binding(
             _env("KEYSTONE_MCP_LOGIN_IDENTITY_BINDING", "off")
+        )
+    )
+    users_delete_mode: UsersDeleteMode = field(
+        default_factory=lambda: _parse_users_delete_mode(
+            _env("KEYSTONE_MCP_USERS_DELETE_MODE", "anonymize")
         )
     )
 

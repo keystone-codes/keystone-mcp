@@ -15,6 +15,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal
 
+DeleteMode = Literal["anonymize", "delete"]
+
 API_KEY_RE = re.compile(r"^ksk_[0-9a-f]{12}_[A-Za-z0-9_-]{43}$")
 
 SERVICE_PREFIX = "svc:"
@@ -66,6 +68,16 @@ def generate_api_key_material() -> tuple[str, str, str]:
 
 def _iso_utc(value: datetime) -> str:
     return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
+@dataclass(frozen=True, slots=True)
+class DeletionResult:
+    email: str
+    mode: DeleteMode
+    pseudonym: str
+    roles_before: tuple[str, ...] | None
+    api_keys_revoked: int
+    references_rewritten: int
 
 
 @dataclass(frozen=True, slots=True)

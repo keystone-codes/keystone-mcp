@@ -49,7 +49,8 @@ An administrator does not edit a database by hand. They ask the agent to
 add a person, change a role, or block someone, and the agent calls the
 built-in `users_*` tools — `users_add`, `users_grant_role`,
 `users_revoke_role`, `users_set_roles`, `users_update`, `users_block`,
-`users_unblock`, `users_list`. The checklist the agent follows is the
+`users_unblock`, `users_delete`, `users_list`. Deletion or anonymization uses
+a confirmation code and revokes sessions and keys. The checklist the agent follows is the
 [`keystone-user-admin`](../skills/keystone-user-admin/SKILL.md) skill. The
 first administrator, and every later one from a fresh deployment, can come
 from `setup.sh --non-interactive` reading `KEYSTONE_SETUP_*` variables —

@@ -108,6 +108,7 @@ without `/` or equal to the MCP path) are refused at startup.
 | `KEYSTONE_MCP_USERS_CIRCUIT_RECOVERY_SECONDS` | 0.5.0 | stable |
 | `KEYSTONE_MCP_USERS_DB_URL` | 0.5.0 | stable |
 | `KEYSTONE_MCP_USERS_DB_URL_FILE` | 0.6.0 | stable |
+| `KEYSTONE_MCP_USERS_DELETE_MODE` | 0.6.0 | stable |
 | `KEYSTONE_MCP_USERS_REDIS_REVISION_KEY` | 0.5.0 | stable |
 | `KEYSTONE_MCP_POLICY_REDIS_REVISION_KEY` | 0.6.0 | stable |
 | `KEYSTONE_MCP_USERS_SERVICE_ALLOW_INSECURE_HTTP` | 0.6.0 | stable |
@@ -211,7 +212,10 @@ Published only when `KEYSTONE_MCP_RBAC_MODE=enforce` unless noted.
 `users_add`, `users_update`,
 `users_block`, `users_unblock`, `users_set_roles`, `users_grant_role`,
 `users_revoke_role`, and `users_logout` require the `admin` capability.
-Arguments and error codes match
+`users_delete` requires the `delete` capability (built-in directory only at
+0.6.0) and is limited to full administrators. Its first successful step returns
+`state: "confirmation_required"` with a summary and one-time code; the second
+step with a valid code returns `state: "done"`. Arguments and error codes match
 [keystone-user-admin skill](../skills/keystone-user-admin/SKILL.md). The
 `users_*` tools may return: `actor_email_required`, `bad_request`, `conflict`,
 `forbidden`, `last_administrator`, `self_admin_mutation_forbidden`,
@@ -304,7 +308,7 @@ Frozen since 0.5.0. Exit codes are part of the contract; command output text is 
 | `keystone-mcp catalog validate`, `keystone-mcp catalog diff` | `0` success; `1` validation error; `3` `--live-url` unreachable |
 | `keystone-mcp catalog export` | `0` success; `1` validation error |
 | `keystone-mcp upstream validate --path <file>` | `0` ok; `1` validation or I/O error |
-| `keystone-mcp users grant-admin`, `users import`, `users admins`, `users block`, `users unblock`, `users logout`, `users unbind-identity` | per `users/cli.py` (`0` success, non-zero documented failures; `users admins` exits `1` when no active full administrator) |
+| `keystone-mcp users grant-admin`, `users import`, `users admins`, `users block`, `users unblock`, `users logout`, `users delete`, `users unbind-identity` | per `users/cli.py` (`0` success, non-zero documented failures; `users admins` and `users delete` on the last administrator exit `1`; `users delete` exits `2` when confirmation is refused, `3` when the person was removed but sessions were not revoked) |
 | `keystone-mcp keys issue`, `keys list`, `keys revoke` | `0` on success, non-zero on failure |
 | `keystone-mcp service-accounts add`, `service-accounts list`, `service-accounts update` | `0` on success, non-zero on failure |
 | `keystone-mcp upstream validate` | `0` ok; `1` validation or I/O error |
@@ -359,6 +363,7 @@ Frozen since 0.5.0.
 | `LoginProvider` protocols (`RedirectLoginProvider`, `FormLoginProvider`) | Module `keystone_mcp.login.protocol`; see [Plugin API](#plugin-api) |
 | `LoginIdentity` | `LoginIdentity` gained optional `key_id`, `key_expires_at`, `issuer`, `subject_id` in 0.6.0 (additive; providers that do not set them are unaffected) |
 | `IdentityBindingDirectory` | Optional users-directory protocol (capability `identity_binding`) since 0.6.0 |
+| `UserDeletionDirectory` | Optional users-directory protocol (capability `delete`) since 0.6.0 |
 | `UserDirectory` and related protocols | Module `keystone_mcp.user_directory.protocol`; optional `ApiKeyIdIndex`, `ApiKeyStateReader` (since 0.6.0) |
 | Entry point group `keystone_mcp.login_providers` | Built-in: `oidc`, `google`, `api_key` |
 | Entry point group `keystone_mcp.user_directories` | Built-in: `local`, `http` |

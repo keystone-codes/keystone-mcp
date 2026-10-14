@@ -14,7 +14,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from sqlalchemy import Table, func, select
+from sqlalchemy import Table, delete, func, select, update
 from sqlalchemy.dialects import postgresql, sqlite
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
@@ -22,6 +22,8 @@ from sqlalchemy.orm import Session, selectinload
 from keystone_mcp.user_directory.errors import IdentityBindingConflictError
 from keystone_mcp.user_directory.types import (
     ApiKeyVerification,
+    DeleteMode,
+    DeletionResult,
     IdentityBinding,
     generate_api_key_material,
     is_valid_service_account_name,
@@ -52,6 +54,15 @@ from keystone_mcp.users.records import ImportedUser, ResolvedUser
 from keystone_mcp.users.roles import ROLE_ADMINISTRATOR, check_role_name, normalize_roles
 
 MAX_FULL_NAME_LENGTH = 255
+_DELETED_EMAIL_PREFIX = "deleted:"
+
+
+def _is_anonymized_email(email: str) -> bool:
+    return email.startswith(_DELETED_EMAIL_PREFIX)
+
+
+def _deleted_email(pseudonym: str) -> str:
+    return f"{_DELETED_EMAIL_PREFIX}{pseudonym}"
 # Matches UserRow.created_by (String(320)); only imported records carry an
 # arbitrary-length created_by from an external source, so only
 # validate_imported_user/upsert_imported_user need this constant.
@@ -98,6 +109,7 @@ def _lock_active_admin_emails(session: Session) -> set[str]:
             .where(
                 UserRow.is_blocked.is_(False),
                 UserRoleRow.role == ROLE_ADMINISTRATOR,
+                ~UserRow.email.like(f"{_DELETED_EMAIL_PREFIX}%"),
             )
             .with_for_update()
         )
@@ -141,6 +153,7 @@ def count_active_administrators(session: Session) -> int:
             .where(
                 UserRow.is_blocked.is_(False),
                 UserRoleRow.role == ROLE_ADMINISTRATOR,
+                ~UserRow.email.like(f"{_DELETED_EMAIL_PREFIX}%"),
             )
         )
         or 0
@@ -172,7 +185,7 @@ def resolve_user(session: Session, subject: str) -> ResolvedUser:
     user = session.scalar(
         select(UserRow).options(selectinload(UserRow.roles)).where(UserRow.email == normalized)
     )
-    if user is None:
+    if user is None or _is_anonymized_email(user.email):
         return ResolvedUser(exists=False, roles=(), is_blocked=False)
     return ResolvedUser(exists=True, roles=tuple(role_names(user)), is_blocked=user.is_blocked)
 
@@ -184,7 +197,12 @@ def list_users(
     role: str | None = None,
     email_contains: str | None = None,
 ) -> list[UserRow]:
-    stmt = select(UserRow).options(selectinload(UserRow.roles)).order_by(UserRow.email)
+    stmt = (
+        select(UserRow)
+        .options(selectinload(UserRow.roles))
+        .where(~UserRow.email.like(f"{_DELETED_EMAIL_PREFIX}%"))
+        .order_by(UserRow.email)
+    )
     if is_blocked is not None:
         stmt = stmt.where(UserRow.is_blocked.is_(is_blocked))
     if email_contains:
@@ -1007,3 +1025,132 @@ def clear_identity_binding(session: Session, *, email: str, actor: str) -> bool:
     user.idp_bound_at = None
     session.flush()
     return True
+
+
+def count_person_references(session: Session, email: str) -> int:
+    normalized = normalize_email(email)
+    total = 0
+    total += (
+        session.scalar(
+            select(func.count())
+            .select_from(UserRow)
+            .where(UserRow.created_by == normalized)
+        )
+        or 0
+    )
+    total += (
+        session.scalar(
+            select(func.count())
+            .select_from(ServiceAccountRow)
+            .where(ServiceAccountRow.created_by == normalized)
+        )
+        or 0
+    )
+    total += (
+        session.scalar(
+            select(func.count())
+            .select_from(ApiKeyRow)
+            .where(
+                (ApiKeyRow.created_by == normalized) | (ApiKeyRow.revoked_by == normalized)
+            )
+        )
+        or 0
+    )
+    return total
+
+
+def delete_user(
+    session: Session,
+    *,
+    email: str,
+    actor: str,
+    mode: DeleteMode,
+    pseudonym: str,
+) -> DeletionResult:
+    actor_email = _require_actor(actor)
+    normalized = normalize_email(email)
+    _ensure_not_self(actor_email, normalized, action="delete")
+    user = _load_user(session, normalized)
+    target_roles = set(role_names(user))
+    roles_before = tuple(sorted(target_roles))
+    if ROLE_ADMINISTRATOR in target_roles:
+        _lock_active_admin_emails(session)
+        _ensure_not_last_admin(
+            session,
+            target_email=normalized,
+            target_roles=target_roles,
+            next_roles=set(),
+        )
+
+    marker = _deleted_email(pseudonym)
+    now = utcnow()
+    api_keys_revoked = 0
+    references_rewritten = 0
+
+    key_rows = list(
+        session.scalars(select(ApiKeyRow).where(ApiKeyRow.subject == normalized)).all()
+    )
+    if mode == "delete":
+        for row in key_rows:
+            session.delete(row)
+        api_keys_revoked = len(key_rows)
+    else:
+        for row in key_rows:
+            row.subject = marker
+            row.label = None
+            if row.revoked_at is None:
+                row.revoked_at = now
+                row.revoked_by = actor_email
+                api_keys_revoked += 1
+
+    for table, column in (
+        (UserRow, UserRow.created_by),
+        (ServiceAccountRow, ServiceAccountRow.created_by),
+    ):
+        result = session.execute(
+            update(table)
+            .where(column == normalized)
+            .values({column.key: marker})
+        )
+        references_rewritten += result.rowcount or 0
+
+    for column in (ApiKeyRow.created_by, ApiKeyRow.revoked_by):
+        result = session.execute(
+            update(ApiKeyRow).where(column == normalized).values({column.key: marker})
+        )
+        references_rewritten += result.rowcount or 0
+
+    session.execute(delete(UserRoleRow).where(UserRoleRow.email == normalized))
+
+    original_created_at = user.created_at
+    session.delete(user)
+    session.flush()
+
+    if mode == "anonymize":
+        existing = session.get(UserRow, marker)
+        if existing is not None:
+            session.delete(existing)
+            session.flush()
+        anon = UserRow(
+            email=marker,
+            full_name="",
+            is_blocked=True,
+            note=f"deleted_at={now.isoformat()}",
+            created_by=None,
+            created_at=original_created_at,
+            updated_at=now,
+            idp_issuer=None,
+            idp_subject=None,
+            idp_bound_at=None,
+        )
+        session.add(anon)
+
+    session.flush()
+    return DeletionResult(
+        email=normalized,
+        mode=mode,
+        pseudonym=pseudonym,
+        roles_before=roles_before,
+        api_keys_revoked=api_keys_revoked,
+        references_rewritten=references_rewritten,
+    )

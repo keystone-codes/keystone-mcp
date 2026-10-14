@@ -1144,6 +1144,45 @@ def test_cli_block_last_admin_refused(tmp_path: Path, monkeypatch, capsys) -> No
     assert "last active administrator" in capsys.readouterr().err.lower()
 
 
+def test_delete_with_yes(tmp_path: Path, monkeypatch, capsys) -> None:
+    db_path = tmp_path / "keystone-users.db"
+    db_url = f"sqlite:///{db_path}"
+    monkeypatch.setenv("KEYSTONE_MCP_USERS_DB_URL", db_url)
+    monkeypatch.setenv("KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT", "cli-test-salt")
+    _seed_user(db_path, email="gone@example.com", roles=["member"])
+
+    exit_code = main(["users", "delete", "--email", "gone@example.com", "--yes"])
+
+    assert exit_code == 0
+    assert "Deleted gone@example.com" in capsys.readouterr().out
+    users = {u.email for u in _list_users(db_url)}
+    assert "gone@example.com" not in users
+
+
+def test_delete_refuses_without_tty_and_yes(tmp_path: Path, monkeypatch, capsys) -> None:
+    db_path = tmp_path / "keystone-users.db"
+    monkeypatch.setenv("KEYSTONE_MCP_USERS_DB_URL", f"sqlite:///{db_path}")
+    _seed_user(db_path, email="victim@example.com", roles=["member"])
+    monkeypatch.setattr(users_cli.sys.stdin, "isatty", lambda: False)
+
+    exit_code = main(["users", "delete", "--email", "victim@example.com"])
+
+    assert exit_code == 2
+    assert "refusing to delete without --yes" in capsys.readouterr().err
+
+
+def test_delete_last_admin_exit_1(tmp_path: Path, monkeypatch, capsys) -> None:
+    db_path = tmp_path / "keystone-users.db"
+    monkeypatch.setenv("KEYSTONE_MCP_USERS_DB_URL", f"sqlite:///{db_path}")
+    monkeypatch.setenv("KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT", "cli-test-salt")
+    _seed_user(db_path, email="sole@example.com", roles=["administrator"])
+
+    exit_code = main(["users", "delete", "--email", "sole@example.com", "--yes"])
+
+    assert exit_code == 1
+    assert "last active administrator" in capsys.readouterr().err.lower()
+
+
 def test_import_block_revokes_sessions(tmp_path: Path, monkeypatch, capsys) -> None:
     redis_url = require_redis_url()
 

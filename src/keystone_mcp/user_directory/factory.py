@@ -42,9 +42,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _IDENTITY_BINDING_METHODS = ("get_identity_binding", "bind_identity", "clear_identity_binding")
+_DELETION_METHODS = ("delete_user",)
 
 _KNOWN_DIRECTORY_CAPABILITIES = frozenset(
-    {"admin", "service_accounts", "api_keys", "identity_binding"}
+    {"admin", "service_accounts", "api_keys", "identity_binding", "delete"}
 )
 
 
@@ -86,6 +87,18 @@ def validate_directory_capabilities(directory: UserDirectory) -> UserDirectory:
             joined = ", ".join(missing)
             raise ConfigError(
                 f"users directory {directory.name!r} declares 'identity_binding' but is missing: "
+                f"{joined} (see docs/plugins.md)"
+            )
+    if "delete" in directory.capabilities:
+        missing = [
+            name
+            for name in _DELETION_METHODS
+            if not callable(getattr(directory, name, None))
+        ]
+        if missing:
+            joined = ", ".join(missing)
+            raise ConfigError(
+                f"users directory {directory.name!r} declares 'delete' but is missing: "
                 f"{joined} (see docs/plugins.md)"
             )
     return directory

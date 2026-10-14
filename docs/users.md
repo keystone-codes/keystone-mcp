@@ -133,6 +133,7 @@ before their own first sign-in.
 | Take away access | `users_block` |
 | Give access back | `users_unblock` |
 | End every OAuth session without blocking | `users_logout` |
+| Delete or anonymize a person | `users_delete` (full administrator only; two-step confirmation) |
 
 `users_block` and `users_logout` revoke all access and refresh tokens for
 that person immediately. The response includes `revoked_tokens` (a count, or
@@ -141,7 +142,36 @@ applies). `users_unblock` does not restore old sessions; the person signs in
 again for new tokens. `users_logout` does not require the email to still
 exist in the directory.
 
-There is no delete. Removing a person means `users_block`.
+## Deleting a person
+
+Use `users_delete` when someone must be removed from the directory or their
+record anonymized — not for routine offboarding (`users_block` is reversible).
+
+Only a **full administrator** may call `users_delete`. The tool always runs in
+two steps: the first call returns `confirmation_required`, a summary (roles,
+API keys, open sessions, references), and a one-time code; the second call must
+include that code. The mode is chosen by the operator via
+`KEYSTONE_MCP_USERS_DELETE_MODE` (`anonymize`, default, or `delete`) — not by
+tool arguments.
+
+On success, every OAuth session and API key for that person is revoked.
+References to them as `created_by` or `revoked_by` in other rows are replaced
+with `deleted:<pseudonym>`, where the pseudonym matches RBAC audit subject
+hashes (`hash_subject` with `KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT`). Audit
+events keep those pseudonyms; they are not rewritten. Anonymized rows use
+email `deleted:<pseudonym>`, an empty name, no roles, and `is_blocked=true`;
+`users_list` never shows them. Hard delete removes the row entirely.
+
+From the host (same database and Redis as the server):
+
+```bash
+keystone-mcp users delete --email person@example.com
+keystone-mcp users delete --email person@example.com --yes   # non-interactive
+```
+
+Exit codes: `0` success, `1` directory error (including last administrator),
+`2` refused confirmation (non-TTY without `--yes`), `3` person removed but
+sessions were not revoked (Redis down — retry `users logout`).
 
 Confirm with the administrator before blocking someone, before revoking
 `administrator`, and before `users_set_roles` when that call would drop a
@@ -155,7 +185,7 @@ applied. List the person first, then decide.
 The built-in directory and the HTTP directory both support administration.
 A directory that only reads (the deprecated `UserDirectoryBackend` wrapper
 from a 0.4.0 fork, or a read-only plugin directory) publishes `users_list`
-alone — the other eight administration tools above are not published at all, rather than
+alone — the other administration tools above are not published at all, rather than
 answering with an error. See
 [user-directory.md](user-directory.md#writing-your-own-directory) for what a
 directory declares about itself.
@@ -246,6 +276,7 @@ the server host can manage access directly:
 keystone-mcp users block   --email person@example.com
 keystone-mcp users unblock --email person@example.com
 keystone-mcp users logout  --email person@example.com
+keystone-mcp users delete  --email person@example.com
 keystone-mcp users unbind-identity --email person@example.com
 ```
 
