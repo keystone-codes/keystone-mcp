@@ -524,6 +524,9 @@ Who is created first, and how later people are added, is [users.md](users.md).
 | `KEYSTONE_MCP_REFRESH_INTERVAL_SECONDS` | `300` | How often the running process re-reads upstream tool lists and RBAC policy files; `0` disables the background refresh task entirely. With it disabled, an upstream that is unreachable at startup stays unreachable for the life of the process -- it is never retried. |
 | `KEYSTONE_MCP_UPSTREAM_TOOL_TIMEOUT_SECONDS` | `180.0` | Default max wait for a proxied tool call. |
 | `KEYSTONE_MCP_UPSTREAM_TOOL_TIMEOUTS` | `""` | JSON object of per-published-tool timeout overrides in seconds. Keys name the published tool; the upstream's own tool name still works but is deprecated since 0.6.0 (warning in the log). Unknown keys are logged after discovery. |
+| `KEYSTONE_MCP_UPSTREAM_MAX_RESPONSE_BYTES` | `16777216` (16 MiB) | Maximum size of one HTTP response body from an upstream (tool call, resource read, prompt, catalog listing, discovery). Stdio upstreams are not capped here (the child process is trusted like Keystone itself; see ADR 0012). This limit is higher than the MCP SDK's default maximum **incoming** request body on Keystone's own HTTP server (4 MiB): upstream answers (files, reports) are often larger than client requests. |
+| `KEYSTONE_MCP_UPSTREAM_MAX_SCHEMA_BYTES` | `65536` (64 KiB) | Maximum serialized size of each of a tool's `inputSchema` and `outputSchema` (`json.dumps` with compact separators). Tools over the limit are not published. |
+| `KEYSTONE_MCP_UPSTREAM_MAX_CATALOG_ITEMS` | `2000` | Maximum tools, prompts, resources, or resource templates returned by one upstream in a single catalog read (each kind counted separately). Exceeding it on a refresh keeps the previous catalog for that kind; exceeding it on the tools list makes the upstream unavailable until the next successful read. |
 | `KEYSTONE_MCP_PROXY_SCHEMA_PATCHES` | `""` | Path to a JSON file patching properties onto a proxied tool's `inputSchema`. See `src/keystone_mcp/router/proxy_schema.py`. |
 | `KEYSTONE_MCP_PROXY_STATUS_ENVELOPE` | `false` | `true` wraps proxied answers in `{state, tool, task_id, result}` and maps a `status` field of `error`/`refused`/`accepted` to an error, a rate-limit error, or a pending task (0.3.x behaviour). At `false` (default), the upstream's response — every content block, `structuredContent`, `isError` — is passed back to the client unchanged. |
 | `KEYSTONE_MCP_PROXY_ELICITATION` | `true` | When `true` (default), HTTP upstreams may ask the connected MCP client form-mode elicitation questions (prefixed with `[namespace]`); URL-mode asks are declined. Stdio upstreams and discovery sessions never receive an elicitation handler. `false` disables forwarding entirely (the upstream sees no client elicitation capability). |
@@ -535,8 +538,9 @@ named variable is unset or empty. The name must start with
 `KEYSTONE_MCP_UPSTREAM_` (e.g. `KEYSTONE_MCP_UPSTREAM_<NAMESPACE>_TOKEN`) and
 must not be one of the `KEYSTONE_MCP_UPSTREAM_*` settings listed in the table
 above (`ALLOW_INSECURE_HTTP`, `EGRESS_ALLOW_PRIVATE`, `DISCOVERY_RETRIES`,
-`DISCOVERY_TIMEOUT`, `REQUIRE_ALL`, `TOOL_TIMEOUT_SECONDS`,
-`TOOL_TIMEOUTS`); registry validation refuses any other name, so an entry can
+`DISCOVERY_TIMEOUT`, `REQUIRE_ALL`, `TOOL_TIMEOUT_SECONDS`, `TOOL_TIMEOUTS`,
+`MAX_RESPONSE_BYTES`, `MAX_SCHEMA_BYTES`, `MAX_CATALOG_ITEMS`); registry
+validation refuses any other name, so an entry can
 never be pointed at an unrelated secret such as
 `KEYSTONE_MCP_GOOGLE_CLIENT_SECRET`.
 

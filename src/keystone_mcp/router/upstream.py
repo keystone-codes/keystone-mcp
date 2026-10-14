@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import json
 import logging
 import os
 from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -21,7 +22,12 @@ from fastmcp import Client, FastMCP
 from fastmcp.client.transports import StreamableHttpTransport
 
 from keystone_mcp.adapters.base import Pattern
-from keystone_mcp.adapters.mcp_proxy import HttpClientFactoryBuilder, McpProxyAdapter
+from keystone_mcp.adapters.mcp_proxy import (
+    DEFAULT_UPSTREAM_MAX_RESPONSE_BYTES,
+    HttpClientFactoryBuilder,
+    McpProxyAdapter,
+    _http_client_factory,
+)
 from keystone_mcp.identity_assertion import (
     IdentityAssertionSigner,
     ec_public_key_jwk_thumbprint,
@@ -73,6 +79,10 @@ UpstreamMode = Literal["proxy_1to1"]
 _DEFAULT_HTTP_PORTS = frozenset({80, 443})
 ToolFilter = Callable[[str], bool]
 _AUTO_PAGINATION_MAX_PAGES = 250
+DEFAULT_UPSTREAM_MAX_SCHEMA_BYTES = 64 * 1024
+DEFAULT_UPSTREAM_MAX_CATALOG_ITEMS = 2000
+_MAX_SCHEMA_PATTERN_CHARS = 512
+_MAX_SCHEMA_DEPTH = 64
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,11 +157,93 @@ def resolve_mounted_tool_name(tool_name: str, strip_prefix: str | None) -> str:
     return tool_name
 
 
+def _schema_json_byte_size(schema: dict[str, Any] | None) -> int:
+    if not schema:
+        return 0
+    return len(json.dumps(schema, separators=(",", ":")))
+
+
+def _schema_nesting_depth(value: Any, depth: int = 0) -> int:
+    if depth > _MAX_SCHEMA_DEPTH:
+        return depth
+    if isinstance(value, dict):
+        if not value:
+            return depth
+        return max(_schema_nesting_depth(v, depth + 1) for v in value.values())
+    if isinstance(value, list):
+        if not value:
+            return depth
+        return max(_schema_nesting_depth(v, depth + 1) for v in value)
+    return depth
+
+
+def _schema_has_long_pattern(value: Any) -> bool:
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if key == "pattern" and isinstance(item, str) and len(item) > _MAX_SCHEMA_PATTERN_CHARS:
+                return True
+            if key == "patternProperties" and isinstance(item, dict):
+                for pattern_key in item:
+                    if len(pattern_key) > _MAX_SCHEMA_PATTERN_CHARS:
+                        return True
+            if _schema_has_long_pattern(item):
+                return True
+    elif isinstance(value, list):
+        for item in value:
+            if _schema_has_long_pattern(item):
+                return True
+    return False
+
+
+def _tool_schema_rejection_reason(
+    input_schema: dict[str, Any],
+    output_schema: dict[str, Any] | None,
+    *,
+    max_schema_bytes: int,
+) -> str | None:
+    """Return a metric ``reason`` when a tool schema must not be published.
+
+    Pattern-length limits are hygiene for schemas Keystone forwards to its own
+    clients; ReDoS protection on tool *answers* is handled separately by not
+    re-validating upstream results against ``outputSchema``.
+    """
+    for schema in (input_schema, output_schema):
+        if schema is not None and _schema_json_byte_size(schema) > max_schema_bytes:
+            return "schema_too_large"
+    for schema in (input_schema, output_schema):
+        if schema is not None and _schema_nesting_depth(schema) > _MAX_SCHEMA_DEPTH:
+            return "schema_too_deep"
+    for schema in (input_schema, output_schema):
+        if schema is not None and _schema_has_long_pattern(schema):
+            return "schema_pattern_too_long"
+    return None
+
+
+def _check_catalog_page_limit(
+    count: int,
+    *,
+    max_items: int,
+    kind: str,
+    namespace: str | None,
+) -> None:
+    if count <= max_items:
+        return
+    if namespace is not None:
+        record_upstream_item_rejected(
+            namespace=namespace,
+            kind="catalog",
+            reason="catalog_limit",
+        )
+    raise UpstreamListToolsError(f"catalog exceeds {max_items} {kind}")
+
+
 async def list_upstream_tools(
     client: Client,
     *,
     timeout_seconds: float,
     max_pages: int = _AUTO_PAGINATION_MAX_PAGES,
+    max_items: int = DEFAULT_UPSTREAM_MAX_CATALOG_ITEMS,
+    namespace: str | None = None,
 ) -> list[Any]:
     """Paginated ``list_tools`` on an already-constructed MCP client."""
     all_tools: list[Any] = []
@@ -167,6 +259,9 @@ async def list_upstream_tools(
         except Exception as exc:
             raise UpstreamListToolsError(str(exc)) from exc
         all_tools.extend(result.tools)
+        _check_catalog_page_limit(
+            len(all_tools), max_items=max_items, kind="tools", namespace=namespace
+        )
         if not result.next_cursor:
             return all_tools
         if result.next_cursor in seen_cursors:
@@ -181,6 +276,8 @@ async def list_upstream_prompts(
     *,
     timeout_seconds: float,
     max_pages: int = _AUTO_PAGINATION_MAX_PAGES,
+    max_items: int = DEFAULT_UPSTREAM_MAX_CATALOG_ITEMS,
+    namespace: str | None = None,
 ) -> list[Any]:
     """Paginated ``list_prompts`` on an already-constructed MCP client."""
     caps = client.server_capabilities
@@ -200,6 +297,9 @@ async def list_upstream_prompts(
         except Exception as exc:
             raise UpstreamListToolsError(str(exc)) from exc
         all_prompts.extend(result.prompts)
+        _check_catalog_page_limit(
+            len(all_prompts), max_items=max_items, kind="prompts", namespace=namespace
+        )
         if not result.next_cursor:
             return all_prompts
         if result.next_cursor in seen_cursors:
@@ -214,6 +314,8 @@ async def list_upstream_resources(
     *,
     timeout_seconds: float,
     max_pages: int = _AUTO_PAGINATION_MAX_PAGES,
+    max_items: int = DEFAULT_UPSTREAM_MAX_CATALOG_ITEMS,
+    namespace: str | None = None,
 ) -> list[Any]:
     """Paginated ``list_resources`` on an already-constructed MCP client."""
     caps = client.server_capabilities
@@ -233,6 +335,9 @@ async def list_upstream_resources(
         except Exception as exc:
             raise UpstreamListToolsError(str(exc)) from exc
         all_resources.extend(result.resources)
+        _check_catalog_page_limit(
+            len(all_resources), max_items=max_items, kind="resources", namespace=namespace
+        )
         if not result.next_cursor:
             return all_resources
         if result.next_cursor in seen_cursors:
@@ -247,6 +352,8 @@ async def list_upstream_resource_templates(
     *,
     timeout_seconds: float,
     max_pages: int = _AUTO_PAGINATION_MAX_PAGES,
+    max_items: int = DEFAULT_UPSTREAM_MAX_CATALOG_ITEMS,
+    namespace: str | None = None,
 ) -> list[Any]:
     """Paginated ``list_resource_templates`` on an already-constructed MCP client."""
     caps = client.server_capabilities
@@ -266,6 +373,12 @@ async def list_upstream_resource_templates(
         except Exception as exc:
             raise UpstreamListToolsError(str(exc)) from exc
         all_templates.extend(result.resource_templates)
+        _check_catalog_page_limit(
+            len(all_templates),
+            max_items=max_items,
+            kind="resource templates",
+            namespace=namespace,
+        )
         if not result.next_cursor:
             return all_templates
         if result.next_cursor in seen_cursors:
@@ -280,6 +393,8 @@ async def fetch_upstream_tools(
     *,
     timeout_seconds: float,
     max_pages: int = _AUTO_PAGINATION_MAX_PAGES,
+    max_items: int = DEFAULT_UPSTREAM_MAX_CATALOG_ITEMS,
+    namespace: str | None = None,
     httpx_client_factory: "McpHttpClientFactory | None" = None,
     headers: Mapping[str, str] | None = None,
 ) -> list[Any]:
@@ -305,7 +420,11 @@ async def fetch_upstream_tools(
         )
         async with Client(transport, init_timeout=timeout_seconds) as client:
             return await list_upstream_tools(
-                client, timeout_seconds=timeout_seconds, max_pages=max_pages
+                client,
+                timeout_seconds=timeout_seconds,
+                max_pages=max_pages,
+                max_items=max_items,
+                namespace=namespace,
             )
     except UpstreamListToolsError:
         raise
@@ -318,6 +437,8 @@ async def fetch_upstream_prompts(
     *,
     timeout_seconds: float,
     max_pages: int = _AUTO_PAGINATION_MAX_PAGES,
+    max_items: int = DEFAULT_UPSTREAM_MAX_CATALOG_ITEMS,
+    namespace: str | None = None,
     httpx_client_factory: "McpHttpClientFactory | None" = None,
     headers: Mapping[str, str] | None = None,
 ) -> list[Any]:
@@ -330,7 +451,11 @@ async def fetch_upstream_prompts(
         )
         async with Client(transport, init_timeout=timeout_seconds) as client:
             return await list_upstream_prompts(
-                client, timeout_seconds=timeout_seconds, max_pages=max_pages
+                client,
+                timeout_seconds=timeout_seconds,
+                max_pages=max_pages,
+                max_items=max_items,
+                namespace=namespace,
             )
     except UpstreamListToolsError:
         raise
@@ -343,6 +468,8 @@ async def fetch_upstream_resources(
     *,
     timeout_seconds: float,
     max_pages: int = _AUTO_PAGINATION_MAX_PAGES,
+    max_items: int = DEFAULT_UPSTREAM_MAX_CATALOG_ITEMS,
+    namespace: str | None = None,
     httpx_client_factory: "McpHttpClientFactory | None" = None,
     headers: Mapping[str, str] | None = None,
 ) -> list[Any]:
@@ -355,7 +482,11 @@ async def fetch_upstream_resources(
         )
         async with Client(transport, init_timeout=timeout_seconds) as client:
             return await list_upstream_resources(
-                client, timeout_seconds=timeout_seconds, max_pages=max_pages
+                client,
+                timeout_seconds=timeout_seconds,
+                max_pages=max_pages,
+                max_items=max_items,
+                namespace=namespace,
             )
     except UpstreamListToolsError:
         raise
@@ -368,6 +499,8 @@ async def fetch_upstream_resource_templates(
     *,
     timeout_seconds: float,
     max_pages: int = _AUTO_PAGINATION_MAX_PAGES,
+    max_items: int = DEFAULT_UPSTREAM_MAX_CATALOG_ITEMS,
+    namespace: str | None = None,
     httpx_client_factory: "McpHttpClientFactory | None" = None,
     headers: Mapping[str, str] | None = None,
 ) -> list[Any]:
@@ -380,7 +513,11 @@ async def fetch_upstream_resource_templates(
         )
         async with Client(transport, init_timeout=timeout_seconds) as client:
             return await list_upstream_resource_templates(
-                client, timeout_seconds=timeout_seconds, max_pages=max_pages
+                client,
+                timeout_seconds=timeout_seconds,
+                max_pages=max_pages,
+                max_items=max_items,
+                namespace=namespace,
             )
     except UpstreamListToolsError:
         raise
@@ -419,9 +556,11 @@ def build_upstream_tool_specs(
     tools: Iterable[Any],
     *,
     schema_patches: PatchTable,
-) -> dict[str, UpstreamToolSpec]:
+    max_schema_bytes: int = DEFAULT_UPSTREAM_MAX_SCHEMA_BYTES,
+) -> tuple[dict[str, UpstreamToolSpec], set[str]]:
     """Map route names to specs; resolve strip_prefix collisions stably."""
     winners: dict[str, tuple[str, UpstreamToolSpec]] = {}
+    schema_rejected: set[str] = set()
 
     for tool in tools:
         tool_name = tool.name
@@ -447,9 +586,28 @@ def build_upstream_tool_specs(
             patches=schema_patches,
         )
         input_schema = _normalize_input_schema(patched_schema)
+        output_schema = _copy_dict_or_none(getattr(tool, "output_schema", None))
+        rejection = _tool_schema_rejection_reason(
+            input_schema,
+            output_schema,
+            max_schema_bytes=max_schema_bytes,
+        )
+        if rejection is not None:
+            logger.warning(
+                "upstream tool refused namespace=%s tool=%s: %s",
+                cfg.namespace,
+                tool_name,
+                rejection,
+            )
+            record_upstream_item_rejected(
+                namespace=cfg.namespace,
+                kind="tool",
+                reason=rejection,
+            )
+            schema_rejected.add(route_name)
+            continue
         params = schema_to_params(input_schema)
         description = tool.description or ""
-        output_schema = _copy_dict_or_none(getattr(tool, "output_schema", None))
         title = getattr(tool, "title", None)
         raw_annotations = getattr(tool, "annotations", None)
         # Stored in wire form (``readOnlyHint`` etc., via ``by_alias=True``) so
@@ -486,7 +644,10 @@ def build_upstream_tool_specs(
         if existing is None or tool_name < existing[0]:
             winners[route_name] = (tool_name, spec)
 
-    return {route_name: spec for route_name, (_tool, spec) in winners.items()}
+    return (
+        {route_name: spec for route_name, (_tool, spec) in winners.items()},
+        schema_rejected,
+    )
 
 
 def _prompt_arguments_fingerprint(prompt: Any) -> list[dict[str, Any]]:
@@ -654,6 +815,9 @@ class UpstreamRegistry:
     tool_timeout_seconds: float = 180.0
     discovery_timeout_seconds: float = 10.0
     tool_timeout_overrides: dict[str, float] = field(default_factory=dict)
+    upstream_max_response_bytes: int = DEFAULT_UPSTREAM_MAX_RESPONSE_BYTES
+    upstream_max_schema_bytes: int = DEFAULT_UPSTREAM_MAX_SCHEMA_BYTES
+    upstream_max_catalog_items: int = DEFAULT_UPSTREAM_MAX_CATALOG_ITEMS
     # false (default): proxied answers pass through as-is. true: wrap them in
     # the 0.3.x {state, tool, task_id, result} envelope (KEYSTONE_MCP_PROXY_STATUS_ENVELOPE).
     status_envelope: bool = False
@@ -705,11 +869,27 @@ class UpstreamRegistry:
 
     def __post_init__(self) -> None:
         pem = self._identity_signing_key_pem.strip()
-        if not pem:
-            return
-        private_key = load_ec_p256_private_key(pem)
-        self._identity_es256_private_key = private_key
-        self._identity_es256_kid = ec_public_key_jwk_thumbprint(private_key.public_key())
+        if pem:
+            private_key = load_ec_p256_private_key(pem)
+            self._identity_es256_private_key = private_key
+            self._identity_es256_kid = ec_public_key_jwk_thumbprint(private_key.public_key())
+        if self.http_client_factory is None:
+            max_bytes = self.upstream_max_response_bytes
+
+            def _default_http_factory(timeout: float) -> McpHttpClientFactory:
+                return _http_client_factory(timeout, max_response_bytes=max_bytes)
+
+            self.http_client_factory = _default_http_factory
+
+    def _catalog_list_kwargs(self, cfg: UpstreamConfig, discovery_timeout: float) -> dict[str, Any]:
+        return {
+            "timeout_seconds": discovery_timeout,
+            "max_items": self.upstream_max_catalog_items,
+            "namespace": cfg.namespace,
+        }
+
+    def _discovery_http_client_factory(self, discovery_timeout: float) -> "McpHttpClientFactory":
+        return self.http_client_factory(discovery_timeout)  # type: ignore[union-attr]
 
     def add_upstream(
         self,
@@ -870,6 +1050,7 @@ class UpstreamRegistry:
             proxy_elicitation=self.proxy_elicitation,
             extra_headers=self._auth_headers.get(namespace),
             identity_signer=identity_signer,
+            max_response_bytes=self.upstream_max_response_bytes,
         )
         self._status[namespace] = UpstreamStatus(
             available=False, catalog_known=False, last_error="not discovered yet"
@@ -1180,12 +1361,11 @@ class UpstreamRegistry:
             conn = self._connections[cfg.namespace]
             if isinstance(conn, StdioUpstreamConnection) and conn.process.state == "running":
                 client = conn.catalog_client(timeout=discovery_timeout)
+                list_kw = self._catalog_list_kwargs(cfg, discovery_timeout)
                 async with client:
-                    tools = await list_upstream_tools(client, timeout_seconds=discovery_timeout)
+                    tools = await list_upstream_tools(client, **list_kw)
                     try:
-                        prompts_raw = await list_upstream_prompts(
-                            client, timeout_seconds=discovery_timeout
-                        )
+                        prompts_raw = await list_upstream_prompts(client, **list_kw)
                     except UpstreamListToolsError as exc:
                         logger.warning(
                             "upstream prompts refresh failed namespace=%s: %s; "
@@ -1195,12 +1375,8 @@ class UpstreamRegistry:
                         )
                         prompts_raw = None
                     try:
-                        resources_raw = await list_upstream_resources(
-                            client, timeout_seconds=discovery_timeout
-                        )
-                        templates_raw = await list_upstream_resource_templates(
-                            client, timeout_seconds=discovery_timeout
-                        )
+                        resources_raw = await list_upstream_resources(client, **list_kw)
+                        templates_raw = await list_upstream_resource_templates(client, **list_kw)
                     except UpstreamListToolsError as exc:
                         logger.warning(
                             "upstream resources refresh failed namespace=%s: %s; "
@@ -1239,27 +1415,15 @@ class UpstreamRegistry:
                     resources_raw = None
                     templates_raw = None
         else:
-            tools = await fetch_upstream_tools(
-                cfg.url,
-                timeout_seconds=discovery_timeout,
-                httpx_client_factory=(
-                    self.http_client_factory(discovery_timeout)
-                    if self.http_client_factory
-                    else None
-                ),
-                headers=self.upstream_headers(cfg.namespace),
-            )
+            list_kw = self._catalog_list_kwargs(cfg, discovery_timeout)
+            fetch_kw = {
+                **list_kw,
+                "httpx_client_factory": self._discovery_http_client_factory(discovery_timeout),
+                "headers": self.upstream_headers(cfg.namespace),
+            }
+            tools = await fetch_upstream_tools(cfg.url, **fetch_kw)
             try:
-                prompts_raw = await fetch_upstream_prompts(
-                    cfg.url,
-                    timeout_seconds=discovery_timeout,
-                    httpx_client_factory=(
-                        self.http_client_factory(discovery_timeout)
-                        if self.http_client_factory
-                        else None
-                    ),
-                    headers=self.upstream_headers(cfg.namespace),
-                )
+                prompts_raw = await fetch_upstream_prompts(cfg.url, **fetch_kw)
             except UpstreamListToolsError as exc:
                 logger.warning(
                     "upstream prompts refresh failed namespace=%s: %s; keeping previous prompts",
@@ -1294,14 +1458,15 @@ class UpstreamRegistry:
         *,
         catalog_client: Client | None = None,
     ) -> list[Any]:
+        list_kw = self._catalog_list_kwargs(cfg, discovery_timeout)
         if catalog_client is not None:
-            return await list_upstream_prompts(catalog_client, timeout_seconds=discovery_timeout)
+            return await list_upstream_prompts(catalog_client, **list_kw)
         if cfg.transport == "stdio":
             conn = self._connections[cfg.namespace]
             if isinstance(conn, StdioUpstreamConnection) and conn.process.state == "running":
                 client = conn.catalog_client(timeout=discovery_timeout)
                 async with client:
-                    return await list_upstream_prompts(client, timeout_seconds=discovery_timeout)
+                    return await list_upstream_prompts(client, **list_kw)
             assert cfg.command is not None
             child_env = resolve_stdio_child_env(cfg.env_from)
             client = temporary_stdio_client(
@@ -1312,14 +1477,12 @@ class UpstreamRegistry:
                 init_timeout=discovery_timeout,
             )
             async with client:
-                return await list_upstream_prompts(client, timeout_seconds=discovery_timeout)
+                return await list_upstream_prompts(client, **list_kw)
         return await fetch_upstream_prompts(
             cfg.url,
-            timeout_seconds=discovery_timeout,
-            httpx_client_factory=(
-                self.http_client_factory(discovery_timeout) if self.http_client_factory else None
-            ),
+            httpx_client_factory=self._discovery_http_client_factory(discovery_timeout),
             headers=self.upstream_headers(cfg.namespace),
+            **list_kw,
         )
 
     def _apply_prompt_specs(
@@ -1397,25 +1560,18 @@ class UpstreamRegistry:
         *,
         catalog_client: Client | None = None,
     ) -> tuple[list[Any], list[Any]]:
+        list_kw = self._catalog_list_kwargs(cfg, discovery_timeout)
         if catalog_client is not None:
-            resources = await list_upstream_resources(
-                catalog_client, timeout_seconds=discovery_timeout
-            )
-            templates = await list_upstream_resource_templates(
-                catalog_client, timeout_seconds=discovery_timeout
-            )
+            resources = await list_upstream_resources(catalog_client, **list_kw)
+            templates = await list_upstream_resource_templates(catalog_client, **list_kw)
             return resources, templates
         if cfg.transport == "stdio":
             conn = self._connections[cfg.namespace]
             if isinstance(conn, StdioUpstreamConnection) and conn.process.state == "running":
                 client = conn.catalog_client(timeout=discovery_timeout)
                 async with client:
-                    resources = await list_upstream_resources(
-                        client, timeout_seconds=discovery_timeout
-                    )
-                    templates = await list_upstream_resource_templates(
-                        client, timeout_seconds=discovery_timeout
-                    )
+                    resources = await list_upstream_resources(client, **list_kw)
+                    templates = await list_upstream_resource_templates(client, **list_kw)
                 return resources, templates
             assert cfg.command is not None
             child_env = resolve_stdio_child_env(cfg.env_from)
@@ -1427,27 +1583,16 @@ class UpstreamRegistry:
                 init_timeout=discovery_timeout,
             )
             async with client:
-                resources = await list_upstream_resources(client, timeout_seconds=discovery_timeout)
-                templates = await list_upstream_resource_templates(
-                    client, timeout_seconds=discovery_timeout
-                )
+                resources = await list_upstream_resources(client, **list_kw)
+                templates = await list_upstream_resource_templates(client, **list_kw)
             return resources, templates
-        resources = await fetch_upstream_resources(
-            cfg.url,
-            timeout_seconds=discovery_timeout,
-            httpx_client_factory=(
-                self.http_client_factory(discovery_timeout) if self.http_client_factory else None
-            ),
-            headers=self.upstream_headers(cfg.namespace),
-        )
-        templates = await fetch_upstream_resource_templates(
-            cfg.url,
-            timeout_seconds=discovery_timeout,
-            httpx_client_factory=(
-                self.http_client_factory(discovery_timeout) if self.http_client_factory else None
-            ),
-            headers=self.upstream_headers(cfg.namespace),
-        )
+        fetch_kw = {
+            **list_kw,
+            "httpx_client_factory": self._discovery_http_client_factory(discovery_timeout),
+            "headers": self.upstream_headers(cfg.namespace),
+        }
+        resources = await fetch_upstream_resources(cfg.url, **fetch_kw)
+        templates = await fetch_upstream_resource_templates(cfg.url, **fetch_kw)
         return resources, templates
 
     def _apply_resource_specs(
@@ -1574,7 +1719,14 @@ class UpstreamRegistry:
         prompts_raw = catalog.prompts
         resources_raw = catalog.resources
         templates_raw = catalog.templates
-        specs = build_upstream_tool_specs(cfg, tools, schema_patches=self.schema_patches)
+        specs, schema_rejected = build_upstream_tool_specs(
+            cfg,
+            tools,
+            schema_patches=self.schema_patches,
+            max_schema_bytes=self.upstream_max_schema_bytes,
+        )
+        for route_name in schema_rejected:
+            self.mark_unpublishable(cfg.namespace, route_name)
         for spec in specs.values():
             route_key = f"{cfg.namespace}:{spec.route_name}"
             published = f"{cfg.namespace}_{spec.route_name}"
@@ -1662,8 +1814,9 @@ class UpstreamRegistry:
         conn = self._connections[cfg.namespace]
         if isinstance(conn, StdioUpstreamConnection) and conn.process.state == "running":
             client = conn.catalog_client(timeout=discovery_timeout)
+            list_kw = self._catalog_list_kwargs(cfg, discovery_timeout)
             async with client:
-                return await list_upstream_tools(client, timeout_seconds=discovery_timeout)
+                return await list_upstream_tools(client, **list_kw)
 
         assert cfg.command is not None
         child_env = resolve_stdio_child_env(cfg.env_from)
@@ -1674,5 +1827,6 @@ class UpstreamRegistry:
             cwd=cfg.cwd,
             init_timeout=discovery_timeout,
         )
+        list_kw = self._catalog_list_kwargs(cfg, discovery_timeout)
         async with client:
-            return await list_upstream_tools(client, timeout_seconds=discovery_timeout)
+            return await list_upstream_tools(client, **list_kw)

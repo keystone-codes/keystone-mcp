@@ -1155,14 +1155,26 @@ class Settings:
             _env("KEYSTONE_MCP_UPSTREAM_TOOL_TIMEOUTS", "")
         )
     )
+    upstream_max_response_bytes: int = field(
+        default_factory=lambda: _env_int(
+            "KEYSTONE_MCP_UPSTREAM_MAX_RESPONSE_BYTES", 16 * 1024 * 1024
+        )
+    )
+    upstream_max_schema_bytes: int = field(
+        default_factory=lambda: _env_int("KEYSTONE_MCP_UPSTREAM_MAX_SCHEMA_BYTES", 64 * 1024)
+    )
+    upstream_max_catalog_items: int = field(
+        default_factory=lambda: _env_int("KEYSTONE_MCP_UPSTREAM_MAX_CATALOG_ITEMS", 2000)
+    )
     # Optional JSON file of upstream inputSchema property patches (see
     # keystone_mcp.router.proxy_schema for the format). Empty means no patches.
     proxy_schema_patches_path: str = field(
         default_factory=lambda: _env("KEYSTONE_MCP_PROXY_SCHEMA_PATCHES", "")
     )
     # false (default): the proxy is transparent — the upstream's response
-    # (content blocks, structuredContent, _meta, isError) reaches the client
-    # unchanged. true: wrap it in the 0.3.x {state, tool, task_id, result}
+    # (content blocks, structuredContent, isError, and _meta minus upstream
+    # connection stamps) reaches the client unchanged. true: wrap it in the
+    # 0.3.x {state, tool, task_id, result}
     # envelope and map a `status` field of error/refused/accepted to an error,
     # a rate-limit error, or a pending task.
     proxy_status_envelope: bool = field(
@@ -1767,6 +1779,14 @@ def validate_settings(settings: Settings) -> None:
     ):
         if value < 0:
             raise ConfigError(f"{name} must be zero or positive (got {value})")
+
+    for name, value in (
+        ("KEYSTONE_MCP_UPSTREAM_MAX_RESPONSE_BYTES", settings.upstream_max_response_bytes),
+        ("KEYSTONE_MCP_UPSTREAM_MAX_SCHEMA_BYTES", settings.upstream_max_schema_bytes),
+        ("KEYSTONE_MCP_UPSTREAM_MAX_CATALOG_ITEMS", settings.upstream_max_catalog_items),
+    ):
+        if value <= 0:
+            raise ConfigError(f"{name} must be positive (got {value})")
 
     from keystone_mcp.identity_assertion import load_ec_p256_private_key
 

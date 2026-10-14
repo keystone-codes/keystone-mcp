@@ -55,8 +55,75 @@ logger = logging.getLogger(__name__)
 
 _warned_upstream_timeout_keys: set[str] = set()
 
+DEFAULT_UPSTREAM_MAX_RESPONSE_BYTES = 16 * 1024 * 1024
 
-def _http_client_factory(tool_timeout_seconds: float) -> McpHttpClientFactory:
+
+class UpstreamResponseTooLargeError(RuntimeError):
+    """Raised when an upstream HTTP response body exceeds the configured limit."""
+
+
+class _CountingAsyncByteStream(httpx2.AsyncByteStream):
+    """Wraps an httpx2 response stream and enforces a byte budget."""
+
+    def __init__(self, stream: httpx2.AsyncByteStream, *, max_bytes: int) -> None:
+        self._stream = stream
+        self._max_bytes = max_bytes
+        self._count = 0
+
+    async def __aiter__(self) -> Any:
+        async for chunk in self._stream:
+            self._count += len(chunk)
+            if self._count > self._max_bytes:
+                await self.aclose()
+                raise UpstreamResponseTooLargeError(
+                    f"upstream response exceeds {self._max_bytes} bytes"
+                )
+            yield chunk
+
+    async def aclose(self) -> None:
+        await self._stream.aclose()
+
+
+class ResponseSizeLimitTransport(httpx2.AsyncBaseTransport):
+    """httpx2 transport wrapper that caps the size of each response body."""
+
+    def __init__(self, transport: httpx2.AsyncBaseTransport, *, max_bytes: int) -> None:
+        self._transport = transport
+        self._max_bytes = max_bytes
+
+    async def handle_async_request(self, request: httpx2.Request) -> httpx2.Response:
+        response = await self._transport.handle_async_request(request)
+        content_length = response.headers.get("content-length")
+        if content_length is not None:
+            try:
+                if int(content_length) > self._max_bytes:
+                    await response.aclose()
+                    raise UpstreamResponseTooLargeError(
+                        f"upstream response exceeds {self._max_bytes} bytes"
+                    )
+            except ValueError:
+                pass
+        response.stream = _CountingAsyncByteStream(response.stream, max_bytes=self._max_bytes)
+        return response
+
+    async def aclose(self) -> None:
+        await self._transport.aclose()
+
+
+def limit_response_size(
+    transport: httpx2.AsyncBaseTransport, max_bytes: int
+) -> httpx2.AsyncBaseTransport:
+    """Wrap *transport* so each HTTP response body is at most *max_bytes*."""
+    if isinstance(transport, ResponseSizeLimitTransport):
+        return ResponseSizeLimitTransport(transport._transport, max_bytes=max_bytes)
+    return ResponseSizeLimitTransport(transport, max_bytes=max_bytes)
+
+
+def _http_client_factory(
+    tool_timeout_seconds: float,
+    *,
+    max_response_bytes: int = DEFAULT_UPSTREAM_MAX_RESPONSE_BYTES,
+) -> McpHttpClientFactory:
     """Build the transport's HTTP client with the per-tool timeout applied.
 
     Without this the per-tool budget bounded only the MCP request and not the
@@ -76,7 +143,10 @@ def _http_client_factory(tool_timeout_seconds: float) -> McpHttpClientFactory:
         auth: Any = None,
         **_kwargs: Any,
     ) -> httpx2.AsyncClient:
+        inner = httpx2.AsyncHTTPTransport()
+        transport = limit_response_size(inner, max_response_bytes)
         return httpx2.AsyncClient(
+            transport=transport,
             headers=headers,
             timeout=httpx2.Timeout(tool_timeout_seconds),
             auth=auth,
@@ -112,6 +182,7 @@ class McpProxyAdapter:
         proxy_elicitation: bool = True,
         extra_headers: Mapping[str, str] | None = None,
         identity_signer: IdentityAssertionSigner | None = None,
+        max_response_bytes: int = DEFAULT_UPSTREAM_MAX_RESPONSE_BYTES,
     ) -> None:
         from keystone_mcp.router.upstream_connection import HttpUpstreamConnection
 
@@ -126,12 +197,18 @@ class McpProxyAdapter:
             self._connection = connection_or_url
         self._tool_timeout_seconds = tool_timeout_seconds
         self._tool_timeout_overrides = dict(tool_timeout_overrides or {})
+        self._max_response_bytes = max_response_bytes
         self._client_factory = client_factory
         if http_client_factory is not None:
             self._http_client_factory = http_client_factory
         elif isinstance(self._connection, HttpUpstreamConnection):
             if self._connection._http_client_factory is None:
-                self._connection._http_client_factory = _http_client_factory
+                limit = max_response_bytes
+
+                def _default_builder(timeout: float) -> McpHttpClientFactory:
+                    return _http_client_factory(timeout, max_response_bytes=limit)
+
+                self._connection._http_client_factory = _default_builder
         self._status_envelope = status_envelope
         self._proxy_elicitation = proxy_elicitation
         # e.g. the upstream's ``Authorization: Bearer ...`` (auth.bearer_env).
@@ -310,30 +387,45 @@ class McpProxyAdapter:
             raise ToolError(f"upstream {route.namespace} is unavailable") from None
         if elicitation_callback is not None:
             attach_upstream_elicitation_callback(client, elicitation_callback)
-        async with client:
-            raw = await call_upstream_tool(
-                client,
-                tool_name,
-                payload,
-                timeout=timeout,
-                meta=call_meta,
-                downstream=downstream,
-                log_namespace=route.namespace,
-                input_responses=input_responses,
-                request_state=request_state,
-                proxy_elicitation=self._proxy_elicitation,
+        try:
+            async with client:
+                raw = await call_upstream_tool(
+                    client,
+                    tool_name,
+                    payload,
+                    timeout=timeout,
+                    meta=call_meta,
+                    downstream=downstream,
+                    log_namespace=route.namespace,
+                    input_responses=input_responses,
+                    request_state=request_state,
+                    proxy_elicitation=self._proxy_elicitation,
+                )
+                if isinstance(raw, InputRequiredToolResult):
+                    return raw
+                if self._status_envelope:
+                    # Parsed inside the ``async with`` block: _parse_call_tool_result
+                    # decodes against the upstream's output schema, cached on the
+                    # still-open session.
+                    parsed = await parse_for_status_envelope(client, tool_name, raw)
+        except UpstreamResponseTooLargeError as exc:
+            from keystone_mcp.observability.metrics import record_upstream_item_rejected
+
+            record_upstream_item_rejected(
+                namespace=route.namespace,
+                kind="response",
+                reason="response_too_large",
             )
-            if isinstance(raw, InputRequiredToolResult):
-                return raw
-            if self._status_envelope:
-                # Parsed inside the ``async with`` block: _parse_call_tool_result
-                # decodes against the upstream's output schema, cached on the
-                # still-open session.
-                parsed = await parse_for_status_envelope(client, tool_name, raw)
+            raise ToolError(
+                f"upstream {route.namespace} answer is larger than {self._max_response_bytes} bytes"
+            ) from exc
 
         if self._status_envelope:
             return self._wrap_status_envelope(parsed, route, ctx)
 
+        from keystone_mcp.router.proxy_components import strip_upstream_connection_meta
+
+        raw = raw.model_copy(update={"meta": strip_upstream_connection_meta(raw.meta)})
         return ToolResult.from_mcp_result(raw)
 
     @staticmethod

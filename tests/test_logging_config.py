@@ -133,7 +133,7 @@ def test_documented_grep_finds_access_lines() -> None:
     record.stream = "access"
     line = JsonFormatter().format(record)
     doc = OBSERVABILITY_LOGGING_DOC.read_text(encoding="utf-8")
-    match = re.search(r'grep \'([^\']+)\'', doc)
+    match = re.search(r"grep \'([^\']+)\'", doc)
     assert match is not None, "grep pattern not found in observability-logging.md"
     assert re.search(match.group(1), line)
 

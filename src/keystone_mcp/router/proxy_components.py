@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import contextvars
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Literal
 
 import mcp.types as mcp_types
@@ -18,7 +19,6 @@ from fastmcp.server.providers.proxy import (
     ProxyPrompt,
     ProxyResource,
     ProxyTemplate,
-    _forwardable_server_meta,
     _stash_proxy_request_context,
 )
 from mcp_types import BlobResourceContents, TextResourceContents
@@ -38,6 +38,23 @@ _template_read_backend_uri: contextvars.ContextVar[str | None] = contextvars.Con
     "_template_read_backend_uri",
     default=None,
 )
+
+_CONNECTION_META_KEYS = frozenset(
+    {
+        mcp_types.SERVER_INFO_META_KEY,
+        mcp_types.PROTOCOL_VERSION_META_KEY,
+        mcp_types.CLIENT_INFO_META_KEY,
+        mcp_types.CLIENT_CAPABILITIES_META_KEY,
+    }
+)
+
+
+def strip_upstream_connection_meta(meta: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """Drop upstream connection stamps from ``_meta`` before forwarding to clients."""
+    if not meta:
+        return None
+    filtered = {k: v for k, v in meta.items() if k not in _CONNECTION_META_KEYS}
+    return filtered or None
 
 
 class UpstreamProxyPrompt(ProxyPrompt):
@@ -167,7 +184,7 @@ class UpstreamProxyPrompt(ProxyPrompt):
             return PromptResult(
                 messages=messages,
                 description=result.description,
-                meta=result.meta,
+                meta=strip_upstream_connection_meta(result.meta),
             )
 
 
@@ -198,7 +215,7 @@ def _resource_result_from_read(
             )
         else:
             raise ResourceError(f"Unsupported content type: {type(item)}")
-    return ResourceResult(contents=contents, meta=_forwardable_server_meta(result.meta) or None)
+    return ResourceResult(contents=contents, meta=strip_upstream_connection_meta(result.meta))
 
 
 class _UpstreamProxyClientMixin:

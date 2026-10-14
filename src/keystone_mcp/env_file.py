@@ -66,14 +66,10 @@ def _parse_value(raw: str, *, path: Path, line_number: int) -> str:
         quote = value[0]
         close = value.find(quote, 1)
         if close == -1:
-            raise ConfigError(
-                f"{path}:{line_number}: unterminated or malformed quoted value"
-            )
+            raise ConfigError(f"{path}:{line_number}: unterminated or malformed quoted value")
         rest = value[close + 1 :]
         if rest and not (rest.startswith(" ") and "#" in rest):
-            raise ConfigError(
-                f"{path}:{line_number}: unterminated or malformed quoted value"
-            )
+            raise ConfigError(f"{path}:{line_number}: unterminated or malformed quoted value")
         return value[1:close]
     return _strip_inline_comment(value).strip()
 
