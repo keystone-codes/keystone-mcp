@@ -147,6 +147,39 @@ async def test_google_login_redirect_includes_state_nonce_pkce(google_harness):
     assert raw is not None
 
 
+async def test_google_login_with_googleapis_discovery_endpoints(google_harness):
+    client = google_harness["client"]
+    oauth = google_harness["oauth"]
+    mock_google = google_harness["mock_google"]
+    settings = google_harness["settings"]
+    mock_google.fake.tamper.discovery_token_endpoint = "https://oauth2.googleapis.com/token"
+    mock_google.fake.tamper.discovery_jwks_uri = "https://www.googleapis.com/jwks"
+
+    client_id = await register_client(client)
+    verifier, challenge = make_pkce()
+    txn = await authorize_to_login(client, client_id, challenge, settings.resource_url)
+
+    response, _state = await _complete_google_callback(
+        client, oauth, mock_google, txn, email="alice@example.com"
+    )
+    assert response.status_code == 302
+    location = response.headers["location"]
+    code = parse_qs(urlparse(location).query)["code"][0]
+
+    token_response = await client.post(
+        "/token",
+        data={
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": REDIRECT_URI,
+            "client_id": client_id,
+            "code_verifier": verifier,
+            "resource": settings.resource_url,
+        },
+    )
+    assert token_response.status_code == 200
+
+
 async def test_google_callback_success_issues_authorization_code(google_harness):
     client = google_harness["client"]
     oauth = google_harness["oauth"]

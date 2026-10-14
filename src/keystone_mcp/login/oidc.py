@@ -61,6 +61,7 @@ _ALLOWED_ID_TOKEN_ALGS = frozenset(
 )
 
 GOOGLE_OIDC_ISSUER = "https://accounts.google.com"
+GOOGLE_ENDPOINT_HOSTS: tuple[str, ...] = ("oauth2.googleapis.com", "www.googleapis.com")
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,6 +81,7 @@ class OidcProviderConfig:
     extra_authorize_params: Mapping[str, str] = field(default_factory=dict)
     additional_issuers: tuple[str, ...] = ()
     token_auth_method: Literal["client_secret_basic", "client_secret_post"] | None = None
+    endpoint_hosts: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,6 +117,7 @@ def google_provider_config(
         token_auth_method="client_secret_post",
         hosted_domain=hosted,
         allowed_domains=allowed,
+        endpoint_hosts=GOOGLE_ENDPOINT_HOSTS,
     )
 
 
@@ -154,12 +157,21 @@ def _url_origin_key(url: str) -> tuple[str, str, int] | None:
     return scheme, host, port
 
 
+def _endpoint_host_spec(origin: tuple[str, str, int]) -> str:
+    scheme, host, port = origin
+    default_port = _default_port(scheme)
+    if default_port is not None and port == default_port:
+        return host
+    return f"{host}:{port}"
+
+
 def _validate_discovery_endpoint_origin(
     *,
     provider_name: str,
     configured_issuer: str,
     endpoint_url: str,
     field_name: str,
+    extra_hosts: tuple[str, ...],
 ) -> None:
     issuer_origin = _url_origin_key(configured_issuer)
     endpoint_origin = _url_origin_key(endpoint_url)
@@ -188,13 +200,20 @@ def _validate_discovery_endpoint_origin(
         )
         raise LoginRejected("provider_unavailable", "discovery endpoint origin mismatch")
 
-    if issuer_origin != endpoint_origin:
-        logger.error(
-            "login provider %s: discovery %s host or port mismatch",
-            provider_name,
-            field_name,
-        )
-        raise LoginRejected("provider_unavailable", "discovery endpoint origin mismatch")
+    if issuer_origin == endpoint_origin:
+        return
+
+    endpoint_host = _endpoint_host_spec(endpoint_origin)
+    if extra_hosts and endpoint_host in extra_hosts:
+        return
+
+    logger.error(
+        "login provider %s: discovery %s host %s is neither the issuer host nor in endpoint_hosts",
+        provider_name,
+        field_name,
+        endpoint_host,
+    )
+    raise LoginRejected("provider_unavailable", "discovery endpoint origin mismatch")
 
 
 def _new_pkce_pair() -> tuple[str, str]:
@@ -436,6 +455,7 @@ class OidcLoginProvider(RedirectLoginProviderBase):
                 configured_issuer=self._config.issuer,
                 endpoint_url=endpoint_url,
                 field_name=field_name,
+                extra_hosts=self._config.endpoint_hosts,
             )
 
         algs_raw = payload.get("id_token_signing_alg_values_supported")

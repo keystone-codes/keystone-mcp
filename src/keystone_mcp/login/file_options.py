@@ -11,6 +11,7 @@ from keystone_mcp.config import ConfigError, DeploymentProfile
 from keystone_mcp.login.oidc import OidcProviderConfig, google_provider_config
 
 _SECRET_ENV_RE = re.compile(r"^[A-Z_][A-Z0-9_]*$")
+_ENDPOINT_HOST_RE = re.compile(r"^[a-z0-9.-]+(:[0-9]{1,5})?$")
 
 
 def _require_str(options: Mapping[str, Any], key: str, *, provider_name: str) -> str:
@@ -46,6 +47,8 @@ def parse_google_options(
         if not isinstance(val, str):
             raise ValueError(f"{name}: allowed_domain must be a string")
         allowed_domain = val.strip().lower().lstrip("@")
+    if "endpoint_hosts" in options:
+        raise ValueError(f"{name}: endpoint_hosts is not configurable for type: google")
     return google_provider_config(
         client_id=client_id,
         client_secret=client_secret,
@@ -168,6 +171,23 @@ def parse_oidc_options(
             )
         token_auth_method = tam  # type: ignore[assignment]
 
+    endpoint_hosts: tuple[str, ...] = ()
+    if "endpoint_hosts" in options:
+        raw_hosts = options["endpoint_hosts"]
+        if not isinstance(raw_hosts, list) or not raw_hosts:
+            raise ValueError(f"{name}: endpoint_hosts must be a non-empty list")
+        hosts: list[str] = []
+        for i, item in enumerate(raw_hosts):
+            if not isinstance(item, str) or not item.strip():
+                raise ValueError(f"{name}: endpoint_hosts[{i}] must be a non-empty string")
+            normalized = item.strip().lower()
+            if "/" in normalized or not _ENDPOINT_HOST_RE.fullmatch(normalized):
+                raise ValueError(
+                    f"{name}: endpoint_hosts[{i}] must be a host name (no scheme or path)"
+                )
+            hosts.append(normalized)
+        endpoint_hosts = tuple(hosts)
+
     return OidcProviderConfig(
         name=name,
         title=title,
@@ -184,4 +204,5 @@ def parse_oidc_options(
         extra_authorize_params=extra_authorize_params or {},
         additional_issuers=additional_issuers,
         token_auth_method=token_auth_method,
+        endpoint_hosts=endpoint_hosts,
     )
