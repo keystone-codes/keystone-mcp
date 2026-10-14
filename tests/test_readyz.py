@@ -26,6 +26,7 @@ from keystone_mcp.auth.login_pending_store import InMemoryLoginPendingStore
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import Settings
 from keystone_mcp.http.readiness import ReadinessProbe
+from keystone_mcp.rbac.policy import hash_policy_bytes
 from keystone_mcp.server import bootstrap_rbac_policy, build_server
 from support.login import dev_token_login
 from support.test_env import require_redis_url
@@ -385,3 +386,48 @@ async def test_readyz_logs_degradation_once(caplog: pytest.LogCaptureFixture):
     assert len(warnings) == 1
     assert "readiness degraded" in warnings[0].message
     assert "redis=fail" in warnings[0].message
+
+
+async def test_readyz_internal_caller_sees_policy_content_hash(
+    tmp_path: Path,
+    redis_url: str,
+):
+    policy_path = tmp_path / "rbac-policy.yaml"
+    policy_bytes = RBAC_POLICY.encode("utf-8")
+    policy_path.write_bytes(policy_bytes)
+    settings = Settings(
+        base_url=BASE_URL,
+        rbac_mode="enforce",
+        rbac_policy_path=str(policy_path),
+        rbac_audit_subject_salt="test-readyz-salt",
+        redis_url=redis_url,
+    )
+    mcp, registry, _oauth, _upstreams, policy_manager, _observability, _reconciler = build_server(
+        login_providers=[dev_token_login({"token"})],
+        settings=settings,
+        register_builtin_catalog=False,
+    )
+    registry.add_route("e2e_ping", StubAdapter(), mode="live", description="test route")
+    bootstrap_rbac_policy(policy_manager, registry)
+    app = mcp.http_app(path=settings.http_path)
+    response = await _get(app, "/readyz", client_host="127.0.0.1")
+    body = response.json()
+    assert body["policy_content_hash"] == hash_policy_bytes(policy_bytes)
+    assert body["policy_in_sync"] is None
+
+
+async def test_readyz_external_caller_does_not_see_policy_hash(tmp_path: Path):
+    settings = _rbac_settings(tmp_path)
+    mcp, registry, _oauth, _upstreams, policy_manager, _observability, _reconciler = build_server(
+        login_providers=[dev_token_login({"token"})],
+        settings=settings,
+        oauth_store=InMemoryOAuthStore(),
+        register_builtin_catalog=False,
+    )
+    registry.add_route("e2e_ping", StubAdapter(), mode="live", description="test route")
+    bootstrap_rbac_policy(policy_manager, registry)
+    app = mcp.http_app(path=settings.http_path)
+    response = await _get(app, "/readyz", client_host="203.0.113.1")
+    body = response.json()
+    assert "policy_content_hash" not in body
+    assert "policy_in_sync" not in body

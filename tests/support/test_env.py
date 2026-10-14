@@ -30,6 +30,7 @@ ALLOWED_SHELL_KEYSTONE_MCP_VARS: frozenset[str] = frozenset(
         "KEYSTONE_MCP_REDIS_KEY_PREFIX",
         "KEYSTONE_MCP_LOGIN_PENDING_KEY_PREFIX",
         "KEYSTONE_MCP_USERS_REDIS_REVISION_KEY",
+        "KEYSTONE_MCP_POLICY_REDIS_REVISION_KEY",
     }
 )
 
@@ -39,6 +40,10 @@ def redis_key_prefix(kind: str) -> str:
 
 
 def users_revision_key(kind: str = "users") -> str:
+    return f"{RUN_KEY_ROOT}{kind}:revision"
+
+
+def policy_revision_key(kind: str = "policy") -> str:
     return f"{RUN_KEY_ROOT}{kind}:revision"
 
 

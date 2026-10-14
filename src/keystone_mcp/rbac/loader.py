@@ -312,12 +312,14 @@ class RbacPolicyManager:
         *,
         upstream_catalog_state: UpstreamCatalogStateProvider | None = None,
         extra_catalog_names: Callable[[], frozenset[str]] | None = None,
+        on_identity: Callable[[PolicyIdentity], None] | None = None,
     ) -> None:
         self._settings = settings
         self._lock = threading.Lock()
         self._snapshot: PolicySnapshot | None = None
         self._upstream_catalog_state_provider = upstream_catalog_state
         self._extra_catalog_names = extra_catalog_names
+        self._on_identity = on_identity
 
     @property
     def snapshot(self) -> PolicySnapshot | None:
@@ -410,7 +412,9 @@ class RbacPolicyManager:
             return PolicyReloadResult(success=True, active=candidate)
 
         logger.warning("rbac policy hot-reload rejected: %s", last_error)
-        return PolicyReloadResult(success=False, active=previous, error=last_error or "reload failed")
+        return PolicyReloadResult(
+            success=False, active=previous, error=last_error or "reload failed"
+        )
 
     def _load_and_validate(self, registry: RouterRegistry) -> PolicySnapshot:
         path = self.policy_path()
@@ -443,11 +447,19 @@ class RbacPolicyManager:
                 identity.content_hash,
                 identity.source_path,
             )
+        else:
+            logger.info(
+                "rbac policy active version=%s content_hash=%s path=%s "
+                "upstream_discovery_counts=%s",
+                identity.version,
+                identity.content_hash,
+                identity.source_path,
+                discovery_counts,
+            )
+        observer = self._on_identity
+        if observer is None:
             return
-        logger.info(
-            "rbac policy active version=%s content_hash=%s path=%s upstream_discovery_counts=%s",
-            identity.version,
-            identity.content_hash,
-            identity.source_path,
-            discovery_counts,
-        )
+        try:
+            observer(identity)
+        except Exception:
+            logger.warning("rbac policy identity observer failed", exc_info=True)

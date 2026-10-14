@@ -504,6 +504,7 @@ The signal handler is installed when the mode is `observe` or `enforce`.
 | `KEYSTONE_MCP_USERS_CACHE_ALLOW_TTL_SECONDS` | `60` | Cache TTL for an allow decision. Resolver caches are capped (10 000 verified keys, 10 000 denials, 50 000 subject resolutions); the built-in directory’s active `key_id` index is refreshed at least this often. |
 | `KEYSTONE_MCP_USERS_CACHE_DENY_TTL_SECONDS` | `30` | Cache TTL for a deny decision (same cache caps as above). |
 | `KEYSTONE_MCP_USERS_REDIS_REVISION_KEY` | `km:users:revision` | Shared Redis key that invalidates the directory cache across replicas. |
+| `KEYSTONE_MCP_POLICY_REDIS_REVISION_KEY` | `km:rbac:policy:revision` | Shared Redis hash that publishes RBAC policy revisions after `policy_*` writes so other replicas reload their local file. |
 | `KEYSTONE_MCP_USERS_CIRCUIT_FAILURE_THRESHOLD` | `5` | Consecutive failures before the directory circuit breaker opens. |
 | `KEYSTONE_MCP_USERS_CIRCUIT_RECOVERY_SECONDS` | `30` | Time before the circuit breaker retries after opening. |
 
