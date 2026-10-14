@@ -88,6 +88,10 @@ fails the build if they would silently skip).
 The suite must pass without reruns or forced ordering; a flaky test is a bug
 to fix, not to retry (`tests/test_ci_hygiene.py`).
 
+Changes to sign-in, OAuth, or RBAC that affect an attack from the release
+checklist should add or update a test in `tests/security/` and an entry in
+`tests/security/checklist.yaml` (see [security-model.md](security-model.md#how-this-is-tested)).
+
 CI runs the suite on Python 3.11 through 3.14. Coverage (line and branch,
 combined) is measured in the Python 3.12 job and must stay at or above the
 ``fail_under`` threshold in ``pyproject.toml`` (currently 86 %). Register new

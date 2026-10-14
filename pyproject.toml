@@ -90,6 +90,7 @@ asyncio_default_test_loop_scope = "function"
 testpaths = ["tests"]
 pythonpath = ["src"]
 markers = [
+    "security: adversarial sign-in, OAuth, and RBAC checklist tests",
     "integration: optional live-service tests; skipped when env prerequisites are missing",
     "live_refresh: slow end-to-end live catalog/policy refresh (30s timer)",
     "keystone_contract: Keystone-MCP extension contract test",
