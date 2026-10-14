@@ -116,6 +116,15 @@ Changing a protocol in `keystone_mcp.login` or `keystone_mcp.user_directory`
 means changing the contract tests in the same pull request; the contract is
 frozen from 0.5.0.
 
+## Feature requests and the compatibility promise
+
+Feature requests ask whether the idea would alter something listed in
+[compatibility.md](compatibility.md). Maintainers label requests that would
+change or remove a frozen contract as `contract-change`. Those changes belong
+in a future 2.0 release, not in a 0.x minor, because the contract may only
+grow until 2.0. If your request falls in that category, expect a reply pointing
+to the compatibility page rather than a near-term implementation.
+
 ## Changing a public contract
 
 Public contracts are listed in [compatibility.md](compatibility.md). The

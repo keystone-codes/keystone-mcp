@@ -10,6 +10,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ### Added
 
+- Issue templates for upgrade reports; feature requests ask whether the change would alter a frozen contract.
 - `keystone-mcp oauth register-client`: register a public OAuth client when self-registration is off, with the same redirect-host and metadata checks as `POST /register`.
 - `keystone-mcp users db current` and `keystone-mcp users db downgrade --to <revision>`: roll the users database back before returning to an older version. `docs/upgrading.md` gains general upgrade, rolling-upgrade and rollback sections. Developers: CI upgrades a live 0.4.0 stack through 0.5.0 to the current build and rolls back, checking sessions, people, clients and the tool list.
 - ADR 0013 (management roles come from the policy) and ADR 0016 (machines never

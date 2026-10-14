@@ -61,6 +61,15 @@ body:
     validations:
       required: false
 
+  - type: input
+    id: upgraded_recently
+    attributes:
+      label: Upgraded recently? From which version
+      description: If this started right after an upgrade, say which version you came from.
+      placeholder: e.g. 0.5.0 → 0.6.0 (leave blank if not upgrade-related)
+    validations:
+      required: false
+
   - type: dropdown
     id: deployment_profile
     attributes:
