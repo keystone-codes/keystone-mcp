@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import subprocess
 import sys
@@ -56,8 +57,8 @@ BLOCKED_EMAIL = "blocked@upgrade.test"
 class StandState:
     admin_tokens: TokenPair | None = None
     member_tokens: TokenPair | None = None
-    member_tools_040: list[str] = field(default_factory=list)
-    member_tools_050: list[str] = field(default_factory=list)
+    catalog_tools_040: list[str] = field(default_factory=list)
+    catalog_tools_050: list[str] = field(default_factory=list)
     oauth_metadata: dict[str, Any] | None = None
     service_account_name: str = "upgrade-bot"
     api_key_secret: str | None = None
@@ -81,6 +82,8 @@ class Runner:
     def compose(self, *args: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
         cmd = ["docker", "compose", "-f", str(COMPOSE_FILE), *args]
         merged = os.environ.copy()
+        merged.setdefault("KEYSTONE_IMAGE", IMAGE_CURRENT)
+        merged.setdefault("KEYSTONE_ENV_FILE", "env/current.env")
         if env:
             merged.update(env)
         return subprocess.run(
@@ -93,6 +96,14 @@ class Runner:
         )
 
     def ensure_image(self, tag: str, *, git_commit: str | None = None) -> bool:
+        local = subprocess.run(
+            ["docker", "image", "inspect", tag],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if local.returncode == 0:
+            return True
         inspect = subprocess.run(
             ["docker", "manifest", "inspect", tag],
             capture_output=True,
@@ -131,7 +142,7 @@ class Runner:
         return build.returncode == 0
 
     def down(self) -> None:
-        self.compose("down", "--remove-orphans")
+        self.compose("down", "-v", "--remove-orphans")
 
     def up_keystone(self, image: str, env_file: str, *, alt: bool = False) -> None:
         service = "keystone-alt" if alt else "keystone"
@@ -148,7 +159,7 @@ class Runner:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             try:
-                resp = httpx.get(f"{base_url}/readyz", timeout=5.0, http2=False)
+                resp = httpx.get(f"{base_url}/readyz", timeout=5.0)
                 if resp.status_code == 200 and resp.json().get("status") == "ok":
                     return True
             except httpx.HTTPError:
@@ -240,8 +251,8 @@ class Runner:
                 {"email": BLOCKED_EMAIL},
             )
             self.state.member_tokens = await oauth_login_pair(client, base_url, MEMBER_EMAIL)
-            self.state.member_tools_040 = await list_tool_names(
-                base_url, self.state.member_tokens.access_token
+            self.state.catalog_tools_040 = await list_tool_names(
+                base_url, self.state.admin_tokens.access_token
             )
         return True
 
@@ -260,7 +271,8 @@ class Runner:
     ) -> bool:
         assert self.state.member_tokens and self.state.oauth_metadata
         async with http_client() as client:
-            tools = await list_tool_names(base_url, self.state.member_tokens.access_token)
+            assert self.state.admin_tokens
+            tools = await list_tool_names(base_url, self.state.admin_tokens.access_token)
             if diff_key:
                 expected = self.load_expected(diff_key)
                 bad_removed, bad_added = tool_diff(previous_tools, tools, expected)
@@ -271,6 +283,9 @@ class Runner:
                         f"unexpected removed={bad_removed} added={bad_added}",
                     )
                     return False
+            member_tools = await list_tool_names(
+                base_url, self.state.member_tokens.access_token
+            )
             refreshed = await refresh_tokens(
                 client,
                 self.state.oauth_metadata["token_endpoint"],
@@ -280,16 +295,26 @@ class Runner:
             )
             self.state.member_tokens = refreshed
             tools_after_refresh = await list_tool_names(base_url, refreshed.access_token)
-            if set(tools_after_refresh) != set(tools):
+            if set(tools_after_refresh) != set(member_tools):
                 self.step(f"{label} refresh preserves tools", False, "tool set changed")
                 return False
-            users_raw = await call_tool(
-                base_url,
-                self.state.admin_tokens.access_token,
-                "users_list",
-                {},
+            users_active = parse_users_list_result(
+                await call_tool(
+                    base_url,
+                    self.state.admin_tokens.access_token,
+                    "users_list",
+                    {},
+                )
             )
-            users = parse_users_list_result(users_raw)
+            users_blocked = parse_users_list_result(
+                await call_tool(
+                    base_url,
+                    self.state.admin_tokens.access_token,
+                    "users_list",
+                    {"is_blocked": True},
+                )
+            )
+            users = users_active + users_blocked
             emails = {u.get("email") for u in users}
             for expected_email in (ADMIN_EMAIL, MEMBER_EMAIL, VIEWER_EMAIL, BLOCKED_EMAIL):
                 if expected_email not in emails:
@@ -300,24 +325,43 @@ class Runner:
                 self.step(f"{label} users_list blocked flag", False, "blocked user not blocked")
                 return False
         if db_revision:
-            proc = self.exec_cli("users", "db", "current")
-            if proc.returncode != 0 or db_revision not in proc.stdout:
-                self.step(f"{label} db revision", False, proc.stdout + proc.stderr)
+            proc = self.compose(
+                "exec",
+                "-T",
+                "postgres",
+                "psql",
+                "-U",
+                "keystone",
+                "-d",
+                "keystone",
+                "-tAc",
+                "SELECT version_num FROM keystone_users_alembic_version;",
+            )
+            actual = (proc.stdout or "").strip()
+            if proc.returncode != 0 or actual != db_revision:
+                self.step(
+                    f"{label} db revision",
+                    False,
+                    f"expected {db_revision!r}, got {actual!r}",
+                )
                 return False
         return True
 
     async def extend_050(self, base_url: str) -> bool:
-        assert self.state.admin_tokens
-        await call_tool(
-            base_url,
-            self.state.admin_tokens.access_token,
-            "service_accounts_add",
-            {
-                "name": self.state.service_account_name,
-                "description": "upgrade stand bot",
-                "roles": ["viewer"],
-            },
+        add = self.run_cli_oneoff(
+            "service-accounts",
+            "add",
+            "--name",
+            self.state.service_account_name,
+            "--description",
+            "upgrade stand bot",
+            "--role",
+            "viewer",
+            env_file="env/0.5.0.env",
+            image=IMAGE_050,
         )
+        if add.returncode != 0:
+            return False
         issue = self.run_cli_oneoff(
             "keys",
             "issue",
@@ -330,14 +374,20 @@ class Runner:
         )
         if issue.returncode != 0:
             return False
-        for line in issue.stdout.splitlines():
-            if line.startswith("secret:"):
-                self.state.api_key_secret = line.split(":", 1)[1].strip()
-        return self.state.api_key_secret is not None
+        try:
+            payload = json.loads(issue.stdout)
+        except json.JSONDecodeError:
+            return False
+        secret = payload.get("key")
+        if not isinstance(secret, str) or not secret:
+            return False
+        self.state.api_key_secret = secret
+        return True
 
     async def verify_current_extras(self, base_url: str) -> bool:
-        assert self.state.member_tokens and self.state.oauth_metadata
+        assert self.state.member_tokens
         async with http_client() as client:
+            self.state.oauth_metadata = await discover_oauth_metadata(client, base_url)
             self.state.member_tokens = await refresh_tokens(
                 client,
                 self.state.oauth_metadata["token_endpoint"],
@@ -346,18 +396,28 @@ class Runner:
                 resource=self.state.oauth_metadata["resource"],
             )
             await list_tool_names(base_url, self.state.member_tokens.access_token)
+            await list_tool_names(base_url, self.state.member_tokens.access_token)
         plain = redis_plain_access_key("km:oauth:", self.state.member_tokens.access_token)
         hashed = redis_hashed_access_key("km:oauth:", self.state.member_tokens.access_token)
-        key_check = self.compose("exec", "-T", "redis", "redis-cli", "EXISTS", plain, hashed)
-        exists_plain = (key_check.stdout or "").splitlines()[0].strip() == "1" if key_check.returncode == 0 else False
+        plain_check = self.compose("exec", "-T", "redis", "redis-cli", "EXISTS", plain)
+        hashed_check = self.compose("exec", "-T", "redis", "redis-cli", "EXISTS", hashed)
+        exists_plain = (
+            plain_check.returncode == 0 and (plain_check.stdout or "").strip() == "1"
+        )
         exists_hashed = (
-            (key_check.stdout or "").splitlines()[-1].strip() == "1" if key_check.returncode == 0 else False
+            hashed_check.returncode == 0 and (hashed_check.stdout or "").strip() == "1"
         )
         if exists_plain:
             return False
         if not exists_hashed:
             return False
-        proc = self.exec_cli("users", "db", "current", env_file="env/current.env", image=IMAGE_CURRENT)
+        proc = self.run_cli_oneoff(
+            "users",
+            "db",
+            "current",
+            env_file="env/current.env",
+            image=IMAGE_CURRENT,
+        )
         if proc.returncode != 0 or "0004_identity_binding" not in proc.stdout:
             return False
         return True
@@ -382,49 +442,106 @@ class Runner:
         if not self.wait_ready(BASE_URL):
             return False
         async with http_client() as client:
+            meta = await discover_oauth_metadata(client, BASE_URL)
             resp = await client.post(
-                self.state.oauth_metadata["token_endpoint"],
+                meta["token_endpoint"],
                 data={
                     "grant_type": "refresh_token",
                     "refresh_token": refresh_before,
                     "client_id": self.state.member_tokens.client_id,
-                    "resource": self.state.oauth_metadata["resource"],
+                    "resource": meta["resource"],
                 },
             )
             if resp.status_code >= 500:
                 return False
             body = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
-            if resp.status_code != 400 or body.get("error") != "invalid_grant":
+            if resp.status_code not in (400, 401) or body.get("error") != "invalid_grant":
                 return False
             fresh = await oauth_login_pair(client, BASE_URL, MEMBER_EMAIL)
             if not fresh.access_token:
                 return False
-        proc = self.exec_cli("users", "db", "current", env_file="env/0.5.0.env", image=IMAGE_050)
-        return proc.returncode == 0 and "0003_api_keys" in proc.stdout
+        proc = self.compose(
+            "exec",
+            "-T",
+            "postgres",
+            "psql",
+            "-U",
+            "keystone",
+            "-d",
+            "keystone",
+            "-tAc",
+            "SELECT version_num FROM keystone_users_alembic_version;",
+        )
+        return proc.returncode == 0 and (proc.stdout or "").strip() == "0003_api_keys"
 
-    async def mixed_replicas(self) -> bool:
+    async def mixed_replicas(self) -> tuple[bool, str]:
         self.compose("stop", "keystone", "keystone-alt")
-        self.up_keystone(IMAGE_CURRENT, "env/current.env")
-        self.up_keystone(IMAGE_050, "env/0.5.0.env", alt=True)
-        if not (self.wait_ready(BASE_URL) and self.wait_ready(ALT_BASE_URL)):
-            return False
+        self.compose("rm", "-f", "keystone", "keystone-alt")
+        rev = self.compose(
+            "exec",
+            "-T",
+            "postgres",
+            "psql",
+            "-U",
+            "keystone",
+            "-d",
+            "keystone",
+            "-tAc",
+            "SELECT version_num FROM keystone_users_alembic_version;",
+        )
+        if rev.returncode != 0 or (rev.stdout or "").strip() != "0003_api_keys":
+            return False, f"mixed replicas need db 0003, got {(rev.stdout or '').strip()!r}"
+        # Start 0.5.x before current migrates the shared database past 0003.
+        self.compose(
+            "--profile",
+            "mixed",
+            "up",
+            "-d",
+            "--force-recreate",
+            "keystone-alt",
+            env={
+                "KEYSTONE_ALT_IMAGE": IMAGE_050,
+                "KEYSTONE_ALT_ENV_FILE": "env/0.5.0-alt.env",
+            },
+        )
+        if not self.wait_ready(ALT_BASE_URL):
+            return False, "0.5 alt replica not ready"
+        try:
+            async with http_client() as client:
+                meta_alt = await discover_oauth_metadata(client, ALT_BASE_URL)
+                pair = await oauth_login_pair(client, ALT_BASE_URL, VIEWER_EMAIL)
+                await list_tool_names(ALT_BASE_URL, pair.access_token)
+        except Exception as exc:  # noqa: BLE001
+            return False, f"alt oauth/tools: {exc}"
+        self.compose(
+            "up",
+            "-d",
+            "--force-recreate",
+            "keystone",
+            env={
+                "KEYSTONE_IMAGE": IMAGE_CURRENT,
+                "KEYSTONE_ENV_FILE": "env/current.env",
+            },
+        )
+        if not self.wait_ready(BASE_URL):
+            return False, "current replica not ready"
+        try:
+            async with http_client() as client:
+                meta_cur = await discover_oauth_metadata(client, BASE_URL)
+                refreshed = await refresh_tokens(
+                    client,
+                    meta_cur["token_endpoint"],
+                    client_id=pair.client_id,
+                    refresh_token=pair.refresh_token,
+                    resource=meta_alt["resource"],
+                )
+        except Exception as exc:  # noqa: BLE001
+            return False, f"current refresh: {exc}"
         async with http_client() as client:
-            meta_alt = await discover_oauth_metadata(client, ALT_BASE_URL)
-            meta_cur = await discover_oauth_metadata(client, BASE_URL)
-            pair = await oauth_login_pair(client, ALT_BASE_URL, VIEWER_EMAIL)
-            await list_tool_names(ALT_BASE_URL, pair.access_token)
-            refreshed = await refresh_tokens(
-                client,
-                meta_cur["token_endpoint"],
-                client_id=pair.client_id,
-                refresh_token=pair.refresh_token,
-                resource=meta_cur["resource"],
-            )
-            await list_tool_names(BASE_URL, refreshed.access_token)
             hashed = redis_hashed_access_key("km:oauth:", refreshed.access_token)
             exists = self.compose("exec", "-T", "redis", "redis-cli", "EXISTS", hashed)
             if exists.returncode != 0 or (exists.stdout or "").strip() != "1":
-                return False
+                return False, "hashed access key missing after current refresh"
             resp = await client.post(
                 meta_alt["token_endpoint"],
                 data={
@@ -435,9 +552,11 @@ class Runner:
                 },
             )
             if resp.status_code >= 500:
-                return False
+                return False, f"alt refresh returned {resp.status_code}"
             body = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
-            return resp.status_code == 400 and body.get("error") == "invalid_grant"
+            if resp.status_code not in (400, 401) or body.get("error") != "invalid_grant":
+                return False, f"alt refresh expected invalid_grant, got {resp.status_code} {body!r}"
+            return True, ""
 
     def startup_refused_on_newer_db(self) -> bool:
         self.compose("stop", "keystone")
@@ -465,7 +584,10 @@ class Runner:
             env={"KEYSTONE_IMAGE": IMAGE_050, "KEYSTONE_ENV_FILE": "env/0.5.0.env"},
         )
         combined = (proc.stdout or "") + (proc.stderr or "")
-        return proc.returncode != 0 and "Can't locate revision" in combined
+        return proc.returncode != 0 and (
+            "Can't locate revision" in combined
+            or "users directory database is not ready" in combined
+        )
 
 
 async def async_main() -> int:
@@ -505,6 +627,10 @@ async def async_main() -> int:
     runner.compose("stop", "keystone")
     runner.up_keystone(IMAGE_050, "env/0.5.0.env")
     runner.step("0.5.0 ready", runner.wait_ready(BASE_URL))
+    if runner.state.admin_tokens:
+        runner.state.catalog_tools_050 = await list_tool_names(
+            BASE_URL, runner.state.admin_tokens.access_token
+        )
 
     ok_050 = False
     try:
@@ -512,16 +638,13 @@ async def async_main() -> int:
             BASE_URL,
             label="0.5.0",
             diff_key="0.4.0->0.5.0",
-            previous_tools=runner.state.member_tools_040,
+            previous_tools=runner.state.catalog_tools_040,
             db_revision="0003_api_keys",
         )
     except Exception as exc:  # noqa: BLE001
         runner.step("0.5.0 verify", False, str(exc))
     else:
         runner.step("0.5.0 verify", ok_050)
-        runner.state.member_tools_050 = await list_tool_names(
-            BASE_URL, runner.state.member_tokens.access_token  # type: ignore[union-attr]
-        )
 
     try:
         extended = await runner.extend_050(BASE_URL)
@@ -543,7 +666,7 @@ async def async_main() -> int:
             BASE_URL,
             label="current",
             diff_key="0.5.0->0.6.0",
-            previous_tools=runner.state.member_tools_050,
+            previous_tools=runner.state.catalog_tools_050,
             db_revision="0004_identity_binding",
         )
     except Exception as exc:  # noqa: BLE001
@@ -578,15 +701,15 @@ async def async_main() -> int:
     else:
         runner.step("rollback 0.6→0.5", rollback_ok)
 
-    runner.step("0.5.0 refuses 0004 db", runner.startup_refused_on_newer_db())
-
     try:
-        mixed_ok = await runner.mixed_replicas()
+        mixed_ok, mixed_detail = await runner.mixed_replicas()
     except Exception as exc:  # noqa: BLE001
         mixed_ok = False
         runner.step("mixed replicas", False, str(exc))
     else:
-        runner.step("mixed replicas", mixed_ok)
+        runner.step("mixed replicas", mixed_ok, mixed_detail)
+
+    runner.step("0.5.0 refuses 0004 db", runner.startup_refused_on_newer_db())
 
     if runner.failures:
         logs = runner.compose("logs", "--no-color")
