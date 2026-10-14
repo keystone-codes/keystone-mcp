@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from keystone_mcp.observability.audit import (
@@ -49,6 +50,30 @@ class RbacObservability:
             tool_name_mode=settings.metrics_tool_name,
             oauth_client_id_limit=settings.metrics_oauth_client_id_limit,
         )
+        self._known_name_check: Callable[[str, str], bool] | None = None
+
+    def set_known_name_check(self, check: Callable[[str, str], bool] | None) -> None:
+        self._known_name_check = check
+
+    def _tool_is_known(self, tool_name: str) -> bool:
+        if self._known_name_check is None:
+            return True
+        return self._known_name_check("tool", tool_name)
+
+    def _authz_tool_family_label(self, tool_name: str, operation: str) -> str:
+        if not tool_name:
+            return tool_family(tool_name)
+        if self._known_name_check is None:
+            return tool_family(tool_name)
+        kind_by_operation = {
+            "call_tool": "tool",
+            "get_prompt": "prompt",
+            "read_resource": "resource",
+        }
+        kind = kind_by_operation.get(operation, "tool")
+        if self._known_name_check(kind, tool_name):
+            return tool_family(tool_name)
+        return "unknown"
 
     def active_policy_fields(self) -> PolicyAuditFields:
         identity: PolicyIdentity | None = None
@@ -78,7 +103,7 @@ class RbacObservability:
         subject_type: str | None = None,
     ) -> None:
         policy = self.active_policy_fields()
-        family = tool_family(tool_name)
+        family = self._authz_tool_family_label(tool_name, operation)
         critical = (
             is_critical_tool(tool_name, self.critical_tool_patterns()) if tool_name else False
         )
@@ -262,7 +287,10 @@ class RbacObservability:
 
     def record_tool_call_attempt(self, *, tool_name: str) -> None:
         try:
-            self.metrics.record_tool_call_attempt(tool_name=tool_name)
+            self.metrics.record_tool_call_attempt(
+                tool_name=tool_name,
+                known=self._tool_is_known(tool_name),
+            )
         except Exception:
             import logging
 
@@ -283,6 +311,7 @@ class RbacObservability:
                 tool_name=tool_name,
                 outcome=outcome,
                 duration_seconds=duration_seconds,
+                known=self._tool_is_known(tool_name),
             )
         except Exception:
             import logging

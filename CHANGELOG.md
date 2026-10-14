@@ -8,6 +8,14 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ## [Unreleased]
 
+### Changed
+
+- List requests (`tools/list`, `prompts/list`, `resources/list`, `resources/templates/list`) count toward the per-identity rate limit. A throttled `prompts/get` returns a prompt error.
+
+### Migration
+
+- Each list request now uses one slot of `KEYSTONE_MCP_THROTTLE_MAX` (default 120 per 60 s). If a client lists very often, raise the limit. Metric series for names that are not published are now reported as `tool="unknown"`.
+
 ## [0.5.0] - 2026-10-13
 
 ### Added

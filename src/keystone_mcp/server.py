@@ -487,6 +487,18 @@ def build_server(
 
     _register_default_upstreams(upstreams, settings)
 
+    def _known_name(kind: str, name: str) -> bool:
+        if kind == "tool":
+            return registry.has_published_name(name)
+        if kind == "prompt":
+            return upstreams.content.owner_of_published_prompt(name) is not None
+        return (
+            upstreams.content.owner_of_resource_rbac(name) is not None
+            or upstreams.content.owner_of_template_rbac(name) is not None
+        )
+
+    rbac_observability.set_known_name_check(_known_name)
+
     # Remembers a handshake-era connection even for a request that a later
     # middleware throttles or RBAC denies, so added before every other
     # middleware (test-sentinel: test_session_is_tracked_even_when_rbac_denies).

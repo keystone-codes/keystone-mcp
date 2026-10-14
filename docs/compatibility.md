@@ -336,6 +336,8 @@ Frozen since 0.5.0. Metric names and label keys (not log message text):
 | `keystone_mcp_oauth_client_registrations_total` | `outcome` |
 | `keystone_mcp_oauth_clients` | (gauge, no labels) |
 
+Label value `unknown` is reserved for names that are not published.
+
 Audit event types and field names (values are not frozen): `rbac_authz_decision`,
 `rbac_users_mutation`, `rbac_policy_mutation` — see
 [observability-rbac.md](observability-rbac.md) and `src/keystone_mcp/observability/audit.py`.
