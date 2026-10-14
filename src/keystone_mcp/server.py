@@ -111,6 +111,7 @@ _session_revoker_holder: dict[str, SessionRevoker | None] = {"revoker": None}
 _bootstrap_state_holder: dict[str, BootstrapState | None] = {"state": None}
 _deferred_bootstrap_holder: dict[str, Callable[[], Awaitable[None]] | None] = {"factory": None}
 _startup_failure_holder: dict[str, BaseException | None] = {"error": None}
+_tracing_handle_holder: dict[str, object | None] = {"handle": None}
 
 
 def _default_request_shutdown() -> None:
@@ -155,6 +156,12 @@ async def _keystone_lifespan(_server: FastMCP):
                     await provider.aclose()
                 except Exception:  # noqa: BLE001 - shutdown must not be blocked by one provider
                     logger.exception("error closing login provider %s", provider.name)
+        tracing_handle = _tracing_handle_holder.get("handle")
+        if tracing_handle is not None:
+            from keystone_mcp.observability.tracing import shutdown_tracing
+
+            shutdown_tracing()
+            _tracing_handle_holder["handle"] = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1144,6 +1151,10 @@ def _http_asgi_middleware(settings: Settings) -> list:
             internal_prefixes=internal_prefixes,
         )
     ]
+    if settings.otel_enabled:
+        from keystone_mcp.observability.tracing import TracingMiddleware
+
+        stack.append(Middleware(TracingMiddleware, settings=settings))
     if settings.log_access_enabled:
         stack.append(Middleware(AccessLogMiddleware, settings=settings))
     return stack
@@ -1162,6 +1173,14 @@ def main() -> None:
             print(f"keystone-mcp: {problem}", file=sys.stderr)
         raise SystemExit(1) from exc
     configure_logging(settings)
+    from keystone_mcp.observability.tracing import configure_tracing
+
+    try:
+        _tracing_handle_holder["handle"] = configure_tracing(settings)
+    except ConfigError as exc:
+        for problem in exc.problems:
+            print(f"keystone-mcp: {problem}", file=sys.stderr)
+        raise SystemExit(1) from exc
     try:
         _ = settings.upstreams
     except ValueError as exc:

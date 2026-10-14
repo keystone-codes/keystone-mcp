@@ -12,6 +12,7 @@ import pytest_asyncio
 from asgi_lifespan import LifespanManager
 from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
+from fastmcp.exceptions import ToolError
 from httpx import ASGITransport, AsyncClient
 from redis.exceptions import RedisError
 
@@ -170,7 +171,7 @@ async def test_revoke_key_ends_sessions_opened_with_it(api_key_session_harness):
         assert revoked.data["state"] == "done"
         assert revoked.data["revoked_tokens"] >= 2
 
-    with pytest.raises(Exception):
+    with pytest.raises(ToolError):
         async with Client(_transport(h["app"], h["settings"], h["human1"]["body"]["access_token"])):
             pass
 
@@ -222,7 +223,7 @@ async def test_revoke_key_falls_back_to_subject_for_legacy_marker(api_key_sessio
     async with h["admin_client_factory"]() as admin_client:
         await admin_client.call_tool("api_keys_revoke", {"key_id": h["kid1"]})
 
-    with pytest.raises(Exception):
+    with pytest.raises(ToolError):
         async with Client(_transport(h["app"], h["settings"], dev_res["body"]["access_token"])):
             pass
     refresh = await refresh_access_token(
