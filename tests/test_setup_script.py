@@ -29,8 +29,9 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import pytest
+import yaml
 
-from keystone_mcp.config import load_settings
+from keystone_mcp.config import load_settings, startup_warnings
 from keystone_mcp.env_file import load_env_file
 from support.test_env import require_redis_url
 
@@ -144,12 +145,9 @@ def test_local_profile_writes_expected_env(sandbox, redis_url):
 
     assert values["KEYSTONE_MCP_DEPLOYMENT_PROFILE"] == "local"
     assert values["KEYSTONE_MCP_BASE_URL"] == "http://localhost:8080"
-    assert values["KEYSTONE_MCP_ENABLED_LOGIN_METHODS"] == "api_key"
-    assert values["KEYSTONE_MCP_PRIMARY_LOGIN_METHOD"] == "api_key"
+    assert "KEYSTONE_MCP_ENABLED_LOGIN_METHODS" not in values
+    assert "KEYSTONE_MCP_PRIMARY_LOGIN_METHOD" not in values
     assert values["KEYSTONE_MCP_DEV_TOKENS"] == "a-local-admin-token"
-    assert values["KEYSTONE_MCP_GOOGLE_CLIENT_ID"] == ""
-    assert values["KEYSTONE_MCP_GOOGLE_CLIENT_SECRET"] == ""
-    assert values["KEYSTONE_MCP_GOOGLE_ALLOWED_DOMAIN"] == ""
     assert values["KEYSTONE_MCP_RBAC_MODE"] == "enforce"
     assert (
         Path(values["KEYSTONE_MCP_RBAC_POLICY_PATH"]).resolve()
@@ -159,10 +157,10 @@ def test_local_profile_writes_expected_env(sandbox, redis_url):
     assert values["KEYSTONE_MCP_USERS_BACKEND"] == "local"
     assert_sqlite_points_inside(values["KEYSTONE_MCP_USERS_DB_URL"], sandbox)
     assert values["KEYSTONE_MCP_SUPERADMIN_EMAIL"] == "admin@example.com"
-    assert values["KEYSTONE_MCP_USERS_SERVICE_URL"] == ""
-    assert values["KEYSTONE_MCP_USERS_SERVICE_TOKEN"] == ""
-    assert values["KEYSTONE_MCP_AUTH_SERVICE_URL"] == ""
-    assert values["KEYSTONE_MCP_AUTH_SERVICE_TOKEN"] == ""
+    assert "KEYSTONE_MCP_USERS_SERVICE_URL" not in values
+    assert "KEYSTONE_MCP_USERS_SERVICE_TOKEN" not in values
+    assert "KEYSTONE_MCP_AUTH_SERVICE_URL" not in values
+    assert "KEYSTONE_MCP_AUTH_SERVICE_TOKEN" not in values
     assert values["KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT"]
 
     # Every variable setup.sh writes appears exactly once among the active
@@ -185,12 +183,13 @@ def test_production_profile_writes_expected_env(sandbox, redis_url):
 
     assert values["KEYSTONE_MCP_DEPLOYMENT_PROFILE"] == "production"
     assert values["KEYSTONE_MCP_BASE_URL"] == "https://mcp.example.com"
-    assert values["KEYSTONE_MCP_ENABLED_LOGIN_METHODS"] == "google"
-    assert values["KEYSTONE_MCP_PRIMARY_LOGIN_METHOD"] == "google"
+    assert "KEYSTONE_MCP_ENABLED_LOGIN_METHODS" not in values
+    assert "KEYSTONE_MCP_PRIMARY_LOGIN_METHOD" not in values
     assert values["KEYSTONE_MCP_DEV_TOKENS"] == ""
-    assert values["KEYSTONE_MCP_GOOGLE_CLIENT_ID"] == "a-client-id"
-    assert values["KEYSTONE_MCP_GOOGLE_CLIENT_SECRET"] == "a-client-secret"
-    assert values["KEYSTONE_MCP_GOOGLE_ALLOWED_DOMAIN"] == ""
+    assert values["KEYSTONE_MCP_LOGIN_PROVIDERS_PATH"] == str(
+        (sandbox / "login-providers.yaml").resolve()
+    )
+    assert values["KEYSTONE_MCP_LOGIN_GOOGLE_SECRET"] == "a-client-secret"
     assert values["KEYSTONE_MCP_RBAC_MODE"] == "enforce"
     assert (
         Path(values["KEYSTONE_MCP_RBAC_POLICY_PATH"]).resolve()
@@ -202,10 +201,10 @@ def test_production_profile_writes_expected_env(sandbox, redis_url):
         values["KEYSTONE_MCP_USERS_DB_URL"] == "postgresql+psycopg://keystone:pw@db:5432/keystone"
     )
     assert values["KEYSTONE_MCP_SUPERADMIN_EMAIL"] == "admin@example.com"
-    assert values["KEYSTONE_MCP_USERS_SERVICE_URL"] == ""
-    assert values["KEYSTONE_MCP_USERS_SERVICE_TOKEN"] == ""
-    assert values["KEYSTONE_MCP_AUTH_SERVICE_URL"] == ""
-    assert values["KEYSTONE_MCP_AUTH_SERVICE_TOKEN"] == ""
+    assert "KEYSTONE_MCP_USERS_SERVICE_URL" not in values
+    assert "KEYSTONE_MCP_USERS_SERVICE_TOKEN" not in values
+    assert "KEYSTONE_MCP_AUTH_SERVICE_URL" not in values
+    assert "KEYSTONE_MCP_AUTH_SERVICE_TOKEN" not in values
     assert values["KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT"]
 
     keys = active_keys(env_path)
@@ -213,6 +212,73 @@ def test_production_profile_writes_expected_env(sandbox, redis_url):
 
     mode = stat.S_IMODE(env_path.stat().st_mode)
     assert mode == 0o600
+
+
+def test_local_profile_writes_no_deprecated_login_variables(sandbox, redis_url):
+    result = run_setup(sandbox, local_env(redis_url))
+    assert result.returncode == 0, result.stdout + result.stderr
+    values = parse_dotenv(sandbox / ".env")
+    assert "KEYSTONE_MCP_ENABLED_LOGIN_METHODS" not in values
+    assert "KEYSTONE_MCP_PRIMARY_LOGIN_METHOD" not in values
+    assert "KEYSTONE_MCP_GOOGLE_CLIENT_ID" not in values
+    assert "KEYSTONE_MCP_GOOGLE_CLIENT_SECRET" not in values
+
+
+def test_production_profile_writes_providers_file(sandbox, redis_url):
+    env = production_env(redis_url, KEYSTONE_SETUP_GOOGLE_ALLOWED_DOMAIN="example.com")
+    result = run_setup(sandbox, env)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+    providers_path = sandbox / "login-providers.yaml"
+    assert providers_path.is_file()
+    assert stat.S_IMODE(providers_path.stat().st_mode) == 0o600
+
+    document = yaml.safe_load(providers_path.read_text(encoding="utf-8"))
+    google = next(p for p in document["providers"] if p["type"] == "google")
+    assert google["client_id"] == "a-client-id"
+    assert google["client_secret_env"] == "KEYSTONE_MCP_LOGIN_GOOGLE_SECRET"
+    assert google.get("allowed_domain") == "example.com"
+
+    dotenv = parse_dotenv(sandbox / ".env")
+    assert dotenv["KEYSTONE_MCP_LOGIN_GOOGLE_SECRET"] == "a-client-secret"
+    assert dotenv["KEYSTONE_MCP_LOGIN_PROVIDERS_PATH"] == str(providers_path.resolve())
+
+
+def test_setup_never_writes_removed_variables(sandbox, redis_url):
+    for env in (local_env(redis_url), production_env(redis_url)):
+        target = sandbox / f"run-{env['KEYSTONE_SETUP_PROFILE']}"
+        target.mkdir()
+        shutil.copy(SETUP_SCRIPT, target / "setup.sh")
+        shutil.copy(ENV_EXAMPLE, target / ".env.example")
+        (target / "config").mkdir()
+        shutil.copy(RBAC_POLICY, target / "config" / "rbac-policy.yaml")
+        result = run_setup(target, env)
+        assert result.returncode == 0, result.stdout + result.stderr
+        text = (target / ".env").read_text(encoding="utf-8")
+        assert "AUTH_SERVICE_" not in text
+
+
+@pytest.mark.parametrize("profile", ["local", "production"])
+def test_written_env_starts_without_deprecation_warnings(sandbox, redis_url, monkeypatch, profile):
+    env = local_env(redis_url) if profile == "local" else production_env(redis_url)
+    result = run_setup(sandbox, env)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+    monkeypatch.chdir(sandbox)
+    file_environ: dict[str, str] = {}
+    load_env_file(environ=file_environ)
+    written = {k: v for k, v in file_environ.items() if k.startswith("KEYSTONE_MCP_")}
+    for key, value in written.items():
+        monkeypatch.setenv(key, value)
+    if profile == "production":
+        monkeypatch.setenv(
+            "KEYSTONE_MCP_LOGIN_GOOGLE_SECRET",
+            written["KEYSTONE_MCP_LOGIN_GOOGLE_SECRET"],
+        )
+
+    settings = load_settings()
+    warnings = startup_warnings(settings)
+    assert not any("deprecated" in w.lower() for w in warnings)
 
 
 @pytest.mark.parametrize(

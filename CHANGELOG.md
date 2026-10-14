@@ -41,6 +41,8 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 - Keystone checks a plugin against the method list of the 0.5 protocols instead of `isinstance`; the startup error names missing methods. The plugin template depends on `keystone-mcp-gateway>=0.5,<2`.
 - Contract tests: a directory that declares `admin`, `service_accounts` or `api_keys` must run the matching contract class, and the availability tests are no longer skipped silently. In 0.5 a test class that mixed in only `UserDirectoryContract` passed without checking the administrator rules its directory claimed — a gap in the contract tests, fixed here. Opt out only with `@pytest.mark.keystone_contract_lenient(reason=...)`.
+- Kubernetes and production-docker examples and `setup.sh` configure sign-in through a providers file (`KEYSTONE_MCP_LOGIN_PROVIDERS_PATH`) and no longer write deprecated or removed variables.
+- Kubernetes example: `startupProbe`, `preStop`, `terminationGracePeriodSeconds: 40`, `PodDisruptionBudget`, `automountServiceAccountToken: false`, `KEYSTONE_MCP_POLICY_TOOLS=read-only`, `ingressClassName`; policy ConfigMap kept identical to the production example by a test.
 - Management roles: a role that reaches any built-in administration tool is a management role, and a person whose roles reach all of them is a full administrator — both derived from the active policy, whatever the role names. Only a full administrator can give or take away a management role, or change, block, unblock, log out, or manage API keys of an account that holds one.
 - `resources/read` requires every RBAC name of the matching resources and templates in the URI's own namespace to be allowed.
 - Service accounts get `forbidden` from every administration tool that changes state (`users_*`, `service_accounts_*`, `api_keys_*`, `policy_*`); reading stays available. `tools/list` no longer shows a caller the tools it will be refused for lack of an interactive sign-in.
@@ -112,6 +114,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ### Migration
 
+- If you copied the 0.5 Kubernetes example: rename the secret key `KEYSTONE_MCP_GOOGLE_CLIENT_SECRET` to the variable named in your providers file, add the providers file, and set `KEYSTONE_MCP_POLICY_TOOLS=read-only` for a read-only policy mount. Old variables keep working with a deprecation warning.
 - Nothing to do on a shared policy volume. Without one, a replica whose policy file differs from the last change made through `policy_*` reports `keystone_mcp_rbac_policy_in_sync 0`; copy the file to every replica and send `SIGHUP`.
 - Plugin authors: change `keystone-mcp-gateway<0.6` to `<2`; mix in the contract class for every declared capability and add a `keystone_unavailable_directory_factory` fixture (or mark the class `keystone_contract_lenient` with a reason). Directory config files with inline secrets under keys like `client_secret` or inside lists now refuse startup: move the value to an environment variable and reference it with `<key>_env`.
 - A stdio upstream that blocks for more than ~35 s without answering pings is now restarted only after three missed pings (about a minute).

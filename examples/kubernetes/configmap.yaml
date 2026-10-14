@@ -1,16 +1,17 @@
-# RBAC policy and upstream registry, mounted read-only at /etc/keystone-mcp/
-# by deployment.yaml. Same content as examples/production/ -- copy both files
-# over if you change the production example, or edit here directly and keep
-# the two in sync by hand (there is no templating in this example).
+# RBAC policy, upstream registry, and sign-in providers, mounted read-only at
+# /etc/keystone-mcp/ by deployment.yaml. Policy content matches
+# examples/production/policy/rbac-policy.yaml (checked by tests).
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: keystone-config
 data:
   rbac-policy.yaml: |
+    # Kept identical to examples/production/policy/rbac-policy.yaml by
+    # tests/test_kubernetes_example.py.
     # Starting-point RBAC policy for a production deployment. Copy of
-    # config/rbac-policy.yaml in the repository, mounted read-only at
-    # /etc/keystone-mcp/rbac-policy.yaml by the keystone Deployment.
+    # config/rbac-policy.yaml in the repository, mounted read-write at
+    # /etc/keystone-mcp/policy/rbac-policy.yaml by docker-compose.yml.
     #
     # Replace the roles and allow patterns with your own; role names are
     # free-form. A role can only be assigned to a person if its name is in this
@@ -25,7 +26,7 @@ data:
     #
     # Format reference: ../../docs/rbac-policy-format.md
 
-    version: "1.0.0"
+    version: "2.0.0"
     default_deny: true
 
     roles:
@@ -42,8 +43,14 @@ data:
     #      - your_service_search
     #      - your_service_read
 
-    # Tools that may only run under an interactive human login. Empty by default.
-    requires_human_identity: []
+    # Only if every administrator signs in through an interactive provider (Google,
+    # OIDC). An administrator who signs in with a DEV token or an API key gets
+    # interactive=false and is refused these tools. Remove an entry if that is your case.
+    requires_human_identity:
+      - users_*
+      - service_accounts_*
+      - api_keys_*
+      - policy_*
 
     # Tools whose role resolution must bypass the allow cache. The platform
     # always treats users_* as critical.
@@ -55,8 +62,12 @@ data:
     tool_dispositions:
       R:
         - users_list
+        - policy_read
+        - policy_catalog
+        - policy_validate
       D:
         - users_block
+        - policy_role_delete
       W:
         - users_add
         - users_update
@@ -64,22 +75,32 @@ data:
         - users_set_roles
         - users_grant_role
         - users_revoke_role
+        - policy_role_set
+        - policy_allow_add
+        - policy_allow_remove
+        - policy_list_set
+        - policy_rollback
+  login-providers.yaml: |
+    version: 1
+    providers:
+      - name: google
+        type: google
+        client_id: CHANGE_ME.apps.googleusercontent.com
+        client_secret_env: KEYSTONE_MCP_LOGIN_GOOGLE_SECRET
+        # allowed_domain: example.com
   upstreams.yaml: |
     # Upstream registry for your own services. Mounted read-only at
-    # /etc/keystone-mcp/upstreams.yaml by the keystone Deployment;
-    # KEYSTONE_MCP_UPSTREAMS_PATH in deployment.yaml already points there.
+    # /etc/keystone-mcp/upstreams.yaml by docker-compose.yml. Set
+    # KEYSTONE_MCP_UPSTREAMS_PATH=/etc/keystone-mcp/upstreams.yaml in .env to
+    # point Keystone-MCP at it (step 3 of docs/paths/production-docker.md; the
+    # shipped .env.example ships this line commented out).
     #
-    # Uncomment and adapt one entry per upstream MCP service. Run each service
-    # in this namespace, as a ClusterIP Service with no further exposure, and
-    # reach it here by its Service DNS name. See ../../docs/connecting-services.md.
+    # Uncomment and adapt one entry per upstream MCP service. Run each service on
+    # the "keystone" network from docker-compose.yml, with no published port, and
+    # reach it here by its service name. See ../../docs/connecting-services.md.
     schema_version: 1
     entries: []
-    # A plain-http URL on a *.svc.cluster.local name needs both
-    # KEYSTONE_MCP_UPSTREAM_ALLOW_INSECURE_HTTP=true and
-    # KEYSTONE_MCP_UPSTREAM_EGRESS_ALLOW_PRIVATE=true in deployment.yaml's env
-    # (".local" names count as private); otherwise startup refuses the entry.
-    # Check with: keystone-mcp upstream validate --path upstreams.yaml
     #  - name: your-service
-    #    url: http://your-service.keystone.svc.cluster.local:8081/mcp
+    #    url: http://your-service:8081/mcp
     #    namespace: your_service
     #    enabled: true
