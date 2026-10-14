@@ -242,6 +242,15 @@ allowed decision, or `KEYSTONE_MCP_USERS_CACHE_DENY_TTL_SECONDS` for a denial,
 after which the cache expires on its own and the next call reads fresh data
 regardless.
 
+API key verification uses separate positive and negative caches (each capped
+at 10 000 entries) plus a resolution cache (50 000 subjects). The built-in
+directory also implements optional `ApiKeyIdIndex`: Keystone loads the set of
+active `key_id` values (refreshed on revision change and at least every
+`KEYSTONE_MCP_USERS_CACHE_ALLOW_TTL_SECONDS`) so unknown ids are refused
+without a database round-trip. Directories without that protocol fall back to
+a per-process rate limit (20/s, burst 50) for `key_id` values that have never
+verified successfully on that replica.
+
 ## Registering a directory from your own package
 
 See [plugins.md](plugins.md). Why: [ADR 0009](adr/0009-plugins-via-entry-points.md).

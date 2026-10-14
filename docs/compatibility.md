@@ -311,7 +311,7 @@ Frozen since 0.5.0.
 |---|---|
 | `LoginProvider` protocols (`RedirectLoginProvider`, `FormLoginProvider`) | Module `keystone_mcp.login.protocol`; adding a method with a default implementation is not breaking; a new required method or signature change requires a major release |
 | `LoginIdentity` | `LoginIdentity` gained optional `key_id`, `key_expires_at` in 0.6.0 (additive; providers that do not set them are unaffected) |
-| `UserDirectory` and related protocols | Module `keystone_mcp.user_directory.protocol` |
+| `UserDirectory` and related protocols | Module `keystone_mcp.user_directory.protocol`; optional `ApiKeyIdIndex` (since 0.6.0) |
 | Entry point group `keystone_mcp.login_providers` | Built-in: `oidc`, `google`, `api_key` |
 | Entry point group `keystone_mcp.user_directories` | Built-in: `local`, `http` |
 | Pytest plugin `keystone_mcp.contract_tests` | Contract tests for providers and directories (`pytest -p keystone_mcp.contract_tests`, optional extra `contract-tests`) |
@@ -341,6 +341,10 @@ Frozen since 0.5.0. Metric names and label keys (not log message text):
 | `keystone_mcp_oauth_client_registrations_total` | `outcome` (`created`, `rejected_limit`, `rejected_redirect_host`, `rejected_metadata`) |
 | `keystone_mcp_oauth_client_evictions_total` | (counter, no labels) |
 | `keystone_mcp_oauth_clients` | (gauge, no labels) |
+| `keystone_mcp_api_key_verifications_total` | `outcome` |
+| `keystone_mcp_api_key_cache_entries` | `cache` |
+| `keystone_mcp_api_key_cache_evictions_total` | `cache` |
+| `keystone_mcp_users_revision_bump_failed_total` | — |
 
 Label value `unknown` is reserved for names that are not published.
 
