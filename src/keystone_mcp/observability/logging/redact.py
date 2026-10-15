@@ -6,12 +6,8 @@ import re
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
-_API_KEY_RE = re.compile(
-    r"\bksk_[0-9a-f]{12}_[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])"
-)
-_KEYSTONE_TOKEN_RE = re.compile(
-    r"\bkm_(?:at|rt)_[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])"
-)
+_API_KEY_RE = re.compile(r"\bksk_[0-9a-f]{12}_[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])")
+_KEYSTONE_TOKEN_RE = re.compile(r"\bkm_(?:at|rt)_[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])")
 
 
 def _mask_api_key(match: re.Match[str]) -> str:
@@ -154,7 +150,7 @@ def redact_dict(data: dict[str, Any]) -> dict[str, Any]:
             "private_key",
             "credential",
             "api_token",
- # The signed identity assertion header -- a JWT, not a
+            # The signed identity assertion header -- a JWT, not a
             # secret by itself, but it carries roles, email and task_id for
             # whoever is named in it and should not sit in plain log storage.
             "x-keystone-identity",

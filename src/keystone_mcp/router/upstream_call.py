@@ -84,12 +84,12 @@ class DownstreamCall:
     def current(cls) -> "DownstreamCall | None":
         """Capture from the active FastMCP request; ``None`` outside one.
 
-        "Outside one" covers a unit test that calls an adapter directly, and
-        any future caller that runs off the request task (there is none yet).
-        Values are captured once here rather than re-read later, which is
-        what makes the forwarding work the same way whether the upstream call
- happens inline in the request task or from a separate one (stdio upstream wiring
-        stdio read loop, shared across many client requests).
+               "Outside one" covers a unit test that calls an adapter directly, and
+               any future caller that runs off the request task (there is none yet).
+               Values are captured once here rather than re-read later, which is
+               what makes the forwarding work the same way whether the upstream call
+        happens inline in the request task or from a separate one (stdio upstream wiring
+               stdio read loop, shared across many client requests).
         """
         try:
             ctx = get_context()

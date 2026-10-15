@@ -132,7 +132,8 @@
     width: 100%; max-width: 440px; display: flex; justify-content: space-between; align-items: center;
     color: var(--muted); font-size: .8rem; margin-top: 14px; padding: 0 4px;
   }
-  footer nav a { color: var(--muted); text-decoration: none; margin-inline-start: 10px; }
-  footer nav a[aria-current="true"] { color: var(--text); font-weight: 600; text-decoration: underline; }
+  footer nav a { color: var(--muted); text-decoration: none; }
+  footer nav > * + * { margin-inline-start: 10px; }
+  footer nav [aria-current="true"] { color: var(--text); font-weight: 600; text-decoration: underline; }
 
 </style></head><body><main class="card"><div class="brand"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 2.5 4 6v6c0 4.6 3.4 8.3 8 9.5 4.6-1.2 8-4.9 8-9.5V6l-8-3.5Z"/><path d="M9.5 12.5h5M12 10v5"/></svg><h1>Keystone-MCP</h1></div><div class="alert" role="alert" style="margin-top:12px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16v.5"/></svg><span><strong>Invalid or expired authorization request</strong></span></div><p style="margin:0 0 6px">Go back to the application and start sign-in again. The link is valid for ten minutes.</p><p class="help" style="margin:0">If this keeps happening, tell your administrator the code: <code>error_request</code></p></main><footer><span>Keystone-MCP</span><nav aria-label="Language"><span aria-current="true">EN</span><a href="/login?lang=ru">RU</a><a href="/login?lang=he">HE</a><a href="/login?lang=ar">AR</a></nav></footer></body></html>

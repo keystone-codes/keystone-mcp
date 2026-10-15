@@ -98,7 +98,7 @@ async def _tool_calls(mcp, times: int) -> None:
 async def test_two_replicas_share_one_budget(
     policy_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
- # Four call_tool hits plus one tools/list per Client session.
+    # Four call_tool hits plus one tools/list per Client session.
     settings = _redis_settings(throttle_max_requests=6, throttle_window_seconds=60)
     mcp_a = _build_mcp(settings, policy_path, monkeypatch)
     mcp_b = _build_mcp(settings, policy_path, monkeypatch)
@@ -198,9 +198,10 @@ async def test_redis_error_allows_and_counts(
         kind="tool",
     )
     sliding._script = AsyncMock(side_effect=RedisError("down"))
-    before = REGISTRY.get_sample_value(
-        "keystone_mcp_throttle_backend_errors_total", {"kind": "tool"}
-    ) or 0.0
+    before = (
+        REGISTRY.get_sample_value("keystone_mcp_throttle_backend_errors_total", {"kind": "tool"})
+        or 0.0
+    )
     with caplog.at_level(logging.WARNING):
         for _ in range(3):
             decision = await sliding.hit("x", limit=1, window_seconds=60)

@@ -517,9 +517,7 @@ class UsersAdminAdapter:
                 route,
                 ctx,
                 code="forbidden",
-                message=(
-                    "only a full administrator may delete a person from the users directory"
-                ),
+                message=("only a full administrator may delete a person from the users directory"),
             )
             self._record_mutation_audit(
                 route, ctx, spec, result, operation_override="delete_requested"
@@ -569,9 +567,7 @@ class UsersAdminAdapter:
                     email=target_email,
                 )
             except UsersError as exc:
-                result = self._error(
-                    route, ctx, code=exc.code, message=self._error_message(exc)
-                )
+                result = self._error(route, ctx, code=exc.code, message=self._error_message(exc))
                 self._record_mutation_audit(
                     route, ctx, spec, result, operation_override="delete_requested"
                 )
@@ -617,9 +613,7 @@ class UsersAdminAdapter:
             )
             return result
 
-        pseudonym = delete_support.build_pseudonym(
-            target_email, salt=self._rbac_audit_subject_salt
-        )
+        pseudonym = delete_support.build_pseudonym(target_email, salt=self._rbac_audit_subject_salt)
         deleter = directory  # typed as UserDeletionDirectory after capability check
         assert isinstance(deleter, UserDeletionDirectory)
         try:

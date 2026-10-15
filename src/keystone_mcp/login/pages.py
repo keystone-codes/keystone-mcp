@@ -143,8 +143,9 @@ _PAGE_STYLES = """
     width: 100%; max-width: 440px; display: flex; justify-content: space-between; align-items: center;
     color: var(--muted); font-size: .8rem; margin-top: 14px; padding: 0 4px;
   }
-  footer nav a { color: var(--muted); text-decoration: none; margin-inline-start: 10px; }
-  footer nav a[aria-current="true"] { color: var(--text); font-weight: 600; text-decoration: underline; }
+  footer nav a { color: var(--muted); text-decoration: none; }
+  footer nav > * + * { margin-inline-start: 10px; }
+  footer nav [aria-current="true"] { color: var(--text); font-weight: 600; text-decoration: underline; }
 """
 
 _SHIELD_SVG = """<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">

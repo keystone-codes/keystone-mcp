@@ -376,7 +376,9 @@ class OidcLoginProviderChecks06:
         self, keystone_oidc_provider: RedirectLoginProvider, fake_oidc_issuer: FakeOidcIssuer
     ):
         async def exercise() -> None:
-            redirect = await keystone_oidc_provider.begin(state="s", callback_url="http://app.test/cb")
+            redirect = await keystone_oidc_provider.begin(
+                state="s", callback_url="http://app.test/cb"
+            )
             with pytest.raises(LoginRejected) as exc:
                 await keystone_oidc_provider.complete(
                     params={"state": "s"},

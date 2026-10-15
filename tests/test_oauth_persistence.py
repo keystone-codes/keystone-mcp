@@ -443,7 +443,7 @@ async def test_concurrent_refresh_keeps_google_auth_method(persistence_client):
     # obtain_access_token logs in via the api_key form; overwrite the marker
     # to simulate a session that authenticated through Google. This fixture's
     # server only configures the built-in api_key provider, so "google" is
- # registered directly on the already-built provider (runtime registration refuses a
+    # registered directly on the already-built provider (runtime registration refuses a
     # refresh naming a provider that is not currently configured) rather than
     # rebuilding the whole app with Google turned on, which would also pull
     # in a real users-directory resolver and change every other login in
@@ -498,13 +498,13 @@ async def test_concurrent_refresh_keeps_google_auth_method(persistence_client):
 async def test_old_auth_marker_gets_short_grace_ttl_after_rotation(persistence_client):
     """After a successful rotation, the old refresh token's marker is rewritten, not deleted.
 
-    This used to assert the marker was gone immediately after rotation. That
- is exactly what reopened the race this fix (below) closes: a
-    second request that validated the old refresh token concurrently with the
-    one that won the rotation would read no marker at all once the first
-    request deleted it, and silently downgrade to ("api_key", None). Instead
-    the marker is rewritten with a short grace TTL, which this test checks
-    directly against the in-memory store's expiry bookkeeping.
+       This used to assert the marker was gone immediately after rotation. That
+    is exactly what reopened the race this fix (below) closes: a
+       second request that validated the old refresh token concurrently with the
+       one that won the rotation would read no marker at all once the first
+       request deleted it, and silently downgrade to ("api_key", None). Instead
+       the marker is rewritten with a short grace TTL, which this test checks
+       directly against the in-memory store's expiry bookkeeping.
     """
     client, oauth, _store, settings = persistence_client
     res = await obtain_access_token(client, settings.resource_url)
@@ -755,8 +755,8 @@ async def test_refresh_marker_from_0_4_is_read():
 
 async def test_refresh_for_removed_provider_is_refused():
     """A refresh token opened through a provider that was since removed from
-    the configuration is refused (``invalid_grant``), not silently downgraded
- to api_key sign-in -- the old redirect-only fallback this replaces.
+       the configuration is refused (``invalid_grant``), not silently downgraded
+    to api_key sign-in -- the old redirect-only fallback this replaces.
     """
     settings = Settings(base_url=BASE_URL)
     store = InMemoryOAuthStore()

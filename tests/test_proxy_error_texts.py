@@ -228,9 +228,7 @@ async def test_empty_resource_read_hides_uri(downstream_mode):
             async with running.client(**client_kwargs) as client:
                 resources = await client.list_resources()
                 uri = resources[0].uri
-                with pytest.raises(
-                    MCPError, match=r"^upstream hello returned no content$"
-                ) as exc:
+                with pytest.raises(MCPError, match=r"^upstream hello returned no content$") as exc:
                     await client.read_resource(uri)
                 assert "file://" not in str(exc.value)
                 assert "secret.example" not in str(exc.value)

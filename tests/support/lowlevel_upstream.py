@@ -161,7 +161,7 @@ _TOOL_DEFINITIONS: dict[str, types.Tool] = {
     ),
     "ask": types.Tool(
         name="ask",
- description="Ask the client a form question (elicitation tests).",
+        description="Ask the client a form question (elicitation tests).",
         inputSchema=_EMPTY_ASK_SCHEMA,
     ),
     "ask_url": types.Tool(
@@ -197,32 +197,32 @@ def build_lowlevel_upstream_app(
 ) -> Starlette:
     """Build a Starlette app around a low-level ``mcp.server.lowlevel.Server``.
 
-    ``tools`` restricts which tools are registered (default: the original six
-    -- ``count`` is not one of them, see ``_TOOL_ORDER``), so a test can
-    target one tool without depending on fixes the others still need.
-    ``extra_tools`` adds tools on top of the default six without changing it
-    (e.g. ``extra_tools={"count"}``). ``observed``, when given, receives the
-    last call's request headers (lower-cased keys) under
-    ``observed["headers"]`` — written by the ``whoami`` tool — and, for a
-    tokenless ``count`` call, ``observed["progress_token"] = None``.
+       ``tools`` restricts which tools are registered (default: the original six
+       -- ``count`` is not one of them, see ``_TOOL_ORDER``), so a test can
+       target one tool without depending on fixes the others still need.
+       ``extra_tools`` adds tools on top of the default six without changing it
+       (e.g. ``extra_tools={"count"}``). ``observed``, when given, receives the
+       last call's request headers (lower-cased keys) under
+       ``observed["headers"]`` — written by the ``whoami`` tool — and, for a
+       tokenless ``count`` call, ``observed["progress_token"] = None``.
 
-    ``require_bearer``, when given, makes both ``list_tools`` and
-    ``call_tool`` reject a request whose ``Authorization`` header is not
-    exactly ``Bearer <require_bearer>`` — standing in for a real upstream that
-    requires Keystone's ``auth.bearer_env`` token (P08). A ``list_tools``
-    rejection surfaces to the caller as a failed discovery; a ``call_tool``
-    rejection surfaces as an error ``CallToolResult`` (the low-level SDK's
-    call-tool wrapper always turns a raised exception into one, the same way
-    the ``fail`` tool below does).
+       ``require_bearer``, when given, makes both ``list_tools`` and
+       ``call_tool`` reject a request whose ``Authorization`` header is not
+       exactly ``Bearer <require_bearer>`` — standing in for a real upstream that
+       requires Keystone's ``auth.bearer_env`` token (P08). A ``list_tools``
+       rejection surfaces to the caller as a failed discovery; a ``call_tool``
+       rejection surfaces as an error ``CallToolResult`` (the low-level SDK's
+       call-tool wrapper always turns a raised exception into one, the same way
+       the ``fail`` tool below does).
 
-    ``stateless`` and ``json_response`` are passed straight through to
- ``StreamableHTTPSessionManager`` (default: unchanged from before progress forwarding landed). A
-    progress notification can only reach the client before the final response
-    when ``json_response=False`` -- a ``json_response=True`` session buffers
-    the whole answer and sends it as one JSON body, on both protocol eras.
+       ``stateless`` and ``json_response`` are passed straight through to
+    ``StreamableHTTPSessionManager`` (default: unchanged from before progress forwarding landed). A
+       progress notification can only reach the client before the final response
+       when ``json_response=False`` -- a ``json_response=True`` session buffers
+       the whole answer and sends it as one JSON body, on both protocol eras.
 
-    ``StreamableHTTPSessionManager.run()`` can only be entered once per
-    instance, so call this again to get a fresh app for each test.
+       ``StreamableHTTPSessionManager.run()`` can only be entered once per
+       instance, so call this again to get a fresh app for each test.
     """
     selected = set(_TOOL_ORDER) if tools is None else set(tools)
     if extra_tools:
@@ -620,7 +620,7 @@ def asgi_http_client_factory(
 
     def builder(timeout_seconds: float) -> Callable[..., httpx2.AsyncClient]:
         # Keep the socket read budget above the MCP call timeout so courtesy
- # cancel can be sent before httpx2 gives up (timeout test).
+        # cancel can be sent before httpx2 gives up (timeout test).
         httpx_timeout = timeout_seconds + (5.0 if streaming else 0.0)
 
         def factory(

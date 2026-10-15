@@ -35,6 +35,7 @@ _template_read_backend_uri: contextvars.ContextVar[str | None] = contextvars.Con
     default=None,
 )
 
+
 @asynccontextmanager
 async def _upstream_guard_scope(
     registry: "UpstreamRegistry",

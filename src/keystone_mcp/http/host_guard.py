@@ -135,9 +135,7 @@ def origin_header_allowed(origin_header: str, allowed_hosts: tuple[str, ...]) ->
     )
 
 
-def cross_site_origin_refusal(
-    request: Request, allowed_hosts: tuple[str, ...]
-) -> Response | None:
+def cross_site_origin_refusal(request: Request, allowed_hosts: tuple[str, ...]) -> Response | None:
     """Return a 400 response when *request* carries a disallowed ``Origin``, else ``None``."""
     origin_header = request.headers.get("origin")
     if origin_header == "null":

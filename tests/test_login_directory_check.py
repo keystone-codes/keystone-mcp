@@ -219,9 +219,9 @@ async def test_login_directory_is_not_consulted_before_token_check():
 async def test_provider_without_resolver_accepts_any_email(harness):
     """Test-only path: a provider built without a resolver skips the directory check.
 
-    The production server always wires a user_resolver (built-in users
- directory, the directory-check dependency on ), so this only happens when a test
-    builds the server/provider without supplying one, as ``harness`` does.
+       The production server always wires a user_resolver (built-in users
+    directory, the directory-check dependency on ), so this only happens when a test
+       builds the server/provider without supplying one, as ``harness`` does.
     """
     client_id = await register_client(harness.client)
     verifier, challenge = make_pkce()

@@ -547,11 +547,7 @@ _starlette_app = Starlette(
     lifespan=_lifespan,
 )
 _configure_otel_provider_once()
-app = (
-    _HelloTracingMiddleware(_starlette_app)
-    if _otel_export_configured()
-    else _starlette_app
-)
+app = _HelloTracingMiddleware(_starlette_app) if _otel_export_configured() else _starlette_app
 
 
 if __name__ == "__main__":

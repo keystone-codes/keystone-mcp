@@ -91,9 +91,7 @@ def validate_directory_capabilities(directory: UserDirectory) -> UserDirectory:
             )
     if "delete" in directory.capabilities:
         missing = [
-            name
-            for name in _DELETION_METHODS
-            if not callable(getattr(directory, name, None))
+            name for name in _DELETION_METHODS if not callable(getattr(directory, name, None))
         ]
         if missing:
             joined = ", ".join(missing)

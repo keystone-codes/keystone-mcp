@@ -135,7 +135,9 @@ async def _browser_login(
     async with httpx.AsyncClient(base_url=base_url, follow_redirects=False, timeout=30.0) as client:
         resp = await client.get(authorize_url, follow_redirects=True)
         if resp.status_code != 200:
-            raise RuntimeError(f"authorize flow ended with HTTP {resp.status_code}, not a login page")
+            raise RuntimeError(
+                f"authorize flow ended with HTTP {resp.status_code}, not a login page"
+            )
         action, fields = parse_api_key_login_form(resp.text, page_url=str(resp.url))
         fields["email"] = email
         fields["api_token"] = dev_token
@@ -454,7 +456,9 @@ async def run(args: argparse.Namespace) -> int:
 
             wait_task = asyncio.create_task(_wait_modern())
         else:
-            wait_task = asyncio.create_task(asyncio.wait_for(list_changed_event.wait(), timeout=10.0))
+            wait_task = asyncio.create_task(
+                asyncio.wait_for(list_changed_event.wait(), timeout=10.0)
+            )
 
         await _admin_policy_allow_member_pattern(
             base_url=base_url,
@@ -500,8 +504,10 @@ async def run(args: argparse.Namespace) -> int:
         await stack.aclose()
 
     protocol_label = MODERN_VERSION if args.protocol == "modern" else "handshake"
-    elicitation_cell = outcomes["elicitation"] if outcomes["elicitation"] == "yes" else (
-        "n/a" if log.skipped else "no"
+    elicitation_cell = (
+        outcomes["elicitation"]
+        if outcomes["elicitation"] == "yes"
+        else ("n/a" if log.skipped else "no")
     )
     print(
         summarize_clients_md_row(

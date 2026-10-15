@@ -38,8 +38,14 @@ def _runtime_imports_httpx_utils(path: Path) -> bool:
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     ranges: list[tuple[int, int]] = []
     for node in ast.walk(tree):
-        if isinstance(node, ast.If) and isinstance(node.test, ast.Name) and node.test.id == "TYPE_CHECKING":
-            ranges.append((node.lineno, max(getattr(n, "lineno", node.lineno) for n in ast.walk(node))))
+        if (
+            isinstance(node, ast.If)
+            and isinstance(node.test, ast.Name)
+            and node.test.id == "TYPE_CHECKING"
+        ):
+            ranges.append(
+                (node.lineno, max(getattr(n, "lineno", node.lineno) for n in ast.walk(node)))
+            )
     for node in ast.walk(tree):
         if not isinstance(node, ast.ImportFrom) or node.module is None:
             continue

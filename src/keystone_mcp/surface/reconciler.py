@@ -992,11 +992,11 @@ class SurfaceReconciler:
             self._namespace_prompt_fingerprints[namespace] = self._fingerprint_prompts_namespace(
                 namespace
             )
-            self._namespace_resource_fingerprints[namespace] = self._fingerprint_resources_namespace(
-                namespace
+            self._namespace_resource_fingerprints[namespace] = (
+                self._fingerprint_resources_namespace(namespace)
             )
-            self._namespace_template_fingerprints[namespace] = self._fingerprint_templates_namespace(
-                namespace
+            self._namespace_template_fingerprints[namespace] = (
+                self._fingerprint_templates_namespace(namespace)
             )
 
         self._registry_hash = current_hash

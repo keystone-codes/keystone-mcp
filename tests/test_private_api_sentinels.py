@@ -119,6 +119,7 @@ PRIVATE_APIS: tuple[PrivateApiRow, ...] = (
     ),
 )
 
+
 def _normalize_signature(sig: inspect.Signature) -> str:
     text = str(sig)
     return re.sub(r"\s+", "", text)
@@ -264,7 +265,11 @@ def _scan_source_usage(path: Path) -> list[str]:
                     violations.append(
                         f"{rel}:{node.lineno}: client.{node.attr} not listed in PRIVATE_APIS"
                     )
-            if isinstance(node.value, ast.Name) and node.value.id == "mcp" and node.attr == "_mcp_server":
+            if (
+                isinstance(node.value, ast.Name)
+                and node.value.id == "mcp"
+                and node.attr == "_mcp_server"
+            ):
                 if rel != "server.py":
                     violations.append(f"{rel}:{node.lineno}: mcp._mcp_server outside server.py")
             if (

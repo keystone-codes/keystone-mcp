@@ -329,7 +329,9 @@ async def test_concurrent_grant_role_returns_changed_false(postgres_engine) -> N
         return_exceptions=True,
     )
     changed_flags = sorted(
-        r.changed for r in results if not isinstance(r, BaseException)  # type: ignore[union-attr]
+        r.changed
+        for r in results
+        if not isinstance(r, BaseException)  # type: ignore[union-attr]
     )
     assert changed_flags == [False, True]
 

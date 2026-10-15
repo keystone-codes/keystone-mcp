@@ -99,4 +99,3 @@ async def test_token_redirect_uri_mismatch_is_invalid_grant(attacker_stand) -> N
         assert tok.status_code != 200
         body = tok.json()
         assert body.get("error") in ("invalid_grant", "invalid_request")
-

@@ -368,7 +368,7 @@ def build_server(
 
     # Built before the OAuth provider (rather than alongside registry/upstream
     # wiring further down) so the provider itself can record client
- # registration metrics (KEYSTONE_MCP_OAUTH_MAX_CLIENTS).
+    # registration metrics (KEYSTONE_MCP_OAUTH_MAX_CLIENTS).
     # ``upstreams`` is constructed further down (it needs ``mcp``, which needs
     # ``oauth``, which needs ``rbac_observability``, which needs
     # ``policy_manager`` -- so ``upstreams`` cannot exist yet here). This
@@ -458,9 +458,9 @@ def build_server(
 
     # Tracks open connections (handshake era) and ``subscriptions/listen``
     # streams (2026-07-28 era) so the surface reconciler can notify them of a
- # catalog change, a policy reload or a users-directory change.
+    # catalog change, a policy reload or a users-directory change.
     # Registered on the private low-level server (``FastMCP._mcp_server``,
- # the same closed-API field documented in the spike report) so the SDK advertises
+    # the same closed-API field documented in the spike report) so the SDK advertises
     # ``tools.listChanged=true`` to 2026-07-28 clients -- FastMCP 4.1 does not
     # serve ``subscriptions/listen`` on its own (test-sentinel:
     # ``test_list_changed_is_advertised_on_both_eras``).
@@ -483,7 +483,7 @@ def build_server(
     async def _login_post(request):  # noqa: ANN001
         return await oauth.handle_login(request)
 
- # One GET/POST/callback trio per configured redirect redirect login provider: a
+    # One GET/POST/callback trio per configured redirect redirect login provider: a
     # provider that is not configured gets no route at all, so a request for
     # it 404s from Starlette's own routing rather than a Keystone error page.
     # The provider named "google" gets exactly the paths it always has
@@ -511,14 +511,14 @@ def build_server(
         mcp.custom_route(f"/login/{_provider.name}", methods=["GET"])(_login_get_handler)
         # Consent screen's provider button posts here (CSRF-checked) instead
         # of following a bare link, so the redirect sign-in cannot be
- # triggered from a cross-site page or an emailed URL.
+        # triggered from a cross-site page or an emailed URL.
         mcp.custom_route(f"/login/{_provider.name}", methods=["POST"])(_login_post_handler)
         mcp.custom_route(f"/login/{_provider.name}/callback", methods=["GET"])(
             _login_callback_handler
         )
 
     # Where authorize() sends a request whose redirect_uri host is not on
- # KEYSTONE_MCP_OAUTH_ALLOWED_REDIRECT_HOSTS: a local error page
+    # KEYSTONE_MCP_OAUTH_ALLOWED_REDIRECT_HOSTS: a local error page
     # instead of a redirect carrying `error`/`state` to that disallowed host.
     @mcp.custom_route("/login/redirect-not-allowed", methods=["GET"])
     async def _login_redirect_not_allowed(request):  # noqa: ANN001
@@ -1176,13 +1176,13 @@ async def bootstrap_platform(
 def _http_asgi_middleware(settings: Settings) -> list:
     """Starlette middleware passed to FastMCP HTTP transport.
 
-    ``HostGuardMiddleware`` is listed first (first = outermost of *this*
-    list) so a disallowed ``Host``/``Origin`` is refused before access
-    logging runs for that request, and — more importantly — before any
-    route's own handler does: this list is appended after fastmcp's own
-    auth middleware (bearer-token parsing) in the final stack, but still
-    wraps the router, so no OAuth endpoint, ``/mcp`` call, or custom route
- ever executes for a request this guard refuses.
+       ``HostGuardMiddleware`` is listed first (first = outermost of *this*
+       list) so a disallowed ``Host``/``Origin`` is refused before access
+       logging runs for that request, and — more importantly — before any
+       route's own handler does: this list is appended after fastmcp's own
+       auth middleware (bearer-token parsing) in the final stack, but still
+       wraps the router, so no OAuth endpoint, ``/mcp`` call, or custom route
+    ever executes for a request this guard refuses.
     """
     from starlette.middleware import Middleware
 

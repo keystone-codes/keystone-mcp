@@ -152,9 +152,9 @@ async def test_block_visible_through_redis_revision(tmp_path: Path) -> None:
 async def test_ping_translates_store_unavailable_to_catalog_unavailable() -> None:
     """``LocalUserDirectory.ping()`` must raise the ``UserDirectory`` error
 
-    vocabulary (``UserDirectoryUnavailableError``, code ``catalog_unavailable``),
-    not the store's own ``keystone_mcp.users.errors.UsersStoreUnavailableError``
- -- the same translation ``resolve_user`` already does (contract review finding).
+       vocabulary (``UserDirectoryUnavailableError``, code ``catalog_unavailable``),
+       not the store's own ``keystone_mcp.users.errors.UsersStoreUnavailableError``
+    -- the same translation ``resolve_user`` already does (contract review finding).
     """
     engine = create_users_engine("postgresql+psycopg://u:pass@127.0.0.1:1/db")
     store = UsersStore(engine, revision=NullRevisionWriter())

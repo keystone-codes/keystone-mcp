@@ -61,7 +61,12 @@ async def test_oauth_flow_leaves_no_raw_secrets_in_logs_or_bodies(
         csrf = parse_csrf(page.text)
         bad = await client.post(
             "/login",
-            data={"txn": txn, "csrf": csrf, "api_token": "wrong-secret", "email": "member@sec.test"},
+            data={
+                "txn": txn,
+                "csrf": csrf,
+                "api_token": "wrong-secret",
+                "email": "member@sec.test",
+            },
         )
         bodies.append(bad.text)
 

@@ -72,7 +72,7 @@ _MAX_TRACKED_EMAILS = 20_000
 _EMAIL_SWEEP_EVERY_N_CALLS = 2_000
 
 # Longest email `LoginAttemptThrottle` will use verbatim as a dict key
-#. RFC 5321 caps a real address at 254 octets; 320 leaves room
+# . RFC 5321 caps a real address at 254 octets; 320 leaves room
 # for callers that pass something a little longer without being unbounded.
 # Truncating (rather than refusing) is deliberately safe either way: two
 # distinct attacker-controlled strings sharing the first 320 characters now
@@ -221,9 +221,9 @@ class LoginAttemptThrottle:
     def check_email_failures(self, email: str, now: float | None = None) -> tuple[bool, int]:
         """Return whether another login attempt is allowed for *email* (failures only).
 
-        A read-only check: an email with no recorded failure is never added to
- `_email_failures` — there is nothing to look up, so this
-        returns the "allowed" default without creating an entry.
+               A read-only check: an email with no recorded failure is never added to
+        `_email_failures` — there is nothing to look up, so this
+               returns the "allowed" default without creating an entry.
         """
         if self._email_max <= 0:
             return True, 0

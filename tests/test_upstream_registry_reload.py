@@ -204,7 +204,9 @@ async def test_changed_filters_and_timeout_apply(tmp_path: Path):
         assert "hello_greet" not in names
 
 
-async def test_invalid_file_keeps_previous_registry(tmp_path: Path, caplog: pytest.LogCaptureFixture):
+async def test_invalid_file_keeps_previous_registry(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+):
     mcp, _registry, _upstreams, _pm, _obs, reconciler, reg_path, _settings = await _stack(
         tmp_path,
         entries=[_hello_entry()],
@@ -213,7 +215,9 @@ async def test_invalid_file_keeps_previous_registry(tmp_path: Path, caplog: pyte
     with caplog.at_level("WARNING"):
         await reconciler.tick()
         await reconciler.tick()
-    warnings = [r.message for r in caplog.records if "upstream registry reload rejected" in r.message]
+    warnings = [
+        r.message for r in caplog.records if "upstream registry reload rejected" in r.message
+    ]
     assert len(warnings) == 1
     assert _metric("keystone_mcp_upstream_registry_reload_total", {"outcome": "rejected"}) >= 1
     async with Client(mcp) as client:
@@ -332,7 +336,9 @@ async def test_sighup_with_env_registry_logs_and_does_nothing(
     assert any("KEYSTONE_MCP_UPSTREAMS" in r.message for r in caplog.records)
 
 
-async def test_sighup_picks_up_rotated_bearer_secret(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+async def test_sighup_picks_up_rotated_bearer_secret(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     bearer_var = "KEYSTONE_MCP_UPSTREAM_HELLO_BEARER"
     monkeypatch.setenv(bearer_var, "token-a")
     entries = [_hello_entry(auth={"bearer_env": bearer_var})]
@@ -344,7 +350,9 @@ async def test_sighup_picks_up_rotated_bearer_secret(tmp_path: Path, monkeypatch
         app=app,
     )
     monkeypatch.setenv(bearer_var, "token-b")
-    app2 = build_lowlevel_upstream_app(tools=["whoami"], observed=observed, require_bearer="token-b")
+    app2 = build_lowlevel_upstream_app(
+        tools=["whoami"], observed=observed, require_bearer="token-b"
+    )
     lifespan_b = LifespanManager(app2)
     await lifespan_b.__aenter__()
     factory_b = asgi_http_client_factory(app2)
@@ -356,7 +364,9 @@ async def test_sighup_picks_up_rotated_bearer_secret(tmp_path: Path, monkeypatch
     assert upstreams._auth_headers["hello"]["Authorization"].endswith("token-b")
 
 
-async def test_policy_drift_logged_for_removed_namespace(tmp_path: Path, caplog: pytest.LogCaptureFixture):
+async def test_policy_drift_logged_for_removed_namespace(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+):
     policy_path = tmp_path / "policy.yaml"
     policy_path.write_text(POLICY_HELLO, encoding="utf-8")
     reg_path = tmp_path / "upstreams.yaml"
@@ -386,7 +396,9 @@ async def test_policy_drift_logged_for_removed_namespace(tmp_path: Path, caplog:
         if isinstance(conn, HttpUpstreamConnection):
             conn._http_client_factory = factory  # type: ignore[assignment]
     discovery = await bootstrap_upstreams(upstreams, settings)
-    bootstrap_rbac_policy(policy_manager, registry, discovery=discovery, observability=observability)
+    bootstrap_rbac_policy(
+        policy_manager, registry, discovery=discovery, observability=observability
+    )
     assert reconciler is not None
     await reconciler.start()
     _write_registry(reg_path, [])

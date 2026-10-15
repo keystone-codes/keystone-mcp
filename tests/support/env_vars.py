@@ -116,6 +116,7 @@ def reads_in_source(text: str) -> set[str]:
 def _secret_file_variables() -> set[str]:
     config_path = SRC_ROOT / "config.py"
     tree = ast.parse(config_path.read_text(encoding="utf-8"))
+
     def _tuple_from(node: ast.AST | None) -> ast.Tuple | None:
         if isinstance(node, ast.Tuple):
             return node

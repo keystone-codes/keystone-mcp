@@ -912,7 +912,7 @@ class RedisOAuthStore:
         if ttl == -1:
             # Legacy record written without a TTL: give it one now so it does
             # not live forever, and add it to the client-count index (a
- # before the registration index record predates the index entirely).
+            # before the registration index record predates the index entirely).
             expiry = int(time.time()) + self._client_ttl_seconds
             async with self._redis.pipeline(transaction=False) as pipe:
                 pipe.expire(key, self._client_ttl_seconds)

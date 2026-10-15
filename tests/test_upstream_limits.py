@@ -258,10 +258,13 @@ async def test_service_rate_limit_is_shared_by_people(monkeypatch) -> None:
                             await client.call_tool("hello_greet", {"name": "b"})
                     else:
                         await client.call_tool("hello_greet", {"name": "b"})
-        assert _metric(
-            "keystone_mcp_upstream_limit_rejections_total",
-            {"namespace": "hello", "reason": "rate"},
-        ) >= 1
+        assert (
+            _metric(
+                "keystone_mcp_upstream_limit_rejections_total",
+                {"namespace": "hello", "reason": "rate"},
+            )
+            >= 1
+        )
         throttle_after = sum(
             sample.value
             for metric in REGISTRY.collect()
@@ -346,10 +349,14 @@ async def test_breaker_opens_after_failures_and_half_opens() -> None:
                 _restore_working_factory(upstreams, app)
                 result = await client.call_tool("hello_greet", {"name": "ok"})
                 assert not result.is_error
-        assert obs.metrics and _metric(
-            "keystone_mcp_upstream_circuit_state",
-            {"namespace": "hello"},
-        ) == 0
+        assert (
+            obs.metrics
+            and _metric(
+                "keystone_mcp_upstream_circuit_state",
+                {"namespace": "hello"},
+            )
+            == 0
+        )
 
 
 @pytest.mark.asyncio
@@ -464,6 +471,8 @@ async def test_readyz_shows_circuit_state_to_internal_callers() -> None:
                 assert internal.json()["upstreams"]["hello"]["circuit"] == "closed"
                 assert "inflight" in internal.json()["upstreams"]["hello"]
             transport_ext = httpx.ASGITransport(app=http_app, client=("203.0.113.9", 12345))
-            async with httpx.AsyncClient(transport=transport_ext, base_url=settings.base_url) as client:
+            async with httpx.AsyncClient(
+                transport=transport_ext, base_url=settings.base_url
+            ) as client:
                 external = await client.get("/readyz")
                 assert "upstreams" not in external.json()

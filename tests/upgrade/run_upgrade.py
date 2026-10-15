@@ -40,12 +40,8 @@ ARTIFACTS = ROOT / "artifacts"
 BASE_URL = os.environ.get("UPGRADE_BASE_URL", "http://127.0.0.1:18080")
 ALT_BASE_URL = os.environ.get("UPGRADE_ALT_BASE_URL", "http://127.0.0.1:18081")
 
-IMAGE_040 = os.environ.get(
-    "UPGRADE_IMAGE_040", "ghcr.io/keystone-codes/keystone-mcp:0.4.0"
-)
-IMAGE_050 = os.environ.get(
-    "UPGRADE_IMAGE_050", "ghcr.io/keystone-codes/keystone-mcp:0.5.0"
-)
+IMAGE_040 = os.environ.get("UPGRADE_IMAGE_040", "ghcr.io/keystone-codes/keystone-mcp:0.4.0")
+IMAGE_050 = os.environ.get("UPGRADE_IMAGE_050", "ghcr.io/keystone-codes/keystone-mcp:0.5.0")
 IMAGE_CURRENT = os.environ.get("KEYSTONE_IMAGE", "keystone-mcp:upgrade-current")
 
 MEMBER_EMAIL = "member@upgrade.test"
@@ -79,7 +75,9 @@ class Runner:
             print(msg)
             self.failures.append(name)
 
-    def compose(self, *args: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+    def compose(
+        self, *args: str, env: dict[str, str] | None = None
+    ) -> subprocess.CompletedProcess[str]:
         cmd = ["docker", "compose", "-f", str(COMPOSE_FILE), *args]
         merged = os.environ.copy()
         merged.setdefault("KEYSTONE_IMAGE", IMAGE_CURRENT)
@@ -153,7 +151,12 @@ class Runner:
         if alt:
             self.compose("--profile", "mixed", "up", "-d", service, env=env)
         else:
-            self.compose("up", "-d", service, env={**env, "KEYSTONE_IMAGE": image, "KEYSTONE_ENV_FILE": env_file})
+            self.compose(
+                "up",
+                "-d",
+                service,
+                env={**env, "KEYSTONE_IMAGE": image, "KEYSTONE_ENV_FILE": env_file},
+            )
 
     def wait_ready(self, base_url: str, timeout: float = 180.0) -> bool:
         deadline = time.monotonic() + timeout
@@ -167,13 +170,17 @@ class Runner:
             time.sleep(2.0)
         return False
 
-    def exec_cli(self, *args: str, env_file: str = "env/current.env", image: str | None = None) -> subprocess.CompletedProcess[str]:
+    def exec_cli(
+        self, *args: str, env_file: str = "env/current.env", image: str | None = None
+    ) -> subprocess.CompletedProcess[str]:
         env = {"KEYSTONE_ENV_FILE": env_file}
         if image:
             env["KEYSTONE_IMAGE"] = image
         return self.compose("exec", "-T", "keystone", "keystone-mcp", *args, env=env)
 
-    def run_cli_oneoff(self, *args: str, env_file: str, image: str) -> subprocess.CompletedProcess[str]:
+    def run_cli_oneoff(
+        self, *args: str, env_file: str, image: str
+    ) -> subprocess.CompletedProcess[str]:
         return self.compose(
             "run",
             "--rm",
@@ -283,9 +290,7 @@ class Runner:
                         f"unexpected removed={bad_removed} added={bad_added}",
                     )
                     return False
-            member_tools = await list_tool_names(
-                base_url, self.state.member_tokens.access_token
-            )
+            member_tools = await list_tool_names(base_url, self.state.member_tokens.access_token)
             refreshed = await refresh_tokens(
                 client,
                 self.state.oauth_metadata["token_endpoint"],
@@ -401,12 +406,8 @@ class Runner:
         hashed = redis_hashed_access_key("km:oauth:", self.state.member_tokens.access_token)
         plain_check = self.compose("exec", "-T", "redis", "redis-cli", "EXISTS", plain)
         hashed_check = self.compose("exec", "-T", "redis", "redis-cli", "EXISTS", hashed)
-        exists_plain = (
-            plain_check.returncode == 0 and (plain_check.stdout or "").strip() == "1"
-        )
-        exists_hashed = (
-            hashed_check.returncode == 0 and (hashed_check.stdout or "").strip() == "1"
-        )
+        exists_plain = plain_check.returncode == 0 and (plain_check.stdout or "").strip() == "1"
+        exists_hashed = hashed_check.returncode == 0 and (hashed_check.stdout or "").strip() == "1"
         if exists_plain:
             return False
         if not exists_hashed:
@@ -454,7 +455,11 @@ class Runner:
             )
             if resp.status_code >= 500:
                 return False
-            body = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+            body = (
+                resp.json()
+                if resp.headers.get("content-type", "").startswith("application/json")
+                else {}
+            )
             if resp.status_code not in (400, 401) or body.get("error") != "invalid_grant":
                 return False
             fresh = await oauth_login_pair(client, BASE_URL, MEMBER_EMAIL)
@@ -553,7 +558,11 @@ class Runner:
             )
             if resp.status_code >= 500:
                 return False, f"alt refresh returned {resp.status_code}"
-            body = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+            body = (
+                resp.json()
+                if resp.headers.get("content-type", "").startswith("application/json")
+                else {}
+            )
             if resp.status_code not in (400, 401) or body.get("error") != "invalid_grant":
                 return False, f"alt refresh expected invalid_grant, got {resp.status_code} {body!r}"
             return True, ""
@@ -594,12 +603,8 @@ async def async_main() -> int:
     runner = Runner()
 
     images_ok = (
-        runner.ensure_image(IMAGE_050, git_commit="5155209")
-        or runner.ensure_image(IMAGE_050)
-    ) and (
-        runner.ensure_image(IMAGE_040, git_commit="5988b51")
-        or runner.ensure_image(IMAGE_040)
-    )
+        runner.ensure_image(IMAGE_050, git_commit="5155209") or runner.ensure_image(IMAGE_050)
+    ) and (runner.ensure_image(IMAGE_040, git_commit="5988b51") or runner.ensure_image(IMAGE_040))
     if IMAGE_CURRENT == "keystone-mcp:upgrade-current":
         images_ok = images_ok and runner.ensure_image(IMAGE_CURRENT)
     else:

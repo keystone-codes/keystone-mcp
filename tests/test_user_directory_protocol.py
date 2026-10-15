@@ -128,9 +128,9 @@ def test_missing_admin_methods_are_named() -> None:
 def test_build_server_validates_an_injected_user_directory() -> None:
     """``build_server(user_directory=...)`` gets the same refusal as a
 
-    directory ``build_user_directory`` constructs itself: an embedding
-    process, a test, or a plugin that hands in a misdeclared directory does
- not silently publish broken admin tools (contract review finding).
+       directory ``build_user_directory`` constructs itself: an embedding
+       process, a test, or a plugin that hands in a misdeclared directory does
+    not silently publish broken admin tools (contract review finding).
     """
     settings = Settings(base_url="http://localhost:8080", rbac_mode="off")
     with pytest.raises(ConfigError, match="declares 'admin'"):
@@ -169,9 +169,9 @@ async def test_legacy_backend_is_wrapped_with_deprecation_warning() -> None:
 async def test_in_memory_directory_create_user_conflicts_on_existing_email() -> None:
     """``create_user`` for an email that already exists must raise ``conflict``,
 
-    not silently overwrite the existing entry -- matching ``LocalUserDirectory``
- and the HTTP contract's own ``user_already_exists`` normalization
-    review finding).
+       not silently overwrite the existing entry -- matching ``LocalUserDirectory``
+    and the HTTP contract's own ``user_already_exists`` normalization
+       review finding).
     """
     from keystone_mcp.user_directory.errors import UsersError
     from keystone_mcp.user_directory.memory import InMemoryUserDirectory
