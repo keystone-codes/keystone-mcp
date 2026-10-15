@@ -38,10 +38,7 @@ jobs:
             uv run --no-project --python 3.12 python scripts/check_version.py
           fi
 
-  test:
-    needs: version-gate
-    uses: ./.github/workflows/test-gate.yml
-
+  # Full test gate runs on master via CI; avoid duplicating the matrix on tag push.
   build-dist:
     name: Build and check the PyPI distribution
     needs: version-gate
@@ -196,6 +193,10 @@ jobs:
       contents: read
       packages: read
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
         with:
           registry: ghcr.io
@@ -285,7 +286,7 @@ jobs:
 
   publish:
     name: Tag published image digest
-    needs: [version-gate, test, image-build, image-scan, image-smoke]
+    needs: [version-gate, image-build, image-scan, image-smoke]
     if: github.event_name == 'push' && vars.SKIP_GHCR_PUSH != 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -374,7 +375,7 @@ jobs:
 
   pypi:
     name: Publish to PyPI
-    needs: [test, wheel-smoke, publish]
+    needs: [wheel-smoke, publish]
     if: github.event_name == 'push' && vars.SKIP_PYPI_PUBLISH != 'true'
     runs-on: ubuntu-latest
     environment: pypi
