@@ -21,13 +21,13 @@ from fastmcp.client.transports import StreamableHttpTransport
 from fastmcp.exceptions import ToolError
 from httpx2 import ASGITransport, AsyncClient
 
-from conftest import BASE_URL, obtain_access_token
 from keystone_mcp.adapters.stub import StubAdapter
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import Settings
 from keystone_mcp.server import bootstrap_rbac_policy, build_server
 from keystone_mcp.user_directory import build_in_memory_user_directory_resolver
 from support.login import dev_token_login
+from support.oauth_harness import BASE_URL, obtain_access_token
 from support.test_env import UNUSED_REDIS_URL
 
 VALID_TOKEN = "valid-test-token"

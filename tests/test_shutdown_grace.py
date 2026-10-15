@@ -147,7 +147,7 @@ async def test_in_flight_call_survives_sigterm(redis_url: str, tmp_path: Path) -
 
         await asyncio.sleep(2.0)
 
-        from conftest import obtain_access_token
+        from support.oauth_harness import obtain_access_token
 
         resource = Settings(base_url=base_url).resource_url
 

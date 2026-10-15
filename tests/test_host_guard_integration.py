@@ -22,11 +22,11 @@ import httpx
 import pytest
 from asgi_lifespan import LifespanManager
 
-from conftest import BASE_URL, VALID_TOKEN, make_pkce
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import Settings
 from keystone_mcp.server import _http_asgi_middleware, build_server
 from support.login import dev_token_login
+from support.oauth_harness import BASE_URL, VALID_TOKEN, make_pkce
 
 pytestmark = pytest.mark.asyncio
 

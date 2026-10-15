@@ -17,7 +17,6 @@ from fastmcp import Client
 from fastmcp.exceptions import ToolError
 from prometheus_client import REGISTRY
 
-from conftest import BASE_URL, VALID_TOKEN
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import Settings
 from keystone_mcp.server import (
@@ -32,6 +31,7 @@ from support.lowlevel_upstream import (
     asgi_http_client_factory,
     build_lowlevel_upstream_app,
 )
+from support.oauth_harness import BASE_URL, VALID_TOKEN
 
 POLICY = """\
 version: "1.0.0"

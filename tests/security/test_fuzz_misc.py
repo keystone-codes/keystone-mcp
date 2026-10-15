@@ -48,7 +48,8 @@ def test_env_bool_never_silent_false_for_unknown(monkeypatch, name: str, raw: st
 async def test_login_post_random_fields_not_500(attacker_stand, payload):
     import httpx
     from asgi_lifespan import LifespanManager
-    from tests.security.conftest import BASE_URL
+
+    from security.conftest import BASE_URL
 
     async with LifespanManager(attacker_stand.app):
         async with httpx.AsyncClient(

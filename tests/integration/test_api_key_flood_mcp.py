@@ -13,7 +13,6 @@ from fastmcp.client import Client
 from fastmcp.client.transports import StreamableHttpTransport
 from httpx import ASGITransport, AsyncClient
 
-from conftest import BASE_URL
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import Settings
 from keystone_mcp.server import build_server
@@ -22,6 +21,7 @@ from keystone_mcp.user_directory.local import LocalUserDirectory
 from keystone_mcp.user_directory.types import generate_api_key_material
 from keystone_mcp.users import service
 from keystone_mcp.users.db import make_session_factory, session_scope
+from support.oauth_harness import BASE_URL
 from support.users_store import make_users_store
 
 _MCP_HEADERS = {

@@ -8,11 +8,11 @@ import httpx
 from asgi_lifespan import LifespanManager
 from mcp.shared.auth import OAuthClientInformationFull
 
-from conftest import BASE_URL, REDIRECT_URI, VALID_TOKEN, make_pkce, register_client
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import Settings
 from keystone_mcp.server import build_server
 from support.login import dev_token_login
+from support.oauth_harness import BASE_URL, REDIRECT_URI, VALID_TOKEN, make_pkce, register_client
 
 
 def _build_app(*, oauth_store=None, **settings_overrides):

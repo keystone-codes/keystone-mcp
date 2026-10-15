@@ -31,12 +31,12 @@ from fastmcp.client.transports import StreamableHttpTransport
 from httpx2 import ASGITransport, AsyncClient
 
 import keystone_mcp.server as server
-from conftest import BASE_URL, obtain_access_token
 from keystone_mcp.adapters.stub import StubAdapter
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import Settings
 from keystone_mcp.server import bootstrap_platform, build_server
 from support.login import dev_token_login
+from support.oauth_harness import BASE_URL, obtain_access_token
 from support.test_env import require_redis_url, users_revision_key
 
 VALID_TOKEN = "valid-test-token"

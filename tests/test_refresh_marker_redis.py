@@ -10,7 +10,6 @@ import pytest
 import pytest_asyncio
 from mcp.server.auth.provider import AccessToken
 
-from conftest import BASE_URL, refresh_access_token
 from keystone_mcp.auth.keystone_oauth_provider import RefreshMeta, encode_refresh_meta
 from keystone_mcp.auth.login_pending_store import RedisLoginPendingStore
 from keystone_mcp.auth.oauth_store import (
@@ -21,6 +20,7 @@ from keystone_mcp.auth.oauth_store import (
 from keystone_mcp.config import Settings
 from keystone_mcp.server import build_server
 from support.login import dev_token_login
+from support.oauth_harness import BASE_URL, refresh_access_token
 
 pytestmark = pytest.mark.asyncio
 
@@ -194,7 +194,7 @@ async def test_session_from_legacy_markers_refresh(
 
 async def test_missing_marker_is_invalid_grant(redis_harness):
     client, oauth, settings, oauth_store, pending_store = redis_harness
-    from conftest import obtain_access_token
+    from support.oauth_harness import obtain_access_token
 
     res = await obtain_access_token(client, settings.resource_url)
     assert res["status"] == 200

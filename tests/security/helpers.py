@@ -8,7 +8,7 @@ import re
 import secrets
 from urllib.parse import parse_qs, urlparse
 
-from tests.security.conftest import REDIRECT_URI, AttackerStand
+from security.conftest import REDIRECT_URI, AttackerStand
 
 _CSRF_FIELD_RE = re.compile(r'name="csrf" value="([^"]*)"')
 

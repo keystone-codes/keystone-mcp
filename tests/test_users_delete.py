@@ -373,7 +373,7 @@ def _delete_transport(app, settings: Settings, token: str):
     from fastmcp.client.transports import StreamableHttpTransport
     from httpx import ASGITransport, AsyncClient
 
-    from conftest import BASE_URL
+    from support.oauth_harness import BASE_URL
 
     def factory(headers=None, timeout=None, auth=None, **_kw):
         return AsyncClient(
@@ -400,10 +400,10 @@ async def test_sessions_and_keys_are_revoked(tmp_path: Path, oauth_store_backend
     from mcp.shared.exceptions import MCPError
 
     import keystone_mcp.server as server_module
-    from conftest import BASE_URL, obtain_access_token, refresh_access_token
     from keystone_mcp.adapters.stub import StubAdapter
     from keystone_mcp.server import bootstrap_platform, build_server
     from support.login import dev_token_login
+    from support.oauth_harness import BASE_URL, obtain_access_token, refresh_access_token
 
     oauth_store, pending, _base, _backend = oauth_store_backend
     policy_path = tmp_path / "rbac-policy.yaml"

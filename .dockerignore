@@ -16,6 +16,8 @@ htmlcov
 internal/
 tests/
 examples/
+!examples/hello-stdio
+!examples/hello-stdio/**
 docs/
 docker-compose*.yml
 scripts/

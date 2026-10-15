@@ -14,11 +14,11 @@ from httpx2 import ASGITransport, AsyncClient
 from mcp.server.auth.provider import AccessToken
 
 import keystone_mcp.server as server_module
-from conftest import BASE_URL
 from keystone_mcp.adapters.stub import StubAdapter
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import Settings
 from keystone_mcp.server import bootstrap_platform, build_server
+from support.oauth_harness import BASE_URL
 from support.test_env import require_redis_url, users_revision_key
 
 POLICY = """\

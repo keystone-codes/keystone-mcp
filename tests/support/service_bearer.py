@@ -13,7 +13,6 @@ from asgi_lifespan import LifespanManager
 from fastmcp.client.transports import StreamableHttpTransport
 from httpx2 import ASGITransport, AsyncClient
 
-from conftest import BASE_URL
 from keystone_mcp.adapters.stub import StubAdapter
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import Settings
@@ -28,6 +27,7 @@ from support.lowlevel_upstream import (
     asgi_http_client_factory,
     build_lowlevel_upstream_app,
 )
+from support.oauth_harness import BASE_URL
 from support.test_env import require_redis_url, users_revision_key
 
 ADMIN_EMAIL = "admin@example.com"

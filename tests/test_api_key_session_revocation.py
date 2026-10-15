@@ -16,7 +16,6 @@ from fastmcp.exceptions import ToolError
 from httpx import ASGITransport, AsyncClient
 from redis.exceptions import RedisError
 
-from conftest import BASE_URL, obtain_access_token, refresh_access_token
 from keystone_mcp.auth.keystone_oauth_provider import RefreshMeta, encode_refresh_meta
 from keystone_mcp.auth.login_pending_store import InMemoryLoginPendingStore
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
@@ -27,6 +26,7 @@ from keystone_mcp.server import bootstrap_platform, build_server
 from keystone_mcp.users import service
 from keystone_mcp.users.db import make_session_factory, session_scope
 from support.login import dev_token_login
+from support.oauth_harness import BASE_URL, obtain_access_token, refresh_access_token
 from support.test_env import require_redis_url
 from support.users_store import make_users_store
 

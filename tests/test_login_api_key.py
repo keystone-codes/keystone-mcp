@@ -10,7 +10,6 @@ from urllib.parse import parse_qs, urlparse
 import httpx
 from asgi_lifespan import LifespanManager
 
-from conftest import BASE_URL, authorize_to_login, make_pkce, register_client
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import Settings
 from keystone_mcp.login.api_key import ApiKeyLoginProvider
@@ -22,6 +21,7 @@ from keystone_mcp.user_directory.types import ApiKeyVerification
 from keystone_mcp.users import service
 from keystone_mcp.users.db import make_session_factory, session_scope
 from keystone_mcp.users.models import utcnow
+from support.oauth_harness import BASE_URL, authorize_to_login, make_pkce, register_client
 from support.users_store import make_users_store
 
 VALID_DEV = "local-dev-token"

@@ -6,8 +6,9 @@ import json
 
 import pytest
 from fastmcp import Client
-from tests.security.conftest import ADMIN_EMAIL, MEMBER_EMAIL
-from tests.security.helpers import obtain_bearer_token
+
+from security.conftest import ADMIN_EMAIL, MEMBER_EMAIL
+from security.helpers import obtain_bearer_token
 
 pytestmark = pytest.mark.security
 

@@ -9,9 +9,9 @@ import pytest
 from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
 
-from conftest import obtain_access_token
 from keystone_mcp.adapters.stub import StubAdapter
 from keystone_mcp.router.registry import Param
+from support.oauth_harness import obtain_access_token
 
 pytestmark = pytest.mark.asyncio
 

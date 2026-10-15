@@ -8,7 +8,12 @@ import httpx
 import pytest_asyncio
 from asgi_lifespan import LifespanManager
 
-from conftest import (
+from keystone_mcp.auth.login_pending_store import RedisLoginPendingStore
+from keystone_mcp.auth.oauth_store import RedisOAuthStore, build_shared_auth_stores
+from keystone_mcp.config import Settings
+from keystone_mcp.server import build_server
+from support.login import dev_token_login
+from support.oauth_harness import (
     BASE_URL,
     REDIRECT_URI,
     VALID_TOKEN,
@@ -17,11 +22,6 @@ from conftest import (
     obtain_access_token,
     register_client,
 )
-from keystone_mcp.auth.login_pending_store import RedisLoginPendingStore
-from keystone_mcp.auth.oauth_store import RedisOAuthStore, build_shared_auth_stores
-from keystone_mcp.config import Settings
-from keystone_mcp.server import build_server
-from support.login import dev_token_login
 from support.test_env import redis_key_prefix
 
 

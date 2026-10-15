@@ -18,7 +18,6 @@ from mcp.server.auth.provider import AccessToken
 from mcp.shared.auth import OAuthClientInformationFull
 from prometheus_client import REGISTRY
 
-from conftest import BASE_URL, VALID_TOKEN, obtain_access_token, refresh_access_token
 from keystone_mcp.auth.keystone_oauth_provider import RefreshMeta, encode_refresh_meta
 from keystone_mcp.auth.oauth_store import (
     KeystoneRefreshToken,
@@ -29,6 +28,7 @@ from keystone_mcp.config import Settings
 from keystone_mcp.identity import VerifiedIdentity
 from keystone_mcp.server import bootstrap_platform, build_server
 from support.login import dev_token_login
+from support.oauth_harness import BASE_URL, VALID_TOKEN, obtain_access_token, refresh_access_token
 from support.test_env import redis_key_prefix, require_redis_url
 
 pytest_plugins = ("support.oauth_stores",)

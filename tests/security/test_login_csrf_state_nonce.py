@@ -8,8 +8,6 @@ import httpx
 import pytest
 import pytest_asyncio
 from asgi_lifespan import LifespanManager
-from tests.security.conftest import BASE_URL, DEV_TOKEN, REDIRECT_URI
-from tests.security.helpers import _csrf_from_page, pkce_pair
 
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import Settings
@@ -17,6 +15,8 @@ from keystone_mcp.contract_tests.fake_oidc import FakeOidcIssuer
 from keystone_mcp.login.oidc import OidcLoginProvider
 from keystone_mcp.server import build_server
 from keystone_mcp.user_directory.factory import build_in_memory_user_directory_resolver
+from security.conftest import BASE_URL, DEV_TOKEN, REDIRECT_URI
+from security.helpers import _csrf_from_page, pkce_pair
 from support.login import dev_token_login
 
 pytestmark = pytest.mark.security

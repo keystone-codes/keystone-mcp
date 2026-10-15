@@ -12,15 +12,6 @@ from fastmcp.server.middleware import MiddlewareContext
 from mcp.server.auth.provider import AuthorizationParams
 from mcp.shared.auth import OAuthClientInformationFull
 
-from conftest import (
-    BASE_URL,
-    REDIRECT_URI,
-    VALID_TOKEN,
-    authorize_to_login,
-    make_pkce,
-    obtain_access_token,
-    register_client,
-)
 from keystone_mcp.auth.keystone_oauth_provider import KeystoneOAuthProvider
 from keystone_mcp.auth.login_pending_store import InMemoryLoginPendingStore
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
@@ -36,6 +27,15 @@ from keystone_mcp.server import build_server
 from keystone_mcp.user_directory import build_in_memory_user_directory_resolver
 from support.fake_login import FakeFormProvider, FakeRedirectProvider
 from support.login import dev_token_login
+from support.oauth_harness import (
+    BASE_URL,
+    REDIRECT_URI,
+    VALID_TOKEN,
+    authorize_to_login,
+    make_pkce,
+    obtain_access_token,
+    register_client,
+)
 from support.rbac_conformance import (
     CONFORMANCE_EMAIL,
     DecisionRecorder,

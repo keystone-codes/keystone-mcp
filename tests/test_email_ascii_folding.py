@@ -8,7 +8,6 @@ import httpx
 import pytest
 from asgi_lifespan import LifespanManager
 
-from conftest import BASE_URL, authorize_to_login, make_pkce, register_client
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.catalog.builtin import register_catalog
 from keystone_mcp.config import Settings
@@ -26,6 +25,7 @@ from keystone_mcp.users import service
 from keystone_mcp.users.db import make_session_factory, session_scope
 from keystone_mcp.users.revision import InProcessRevisionWriter
 from keystone_mcp.users.store import UsersStore
+from support.oauth_harness import BASE_URL, authorize_to_login, make_pkce, register_client
 from support.users_db import users_engine  # noqa: F401 -- fixture import
 from support.users_store import make_users_store
 

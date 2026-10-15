@@ -18,7 +18,6 @@ from mcp.shared.exceptions import MCPError
 from redis.exceptions import RedisError
 
 import keystone_mcp.server as server_module
-from conftest import BASE_URL, obtain_access_token, refresh_access_token
 from keystone_mcp.adapters.stub import StubAdapter
 from keystone_mcp.adapters.users_admin import UsersAdminAdapter
 from keystone_mcp.auth.login_pending_store import InMemoryLoginPendingStore
@@ -32,6 +31,7 @@ from keystone_mcp.router.registry import RouterRegistry
 from keystone_mcp.server import bootstrap_platform, build_server
 from keystone_mcp.user_directory.local import LocalUserDirectory
 from support.login import dev_token_login
+from support.oauth_harness import BASE_URL, obtain_access_token, refresh_access_token
 from support.test_env import require_redis_url
 from support.users_store import make_users_store
 

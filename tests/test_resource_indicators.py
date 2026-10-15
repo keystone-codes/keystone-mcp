@@ -9,14 +9,14 @@ import pytest
 from asgi_lifespan import LifespanManager
 from mcp.server.auth.provider import AccessToken
 
-from conftest import BASE_URL as HTTP_BASE_URL
-from conftest import VALID_TOKEN, obtain_access_token, refresh_access_token
 from keystone_mcp.auth.keystone_oauth_provider import KeystoneOAuthProvider
 from keystone_mcp.auth.login_pending_store import InMemoryLoginPendingStore
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import Settings, resources_equivalent
 from keystone_mcp.server import build_server
 from support.login import dev_token_login
+from support.oauth_harness import BASE_URL as HTTP_BASE_URL
+from support.oauth_harness import VALID_TOKEN, obtain_access_token, refresh_access_token
 
 BASE_URL = "https://mcp.example.com"
 

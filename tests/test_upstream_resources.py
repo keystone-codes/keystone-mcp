@@ -328,10 +328,10 @@ async def test_resource_list_change_notifies_legacy(monkeypatch):
 
 
 async def test_resource_list_change_notifies_modern(monkeypatch):
-    from conftest import BASE_URL, VALID_TOKEN
     from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
     from keystone_mcp.server import build_server
     from support.login import dev_token_login
+    from support.oauth_harness import BASE_URL, VALID_TOKEN
     from test_list_changed import _modern_client
 
     app = build_lowlevel_upstream_app(tools=["greet"], resources=False)

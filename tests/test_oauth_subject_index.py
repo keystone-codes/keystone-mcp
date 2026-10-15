@@ -256,11 +256,11 @@ async def test_refresh_exchange_after_revoke_subject_refuses_new_tokens():
     from mcp.server.auth.provider import TokenError
     from mcp.shared.auth import OAuthClientInformationFull
 
-    from conftest import BASE_URL, VALID_TOKEN
     from keystone_mcp.auth.keystone_oauth_provider import KeystoneOAuthProvider
     from keystone_mcp.auth.login_pending_store import InMemoryLoginPendingStore
     from keystone_mcp.config import Settings
     from support.login import dev_token_login
+    from support.oauth_harness import BASE_URL, VALID_TOKEN
 
     settings = Settings(base_url=BASE_URL)
     store = InMemoryOAuthStore(
@@ -312,11 +312,11 @@ async def test_auth_code_exchange_succeeds_when_code_issued_after_nbf():
     from mcp.server.auth.provider import AuthorizationCode
     from mcp.shared.auth import OAuthClientInformationFull
 
-    from conftest import BASE_URL, VALID_TOKEN
     from keystone_mcp.auth.keystone_oauth_provider import KeystoneOAuthProvider
     from keystone_mcp.auth.login_pending_store import InMemoryLoginPendingStore
     from keystone_mcp.config import Settings
     from support.login import dev_token_login
+    from support.oauth_harness import BASE_URL, VALID_TOKEN
 
     settings = Settings(base_url=BASE_URL)
     store = InMemoryOAuthStore(

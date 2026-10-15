@@ -6,10 +6,10 @@ import logging
 from dataclasses import replace
 
 import pytest
-from tests.security.conftest import DEV_TOKEN, REDIRECT_URI
-from tests.security.helpers import obtain_bearer_token, pkce_pair
 
 from keystone_mcp.observability.logging import configure_logging
+from security.conftest import DEV_TOKEN, REDIRECT_URI
+from security.helpers import obtain_bearer_token, pkce_pair
 
 pytestmark = pytest.mark.security
 
@@ -53,7 +53,7 @@ async def test_oauth_flow_leaves_no_raw_secrets_in_logs_or_bodies(
         bodies.append(auth.text)
         from urllib.parse import parse_qs, urlparse
 
-        from tests.security.conftest import parse_csrf
+        from security.conftest import parse_csrf
 
         txn = parse_qs(urlparse(auth.headers["location"]).query)["txn"][0]
         page = await client.get(f"/login?txn={txn}")

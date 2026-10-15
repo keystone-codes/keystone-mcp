@@ -17,7 +17,6 @@ from mcp.shared.exceptions import MCPError
 from prometheus_client import REGISTRY
 from redis.exceptions import RedisError
 
-from conftest import BASE_URL, REDIRECT_URI, VALID_TOKEN
 from keystone_mcp.auth.oauth_store import build_shared_auth_stores
 from keystone_mcp.auth.rate_window import InMemorySlidingWindow, RedisSlidingWindow
 from keystone_mcp.auth.throttle import LoginAttemptThrottle, ip_bucket
@@ -31,6 +30,7 @@ from keystone_mcp.config import (
 from keystone_mcp.router.throttle_middleware import THROTTLE_MESSAGE
 from keystone_mcp.server import build_server
 from support.login import dev_token_login
+from support.oauth_harness import BASE_URL, REDIRECT_URI, VALID_TOKEN
 from support.test_env import redis_key_prefix, require_redis_url
 
 SUBJECT = "throttle-redis@example.com"

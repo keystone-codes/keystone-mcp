@@ -13,7 +13,6 @@ from asgi_lifespan import LifespanManager
 from mcp.shared.auth import OAuthClientInformationFull
 from prometheus_client import REGISTRY
 
-from conftest import BASE_URL, REDIRECT_URI, VALID_TOKEN, authorize_to_login, make_pkce
 from keystone_mcp.auth.oauth_store import (
     UNUSED_CLIENT_TTL_SECONDS,
     RedisOAuthStore,
@@ -22,6 +21,7 @@ from keystone_mcp.auth.oauth_store import (
 from keystone_mcp.config import Settings
 from keystone_mcp.server import build_server
 from support.login import dev_token_login
+from support.oauth_harness import BASE_URL, REDIRECT_URI, VALID_TOKEN, authorize_to_login, make_pkce
 
 _REGISTER_PAYLOAD = {"redirect_uris": [REDIRECT_URI], "token_endpoint_auth_method": "none"}
 

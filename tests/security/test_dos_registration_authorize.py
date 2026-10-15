@@ -5,8 +5,9 @@ from __future__ import annotations
 import tracemalloc
 
 import pytest
-from tests.security.conftest import REDIRECT_URI
-from tests.security.helpers import pkce_pair
+
+from security.conftest import REDIRECT_URI
+from security.helpers import pkce_pair
 
 pytestmark = pytest.mark.security
 

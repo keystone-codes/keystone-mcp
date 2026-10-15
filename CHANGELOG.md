@@ -62,6 +62,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 ### Fixed
 
 - Sign-in with Google works again: the provider's token and key endpoints on `googleapis.com` are accepted (0.5.0 refused every Google sign-in with "discovery endpoint origin mismatch").
+- CI and release builds for 0.6.0: Docker image build keeps `examples/hello-stdio`, the v0.5.0 contract freeze baseline matches the tag again, PostgreSQL users migration round-trips seed booleans correctly, and the security fuzz suite imports resolve under pytest.
 - A half-open upstream probe that never reaches the service does not hold the only probe slot.
 - Docs no longer describe the `policy_*` tools and service-account subjects as future work; deprecation notes say "removed in 2.0" everywhere.
 - The release workflow no longer creates a GitHub Release when publishing to PyPI failed.
