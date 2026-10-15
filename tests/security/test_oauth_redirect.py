@@ -8,7 +8,8 @@ import secrets
 from urllib.parse import parse_qs, urlparse
 
 import pytest
-from tests.security.conftest import REDIRECT_URI
+
+from security.conftest import REDIRECT_URI
 
 pytestmark = pytest.mark.security
 
@@ -70,7 +71,7 @@ async def test_token_redirect_uri_mismatch_is_invalid_grant(attacker_stand) -> N
         )
         assert auth.status_code in (302, 307), auth.text
         txn = parse_qs(urlparse(auth.headers["location"]).query)["txn"][0]
-        from tests.security.helpers import _csrf_from_page
+        from security.helpers import _csrf_from_page
 
         page = await client.get(f"/login?txn={txn}")
         login_data = {

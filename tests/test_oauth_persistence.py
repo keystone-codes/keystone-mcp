@@ -19,15 +19,6 @@ from mcp.server.auth.provider import (
 )
 from mcp.shared.auth import OAuthClientInformationFull
 
-from conftest import (
-    BASE_URL,
-    VALID_TOKEN,
-    authorize_to_login,
-    make_pkce,
-    obtain_access_token,
-    refresh_access_token,
-    register_client,
-)
 from keystone_mcp.auth.keystone_oauth_provider import (
     KeystoneOAuthProvider,
     RefreshMeta,
@@ -39,6 +30,15 @@ from keystone_mcp.config import Settings
 from keystone_mcp.server import build_server
 from support.fake_login import FakeRedirectProvider
 from support.login import dev_token_login
+from support.oauth_harness import (
+    BASE_URL,
+    VALID_TOKEN,
+    authorize_to_login,
+    make_pkce,
+    obtain_access_token,
+    refresh_access_token,
+    register_client,
+)
 
 
 @pytest_asyncio.fixture

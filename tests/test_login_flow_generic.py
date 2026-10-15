@@ -17,7 +17,6 @@ import httpx
 import pytest
 from asgi_lifespan import LifespanManager
 
-from conftest import BASE_URL, REDIRECT_URI, authorize_to_login, make_pkce, register_client
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import Settings
 from keystone_mcp.server import bootstrap_platform, build_server
@@ -25,6 +24,13 @@ from keystone_mcp.user_directory.factory import build_in_memory_user_directory_r
 from support.fake_login import FakeFormProvider, FakeRedirectProvider
 from support.google_oidc_fixtures import build_mock_google_oidc
 from support.login import dev_token_login
+from support.oauth_harness import (
+    BASE_URL,
+    REDIRECT_URI,
+    authorize_to_login,
+    make_pkce,
+    register_client,
+)
 
 pytestmark = pytest.mark.asyncio
 

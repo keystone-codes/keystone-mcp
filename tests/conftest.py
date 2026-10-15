@@ -7,24 +7,30 @@ S256 + resource indicator -> login -> code exchange at /token.
 
 from __future__ import annotations
 
-import base64
-import hashlib
 import os
-import secrets
 import warnings
-from dataclasses import dataclass
-from urllib.parse import parse_qs, urlparse
 
 import httpx2
 import pytest
 import pytest_asyncio
 import redis
-from fastmcp.utilities.tests import ASGIServer, asgi_server
+from fastmcp.utilities.tests import asgi_server
 
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import Settings
 from keystone_mcp.server import _http_asgi_middleware, build_server
 from support.login import dev_token_login
+from support.oauth_harness import (
+    BASE_URL,
+    REDIRECT_URI,
+    VALID_TOKEN,
+    Harness,
+    authorize_to_login,
+    make_pkce,
+    obtain_access_token,
+    refresh_access_token,
+    register_client,
+)
 from support.test_env import (
     RUN_KEY_ROOT,
     policy_revision_key,
@@ -35,9 +41,17 @@ from support.test_env import (
 
 pytest_plugins = ["support.test_env"]
 
-VALID_TOKEN = "valid-test-token"
-BASE_URL = "http://localhost:8080"
-REDIRECT_URI = "http://localhost:9999/callback"
+__all__ = [
+    "BASE_URL",
+    "Harness",
+    "REDIRECT_URI",
+    "VALID_TOKEN",
+    "authorize_to_login",
+    "make_pkce",
+    "obtain_access_token",
+    "refresh_access_token",
+    "register_client",
+]
 
 
 @pytest.fixture(autouse=True)
@@ -86,31 +100,6 @@ def _cleanup_run_keys():
         warnings.warn(f"Redis run-key cleanup failed: {exc}", stacklevel=1)
 
 
-def make_pkce() -> tuple[str, str]:
-    verifier = secrets.token_urlsafe(48)
-    challenge = (
-        base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
-    )
-    return verifier, challenge
-
-
-@dataclass
-class Harness:
-    running: ASGIServer
-    registry: object
-    oauth: object
-    settings: Settings
-    client: httpx2.AsyncClient
-
-    def mcp_client_factory(self):
-        """An ``McpHttpClientFactory`` reaching this harness's in-process app.
-
-        ``ASGIServer.http_client`` (``fastmcp.utilities.tests``) already
-        matches that protocol's signature, so no wrapper is needed.
-        """
-        return self.running.http_client
-
-
 @pytest_asyncio.fixture
 async def harness():
     settings = Settings(base_url=BASE_URL, refresh_interval_seconds=0)
@@ -136,92 +125,6 @@ async def harness():
             yield Harness(
                 running=running, registry=registry, oauth=oauth, settings=settings, client=client
             )
-
-
-async def refresh_access_token(
-    client: httpx2.AsyncClient,
-    client_id: str,
-    refresh_token: str,
-    resource: str,
-) -> dict:
-    """Exchange a refresh token at /token."""
-    r = await client.post(
-        "/token",
-        data={
-            "grant_type": "refresh_token",
-            "refresh_token": refresh_token,
-            "client_id": client_id,
-            "resource": resource,
-        },
-    )
-    return {
-        "status": r.status_code,
-        "body": r.json() if r.content else {},
-        "client_id": client_id,
-    }
-
-
-async def register_client(client: httpx2.AsyncClient, client_name: str | None = None) -> str:
-    payload: dict[str, object] = {
-        "redirect_uris": [REDIRECT_URI],
-        "token_endpoint_auth_method": "none",
-    }
-    if client_name is not None:
-        payload["client_name"] = client_name
-    r = await client.post("/register", json=payload)
-    assert r.status_code in (200, 201), r.text
-    return r.json()["client_id"]
-
-
-async def authorize_to_login(
-    client: httpx2.AsyncClient, client_id: str, challenge: str, resource: str
-) -> str:
-    """Run /authorize and return the login transaction id from the redirect."""
-    r = await client.get(
-        "/authorize",
-        params={
-            "response_type": "code",
-            "client_id": client_id,
-            "redirect_uri": REDIRECT_URI,
-            "code_challenge": challenge,
-            "code_challenge_method": "S256",
-            "state": "test-state",
-            "resource": resource,
-        },
-    )
-    assert r.status_code in (302, 307), r.text
-    return parse_qs(urlparse(r.headers["location"]).query)["txn"][0]
-
-
-async def obtain_access_token(
-    client: httpx2.AsyncClient,
-    resource: str,
-    api_token: str = VALID_TOKEN,
-    email: str = "user@example.com",
-) -> dict:
-    """Full happy-path OAuth flow; returns the parsed /token JSON response."""
-    client_id = await register_client(client)
-    verifier, challenge = make_pkce()
-    txn = await authorize_to_login(client, client_id, challenge, resource)
-    r = await client.post("/login", data={"txn": txn, "api_token": api_token, "email": email})
-    assert r.status_code == 302, r.text
-    code = parse_qs(urlparse(r.headers["location"]).query)["code"][0]
-    r = await client.post(
-        "/token",
-        data={
-            "grant_type": "authorization_code",
-            "code": code,
-            "redirect_uri": REDIRECT_URI,
-            "client_id": client_id,
-            "code_verifier": verifier,
-            "resource": resource,
-        },
-    )
-    return {
-        "status": r.status_code,
-        "body": r.json() if r.content else {},
-        "client_id": client_id,
-    }
 
 
 @pytest_asyncio.fixture

@@ -11,14 +11,6 @@ import pytest
 from asgi_lifespan import LifespanManager
 from fastmcp import Client
 from fastmcp.exceptions import ToolError
-from tests.security.conftest import BASE_URL, DEV_TOKEN, MEMBER_EMAIL
-from tests.security.helpers import obtain_bearer_token
-from tests.security.hostile_plugins import (
-    HostileCapabilityDirectory,
-    HostileFormLoginProvider,
-    HostileRedirectLoginProvider,
-    HostileResolveDirectory,
-)
 
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import ConfigError, Settings
@@ -34,6 +26,14 @@ from keystone_mcp.user_directory.http import HttpUserDirectory
 from keystone_mcp.user_directory.resolver import CachedUserDirectoryResolver
 from keystone_mcp.user_directory.revision import InMemoryRevisionReader
 from keystone_mcp.user_directory.types import UserResolveResult
+from security.conftest import BASE_URL, DEV_TOKEN, MEMBER_EMAIL
+from security.helpers import obtain_bearer_token
+from security.hostile_plugins import (
+    HostileCapabilityDirectory,
+    HostileFormLoginProvider,
+    HostileRedirectLoginProvider,
+    HostileResolveDirectory,
+)
 from support.fake_login import FakeRedirectProvider
 from support.login import dev_token_login
 
@@ -115,7 +115,7 @@ async def test_hostile_directory_blocked_user_denied(attacker_stand):
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url=BASE_URL, follow_redirects=False
         ) as client:
-            from tests.security.helpers import pkce_pair
+            from security.helpers import pkce_pair
 
             verifier, challenge = pkce_pair()
             reg = await client.post(
@@ -177,7 +177,7 @@ async def test_hostile_directory_hang_does_not_kill_healthz():
             await asyncio.wait_for(resolver.resolve("user@example.com"), timeout=1.0)
 
     async with LifespanManager(app):
-        from tests.security.hostile_upstream import poll_healthz_while
+        from security.hostile_upstream import poll_healthz_while
 
         await poll_healthz_while(app, attack(), max_latency=1.0)
 

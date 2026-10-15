@@ -14,7 +14,6 @@ import pytest_asyncio
 from asgi_lifespan import LifespanManager
 from fastmcp.client.transports import StreamableHttpTransport
 from httpx2 import ASGITransport, AsyncClient
-from tests.security.hostile_upstream import build_hostile_upstream_app
 
 from keystone_mcp.adapters.stub import StubAdapter
 from keystone_mcp.auth.oauth_store import build_shared_auth_stores
@@ -25,6 +24,7 @@ from keystone_mcp.server import bootstrap_platform, build_server
 from keystone_mcp.users import service
 from keystone_mcp.users.db import make_session_factory, session_scope
 from keystone_mcp.users.factory import build_users_store
+from security.hostile_upstream import build_hostile_upstream_app
 from support.login import dev_token_login
 from support.lowlevel_upstream import (
     UPSTREAM_MCP_URL,

@@ -17,7 +17,6 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
-from conftest import BASE_URL
 from keystone_mcp.adapters.stub import StubAdapter
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import ConfigError, Settings, load_settings
@@ -33,6 +32,7 @@ from support.lowlevel_upstream import (
     asgi_http_client_factory,
     build_lowlevel_upstream_app,
 )
+from support.oauth_harness import BASE_URL
 from support.service_bearer import ADMIN_EMAIL, POLICY_YAML, SERVICE_NAME
 from support.test_env import require_redis_url, users_revision_key
 

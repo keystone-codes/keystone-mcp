@@ -93,7 +93,7 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 asyncio_default_test_loop_scope = "function"
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["src", "tests"]
 markers = [
     "security: adversarial sign-in, OAuth, and RBAC checklist tests",
     "fuzz: property-based security fuzzing (Hypothesis)",

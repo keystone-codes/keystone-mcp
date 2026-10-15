@@ -13,7 +13,7 @@ from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
 from mcp.shared.exceptions import MCPError
 
-from conftest import obtain_access_token
+from support.oauth_harness import obtain_access_token
 
 
 async def test_tool_call_over_oauth_bearer(harness):

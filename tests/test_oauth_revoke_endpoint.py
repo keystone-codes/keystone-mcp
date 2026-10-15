@@ -9,7 +9,11 @@ import httpx
 import pytest
 from asgi_lifespan import LifespanManager
 
-from conftest import (
+from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
+from keystone_mcp.config import Settings
+from keystone_mcp.server import build_server
+from support.login import dev_token_login
+from support.oauth_harness import (
     BASE_URL,
     REDIRECT_URI,
     VALID_TOKEN,
@@ -18,10 +22,6 @@ from conftest import (
     refresh_access_token,
     register_client,
 )
-from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
-from keystone_mcp.config import Settings
-from keystone_mcp.server import build_server
-from support.login import dev_token_login
 
 pytest_plugins = ("support.oauth_stores",)
 

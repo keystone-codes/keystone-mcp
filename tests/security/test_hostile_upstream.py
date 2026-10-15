@@ -10,10 +10,10 @@ import pytest
 from fastmcp import Client
 from fastmcp.client.elicitation import ElicitResult
 from fastmcp.exceptions import ToolError
-from tests.security.helpers import obtain_bearer_token
-from tests.security.hostile_upstream import poll_healthz_while
 
 from keystone_mcp.router.stdio_process import StdioUpstreamProcess
+from security.helpers import obtain_bearer_token
+from security.hostile_upstream import poll_healthz_while
 
 pytestmark = pytest.mark.security
 

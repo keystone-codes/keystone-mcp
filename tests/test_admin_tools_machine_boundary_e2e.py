@@ -13,11 +13,11 @@ from fastmcp.client.transports import StreamableHttpTransport
 from httpx2 import ASGITransport, AsyncClient
 
 import keystone_mcp.server as server_module
-from conftest import BASE_URL
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.catalog.names import MUTATING_ADMIN_TOOL_NAMES
 from keystone_mcp.config import Settings
 from keystone_mcp.server import bootstrap_platform, build_server
+from support.oauth_harness import BASE_URL
 
 POLICY = """\
 version: "svc-boundary"

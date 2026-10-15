@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import pytest
-from tests.security.helpers import obtain_bearer_token
 
 from keystone_mcp.auth.oauth_store import RedisOAuthStore
+from security.helpers import obtain_bearer_token
 
 pytestmark = pytest.mark.security
 

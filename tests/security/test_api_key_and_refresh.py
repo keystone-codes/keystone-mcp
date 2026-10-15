@@ -6,8 +6,9 @@ import time
 from urllib.parse import parse_qs, urlparse
 
 import pytest
-from tests.security.conftest import MEMBER_EMAIL, REDIRECT_URI
-from tests.security.helpers import _csrf_from_page, pkce_pair
+
+from security.conftest import MEMBER_EMAIL, REDIRECT_URI
+from security.helpers import _csrf_from_page, pkce_pair
 
 pytestmark = pytest.mark.security
 

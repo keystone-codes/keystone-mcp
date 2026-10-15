@@ -20,19 +20,19 @@ from urllib.parse import parse_qs, urlparse
 import httpx
 from asgi_lifespan import LifespanManager
 
-from conftest import (
-    BASE_URL,
-    VALID_TOKEN,
-    authorize_to_login,
-    make_pkce,
-    register_client,
-)
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import Settings
 from keystone_mcp.server import build_server
 from keystone_mcp.user_directory.errors import UserDirectoryUnavailableError
 from keystone_mcp.user_directory.factory import build_in_memory_user_directory_resolver
 from support.login import dev_token_login
+from support.oauth_harness import (
+    BASE_URL,
+    VALID_TOKEN,
+    authorize_to_login,
+    make_pkce,
+    register_client,
+)
 
 
 @contextlib.asynccontextmanager

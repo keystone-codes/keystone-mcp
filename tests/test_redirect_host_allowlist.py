@@ -21,7 +21,6 @@ from mcp.server.auth.provider import AuthorizationCode, RefreshToken, TokenError
 from mcp.shared.auth import OAuthClientInformationFull
 from prometheus_client import REGISTRY
 
-from conftest import BASE_URL, REDIRECT_URI, make_pkce, register_client
 from keystone_mcp.auth.keystone_oauth_provider import (
     KeystoneOAuthProvider,
     _redirect_uri_allowed,
@@ -31,6 +30,7 @@ from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import ConfigError, Settings
 from keystone_mcp.server import build_server
 from support.login import dev_token_login
+from support.oauth_harness import BASE_URL, REDIRECT_URI, make_pkce, register_client
 
 VALID_TOKEN = "valid-test-token"
 _REDIRECT_HOST = urlparse(REDIRECT_URI).hostname  # "localhost"

@@ -141,7 +141,7 @@ def test_upgrade_to_0002_from_0001(tmp_path: Path) -> None:
             text(
                 "INSERT INTO keystone_user "
                 "(email, full_name, is_blocked, created_at, updated_at) "
-                "VALUES ('keep@example.com', 'Keep', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+                "VALUES ('keep@example.com', 'Keep', FALSE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
             )
         )
         conn.execute(
@@ -172,7 +172,7 @@ def test_upgrade_to_0004_adds_identity_binding_columns(tmp_path: Path) -> None:
             text(
                 "INSERT INTO keystone_user "
                 "(email, full_name, is_blocked, created_at, updated_at) "
-                "VALUES ('legacy@example.com', 'Legacy', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+                "VALUES ('legacy@example.com', 'Legacy', FALSE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
             )
         )
     upgrade_to_head(engine)
@@ -195,8 +195,8 @@ def test_null_identity_pairs_do_not_conflict_on_sqlite(tmp_path: Path) -> None:
             text(
                 "INSERT INTO keystone_user "
                 "(email, full_name, is_blocked, created_at, updated_at) "
-                "VALUES ('a@example.com', 'A', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP), "
-                "('b@example.com', 'B', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+                "VALUES ('a@example.com', 'A', FALSE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP), "
+                "('b@example.com', 'B', FALSE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
             )
         )
     assert current_revision(engine) == HEAD_REVISION
@@ -224,7 +224,7 @@ def _seed_keep_user(engine) -> None:
             text(
                 "INSERT INTO keystone_user "
                 "(email, full_name, is_blocked, created_at, updated_at) "
-                "VALUES ('keep@example.com', 'Keep', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+                "VALUES ('keep@example.com', 'Keep', FALSE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
             )
         )
 

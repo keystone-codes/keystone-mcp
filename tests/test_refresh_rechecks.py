@@ -14,7 +14,6 @@ import pytest
 from asgi_lifespan import LifespanManager
 from httpx import ASGITransport, AsyncClient
 
-from conftest import BASE_URL, obtain_access_token, refresh_access_token, register_client
 from keystone_mcp.auth.keystone_oauth_provider import RefreshMeta, encode_refresh_meta
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import Settings, startup_warnings
@@ -26,6 +25,12 @@ from keystone_mcp.users.db import make_session_factory, session_scope
 from keystone_mcp.users.models import utcnow
 from support.fake_users_service import build_fake_users_service
 from support.login import dev_token_login
+from support.oauth_harness import (
+    BASE_URL,
+    obtain_access_token,
+    refresh_access_token,
+    register_client,
+)
 from support.test_env import require_redis_url
 from support.users_store import make_users_store
 

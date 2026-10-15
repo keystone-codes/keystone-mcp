@@ -9,7 +9,6 @@ import httpx
 import pytest
 from asgi_lifespan import LifespanManager
 
-from conftest import BASE_URL, VALID_TOKEN, authorize_to_login, make_pkce, register_client
 from keystone_mcp.auth.keystone_oauth_provider import TRANSLATIONS
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import Settings
@@ -26,6 +25,13 @@ from keystone_mcp.server import build_server
 from keystone_mcp.user_directory.factory import build_in_memory_user_directory_resolver
 from support.google_oidc_fixtures import build_mock_google_oidc
 from support.login import dev_token_login
+from support.oauth_harness import (
+    BASE_URL,
+    VALID_TOKEN,
+    authorize_to_login,
+    make_pkce,
+    register_client,
+)
 
 SNAPSHOT_DIR = Path(__file__).resolve().parent / "data" / "login-pages"
 _SNAPSHOT_TXN = "TXN"

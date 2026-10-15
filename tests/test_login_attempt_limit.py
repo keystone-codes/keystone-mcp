@@ -10,7 +10,12 @@ import redis
 from asgi_lifespan import LifespanManager
 from redis.exceptions import RedisError
 
-from conftest import (
+from keystone_mcp.auth.oauth_store import InMemoryOAuthStore, build_shared_auth_stores
+from keystone_mcp.auth.throttle import RedisLoginFailureLimiter
+from keystone_mcp.config import ConfigError, Settings, load_settings, validate_settings
+from keystone_mcp.server import build_server
+from support.login import dev_token_login
+from support.oauth_harness import (
     BASE_URL,
     REDIRECT_URI,
     VALID_TOKEN,
@@ -18,11 +23,6 @@ from conftest import (
     make_pkce,
     register_client,
 )
-from keystone_mcp.auth.oauth_store import InMemoryOAuthStore, build_shared_auth_stores
-from keystone_mcp.auth.throttle import RedisLoginFailureLimiter
-from keystone_mcp.config import ConfigError, Settings, load_settings, validate_settings
-from keystone_mcp.server import build_server
-from support.login import dev_token_login
 from support.test_env import redis_key_prefix, require_redis_url
 
 

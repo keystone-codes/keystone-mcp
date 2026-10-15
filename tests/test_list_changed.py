@@ -24,7 +24,6 @@ from fastmcp import Client
 from fastmcp.utilities.tests import asgi_server
 from mcp.client.subscriptions import listen as listen_subscriptions
 
-from conftest import BASE_URL, VALID_TOKEN, obtain_access_token
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import Settings
 from keystone_mcp.server import build_server
@@ -36,6 +35,7 @@ from support.lowlevel_upstream import (
     asgi_http_client_factory,
     build_lowlevel_upstream_app,
 )
+from support.oauth_harness import BASE_URL, VALID_TOKEN, obtain_access_token
 
 ENFORCE_POLICY = """\
 version: "1.0.0"

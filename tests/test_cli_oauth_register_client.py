@@ -10,7 +10,6 @@ import pytest
 from asgi_lifespan import LifespanManager
 from redis.exceptions import RedisError
 
-from conftest import BASE_URL, VALID_TOKEN, authorize_to_login, make_pkce
 from keystone_mcp import cli
 from keystone_mcp.auth.oauth_store import (
     UNUSED_CLIENT_TTL_SECONDS,
@@ -22,6 +21,7 @@ from keystone_mcp.cli import main
 from keystone_mcp.config import Settings
 from keystone_mcp.server import build_server
 from support.login import dev_token_login
+from support.oauth_harness import BASE_URL, VALID_TOKEN, authorize_to_login, make_pkce
 from support.test_env import redis_key_prefix, require_redis_url
 
 _CLAUDE_REDIRECT = "https://claude.ai/api/mcp/auth_callback"

@@ -5,12 +5,12 @@ from __future__ import annotations
 import time
 from dataclasses import replace
 
-from conftest import refresh_access_token, register_client
 from keystone_mcp.auth.keystone_oauth_provider import RefreshMeta
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore, KeystoneRefreshToken
 from keystone_mcp.identity import VerifiedIdentity
 from keystone_mcp.router.engine import RouterEngine
 from support.admin_harness import build_admin_harness
+from support.oauth_harness import refresh_access_token, register_client
 
 SERVICE_SUBJECT = "svc:ci"
 
@@ -94,7 +94,7 @@ async def test_refresh_keeps_service_subject_type_and_admin_mutation_forbidden(
 
 
 async def test_service_subject_login_still_refused(harness) -> None:
-    from conftest import VALID_TOKEN, authorize_to_login, make_pkce
+    from support.oauth_harness import VALID_TOKEN, authorize_to_login, make_pkce
 
     client = harness.client
     settings = harness.settings
