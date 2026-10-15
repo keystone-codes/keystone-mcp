@@ -147,6 +147,7 @@ class RbacMiddleware(Middleware):
         else:
             self._enforce = True
             self._rbac_mode = "off"
+
     @staticmethod
     def _visible(
         policy: RbacPolicy,

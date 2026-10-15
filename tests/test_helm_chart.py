@@ -130,9 +130,9 @@ def test_policy_tools_read_only_without_claim():
 def test_full_policy_tools_requires_claim():
     result = _helm_template(extra_set=("rbac.policyTools=full",), expect_failure=True)
     combined = (result.stderr + result.stdout).lower()
-    assert "existingpolicyclaim" in combined.replace("_", "").replace("-", "") or "existingPolicyClaim" in (
-        result.stderr + result.stdout
-    )
+    assert "existingpolicyclaim" in combined.replace("_", "").replace(
+        "-", ""
+    ) or "existingPolicyClaim" in (result.stderr + result.stdout)
 
 
 def test_base_url_required():
@@ -180,9 +180,7 @@ def test_configmap_checksum_only_for_login_providers():
     assert "checksum/config" not in ann_without
 
     with_providers = _helm_template(
-        extra_set=(
-            "loginProviders=version: 1\nproviders: []\n",
-        ),
+        extra_set=("loginProviders=version: 1\nproviders: []\n",),
     )
     dep_with = _deployment(_documents(with_providers.stdout))
     ann_with = dep_with["spec"]["template"]["metadata"].get("annotations") or {}

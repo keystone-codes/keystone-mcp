@@ -75,7 +75,7 @@ def test_support_server_does_not_use_fastmcp():
         .parent.joinpath("support", "lowlevel_upstream.py")
         .read_text(encoding="utf-8")
     )
- # The upstream app itself must stay on the low-level MCP SDK only; cancellation tests may
+    # The upstream app itself must stay on the low-level MCP SDK only; cancellation tests may
     # import fastmcp's StreamingASGITransport inside asgi_http_client_factory
     # when streaming=True (cancellation tests), not in the server code path.
     before_client_factory, _after = source.split("def asgi_http_client_factory", 1)

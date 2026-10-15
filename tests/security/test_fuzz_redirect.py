@@ -25,7 +25,9 @@ def redirect_uri(draw):
             st.from_regex(r"[a-z]{3,12}\.example\.com", fullmatch=True),
         )
     )
-    port = draw(st.one_of(st.just(""), st.integers(min_value=1, max_value=65535).map(lambda p: f":{p}")))
+    port = draw(
+        st.one_of(st.just(""), st.integers(min_value=1, max_value=65535).map(lambda p: f":{p}"))
+    )
     path = draw(st.from_regex(r"/[a-z_/]{0,20}", fullmatch=True))
     return f"{scheme}://{host}{port}{path}"
 

@@ -90,8 +90,8 @@ def build_upstream_guard(
 class UpstreamGuard:
     """Serializes and rate-limits proxied calls for one upstream namespace.
 
- A future limits-aware guard may replace the guard when registry ``limits`` change; calls already
-    inside ``call()`` finish on the guard instance they entered.
+    A future limits-aware guard may replace the guard when registry ``limits`` change; calls already
+       inside ``call()`` finish on the guard instance they entered.
     """
 
     def __init__(

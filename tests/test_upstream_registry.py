@@ -712,7 +712,7 @@ def _write_registry_json(tmp_path: Path, document: dict) -> Path:
 
 
 def test_stdio_entry_is_accepted(permissive_policy):
- # Also covers the identity secret / stdio merge point: a stdio entry with
+    # Also covers the identity secret / stdio merge point: a stdio entry with
     # auth.identity_secret_env is accepted like any other.
     document = {
         "schema_version": 1,

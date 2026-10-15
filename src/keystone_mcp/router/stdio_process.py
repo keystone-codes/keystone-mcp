@@ -122,13 +122,13 @@ def _mask_process_env_values(text: str, env: Mapping[str, str]) -> str:
 class StdioUpstreamProcess:
     """Keeps one stdio upstream process alive and exposes its MCP client.
 
-    ``env`` must already be the resolved child environment (name -> value);
-    this class does not read ``KEYSTONE_MCP_*`` itself — resolving an
- entry's ``env_from`` pairs into values is stdio upstream wiring job, at the call site
-    that constructs this object.
+       ``env`` must already be the resolved child environment (name -> value);
+       this class does not read ``KEYSTONE_MCP_*`` itself — resolving an
+    entry's ``env_from`` pairs into values is stdio upstream wiring job, at the call site
+       that constructs this object.
 
-    ``start()`` after ``stop()`` is not supported: it returns ``False`` and
-    does nothing.
+       ``start()`` after ``stop()`` is not supported: it returns ``False`` and
+       does nothing.
     """
 
     def __init__(

@@ -166,7 +166,7 @@ def test_local_profile_writes_expected_env(sandbox, redis_url):
     # Every variable setup.sh writes appears exactly once among the active
     # lines: it replaces the existing (section-1) line in place and never
     # also uncomments/duplicates the matching commented-out section-2 default
- #.
+    # .
     keys = active_keys(env_path)
     assert len(keys) == len(set(keys)), keys
 

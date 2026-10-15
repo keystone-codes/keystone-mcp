@@ -20,7 +20,9 @@ def _test_names_in_file(path: Path) -> set[str]:
     tree = ast.parse(path.read_text(encoding="utf-8"))
     names: set[str] = set()
     for node in tree.body:
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test_"):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith(
+            "test_"
+        ):
             names.add(node.name)
     return names
 

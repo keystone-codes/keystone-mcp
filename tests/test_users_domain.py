@@ -36,15 +36,15 @@ def session_factory(users_engine):  # noqa: ANN001, F811 -- pytest fixture injec
 def test_users_package_has_no_back_imports() -> None:
     """Importing keystone_mcp.users alone must not pull in server/config/etc.
 
-    Run in a fresh subprocess: in-process, other test modules already loaded
-    in this same pytest session would have imported those modules long
-    before this test runs, making an in-process sys.modules check meaningless.
+       Run in a fresh subprocess: in-process, other test modules already loaded
+       in this same pytest session would have imported those modules long
+       before this test runs, making an in-process sys.modules check meaningless.
 
-    ``keystone_mcp.users.errors``/``.records`` import the dependency-free
- ``keystone_mcp.user_directory.types``/``.errors``, so the package
-    itself (and its lightweight ``protocol``/``critical`` submodules) is now
-    expected in ``sys.modules`` -- but nothing that depends on a concrete
-    directory implementation, Redis, or httpx should be.
+       ``keystone_mcp.users.errors``/``.records`` import the dependency-free
+    ``keystone_mcp.user_directory.types``/``.errors``, so the package
+       itself (and its lightweight ``protocol``/``critical`` submodules) is now
+       expected in ``sys.modules`` -- but nothing that depends on a concrete
+       directory implementation, Redis, or httpx should be.
     """
     code = (
         "import keystone_mcp.users, sys; "

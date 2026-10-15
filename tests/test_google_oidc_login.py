@@ -141,7 +141,7 @@ async def test_google_login_redirect_includes_state_nonce_pkce(google_harness):
     assert query["client_id"] == ["test-google-client"]
     assert query["redirect_uri"] == [google_harness["settings"].google_redirect_uri]
 
- # The pending-attempt namespace is now "login_attempt" (shared by any
+    # The pending-attempt namespace is now "login_attempt" (shared by any
     # redirect provider), not the Google-only "google" it used to be.
     raw = await google_harness["oauth"]._pending_store.get("login_attempt", query["state"][0])
     assert raw is not None
@@ -505,9 +505,9 @@ async def test_google_disabled_hides_route(google_harness):
 async def test_api_key_flow_still_works_with_google_enabled(google_harness):
     """api_key login still works alongside Google — for a directory-known email.
 
-    ``retry@example.com`` used to work here because /login only checked the
- token; since the directory check also the directory, this harness's seeded
-    ``alice@example.com`` is used instead.
+       ``retry@example.com`` used to work here because /login only checked the
+    token; since the directory check also the directory, this harness's seeded
+       ``alice@example.com`` is used instead.
     """
     client = google_harness["client"]
     settings = google_harness["settings"]
@@ -537,8 +537,8 @@ async def test_api_key_flow_still_works_with_google_enabled(google_harness):
 async def test_login_page_shows_consent_when_google_primary(google_harness):
     """Even with Google as the primary method, /login shows the consent screen.
 
- It must not redirect straight to Google: the screen itself carries
-    the Google button as a form.
+    It must not redirect straight to Google: the screen itself carries
+       the Google button as a form.
     """
     client = google_harness["client"]
     settings = google_harness["settings"]
@@ -587,7 +587,7 @@ async def test_google_callback_without_csrf_cookie_is_refused(google_harness):
     # later `Set-Cookie` updates — harmless under the old "reuse the incoming
     # cookie" behaviour (both entries held the same value), but a real
     # mismatch now that every consent-screen render mints a fresh cookie
- # (second review): the jar would hold both the stale restored
+    # (second review): the jar would hold both the stale restored
     # value and the fresh one, and which one the request actually sends
     # becomes ambiguous.
     import httpx

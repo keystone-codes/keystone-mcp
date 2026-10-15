@@ -127,10 +127,10 @@ class KeystoneSubscriptionBus:
 class ClientSessionRegistry:
     """Open connections and listen streams this Keystone-MCP instance can notify.
 
-    One instance per server (``build_server``); each replica's registry only
-    knows about its own connections and streams -- no cross-replica fan-out
- (see the list_changed developer notes: a Redis-backed bus is not needed because each
-    instance's reconciler only ever notifies its own clients).
+       One instance per server (``build_server``); each replica's registry only
+       knows about its own connections and streams -- no cross-replica fan-out
+    (see the list_changed developer notes: a Redis-backed bus is not needed because each
+       instance's reconciler only ever notifies its own clients).
     """
 
     def __init__(self) -> None:

@@ -63,6 +63,8 @@ def _is_anonymized_email(email: str) -> bool:
 
 def _deleted_email(pseudonym: str) -> str:
     return f"{_DELETED_EMAIL_PREFIX}{pseudonym}"
+
+
 # Matches UserRow.created_by (String(320)); only imported records carry an
 # arbitrary-length created_by from an external source, so only
 # validate_imported_user/upsert_imported_user need this constant.
@@ -1032,9 +1034,7 @@ def count_person_references(session: Session, email: str) -> int:
     total = 0
     total += (
         session.scalar(
-            select(func.count())
-            .select_from(UserRow)
-            .where(UserRow.created_by == normalized)
+            select(func.count()).select_from(UserRow).where(UserRow.created_by == normalized)
         )
         or 0
     )
@@ -1050,9 +1050,7 @@ def count_person_references(session: Session, email: str) -> int:
         session.scalar(
             select(func.count())
             .select_from(ApiKeyRow)
-            .where(
-                (ApiKeyRow.created_by == normalized) | (ApiKeyRow.revoked_by == normalized)
-            )
+            .where((ApiKeyRow.created_by == normalized) | (ApiKeyRow.revoked_by == normalized))
         )
         or 0
     )
@@ -1063,9 +1061,7 @@ def person_authored_records(session: Session, email: str) -> dict[str, int]:
     normalized = normalize_email(email)
     users_created = (
         session.scalar(
-            select(func.count())
-            .select_from(UserRow)
-            .where(UserRow.created_by == normalized)
+            select(func.count()).select_from(UserRow).where(UserRow.created_by == normalized)
         )
         or 0
     )
@@ -1079,9 +1075,7 @@ def person_authored_records(session: Session, email: str) -> dict[str, int]:
     )
     api_keys_revoked = (
         session.scalar(
-            select(func.count())
-            .select_from(ApiKeyRow)
-            .where(ApiKeyRow.revoked_by == normalized)
+            select(func.count()).select_from(ApiKeyRow).where(ApiKeyRow.revoked_by == normalized)
         )
         or 0
     )
@@ -1120,9 +1114,7 @@ def delete_user(
     api_keys_revoked = 0
     references_rewritten = 0
 
-    key_rows = list(
-        session.scalars(select(ApiKeyRow).where(ApiKeyRow.subject == normalized)).all()
-    )
+    key_rows = list(session.scalars(select(ApiKeyRow).where(ApiKeyRow.subject == normalized)).all())
     if mode == "delete":
         for row in key_rows:
             session.delete(row)
@@ -1141,9 +1133,7 @@ def delete_user(
         (ServiceAccountRow, ServiceAccountRow.created_by),
     ):
         result = session.execute(
-            update(table)
-            .where(column == normalized)
-            .values({column.key: marker})
+            update(table).where(column == normalized).values({column.key: marker})
         )
         references_rewritten += result.rowcount or 0
 

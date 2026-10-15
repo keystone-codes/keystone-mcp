@@ -70,6 +70,7 @@ def pytest_configure(config) -> None:
         )
         settings.load_profile("ci")
 
+
 BASE_URL = "http://127.0.0.1:8080"
 REDIRECT_URI = "http://127.0.0.1:9999/callback"
 DEV_TOKEN = "sec-attacker-dev-token"
@@ -110,7 +111,9 @@ class AttackerStand:
             follow_redirects=False,
         )
 
-    def mcp_transport(self, bearer: str, *, extra_headers: dict[str, str] | None = None) -> StreamableHttpTransport:
+    def mcp_transport(
+        self, bearer: str, *, extra_headers: dict[str, str] | None = None
+    ) -> StreamableHttpTransport:
         headers = dict(extra_headers or {})
 
         def factory(headers=None, timeout=None, auth=None, **_kw):

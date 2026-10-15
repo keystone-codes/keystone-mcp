@@ -50,7 +50,9 @@ async def test_wrong_api_key_on_login_form_rejected(attacker_stand) -> None:
     assert status in (401, 403)
 
 
-async def test_stolen_refresh_after_grace_window_revokes_branch(attacker_stand, monkeypatch) -> None:
+async def test_stolen_refresh_after_grace_window_revokes_branch(
+    attacker_stand, monkeypatch
+) -> None:
     monkeypatch.setenv("KEYSTONE_MCP_OAUTH_REFRESH_GRACE_SECONDS", "1")
     verifier, challenge = pkce_pair()
     async with attacker_stand.raw_client() as client:
@@ -117,4 +119,3 @@ async def test_stolen_refresh_after_grace_window_revokes_branch(attacker_stand, 
         retry_thief = await refresh_once(refresh)
         assert retry_thief.status_code != 200
         assert retry_thief.json().get("error") == "invalid_grant"
-

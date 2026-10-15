@@ -205,8 +205,7 @@ class TracingMiddleware:
             return
 
         headers = {
-            k.decode("latin-1").lower(): v.decode("latin-1")
-            for k, v in scope.get("headers") or ()
+            k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope.get("headers") or ()
         }
         ctx = extract(headers)
         tr = tracer()

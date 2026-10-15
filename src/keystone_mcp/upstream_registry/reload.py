@@ -100,8 +100,6 @@ def diff_upstream_registry(
                 applied = applied_secret_fingerprints.get(namespace)
                 if applied is None or applied != current_fp:
                     changed.append(namespace)
-            elif not upstream_entry_equivalent(
-                old_cfg, new_cfg, compare_secrets=True
-            ):
+            elif not upstream_entry_equivalent(old_cfg, new_cfg, compare_secrets=True):
                 changed.append(namespace)
     return RegistryDiff(added=added, removed=removed, changed=tuple(changed))

@@ -81,7 +81,7 @@ async def test_full_user_lifecycle_and_revision_bumps(users_engine) -> None:  # 
     # An anchor administrator distinct from the lifecycle user: granting and
     # then revoking "administrator" on the lifecycle user below would
     # otherwise make it the directory's sole administrator and trip the
- # last-administrator guard on revoke/set_roles (last-administrator invariant).
+    # last-administrator guard on revoke/set_roles (last-administrator invariant).
     await store.create_user(
         email="anchor-admin@example.com",
         full_name="Anchor Admin",

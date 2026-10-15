@@ -29,9 +29,12 @@ async def test_admin_tool_names_are_not_reachable(attacker_stand, tool_name: str
     token = await obtain_bearer_token(attacker_stand, email=MEMBER_EMAIL)
     transport = attacker_stand.mcp_transport(token)
     async with Client(transport) as mcp:
-        result = await mcp.call_tool(tool_name, {"email": "x@y.z", "role": "member"}, raise_on_error=False)
+        result = await mcp.call_tool(
+            tool_name, {"email": "x@y.z", "role": "member"}, raise_on_error=False
+        )
     assert result.is_error or (
-        result.structured_content and result.structured_content.get("code") in ("forbidden", "not_found")
+        result.structured_content
+        and result.structured_content.get("code") in ("forbidden", "not_found")
     )
 
 

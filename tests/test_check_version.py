@@ -54,7 +54,9 @@ def _write_project(
         f"# Changelog\n\n{changelog_heading}",
         encoding="utf-8",
     )
-    _write_chart(tmp_path, version=chart_version if chart_version is not None else pyproject_version)
+    _write_chart(
+        tmp_path, version=chart_version if chart_version is not None else pyproject_version
+    )
     return tmp_path
 
 

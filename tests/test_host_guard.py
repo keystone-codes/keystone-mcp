@@ -267,7 +267,9 @@ def test_origin_null_is_counted_per_route() -> None:
     app = _guarded_app(("example.com:8080",), mcp_path=mcp_path)
     headers = {"Host": "example.com:8080", "Origin": "null"}
     with TestClient(app, base_url="http://example.com:8080") as client:
-        before = {route: _origin_null_count(route) for route in ("register", "token", "login", "mcp")}
+        before = {
+            route: _origin_null_count(route) for route in ("register", "token", "login", "mcp")
+        }
         assert client.post("/register", headers=headers).status_code == 200
         assert client.post("/token", headers=headers).status_code == 200
         assert client.post("/login", headers=headers).status_code == 200

@@ -16,7 +16,9 @@ _POLICY = UpstreamSecurityPolicy(allow_insecure_http=True, egress_allow_private=
 
 json_value = st.recursive(
     st.none() | st.booleans() | st.integers() | st.text(max_size=20),
-    lambda children: st.lists(children, max_size=5) | st.dictionaries(st.text(max_size=8), children, max_size=5),
+    lambda children: (
+        st.lists(children, max_size=5) | st.dictionaries(st.text(max_size=8), children, max_size=5)
+    ),
     max_leaves=30,
 )
 

@@ -58,9 +58,7 @@ def test_user_admin_skill_documents_tools_and_errors() -> None:
     assert not missing_tools, f"keystone-user-admin SKILL.md omits tools: {missing_tools}"
 
     expected_codes = (
-        USERS_ADMIN_ERROR_CODES
-        | SERVICE_ACCOUNTS_ADMIN_ERROR_CODES
-        | API_KEYS_ADMIN_ERROR_CODES
+        USERS_ADMIN_ERROR_CODES | SERVICE_ACCOUNTS_ADMIN_ERROR_CODES | API_KEYS_ADMIN_ERROR_CODES
     )
     missing_codes = [code for code in sorted(expected_codes) if code not in text]
     assert not missing_codes, f"keystone-user-admin SKILL.md omits error codes: {missing_codes}"

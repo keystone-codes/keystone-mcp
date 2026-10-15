@@ -57,7 +57,9 @@ def _load_hello_module(monkeypatch):
     return module
 
 
-async def test_hello_greet_continues_caller_trace(monkeypatch, tracing_exporter: InMemorySpanExporter):
+async def test_hello_greet_continues_caller_trace(
+    monkeypatch, tracing_exporter: InMemorySpanExporter
+):
     hello = _load_hello_module(monkeypatch)
 
     async with LifespanManager(hello.app):

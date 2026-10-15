@@ -221,5 +221,3 @@ async def test_export_redis_down_sessions_null(tmp_path: Path) -> None:
     adapter._oauth_store.subject_tokens.side_effect = OSError("down")
     out = await _export(harness, "u@example.com")
     assert out["export"]["sessions"] == {"open": None, "reason": "token store unavailable"}
-
-

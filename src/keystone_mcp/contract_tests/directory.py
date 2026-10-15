@@ -163,9 +163,7 @@ class UserDirectoryContract:
                     test_cls, "identity_binding", IdentityBindingDirectoryContract
                 )
             if "delete" in directory.capabilities:
-                _require_capability_contract_class(
-                    test_cls, "delete", DeletionDirectoryContract
-                )
+                _require_capability_contract_class(test_cls, "delete", DeletionDirectoryContract)
 
         _run(keystone_directory_factory, body)
 

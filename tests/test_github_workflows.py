@@ -386,7 +386,9 @@ def test_ci_helm_kind_job_runs_demo_smoke_on_kind():
     assert _COMMIT_SHA_RE.match(uses[0].split("@", 1)[1])
     assert job.get("env", {}).get("NODE_IMAGE") == "kindest/node:v1.30.0"
     with_block = next(
-        step for step in doc["jobs"]["helm-kind"]["steps"] if str(step.get("uses", "")).startswith("helm/kind-action@")
+        step
+        for step in doc["jobs"]["helm-kind"]["steps"]
+        if str(step.get("uses", "")).startswith("helm/kind-action@")
     ).get("with", {})
     assert with_block.get("node_image") == "${{ env.NODE_IMAGE }}"
     run_text = _job_step_run_text(doc, "helm-kind")

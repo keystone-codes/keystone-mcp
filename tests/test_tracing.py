@@ -208,7 +208,9 @@ async def test_one_tool_call_builds_one_trace(tracing_exporter, tmp_path):
     assert "keystone.directory.resolve" in names
     assert "keystone.upstream.call" in names
     assert client_trace in _trace_ids(tracing_exporter)
-    upstream = next(s for s in tracing_exporter.get_finished_spans() if s.name == "keystone.upstream.call")
+    upstream = next(
+        s for s in tracing_exporter.get_finished_spans() if s.name == "keystone.upstream.call"
+    )
     assert upstream.parent is not None
 
 
@@ -232,7 +234,9 @@ async def test_upstream_receives_traceparent_header_and_meta(tracing_exporter, t
 
 
 @pytest.mark.asyncio
-async def test_traceparent_cannot_override_identity_headers(tracing_exporter, tmp_path, monkeypatch):
+async def test_traceparent_cannot_override_identity_headers(
+    tracing_exporter, tmp_path, monkeypatch
+):
     monkeypatch.setenv("KEYSTONE_MCP_UPSTREAM_HELLO_BEARER", "s3cr3t-value")
     policy_path = tmp_path / "rbac-policy.yaml"
     policy_path.write_text(
@@ -434,6 +438,7 @@ def test_log_lines_carry_trace_id(tracing_exporter):
 def test_audit_event_carries_trace_id(tracing_exporter, caplog):
     from keystone_mcp.observability.audit import AuthzAuditRecorder, policy_fields
     from keystone_mcp.observability.tracing import traced
+
     caplog.set_level(logging.INFO)
     recorder = AuthzAuditRecorder(
         enabled=True,
@@ -467,7 +472,9 @@ async def test_disabled_tracing_creates_no_spans_and_no_header(tracing_exporter,
         )
         async with Client(transport) as client:
             await client.call_tool("hello_whoami", {})
-    keystone_spans = [s for s in tracing_exporter.get_finished_spans() if s.name.startswith("keystone.")]
+    keystone_spans = [
+        s for s in tracing_exporter.get_finished_spans() if s.name.startswith("keystone.")
+    ]
     assert keystone_spans == []
     headers = observed.get("headers") or {}
     assert "traceparent" not in headers

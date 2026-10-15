@@ -17,7 +17,9 @@ from security.hostile_upstream import poll_healthz_while
 
 pytestmark = pytest.mark.security
 
-GIANT_STDERR = str(Path(__file__).resolve().parents[1] / "support" / "giant_stderr_line_upstream.py")
+GIANT_STDERR = str(
+    Path(__file__).resolve().parents[1] / "support" / "giant_stderr_line_upstream.py"
+)
 
 
 @pytest.mark.asyncio

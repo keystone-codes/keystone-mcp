@@ -151,7 +151,7 @@ async def test_google_primary_shows_consent_instead_of_redirect():
             assert "HttpOnly" in set_cookie
             assert "samesite=lax" in set_cookie.lower()
             # Plain http (this suite's BASE_URL): the unprefixed name, scoped
- # to /login as before (second review).
+            # to /login as before (second review).
             assert not set_cookie.lower().startswith("__host-")
             assert "path=/login" in set_cookie.lower()
 
@@ -233,7 +233,7 @@ async def test_cookie_secure_flag_follows_base_url():
             page = await client.get("/login", params={"txn": txn})
             set_cookie = page.headers.get("set-cookie", "")
             assert "Secure" in set_cookie
- # second review: the `__Host-` prefix over https,
+            # second review: the `__Host-` prefix over https,
             # which requires `Path=/` — a browser refuses to store the
             # cookie at all otherwise, so the stronger name and the broader
             # path must travel together.

@@ -130,7 +130,7 @@ async def test_one_bad_uri_rejects_the_whole_registration() -> None:
 
 async def test_custom_scheme_host_is_matched() -> None:
     # A custom (non-http(s)) scheme is matched only against an explicit
- # `scheme://host` allowlist entry (second review): a bare host entry no
+    # `scheme://host` allowlist entry (second review): a bare host entry no
     # longer implies "any scheme on this host", since that was exactly the
     # gap that let `evil-app://claude.ai/cb` or `http://claude.ai/...` through
     # under an allowlist meant for `https://claude.ai`.
@@ -279,7 +279,7 @@ def test_allowlist_parsing(monkeypatch) -> None:
     with pytest.raises(ConfigError, match="OAUTH_ALLOWED_REDIRECT_HOSTS"):
         Settings(base_url=BASE_URL)
 
- # A custom scheme paired with a host parses into its own
+    # A custom scheme paired with a host parses into its own
     # field, separate from the bare hosts.
     monkeypatch.setenv(
         "KEYSTONE_MCP_OAUTH_ALLOWED_REDIRECT_HOSTS",

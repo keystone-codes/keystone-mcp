@@ -38,9 +38,7 @@ def test_parse_api_key_login_form_from_consent_snapshot() -> None:
 
 def test_parse_oauth_callback_location_extracts_code_and_state() -> None:
     redirect_uri = "http://127.0.0.1:18765/callback"
-    location = (
-        "http://127.0.0.1:18765/callback?code=abc123&state=xyz"
-    )
+    location = "http://127.0.0.1:18765/callback?code=abc123&state=xyz"
     code, state = helpers.parse_oauth_callback_location(
         location,
         redirect_uri=redirect_uri,

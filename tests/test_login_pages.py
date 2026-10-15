@@ -313,7 +313,9 @@ async def test_lang_cookie_path_is_login_over_http() -> None:
             txn = await authorize_to_login(client, client_id, challenge, settings.resource_url)
             page = await client.get("/login", params={"txn": txn, "lang": "he"})
             assert page.status_code == 200
-            lang_cookie = next(c for c in page.headers.get_list("set-cookie") if c.startswith("km_lang="))
+            lang_cookie = next(
+                c for c in page.headers.get_list("set-cookie") if c.startswith("km_lang=")
+            )
             assert "Path=/login" in lang_cookie
 
 

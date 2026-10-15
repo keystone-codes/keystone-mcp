@@ -120,7 +120,7 @@ def test_auth_code_envelope_from_3x_is_readable():
     assert parsed.code.code == "km_code_spike0000000000000000000000"
     assert parsed.code.subject == "user@example.com"
     assert parsed.auth_method == "google"
- # The 3x envelope predates the "interactive" field: rebuilt from
+    # The 3x envelope predates the "interactive" field: rebuilt from
     # the sign-in method's own name, same as has_interactive_human_identity's
     # fallback for a pre-0.5.0 token.
     assert parsed.interactive is True

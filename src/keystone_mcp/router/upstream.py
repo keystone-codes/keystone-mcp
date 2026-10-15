@@ -863,11 +863,11 @@ class UpstreamRegistry:
     refresh_enabled: bool = True
     observability: "RbacObservability | None" = None
     # ``iss`` claim for every identity assertion signed by any upstream
- # registered here -- set by ``build_server`` from
+    # registered here -- set by ``build_server`` from
     # ``settings.base_url`` (already stripped of a trailing slash).
     identity_issuer: str = ""
     rbac_mode: str = "off"
- # Deployment-wide ES256 signing key; never logged or repr'd.
+    # Deployment-wide ES256 signing key; never logged or repr'd.
     _identity_signing_key_pem: str = field(default="", repr=False)
     _identity_signing_key_previous_pem: str = field(default="", repr=False)
     _identity_es256_private_key: Any = field(default=None, repr=False)
@@ -956,23 +956,23 @@ class UpstreamRegistry:
     ) -> UpstreamConfig:
         """Register an upstream MCP API and mount its namespace sub-server.
 
-        ``bearer_env`` names an environment variable holding a bearer token
-        Keystone sends to this upstream (``Authorization: Bearer <value>``) on
-        discovery and every proxied call. The token itself is read here and
-        kept only in ``_auth_headers``; neither ``UpstreamConfig`` nor any
-        other field on this registry ever holds it, so logging or repr'ing
-        the registry cannot leak it. A missing or empty variable refuses
-        startup with a ``ValueError`` naming the variable, never its value.
+               ``bearer_env`` names an environment variable holding a bearer token
+               Keystone sends to this upstream (``Authorization: Bearer <value>``) on
+               discovery and every proxied call. The token itself is read here and
+               kept only in ``_auth_headers``; neither ``UpstreamConfig`` nor any
+               other field on this registry ever holds it, so logging or repr'ing
+               the registry cannot leak it. A missing or empty variable refuses
+               startup with a ``ValueError`` naming the variable, never its value.
 
-        ``identity_secret_env`` names an environment variable holding this
-        upstream's identity-assertion secret (``auth.identity_secret_env``,
- identity secret): when set, every proxied call carries a signed
-        ``X-Keystone-Identity`` JWT (``aud`` = *name*) alongside
-        ``X-Author-Email``. Re-validated and re-read here (never trusted from
-        an earlier parse), and kept only inside the
-        :class:`~keystone_mcp.identity_assertion.IdentityAssertionSigner`
-        handed to this namespace's adapter — never on this registry or on
-        ``UpstreamConfig``.
+               ``identity_secret_env`` names an environment variable holding this
+               upstream's identity-assertion secret (``auth.identity_secret_env``,
+        identity secret): when set, every proxied call carries a signed
+               ``X-Keystone-Identity`` JWT (``aud`` = *name*) alongside
+               ``X-Author-Email``. Re-validated and re-read here (never trusted from
+               an earlier parse), and kept only inside the
+               :class:`~keystone_mcp.identity_assertion.IdentityAssertionSigner`
+               handed to this namespace's adapter — never on this registry or on
+               ``UpstreamConfig``.
         """
         if namespace in self._sub_servers:
             raise ValueError(f"upstream namespace already registered: {namespace}")

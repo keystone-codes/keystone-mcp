@@ -74,9 +74,7 @@ async def test_anonymize_flow(tmp_path: Path) -> None:
         assert row.full_name == ""
         assert bool(row.is_blocked) is True
         assert (
-            conn.execute(
-                text("SELECT 1 FROM keystone_user WHERE email = :e"), {"e": email}
-            ).first()
+            conn.execute(text("SELECT 1 FROM keystone_user WHERE email = :e"), {"e": email}).first()
             is None
         )
     listed = await harness.directory.list_users(is_blocked=None)
@@ -180,8 +178,7 @@ async def test_audit_pseudonym_unchanged(tmp_path: Path, caplog: pytest.LogCaptu
     events = [
         json.loads(record.message.removeprefix("rbac audit "))
         for record in caplog.records
-        if record.message.startswith("rbac audit ")
-        and "rbac_users_mutation" in record.message
+        if record.message.startswith("rbac audit ") and "rbac_users_mutation" in record.message
     ]
     targets = [e["target"] for e in events if e.get("target")]
     pseudonym = hash_subject(email, salt=SALT)
@@ -221,9 +218,7 @@ async def test_code_is_single_use_and_bound(tmp_path: Path) -> None:
     repeat = await _delete(harness, victim, confirmation=code)
     assert repeat["code"] == "validation_error"
     first_b = await _delete(harness, "other@corp.example")
-    wrong_target = await _delete(
-        harness, "other@corp.example", confirmation=first["confirmation"]
-    )
+    wrong_target = await _delete(harness, "other@corp.example", confirmation=first["confirmation"])
     assert wrong_target["code"] == "validation_error"
     assert first_b["confirmation"] != code
 

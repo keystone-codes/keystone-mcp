@@ -463,13 +463,13 @@ async def test_transparent_mode_reports_upstream_error_flag():
 async def test_proxy_call_over_legacy_handshake():
     """``Client(..., mode="legacy")`` reaches the same upstream, same answer.
 
-    ``McpProxyAdapter`` builds its default client with ``mode="auto"``
- (fastmcp 4 migration: no epoch-caching optimisation here, that is left to a later optimisation pass) --
-    the upstream negotiates the newest protocol epoch it can. This pins the
-    other end of that negotiation range: a client that forces the pre-SDK-v2
-    handshake must still reach the same (SDK v2) upstream and get the exact
-    same answer, confirming the proxy does not depend on auto-negotiation to
-    talk to an older peer.
+       ``McpProxyAdapter`` builds its default client with ``mode="auto"``
+    (fastmcp 4 migration: no epoch-caching optimisation here, that is left to a later optimisation pass) --
+       the upstream negotiates the newest protocol epoch it can. This pins the
+       other end of that negotiation range: a client that forces the pre-SDK-v2
+       handshake must still reach the same (SDK v2) upstream and get the exact
+       same answer, confirming the proxy does not depend on auto-negotiation to
+       talk to an older peer.
     """
     app = build_lowlevel_upstream_app(tools=["greet"])
     async with LifespanManager(app):
@@ -592,11 +592,7 @@ def test_proxy_status_envelope_env_flag(monkeypatch):
 
 def test_mcp_http_client_factory_is_type_only_import() -> None:
     path = (
-        Path(__file__).resolve().parents[1]
-        / "src"
-        / "keystone_mcp"
-        / "adapters"
-        / "mcp_proxy.py"
+        Path(__file__).resolve().parents[1] / "src" / "keystone_mcp" / "adapters" / "mcp_proxy.py"
     )
     tree = ast.parse(path.read_text(encoding="utf-8"))
     type_checking_ranges: list[tuple[int, int]] = []

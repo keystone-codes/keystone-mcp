@@ -182,7 +182,9 @@ async def list_tool_names(base_url: str, access_token: str) -> list[str]:
     return sorted(t.name for t in tools)
 
 
-async def call_tool(base_url: str, access_token: str, name: str, arguments: dict | None = None) -> Any:
+async def call_tool(
+    base_url: str, access_token: str, name: str, arguments: dict | None = None
+) -> Any:
     transport = StreamableHttpTransport(
         url=f"{base_url.rstrip('/')}/",
         headers={"Authorization": f"Bearer {access_token}"},
@@ -200,7 +202,9 @@ def tool_diff(
     added = set(after) - set(before)
     exp_removed = {item["name"] for item in expected.get("removed", [])}
     exp_added = {item["name"] for item in expected.get("added", [])}
-    return (removed - exp_removed) | (exp_removed - removed), (added - exp_added) | (exp_added - added)
+    return (removed - exp_removed) | (exp_removed - removed), (added - exp_added) | (
+        exp_added - added
+    )
 
 
 def token_digest(token: str) -> str:
