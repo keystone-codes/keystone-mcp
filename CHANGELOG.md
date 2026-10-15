@@ -6,7 +6,7 @@ this project uses [Semantic Versioning](https://semver.org/).
 
 Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatibility.md).
 
-## [0.6.0] - 2026-10-14
+## [0.6.0] - 2026-10-15
 
 0.6.0 fixes security issues in 0.5.x. Upgrade; read ### Migration and [upgrading.md](docs/upgrading.md#05x-060) first.
 
