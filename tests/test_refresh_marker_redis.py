@@ -184,11 +184,11 @@ async def test_session_from_legacy_markers_refresh(
     assert refreshed["status"] == 200, refreshed
 
     new_refresh = refreshed["body"]["refresh_token"]
-    new_raw = await pending_store.get("refresh_auth", new_refresh)
+    new_raw = await oauth_store.get_refresh_meta(new_refresh)
     assert new_raw is not None
     new_data = json.loads(new_raw)
     assert new_data["auth_method"] == auth_method
-    assert "auth_time" not in new_data
+    assert isinstance(new_data["auth_time"], int)
     assert "key_id" not in new_data
 
 
@@ -201,10 +201,18 @@ async def test_missing_marker_is_invalid_grant(redis_harness):
     refresh_token = res["body"]["refresh_token"]
     client_id = res["client_id"]
 
+    from keystone_mcp.auth.oauth_store import token_digest
+
     prefix = settings.login_pending_key_prefix
     if not prefix.endswith(":"):
         prefix = f"{prefix}:"
-    await oauth_store.redis.delete(f"{prefix}refresh_auth:{refresh_token}")
+    meta_prefix = f"{prefix}refresh_auth:"
+    await oauth_store.redis.delete(
+        f"{meta_prefix}{refresh_token}",
+        f"{meta_prefix}{token_digest(refresh_token)}",
+    )
+    await pending_store.consume("refresh_auth", refresh_token)
+    await pending_store.consume("refresh_auth", token_digest(refresh_token))
 
     refreshed = await refresh_access_token(client, client_id, refresh_token, settings.resource_url)
     assert refreshed["status"] in (400, 401)
