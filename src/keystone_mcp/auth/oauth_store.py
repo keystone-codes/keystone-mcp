@@ -169,6 +169,8 @@ class OAuthStore(Protocol):
 
     async def get_refresh_grace(self, token: str) -> str | None: ...
 
+    async def get_refresh_meta(self, refresh_token: str) -> str | None: ...
+
     async def subject_tokens(
         self, subject: str
     ) -> tuple[list[AccessToken], list[KeystoneRefreshToken]]: ...
@@ -583,6 +585,9 @@ class InMemoryOAuthStore:
 
     async def get_refresh_grace(self, token: str) -> str | None:
         return self._expiring_get(self._rt_grace, token_digest(token))
+
+    async def get_refresh_meta(self, refresh_token: str) -> str | None:
+        return None
 
     async def subject_tokens(
         self, subject: str
@@ -1442,6 +1447,16 @@ class RedisOAuthStore:
 
     async def get_refresh_grace(self, token: str) -> str | None:
         return await self._redis.get(self._rt_grace_key(token_digest(token)))
+
+    async def get_refresh_meta(self, refresh_token: str) -> str | None:
+        if not self.writes_refresh_meta:
+            return None
+        with _trace_redis_operation("get_refresh_meta"):
+            digest = token_digest(refresh_token)
+            raw = await self._redis.get(self._refresh_meta_redis_key(digest))
+            if raw is not None:
+                return raw
+            return await self._redis.get(self._refresh_meta_redis_key(refresh_token))
 
     async def subject_tokens(
         self, subject: str

@@ -75,6 +75,7 @@ USERS_ADMIN_ERROR_CODES: frozenset[str] = frozenset(
         "bad_request",
         "conflict",
         "forbidden",
+        "identity_binding_conflict",
         "last_administrator",
         "self_admin_mutation_forbidden",
         "service_error",

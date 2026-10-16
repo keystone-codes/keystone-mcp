@@ -2768,6 +2768,10 @@ class KeystoneOAuthProvider(OAuthProvider):
         Kept until 2.0: sessions upgraded from 0.4.x still carry refresh markers
         without ``interactive``, and they must survive an upgrade.
         """
+        if self._store.writes_refresh_meta:
+            raw = await self._store.get_refresh_meta(refresh_token)
+            if raw is not None:
+                return parse_refresh_meta(raw)
         digest = token_digest(refresh_token)
         raw = await self._pending_store.get(_NS_REFRESH_AUTH, digest)
         if raw is None:

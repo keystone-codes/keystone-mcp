@@ -225,23 +225,23 @@ refused to service accounts. The export document carries
 step with a valid code returns `state: "done"`. Arguments and error codes match
 [keystone-user-admin skill](../skills/keystone-user-admin/SKILL.md). The
 `users_*` tools may return: `actor_email_required`, `bad_request`, `conflict`,
-`forbidden`, `last_administrator`, `self_admin_mutation_forbidden`,
+`forbidden`, `identity_binding_conflict`, `last_administrator`, `self_admin_mutation_forbidden`,
 `service_error`, `service_timeout`, `service_unavailable`, `service_unconfigured`,
 `user_not_found`, `validation_error`.
 
 **Service accounts** (built-in directory with `service_accounts` capability):
 `service_accounts_list`, `service_accounts_add`, `service_accounts_update`.
 Error codes: `actor_email_required`, `bad_request`, `conflict`, `forbidden`,
-`last_administrator`, `self_admin_mutation_forbidden`, `service_error`,
-`service_timeout`, `service_unavailable`, `user_not_found`, `validation_error`.
-Mutating tools answer `forbidden` to service accounts.
+`identity_binding_conflict`, `last_administrator`, `self_admin_mutation_forbidden`,
+`service_error`, `service_timeout`, `service_unavailable`, `user_not_found`,
+`validation_error`. Mutating tools answer `forbidden` to service accounts.
 
 **API keys** (built-in directory with `api_keys` capability):
 `api_keys_list`, `api_keys_revoke` always; `api_keys_issue` is **not**
 published when `KEYSTONE_MCP_DEPLOYMENT_PROFILE=production` (issue keys with
 `keystone-mcp keys` on the server instead). Error codes: `actor_email_required`,
-`bad_request`, `conflict`, `forbidden`, `last_administrator`,
-`self_admin_mutation_forbidden`, `service_error`, `service_timeout`,
+`bad_request`, `conflict`, `forbidden`, `identity_binding_conflict`,
+`last_administrator`, `self_admin_mutation_forbidden`, `service_error`, `service_timeout`,
 `service_unavailable`, `user_not_found`, `validation_error`. Mutating tools
 answer `forbidden` to service accounts.
 

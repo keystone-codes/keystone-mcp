@@ -161,6 +161,7 @@ Report the resulting roles and blocked status back to the user — do not just s
 | `actor_email_required` | The server could not tell who you are | Sign in again as a human administrator |
 | `user_not_found` | No such email or service account | Check spelling; retry `users_list` or `service_accounts_list` with `{"is_blocked": true}` |
 | `conflict` | Person or service account already exists, including when two writes race on the same email or role | Read current state; usually nothing to do — not a directory outage |
+| `identity_binding_conflict` | The same identity-provider account is already bound to another person | Unbind or use the correct person record; do not retry blindly |
 | `validation_error` | Missing or malformed argument, unknown role | Fix the argument; verify the role exists in the deployment's RBAC policy |
 | `bad_request` | The external users directory rejected the request | Report it to whoever operates the directory; do not retry blindly |
 | `service_error` | The external users directory returned an unexpected error | Report it to whoever operates the directory; do not retry blindly |
