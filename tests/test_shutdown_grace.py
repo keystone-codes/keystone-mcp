@@ -155,8 +155,6 @@ async def test_in_flight_call_survives_sigterm(redis_url: str, tmp_path: Path) -
             token_res = await obtain_access_token(http, resource, api_token="dev")
             access_token = token_res["body"]["access_token"]
 
-        import httpx2
-
         def _remote_mcp_client_factory(headers=None, timeout=None, auth=None, **_kw):
             return httpx2.AsyncClient(
                 base_url=base_url,
