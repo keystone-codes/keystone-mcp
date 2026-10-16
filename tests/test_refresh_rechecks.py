@@ -14,6 +14,7 @@ import pytest
 from asgi_lifespan import LifespanManager
 from httpx import ASGITransport, AsyncClient
 
+from keystone_mcp.auth import keystone_oauth_provider
 from keystone_mcp.auth.keystone_oauth_provider import RefreshMeta, encode_refresh_meta
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import Settings, startup_warnings
@@ -473,6 +474,7 @@ async def test_legacy_session_counts_from_upgrade(tmp_path, monkeypatch):
 
 
 async def test_refresh_without_resolver_skips_directory_check(tmp_path, caplog):
+    keystone_oauth_provider._REFRESH_NO_RESOLVER_WARNED = False
     store, _revision = await make_users_store(tmp_path)
     factory = make_session_factory(store._engine)  # noqa: SLF001
     with session_scope(factory) as session:

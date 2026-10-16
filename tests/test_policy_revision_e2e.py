@@ -24,6 +24,7 @@ from keystone_mcp.router.rbac_middleware import RbacMiddleware
 from keystone_mcp.router.registry import RouterRegistry
 from keystone_mcp.server import _policy_store_holder, bootstrap_rbac_policy, build_server
 from keystone_mcp.user_directory import build_in_memory_user_directory_resolver
+from keystone_mcp.users.factory import build_users_store
 from support.test_env import policy_revision_key, require_redis_url
 
 POLICY = """\
@@ -70,10 +71,16 @@ async def test_policy_change_reaches_second_replica_without_tick(tmp_path: Path)
         refresh_interval_seconds=0,
         policy_redis_revision_key=rev_key,
         rbac_audit_subject_salt="e2e",
+        users_backend="local",
+        users_db_url=f"sqlite:///{tmp_path}/users-b.db",
     )
+
+    users_store = build_users_store(settings_a)
+    await users_store.migrate()
 
     mcp_a, registry_a, _oauth_a, _up_a, pm_a, obs_a, _rec_a = build_server(
         settings=settings_a,
+        users_store=users_store,
         oauth_store=InMemoryOAuthStore(),
         register_builtin_catalog=False,
     )

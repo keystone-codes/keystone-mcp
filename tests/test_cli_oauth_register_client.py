@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 from urllib.parse import parse_qs, urlparse, urlunparse
 
@@ -21,7 +22,7 @@ from keystone_mcp.cli import main
 from keystone_mcp.config import Settings
 from keystone_mcp.server import build_server
 from support.login import dev_token_login
-from support.oauth_harness import BASE_URL, VALID_TOKEN, authorize_to_login, make_pkce
+from support.oauth_harness import BASE_URL, VALID_TOKEN, make_pkce
 from support.test_env import redis_key_prefix, require_redis_url
 
 _CLAUDE_REDIRECT = "https://claude.ai/api/mcp/auth_callback"
@@ -222,7 +223,7 @@ async def test_registered_client_can_sign_in(capsys, monkeypatch: pytest.MonkeyP
     monkeypatch.setenv("KEYSTONE_MCP_REDIS_URL", redis_url)
     monkeypatch.setenv("KEYSTONE_MCP_REDIS_KEY_PREFIX", prefix)
 
-    assert main(_register_argv()) == 0
+    assert await asyncio.to_thread(main, _register_argv()) == 0
     capsys.readouterr()
 
     async with _dcr_disabled_server(redis_url=redis_url, prefix=prefix) as (
@@ -231,7 +232,20 @@ async def test_registered_client_can_sign_in(capsys, monkeypatch: pytest.MonkeyP
         _store,
     ):
         verifier, challenge = make_pkce()
-        txn = await authorize_to_login(client, _CLIENT_ID, challenge, settings.resource_url)
+        auth = await client.get(
+            "/authorize",
+            params={
+                "response_type": "code",
+                "client_id": _CLIENT_ID,
+                "redirect_uri": _CLAUDE_REDIRECT,
+                "code_challenge": challenge,
+                "code_challenge_method": "S256",
+                "state": "test-state",
+                "resource": settings.resource_url,
+            },
+        )
+        assert auth.status_code in (302, 307), auth.text
+        txn = parse_qs(urlparse(auth.headers["location"]).query)["txn"][0]
         login = await client.post(
             "/login",
             data={"txn": txn, "api_token": VALID_TOKEN, "email": "user@example.com"},

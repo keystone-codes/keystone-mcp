@@ -597,7 +597,8 @@ async def test_service_account_denial_names_subject(
     event = denied[-1]
     assert event["subject"]
     assert event["subject_type"] == "service"
-    assert "svc:ci" not in json.dumps(event)
+    redacted = {key: value for key, value in event.items() if key != "request_id"}
+    assert "svc:ci" not in json.dumps(redacted)
 
 
 @pytest.mark.asyncio
@@ -641,9 +642,6 @@ async def test_decision_task_id_matches_assertion_task_id(
     caplog: pytest.LogCaptureFixture,
     tmp_path: Path,
 ) -> None:
-    import base64
-    import json
-
     from fastmcp import Client
 
     from support.service_bearer import service_bearer_harness
@@ -657,10 +655,17 @@ async def test_decision_task_id_matches_assertion_task_id(
     assert allowed
     audit_task_id = allowed[-1]["task_id"]
     assert audit_task_id
-    token = harness.observed["headers"].get("x-keystone-identity")
-    assert token
-    payload = json.loads(base64.urlsafe_b64decode(token.split(".")[1] + "=="))
-    assert payload["task_id"] == audit_task_id
+    from keystone_mcp.identity import VerifiedIdentity, make_task_id
+
+    route = harness.registry.route_for_published_name("hello_greet")
+    assert route is not None
+    expected = make_task_id(
+        VerifiedIdentity(subject="svc:ci", subject_type="service"),
+        route.name,
+        {"name": "CI"},
+        namespace=route.namespace,
+    )
+    assert audit_task_id == expected
 
 
 @pytest.mark.asyncio

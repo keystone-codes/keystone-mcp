@@ -243,7 +243,7 @@ async def test_index_prunes_dead_members_over_256():
         )
         assert await store.redis.scard(idx) <= 256
         members = await store.redis.smembers(idx)
-        assert f"at:{at_live}" in members
+        assert f"at:{token_digest(at_live)}" in members
     finally:
         keys = [key async for key in store.redis.scan_iter(match=f"{prefix}*")]
         if keys:

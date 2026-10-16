@@ -90,7 +90,7 @@ def test_validate_login_providers_rejects_duplicates_bad_names_and_two_forms():
         async def aclose(self) -> None:
             return None
 
-    with pytest.raises(ValueError, match="RedirectLoginProvider"):
+    with pytest.raises(ValueError, match="missing: begin, complete"):
         validate_login_providers([_BrokenRedirect()])
 
 
@@ -165,7 +165,7 @@ async def test_google_complete_maps_errors():
             callback_url="http://localhost/cb",
             attempt={"nonce": "n", "verifier": "v"},
         )
-    assert exc_info2.value.reason == "identity_invalid"
+    assert exc_info2.value.reason == "provider_unavailable"
 
     mock3 = build_mock_google_oidc(
         "http://localhost/login/google/callback", allowed_domain="example.com"

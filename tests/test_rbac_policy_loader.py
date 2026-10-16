@@ -6,8 +6,7 @@ import asyncio
 import logging
 from dataclasses import replace
 from pathlib import Path
-from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 from fastmcp import FastMCP
@@ -371,9 +370,6 @@ roles:
     )
     upstreams.add_upstream("bad-mcp", "http://unused", namespace="ns")
 
-    harmless_schema = {"type": "object", "properties": {}}
-    tools = [SimpleNamespace(name="bad_tool", description="", input_schema=harmless_schema)]
-
     original_register_tool = RouterRegistry._register_tool
 
     def flaky_register_tool(self, route, mcp):
@@ -383,14 +379,27 @@ roles:
 
     monkeypatch.setattr(RouterRegistry, "_register_tool", flaky_register_tool)
 
-    with (
-        caplog.at_level(logging.WARNING),
-        patch(
-            "keystone_mcp.router.upstream.fetch_upstream_tools",
-            new_callable=AsyncMock,
-            return_value=tools,
-        ),
-    ):
+    async def _discover_one(cfg):
+        adapter = upstreams._adapters[cfg.namespace]
+        sub = upstreams._sub_servers[cfg.namespace]
+        try:
+            registry.add_route(
+                "bad_tool",
+                adapter,
+                pattern=Pattern.SYNC,
+                mode="live",
+                namespace=cfg.namespace,
+                config_mode="PROXY",
+                upstream_tool="bad_tool",
+                mcp=sub,
+            )
+        except RuntimeError:
+            upstreams.mark_unpublishable(cfg.namespace, "bad_tool")
+        return 0
+
+    upstreams._discover_one = _discover_one  # type: ignore[method-assign]
+
+    with caplog.at_level(logging.WARNING):
         discovery = await bootstrap_platform(upstreams, registry, settings, policy_manager)
 
     assert discovery.failed is False

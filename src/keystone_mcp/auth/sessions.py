@@ -5,9 +5,9 @@ from __future__ import annotations
 import logging
 import time
 
-from keystone_mcp.auth.keystone_oauth_provider import parse_refresh_meta
+from keystone_mcp.auth.keystone_oauth_provider import RefreshMeta, parse_refresh_meta
 from keystone_mcp.auth.login_pending_store import LoginPendingStore
-from keystone_mcp.auth.oauth_store import OAuthStore
+from keystone_mcp.auth.oauth_store import OAuthStore, token_digest
 from keystone_mcp.observability.subject import subject_pseudonym
 from keystone_mcp.user_directory.util import normalize_email
 
@@ -22,6 +22,17 @@ class SessionRevoker:
     def __init__(self, oauth_store: OAuthStore, login_store: LoginPendingStore) -> None:
         self._oauth_store = oauth_store
         self._login_store = login_store
+
+    async def _refresh_meta_for(self, refresh_token: str) -> RefreshMeta | None:
+        if self._oauth_store.writes_refresh_meta:
+            raw = await self._oauth_store.get_refresh_meta(refresh_token)
+            if raw is not None:
+                return parse_refresh_meta(raw)
+        digest = token_digest(refresh_token)
+        raw = await self._login_store.get(_NS_REFRESH_AUTH, digest)
+        if raw is None:
+            raw = await self._login_store.get(_NS_REFRESH_AUTH, refresh_token)
+        return parse_refresh_meta(raw)
 
     async def revoke_subject(self, subject: str) -> int:
         """Revoke every token of the subject; return the number of tokens removed."""
@@ -46,8 +57,7 @@ class SessionRevoker:
         legacy = False
 
         for refresh in refresh_list:
-            raw = await self._login_store.get(_NS_REFRESH_AUTH, refresh.token)
-            meta = parse_refresh_meta(raw)
+            meta = await self._refresh_meta_for(refresh.token)
             if meta is None:
                 continue
             if meta.key_id_known and meta.key_id == key_id:

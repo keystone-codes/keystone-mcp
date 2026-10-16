@@ -7,10 +7,13 @@ import logging
 from urllib.parse import parse_qs, urlparse
 
 import httpx
+import httpx2
 import pytest
 from asgi_lifespan import LifespanManager
 from fastmcp import Client
+from fastmcp.client.transports import StreamableHttpTransport
 from fastmcp.exceptions import ToolError
+from httpx2 import ASGITransport, AsyncClient
 
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import ConfigError, Settings
@@ -89,8 +92,23 @@ async def test_hostile_directory_wildcard_and_unknown_roles_denied_at_enforce(
     )
     app = mcp.http_app(path=settings.http_path)
     async with LifespanManager(app):
-        token = await obtain_bearer_token(attacker_stand, email=MEMBER_EMAIL)
-        transport = attacker_stand.mcp_transport(token)
+        token = await obtain_bearer_token(attacker_stand, email=MEMBER_EMAIL, app=app)
+
+        def _client_factory(headers=None, timeout=None, auth=None, **_kw):
+            return AsyncClient(
+                transport=ASGITransport(app=app),
+                base_url=BASE_URL,
+                headers=dict(headers or {}),
+                timeout=timeout or httpx2.Timeout(30.0),
+                auth=auth,
+                follow_redirects=True,
+            )
+
+        transport = StreamableHttpTransport(
+            settings.transport_url,
+            auth=token,
+            httpx_client_factory=_client_factory,
+        )
         async with Client(transport) as client:
             with pytest.raises(ToolError, match="access denied|denied"):
                 await client.call_tool("hello_greet", {"name": "x"})
