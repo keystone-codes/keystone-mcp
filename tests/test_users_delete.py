@@ -364,27 +364,9 @@ VICTIM = "delete-victim@example.com"
 
 
 def _delete_transport(app, settings: Settings, token: str):
-    import httpx
-    from fastmcp.client.transports import StreamableHttpTransport
-    from httpx import ASGITransport, AsyncClient
+    from support.fastmcp_transport import streamable_http_transport_to_app
 
-    from support.oauth_harness import BASE_URL
-
-    def factory(headers=None, timeout=None, auth=None, **_kw):
-        return AsyncClient(
-            transport=ASGITransport(app=app),
-            base_url=BASE_URL,
-            headers=headers,
-            timeout=timeout or httpx.Timeout(30.0),
-            auth=auth,
-            follow_redirects=True,
-        )
-
-    return StreamableHttpTransport(
-        settings.transport_url,
-        auth=token,
-        httpx_client_factory=factory,
-    )
+    return streamable_http_transport_to_app(app, settings.transport_url, token)
 
 
 @pytest.mark.asyncio

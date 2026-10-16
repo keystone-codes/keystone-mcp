@@ -13,6 +13,8 @@ from fastmcp.client import Client
 from fastmcp.client.transports import StreamableHttpTransport
 from httpx import ASGITransport, AsyncClient
 
+from support.fastmcp_transport import asgi_mcp_http_client_factory
+
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import Settings
 from keystone_mcp.server import build_server
@@ -82,17 +84,10 @@ async def test_service_key_works_during_garbage_bearer_flood(tmp_path, monkeypat
         app = mcp.http_app(path=settings.http_path)
         mcp_url = settings.transport_url
 
-        def _httpx_factory(**kwargs):
-            return AsyncClient(
-                transport=ASGITransport(app=app),
-                base_url=BASE_URL,
-                **kwargs,
-            )
-
         transport = StreamableHttpTransport(
             mcp_url,
             headers={"Authorization": f"Bearer {service_key}"},
-            httpx_client_factory=_httpx_factory,
+            httpx_client_factory=asgi_mcp_http_client_factory(app),
         )
 
         async with LifespanManager(app):
