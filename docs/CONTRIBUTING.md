@@ -99,10 +99,9 @@ fails the build if they would silently skip).
 The suite must pass without reruns or forced ordering; a flaky test is a bug
 to fix, not to retry (`tests/test_ci_hygiene.py`).
 
-CI runs the pytest tree in two shards per Python version (``test-core`` then
-``test-tail``, split at ``tests/test_stdio_upstream_e2e.py`` via
-``scripts/ci_pytest_shard.py``) so each job stays under typical organization
-job-duration caps. Hypothesis ``fuzz`` tests run in the Security workflow, not
+CI runs the pytest tree in two steps per Python version (core then tail, split
+at ``tests/test_stdio_upstream_e2e.py`` via ``scripts/ci_pytest_shard.py``) so
+each job stays under typical organization job-duration caps. Hypothesis ``fuzz`` tests run in the Security workflow, not
 in the main test jobs. If a job ends with exit code **143** and no ``FAILED``
 summary, check the log for ``--tb=short`` tracebacks first; an organization
 may also cap job duration under **Settings → Actions** (repository or

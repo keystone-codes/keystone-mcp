@@ -285,7 +285,7 @@ def test_security_fuzz_nightly_job_runs_marked_tests_with_redis():
 
 def test_test_job_has_redis_and_postgres_services():
     doc = _load("test-gate.yml")
-    test_job = doc["jobs"]["test-core"]
+    test_job = doc["jobs"]["test"]
     services = test_job.get("services") or {}
     assert "redis" in services
     assert "postgres" in services
@@ -298,16 +298,14 @@ def test_test_job_has_redis_and_postgres_services():
 
 def test_test_suite_runs_contract_freeze_and_coverage_gates():
     doc = _load("test-gate.yml")
-    core_names = _job_step_names(doc, "test-core")
-    tail_names = _job_step_names(doc, "test-tail")
-    assert "Test suite (core)" in core_names
-    assert "Test suite (tail)" in tail_names
-    core_run = _job_step_run_text(doc, "test-core")
-    tail_run = _job_step_run_text(doc, "test-tail")
+    names = _job_step_names(doc, "test")
+    assert "Test suite (core)" in names
+    assert "Test suite (tail)" in names
+    core_run = _job_step_run_text(doc, "test")
     assert '-m "not fuzz"' in core_run
     assert "ci_pytest_shard.py" in core_run
     assert "junit-core-py" in core_run
-    assert "junit-tail-py" in tail_run
+    assert "junit-tail-py" in core_run
 
     lint = doc["jobs"]["lint"]
     lint_names = _job_step_names(doc, "lint")
@@ -322,8 +320,7 @@ def test_test_suite_runs_contract_freeze_and_coverage_gates():
 
 def test_skip_check_step_present():
     doc = _load("test-gate.yml")
-    assert "Check skipped tests (core)" in _job_step_names(doc, "test-core")
-    assert "Check skipped tests (tail)" in _job_step_names(doc, "test-tail")
+    assert "Check skipped tests" in _job_step_names(doc, "test")
 
 
 def test_upgrade_workflow_permissions_and_timeout():
@@ -471,15 +468,8 @@ def test_coverage_threshold_is_enforced():
     assert match is not None
     assert int(match.group(1)) >= 85
     gate = _load("test-gate.yml")
-    core = next(
-        step
-        for step in gate["jobs"]["test-core"].get("steps") or []
-        if step.get("name") == "Test suite (core)"
-    )
-    tail = next(
-        step
-        for step in gate["jobs"]["test-tail"].get("steps") or []
-        if step.get("name") == "Test suite (tail)"
-    )
+    steps = gate["jobs"]["test"].get("steps") or []
+    core = next(step for step in steps if step.get("name") == "Test suite (core)")
+    tail = next(step for step in steps if step.get("name") == "Test suite (tail)")
     assert "--cov" in str(core.get("run", ""))
     assert "--cov-report=xml" in str(tail.get("run", ""))

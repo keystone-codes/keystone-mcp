@@ -198,8 +198,9 @@ async def test_blocked_in_http_directory_cannot_refresh(tmp_path):
         base_url=BASE_URL,
         refresh_interval_seconds=0,
         users_backend="http",
-        users_http_url="http://fake-users.test",
-        users_http_token="test-service-token",
+        users_service_url="http://fake-users.test",
+        users_service_token="test-service-token",
+        users_service_allow_insecure_http=True,
         redis_url=require_redis_url(),
         enabled_login_methods=frozenset({"api_key"}),
         session_max_age_seconds=0,
@@ -208,13 +209,16 @@ async def test_blocked_in_http_directory_cannot_refresh(tmp_path):
     from keystone_mcp.user_directory.revision import InMemoryRevisionReader
 
     resolver = build_user_directory_resolver(
-        settings, directory=directory, revision_reader=InMemoryRevisionReader(0)
+        settings, directory=directory, revision_reader=InMemoryRevisionReader()
     )
+    from keystone_mcp.login.api_key import ApiKeyLoginProvider
+
+    api_key_login = ApiKeyLoginProvider(resolver=resolver, resolve_directory_keys=True)
     mcp, _reg, oauth, *_ = build_server(
         settings=settings,
         oauth_store=InMemoryOAuthStore(),
         user_resolver=resolver,
-        login_providers=None,
+        login_providers=[api_key_login],
         register_builtin_catalog=False,
     )
     app = mcp.http_app(path=settings.http_path)
@@ -263,7 +267,9 @@ async def test_directory_unavailable_is_503_and_token_survives(tmp_path):
         resolver = h.oauth._user_resolver  # noqa: SLF001
 
         async def fail_resolve(*args, **kwargs):  # noqa: ANN002
-            raise UserDirectoryUnavailableError("users directory is unavailable")
+            raise UserDirectoryUnavailableError(
+                "users directory is unavailable", code="catalog_unavailable"
+            )
 
         with patch.object(resolver, "resolve", side_effect=fail_resolve):
             res = await refresh_access_token(

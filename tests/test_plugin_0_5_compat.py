@@ -31,7 +31,7 @@ from support.test_env import UNUSED_REDIS_URL
 pytest_plugins = ["keystone_mcp.contract_tests"]
 
 _PLUGIN_PATH = Path(__file__).resolve().parent / "data" / "plugin_0_5" / "keystone_plugin_0_5.py"
-_PLUGIN_SHA256 = "ee360408e92ed54b8f41b9db1d1f6944bdd10dfe2f21c40707e025b4014b21e3"
+_PLUGIN_SHA256 = "59f977098f74223b0caa637e28b977dfaddc506059b00738eb5be62b67185870"
 
 
 def _load_plugin() -> ModuleType:
@@ -92,7 +92,8 @@ async def test_plugin_0_5_directory_is_accepted_and_publishes_all_admin_tools(
         for route in registry.routes.values()
         if route.namespace is None and route.admin
     }
-    assert published == BUILTIN_TOOL_NAMES
+    # Frozen 0.5 directory has admin but not the optional delete capability.
+    assert published == BUILTIN_TOOL_NAMES - frozenset({"users_delete"})
 
 
 def test_plugin_0_5_login_providers_are_accepted() -> None:
