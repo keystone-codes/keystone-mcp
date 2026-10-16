@@ -9,8 +9,6 @@ from uuid import uuid4
 import pytest
 from asgi_lifespan import LifespanManager
 from fastmcp import Client
-from fastmcp.client.transports import StreamableHttpTransport
-from httpx2 import ASGITransport, AsyncClient
 from mcp.server.auth.provider import AccessToken
 
 import keystone_mcp.server as server_module
@@ -96,9 +94,7 @@ async def hr_stack(tmp_path: Path):
     async with LifespanManager(http_app):
         from support.fastmcp_transport import streamable_http_transport_to_app
 
-        transport = streamable_http_transport_to_app(
-            http_app, settings.transport_url, token.token
-        )
+        transport = streamable_http_transport_to_app(http_app, settings.transport_url, token.token)
         async with Client(transport) as client:
             yield client
 

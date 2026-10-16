@@ -9,9 +9,7 @@ from pathlib import Path
 import pytest
 from asgi_lifespan import LifespanManager
 from fastmcp import Client, FastMCP
-from fastmcp.client.transports import StreamableHttpTransport
 from fastmcp.exceptions import ToolError
-from httpx2 import ASGITransport, AsyncClient
 from mcp.server.auth.provider import AccessToken
 
 import keystone_mcp.server as server_module
@@ -143,9 +141,7 @@ async def test_subject_type_mismatch_is_refused(enforce_stack):
     )
     from support.fastmcp_transport import streamable_http_transport_to_app
 
-    transport = streamable_http_transport_to_app(
-        http_app, settings.transport_url, "mismatch-token"
-    )
+    transport = streamable_http_transport_to_app(http_app, settings.transport_url, "mismatch-token")
     async with Client(transport) as mismatch_client:
         with pytest.raises(ToolError, match="access denied"):
             await mismatch_client.call_tool("hello_search", {})
