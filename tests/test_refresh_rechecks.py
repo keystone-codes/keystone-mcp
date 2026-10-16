@@ -81,6 +81,7 @@ async def _key_login_harness(tmp_path: Path, **settings_kw) -> _Harness:
             row.expires_at = utcnow() + key_expires_in
             session.add(row)
 
+    session_max_age_seconds = settings_kw.pop("session_max_age_seconds", 0)
     settings = Settings(
         base_url=BASE_URL,
         refresh_interval_seconds=0,
@@ -89,7 +90,7 @@ async def _key_login_harness(tmp_path: Path, **settings_kw) -> _Harness:
         redis_url=require_redis_url(),
         dev_tokens=VALID_TOKEN,
         enabled_login_methods=frozenset({"api_key"}),
-        session_max_age_seconds=0,
+        session_max_age_seconds=session_max_age_seconds,
         **settings_kw,
     )
     directory = LocalUserDirectory(store)
