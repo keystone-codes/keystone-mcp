@@ -38,8 +38,8 @@ jobs:
       - name: Ruff format
         run: uv run ruff format --check .
 
-  test-core:
-    name: Test core (py${{ matrix.python }})
+  test:
+    name: Test (py${{ matrix.python }})
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
@@ -95,103 +95,11 @@ jobs:
           mkdir -p artifacts
           set -euo pipefail
           mapfile -t IGNORE < <(uv run python scripts/ci_pytest_shard.py core ignore-args)
-          args=(tests/ --tb=short -m "not fuzz" --junitxml=artifacts/junit-core-py${{ matrix.python }}.xml)
+          args=(--tb=short -m "not fuzz" --junitxml=artifacts/junit-core-py${{ matrix.python }}.xml)
           if [ "${{ matrix.python }}" = "3.12" ]; then
             args+=(--cov=keystone_mcp --cov-append)
           fi
           uv run pytest tests/ "${IGNORE[@]}" "${args[@]}"
-
-      - name: Check skipped tests (core)
-        run: >-
-          uv run python scripts/check_ci_skips.py
-          artifacts/junit-core-py${{ matrix.python }}.xml
-          tests/data/ci-allowed-skips.txt
-
-      - name: Upload junit (core)
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        with:
-          name: junit-core-${{ matrix.python }}
-          path: artifacts/junit-core-py${{ matrix.python }}.xml
-
-      - name: Upload coverage data (core)
-        if: matrix.python == '3.12'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        with:
-          name: coverage-data-core
-          path: .coverage
-
-      - name: Upload RBAC conformance matrix artifact
-        if: always() && matrix.python == '3.12'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        with:
-          name: rbac-conformance-matrix
-          path: artifacts/rbac-conformance-matrix.md
-          if-no-files-found: ignore
-
-  test-tail:
-    name: Test tail (py${{ matrix.python }})
-    runs-on: ubuntu-latest
-    needs: test-core
-    timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      max-parallel: 4
-      matrix:
-        python: ["3.11", "3.12", "3.13", "3.14"]
-    services:
-      redis:
-        image: redis:7-alpine
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: keystone_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-    env:
-      KEYSTONE_MCP_REDIS_URL: redis://localhost:6379/0
-      KEYSTONE_TEST_POSTGRES_URL: postgresql+psycopg://postgres:postgres@localhost:5432/keystone_test
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-
-      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
-        with:
-          version: "0.11.22"
-          python-version: ${{ matrix.python }}
-
-      - name: Install dependencies
-        run: uv sync --locked --extra dev --extra otel
-
-      - name: Python version
-        run: uv run python --version
-
-      - name: Download junit (core)
-        uses: actions/download-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        with:
-          name: junit-core-${{ matrix.python }}
-          path: artifacts
-
-      - name: Download coverage data (core)
-        if: matrix.python == '3.12'
-        uses: actions/download-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        with:
-          name: coverage-data-core
-          path: .
 
       - name: Test suite (tail)
         run: |
@@ -204,6 +112,19 @@ jobs:
           fi
           uv run pytest "${MODULES[@]}" "${args[@]}"
 
+      - name: Check skipped tests
+        run: |
+          uv run python scripts/check_ci_skips.py artifacts/junit-core-py${{ matrix.python }}.xml tests/data/ci-allowed-skips.txt
+          uv run python scripts/check_ci_skips.py artifacts/junit-tail-py${{ matrix.python }}.xml tests/data/ci-allowed-skips.txt
+
+      - name: Upload RBAC conformance matrix artifact
+        if: always() && matrix.python == '3.12'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: rbac-conformance-matrix
+          path: artifacts/rbac-conformance-matrix.md
+          if-no-files-found: ignore
+
       - name: Upload coverage report
         if: matrix.python == '3.12'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
@@ -211,9 +132,3 @@ jobs:
           name: coverage-xml
           path: artifacts/coverage.xml
           if-no-files-found: error
-
-      - name: Check skipped tests (tail)
-        run: >-
-          uv run python scripts/check_ci_skips.py
-          artifacts/junit-tail-py${{ matrix.python }}.xml
-          tests/data/ci-allowed-skips.txt

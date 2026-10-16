@@ -41,6 +41,7 @@ _SETTINGS_FIELD: dict[str, str] = {
     "KEYSTONE_MCP_DEV_TOKENS": "dev_tokens",
     "KEYSTONE_MCP_GOOGLE_CLIENT_SECRET": "google_client_secret",
     "KEYSTONE_MCP_IDENTITY_SIGNING_KEY": "identity_signing_key",
+    "KEYSTONE_MCP_IDENTITY_SIGNING_KEY_PREVIOUS": "identity_signing_key_previous",
     "KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT": "rbac_audit_subject_salt",
     "KEYSTONE_MCP_REDIS_URL": "redis_url",
     "KEYSTONE_MCP_USERS_DB_URL": "users_db_url",
