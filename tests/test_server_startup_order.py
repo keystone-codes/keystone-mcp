@@ -185,7 +185,11 @@ async def test_require_all_failure_exits_after_listening(monkeypatch: pytest.Mon
 
     monkeypatch.setattr(server, "_request_shutdown", _fake_shutdown)
 
-    settings = _settings(upstream_require_all=True, upstream_discovery_retries=1)
+    settings = _settings(
+        upstream_require_all=True,
+        upstream_discovery_retries=1,
+        upstream_discovery_timeout_seconds=1.0,
+    )
     state = BootstrapState(deferred=True)
     server._bootstrap_state_holder["state"] = state
     mcp, registry, _oauth, upstreams, policy_manager, observability, reconciler = build_server(

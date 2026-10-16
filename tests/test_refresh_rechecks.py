@@ -16,7 +16,7 @@ from httpx import ASGITransport, AsyncClient
 
 from keystone_mcp.auth import keystone_oauth_provider
 from keystone_mcp.auth.keystone_oauth_provider import RefreshMeta, encode_refresh_meta
-from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
+from keystone_mcp.auth.oauth_store import InMemoryOAuthStore, token_digest
 from keystone_mcp.config import Settings, startup_warnings
 from keystone_mcp.server import build_server
 from keystone_mcp.user_directory.errors import UserDirectoryUnavailableError
@@ -37,6 +37,12 @@ from support.users_store import make_users_store
 
 VALID_TOKEN = "valid-test-token"
 HUMAN = "alice@example.com"
+
+
+def _refresh_meta_key(refresh_token: str) -> str:
+    if refresh_token.startswith("km_rt_"):
+        return token_digest(refresh_token)
+    return refresh_token
 
 
 class _Harness:
@@ -311,14 +317,15 @@ async def test_session_max_age_refuses_refresh(tmp_path):
     h = await _key_login_harness(tmp_path, session_max_age_seconds=60)
     try:
         rt = h.login["body"]["refresh_token"]
-        raw = await h.oauth._pending_store.get("refresh_auth", rt)  # noqa: SLF001
+        meta_key = _refresh_meta_key(rt)
+        raw = await h.oauth._pending_store.get("refresh_auth", meta_key)  # noqa: SLF001
         from keystone_mcp.auth.keystone_oauth_provider import parse_refresh_meta
 
         existing = parse_refresh_meta(raw)
         assert existing is not None
         await h.oauth._pending_store.put(  # noqa: SLF001
             "refresh_auth",
-            rt,
+            meta_key,
             encode_refresh_meta(
                 RefreshMeta(
                     auth_method=existing.auth_method,
@@ -349,7 +356,7 @@ async def test_session_max_age_zero_means_no_limit(tmp_path):
         rt = h.login["body"]["refresh_token"]
         await h.oauth._pending_store.put(  # noqa: SLF001
             "refresh_auth",
-            rt,
+            _refresh_meta_key(rt),
             encode_refresh_meta(
                 RefreshMeta(
                     auth_method="api_key",
@@ -392,7 +399,7 @@ async def test_auth_time_written_even_without_limit(tmp_path):
         rt = h.login["body"]["refresh_token"]
         await h.oauth._pending_store.put(  # noqa: SLF001
             "refresh_auth",
-            rt,
+            _refresh_meta_key(rt),
             encode_refresh_meta(
                 RefreshMeta(
                     auth_method="api_key",
@@ -414,7 +421,7 @@ async def test_auth_time_written_even_without_limit(tmp_path):
         )
         assert res["status"] == 200
         new_rt = res["body"]["refresh_token"]
-        raw = await h.oauth._pending_store.get("refresh_auth", new_rt)  # noqa: SLF001
+        raw = await h.oauth._pending_store.get("refresh_auth", _refresh_meta_key(new_rt))  # noqa: SLF001
         from keystone_mcp.auth.keystone_oauth_provider import parse_refresh_meta
 
         meta = parse_refresh_meta(raw)
@@ -431,7 +438,7 @@ async def test_legacy_session_counts_from_upgrade(tmp_path, monkeypatch):
         rt = h.login["body"]["refresh_token"]
         await h.oauth._pending_store.put(  # noqa: SLF001
             "refresh_auth",
-            rt,
+            _refresh_meta_key(rt),
             encode_refresh_meta(
                 RefreshMeta(
                     auth_method="api_key",
@@ -453,7 +460,7 @@ async def test_legacy_session_counts_from_upgrade(tmp_path, monkeypatch):
         )
         assert res["status"] == 200
         new_rt = res["body"]["refresh_token"]
-        raw = await h.oauth._pending_store.get("refresh_auth", new_rt)  # noqa: SLF001
+        raw = await h.oauth._pending_store.get("refresh_auth", _refresh_meta_key(new_rt))  # noqa: SLF001
         from keystone_mcp.auth.keystone_oauth_provider import parse_refresh_meta
 
         meta = parse_refresh_meta(raw)
@@ -561,7 +568,7 @@ async def test_key_session_without_resolver_is_refused(tmp_path):
             )
             await oauth._pending_store.put(  # noqa: SLF001
                 "refresh_auth",
-                rt,
+                _refresh_meta_key(rt),
                 encode_refresh_meta(
                     RefreshMeta(
                         auth_method="api_key",
