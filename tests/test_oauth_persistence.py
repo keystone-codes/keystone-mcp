@@ -25,7 +25,7 @@ from keystone_mcp.auth.keystone_oauth_provider import (
     encode_refresh_meta,
 )
 from keystone_mcp.auth.login_pending_store import InMemoryLoginPendingStore
-from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
+from keystone_mcp.auth.oauth_store import InMemoryOAuthStore, token_digest
 from keystone_mcp.config import Settings
 from keystone_mcp.server import build_server
 from support.fake_login import FakeRedirectProvider
@@ -214,7 +214,7 @@ async def test_auth_method_marker_ttl_equals_the_refresh_token_lifetime():
     assert recorded == [
         (
             "refresh_auth",
-            "km_rt_marker",
+            token_digest("km_rt_marker"),
             encode_refresh_meta(marker),
             1234,
         )
@@ -518,14 +518,15 @@ async def test_old_auth_marker_gets_short_grace_ttl_after_rotation(persistence_c
 
     # Still readable right after rotation, with the same auth_method/resource
     # a second concurrent request would need.
-    raw = await oauth._pending_store.get("refresh_auth", old_refresh)
+    old_meta_key = token_digest(old_refresh)
+    raw = await oauth._pending_store.get("refresh_auth", old_meta_key)
     assert raw is not None
     data = json.loads(raw)
     assert data["auth_method"] == "api_key"
 
     # But its TTL is the short grace window, not the full refresh-token
     # lifetime: it will not linger in Redis/memory forever.
-    entry = oauth._pending_store._entries[("refresh_auth", old_refresh)]
+    entry = oauth._pending_store._entries[("refresh_auth", old_meta_key)]
     assert entry.expires_at <= before + settings.oauth_refresh_grace_seconds + 1
 
 
