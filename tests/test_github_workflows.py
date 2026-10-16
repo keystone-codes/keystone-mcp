@@ -466,8 +466,6 @@ def test_coverage_threshold_is_enforced():
     assert int(match.group(1)) >= 85
     gate = _load("test-gate.yml")
     suite = next(
-        step
-        for step in gate["jobs"]["test"].get("steps") or []
-        if step.get("name") == "Test suite"
+        step for step in gate["jobs"]["test"].get("steps") or [] if step.get("name") == "Test suite"
     )
     assert "--cov" in str(suite.get("run", ""))
