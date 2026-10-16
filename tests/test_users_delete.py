@@ -135,10 +135,11 @@ async def test_references_are_rewritten(tmp_path: Path) -> None:
     marker = f"deleted:{pseudonym}"
     engine = harness.users_store._engine  # noqa: SLF001
     with engine.connect() as conn:
-        for table in inspect(engine).get_table_names():
+        inspector = inspect(conn)
+        for table in inspector.get_table_names():
             if not table.startswith("keystone_"):
                 continue
-            for col in inspect(engine).get_columns(table):
+            for col in inspector.get_columns(table):
                 if col["type"].python_type is not str:
                     continue
                 name = col["name"]
@@ -378,9 +379,17 @@ async def test_sessions_and_keys_are_revoked(tmp_path: Path, oauth_store_backend
 
     import keystone_mcp.server as server_module
     from keystone_mcp.adapters.stub import StubAdapter
+    from keystone_mcp.login.api_key import ApiKeyLoginProvider
     from keystone_mcp.server import bootstrap_platform, build_server
-    from support.login import dev_token_login
-    from support.oauth_harness import BASE_URL, obtain_access_token, refresh_access_token
+    from keystone_mcp.user_directory.factory import build_user_directory_resolver
+    from keystone_mcp.user_directory.local import LocalUserDirectory
+    from support.oauth_harness import (
+        BASE_URL,
+        attempt_access_token,
+        obtain_access_token,
+        refresh_access_token,
+    )
+    from support.users_store import make_users_store
 
     oauth_store, pending, _base, _backend = oauth_store_backend
     policy_path = tmp_path / "rbac-policy.yaml"
@@ -402,11 +411,26 @@ async def test_sessions_and_keys_are_revoked(tmp_path: Path, oauth_store_backend
         dev_tokens=VALID_TOKEN,
         enabled_login_methods=frozenset({"api_key", "dev_token"}),
     )
+    users_store, revision = await make_users_store(tmp_path)
+    directory = LocalUserDirectory(users_store)
+    resolver = build_user_directory_resolver(
+        settings,
+        directory=directory,
+        revision_reader=revision,
+    )
+    api_key_login = ApiKeyLoginProvider(
+        resolver=resolver,
+        dev_tokens=frozenset({VALID_TOKEN}),
+        resolve_directory_keys=True,
+    )
     mcp, registry, _oauth, upstreams, policy_manager, observability, _recon = build_server(
         settings=settings,
         oauth_store=oauth_store,
         login_pending_store=pending,
-        login_providers=[dev_token_login({VALID_TOKEN})],
+        users_store=users_store,
+        user_resolver=resolver,
+        user_directory=directory,
+        login_providers=[api_key_login],
     )
     registry.add_route("member_ping", StubAdapter(), mode="live")
     await bootstrap_platform(
@@ -473,18 +497,18 @@ async def test_sessions_and_keys_are_revoked(tmp_path: Path, oauth_store_backend
             )
             assert refresh["body"].get("error") == "invalid_grant"
 
-            retry_key = await obtain_access_token(
+            retry_key = await attempt_access_token(
                 http_client,
                 settings.resource_url,
                 api_token=api_key,
                 email=VICTIM,
             )
-            assert retry_key["status"] != 200
+            assert retry_key["login_status"] != 302
 
-            retry_email = await obtain_access_token(
+            retry_email = await attempt_access_token(
                 http_client,
                 settings.resource_url,
                 email=VICTIM,
                 api_token=VALID_TOKEN,
             )
-            assert retry_email["status"] != 200
+            assert retry_email["login_status"] != 302

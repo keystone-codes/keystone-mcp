@@ -316,6 +316,7 @@ def test_catalog_registers_all_users_tools(tmp_path: Path):
 
     expected = {
         "users_list",
+        "users_export",
         "users_add",
         "users_update",
         "users_block",
@@ -324,7 +325,6 @@ def test_catalog_registers_all_users_tools(tmp_path: Path):
         "users_grant_role",
         "users_revoke_role",
         "users_logout",
-        "users_delete",
     }
     for name in expected:
         route = reg.get(name)
@@ -346,6 +346,7 @@ def test_policy_loader_accepts_live_users_tools_in_catalog(tmp_path: Path):
     users_tools = {name for name in live if name.startswith("users_")}
     assert users_tools == {
         "users_list",
+        "users_export",
         "users_add",
         "users_update",
         "users_block",
@@ -354,7 +355,6 @@ def test_policy_loader_accepts_live_users_tools_in_catalog(tmp_path: Path):
         "users_set_roles",
         "users_grant_role",
         "users_revoke_role",
-        "users_delete",
     }
     result = assert_live_catalog_validation(policy, live)
     assert result.ok

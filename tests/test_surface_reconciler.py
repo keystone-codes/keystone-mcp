@@ -230,7 +230,7 @@ async def test_one_failing_namespace_does_not_block_others(reconciler_stack):
 
     upstreams.add_upstream("ledger", "http://ledger:8082/mcp", namespace="ledger")
 
-    async def _fake_read(cfg):
+    async def _fake_read(cfg, **_kwargs):
         if cfg.namespace == "reports":
             raise UpstreamListToolsError("reports upstream unreachable")
         return _catalog_read(tools=[_FakeTool("do_thing")])
@@ -254,7 +254,7 @@ async def test_hanging_namespace_does_not_delay_others(reconciler_stack):
     upstreams.add_upstream("ledger", "http://ledger:8082/mcp", namespace="ledger")
     reports_before = set(registry.routes.keys())
 
-    async def _read_catalog(cfg):
+    async def _read_catalog(cfg, **_kwargs):
         if cfg.namespace == "reports":
             await asyncio.sleep(budget + 5.0)
             return UpstreamCatalogRead(
@@ -292,7 +292,7 @@ async def test_parallel_refresh_announces_changes_once(reconciler_stack):
     sessions.broadcast_list_changed = AsyncMock(return_value=0)
     reconciler.client_sessions = sessions
 
-    async def _read_catalog(cfg):
+    async def _read_catalog(cfg, **_kwargs):
         if cfg.namespace == "reports":
             return UpstreamCatalogRead(
                 tools=[
@@ -357,7 +357,7 @@ async def test_unpublishable_tool_is_retried_every_tick_not_cached_as_done(
     reconciler, registry, _policy_path, _policy_manager, upstreams = reconciler_stack
     upstreams.add_upstream("ledger", "http://ledger:8082/mcp", namespace="ledger")
 
-    async def _fake_read(cfg):
+    async def _fake_read(cfg, **_kwargs):
         if cfg.namespace == "reports":
             raise UpstreamListToolsError("reports upstream unreachable")
         return _catalog_read(tools=[_FakeSchemaTool("bad_tool", _GOOD_SCHEMA)])
@@ -405,7 +405,7 @@ async def test_failed_update_keeps_old_tool_and_removal_still_works(
     sub = upstreams._sub_servers["ledger"]
 
     def _read_returning(namespace_tools: list):
-        async def _fake_read(cfg):
+        async def _fake_read(cfg, **_kwargs):
             if cfg.namespace == "reports":
                 raise UpstreamListToolsError("reports upstream unreachable")
             return _catalog_read(tools=namespace_tools)
@@ -500,7 +500,7 @@ async def test_enum_change_triggers_update(reconciler_stack, caplog):
     sub = upstreams._sub_servers["ledger"]
 
     def _read_returning(tools: list):
-        async def _fake_read(cfg):
+        async def _fake_read(cfg, **_kwargs):
             if cfg.namespace == "reports":
                 raise UpstreamListToolsError("reports upstream unreachable")
             return _catalog_read(tools=tools)

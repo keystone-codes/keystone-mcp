@@ -99,12 +99,39 @@ async def obtain_access_token(
     email: str = "user@example.com",
 ) -> dict:
     """Full happy-path OAuth flow; returns the parsed /token JSON response."""
+    result = await attempt_access_token(
+        client, resource, api_token=api_token, email=email, require_login_redirect=True
+    )
+    assert result["login_status"] == 302, result.get("login_body", "")
+    return result
+
+
+async def attempt_access_token(
+    client: httpx2.AsyncClient,
+    resource: str,
+    api_token: str = VALID_TOKEN,
+    email: str = "user@example.com",
+    *,
+    require_login_redirect: bool = False,
+) -> dict:
+    """OAuth code flow; returns token response and login step status (no login assert by default)."""
     client_id = await register_client(client)
     verifier, challenge = make_pkce()
     txn = await authorize_to_login(client, client_id, challenge, resource)
-    r = await client.post("/login", data={"txn": txn, "api_token": api_token, "email": email})
-    assert r.status_code == 302, r.text
-    code = parse_qs(urlparse(r.headers["location"]).query)["code"][0]
+    login_resp = await client.post(
+        "/login", data={"txn": txn, "api_token": api_token, "email": email}
+    )
+    if require_login_redirect:
+        assert login_resp.status_code == 302, login_resp.text
+    if login_resp.status_code != 302:
+        return {
+            "status": login_resp.status_code,
+            "body": {},
+            "client_id": client_id,
+            "login_status": login_resp.status_code,
+            "login_body": login_resp.text,
+        }
+    code = parse_qs(urlparse(login_resp.headers["location"]).query)["code"][0]
     r = await client.post(
         "/token",
         data={
@@ -120,4 +147,5 @@ async def obtain_access_token(
         "status": r.status_code,
         "body": r.json() if r.content else {},
         "client_id": client_id,
+        "login_status": login_resp.status_code,
     }
