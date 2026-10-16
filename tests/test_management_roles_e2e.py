@@ -25,7 +25,7 @@ default_deny: true
 roles:
   administrator: {allow: ["*"]}
   owner: {allow: ["*"]}
-  hr: {allow: ["users_*"]}
+  hr: {allow: ["users_*", "docs_read"]}
   member: {allow: ["docs_read"]}
 requires_human_identity: []
 critical_tools: []

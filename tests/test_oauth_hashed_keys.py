@@ -301,11 +301,14 @@ async def test_legacy_plain_refresh_token_refreshes_and_moves(oauth_store_backen
             client, client_id, refresh_token, settings.resource_url
         )
         assert refreshed["status"] == 200, refreshed
+        new_refresh = refreshed["body"]["refresh_token"]
+        new_digest = token_digest(new_refresh)
 
     assert await store.redis.exists(plain_rt_key) == 0
-    assert await store.redis.exists(store._refresh_key(digest)) == 1
+    assert await store.redis.exists(store._refresh_key(digest)) == 0
+    assert await store.redis.exists(store._refresh_key(new_digest)) == 1
     assert await store.redis.exists(meta_key) == 0
-    assert await store.redis.exists(f"{login_prefix}refresh_auth:{digest}") == 1
+    assert await store.redis.exists(store._refresh_meta_redis_key(new_digest)) == 1
 
 
 async def test_legacy_tokens_are_revoked_by_users_block(redis_block_harness):

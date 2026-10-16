@@ -186,14 +186,6 @@ async def test_blocked_in_http_directory_cannot_refresh(tmp_path):
             created_by="test",
             allowed_roles=None,
         )
-        _row, api_key = service.issue_api_key(
-            session,
-            subject=HUMAN,
-            label=None,
-            expires_in_days=90,
-            created_by="test",
-        )
-
     settings = Settings(
         base_url=BASE_URL,
         refresh_interval_seconds=0,
@@ -213,7 +205,11 @@ async def test_blocked_in_http_directory_cannot_refresh(tmp_path):
     )
     from keystone_mcp.login.api_key import ApiKeyLoginProvider
 
-    api_key_login = ApiKeyLoginProvider(resolver=resolver, resolve_directory_keys=True)
+    api_key_login = ApiKeyLoginProvider(
+        resolver=resolver,
+        dev_tokens=frozenset({VALID_TOKEN}),
+        resolve_directory_keys=False,
+    )
     mcp, _reg, oauth, *_ = build_server(
         settings=settings,
         oauth_store=InMemoryOAuthStore(),
@@ -225,9 +221,9 @@ async def test_blocked_in_http_directory_cannot_refresh(tmp_path):
     async with LifespanManager(app):
         async with AsyncClient(transport=ASGITransport(app=app), base_url=BASE_URL) as client:
             login = await obtain_access_token(
-                client, settings.resource_url, api_token=api_key, email=HUMAN
+                client, settings.resource_url, api_token=VALID_TOKEN, email=HUMAN
             )
-            await store.set_blocked(email=HUMAN, blocked=True, actor="test")
+            await store.set_blocked(email=HUMAN, blocked=True, actor_email="test")
             res = await refresh_access_token(
                 client,
                 login["client_id"],

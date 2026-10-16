@@ -86,12 +86,25 @@ roles:
   administrator:
     allow: ["*"]
   member:
-    allow: ["hello_greet", "hello_whoami", "member_probe"]
+    allow: ["hello_*", "member_probe"]
   robot:
     allow: ["*"]
 requires_human_identity: []
 critical_tools: []
 """
+
+_SEC_CATALOG_SNAPSHOT = """\
+active:
+  - hello_greet
+  - hello_whoami
+  - member_probe
+"""
+
+
+def _write_sec_catalog_snapshot(tmp_path: Path) -> str:
+    path = tmp_path / "catalog-snapshot.yaml"
+    path.write_text(_SEC_CATALOG_SNAPSHOT, encoding="utf-8")
+    return str(path)
 
 
 @dataclass
@@ -241,7 +254,9 @@ async def attacker_stand(tmp_path: Path, monkeypatch) -> AsyncIterator[AttackerS
         register_builtin_catalog=True,
     )
     registry.add_route("member_probe", StubAdapter(), mode="live")
-    in_process = asgi_http_client_factory(upstream_app)
+    in_process = asgi_http_client_factory(
+        upstream_app, max_response_bytes=settings.upstream_max_response_bytes
+    )
     upstreams.http_client_factory = in_process
     for adapter in upstreams._adapters.values():  # noqa: SLF001
         adapter._http_client_factory = in_process  # noqa: SLF001
@@ -340,8 +355,9 @@ async def hostile_attacker_stand(
         log_redact=True,
         refresh_interval_seconds=1 if mode == "list_changed_flood" else 0,
         oauth_refresh_grace_seconds=1,
-        upstream_max_catalog_items=500,
-        upstream_max_schema_bytes=65536,
+        rbac_catalog_snapshot_path=_write_sec_catalog_snapshot(tmp_path),
+        upstream_max_catalog_items=20_000,
+        upstream_max_schema_bytes=8_000_000,
     )
     fake_oidc = FakeOidcIssuer(client_id="sec-oidc", client_secret="sec-oidc-secret")
     oidc_provider = OidcLoginProvider(
@@ -359,7 +375,9 @@ async def hostile_attacker_stand(
         register_builtin_catalog=True,
     )
     registry.add_route("member_probe", StubAdapter(), mode="live")
-    in_process = asgi_http_client_factory(upstream_app)
+    in_process = asgi_http_client_factory(
+        upstream_app, max_response_bytes=settings.upstream_max_response_bytes
+    )
     upstreams.http_client_factory = in_process
     for adapter in upstreams._adapters.values():  # noqa: SLF001
         adapter._http_client_factory = in_process  # noqa: SLF001
