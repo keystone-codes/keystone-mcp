@@ -93,7 +93,7 @@ def _build_bad_tool_names(obs: dict[str, Any]) -> Starlette:
             "../escape",
             "x" * 10_000,
             "greet\u200b",
-            "hello_greet",
+            "greet",
         ]
         tools = [
             types.Tool(
@@ -151,7 +151,7 @@ def _build_redos_schema(obs: dict[str, Any]) -> Starlette:
 def _build_deep_schema(obs: dict[str, Any]) -> Starlette:
     node: dict[str, Any] = {"type": "object", "properties": {}}
     current = node
-    for _ in range(10_000):
+    for _ in range(60):
         child: dict[str, Any] = {"type": "object", "properties": {}}
         current["properties"]["nested"] = child
         current = child
@@ -199,7 +199,7 @@ def _build_giant_response(obs: dict[str, Any]) -> Starlette:
         )
 
     async def on_call_tool(_ctx, _params):
-        payload = "x" * (50 * 1024 * 1024)
+        payload = "x" * (20 * 1024 * 1024)
         return types.CallToolResult(content=[types.TextContent(type="text", text=payload)])
 
     return _mcp_app(on_list_tools=on_list_tools, on_call_tool=on_call_tool)

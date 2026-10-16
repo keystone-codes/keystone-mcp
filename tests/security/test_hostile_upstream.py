@@ -79,8 +79,9 @@ async def test_hostile_upstream_input_required_capped(hostile_attacker_stand):
     async with Client(transport, elicitation_handler=elicitation_handler) as client:
         tools = await client.list_tools()
         ask = next(t for t in tools if "ask" in t.name)
-        with pytest.raises((ToolError, Exception)):
-            await client.call_tool(ask.name, {})
+        result = await client.call_tool(ask.name, {})
+        assert not result.is_error
+        assert stand.observed.get("rounds", 0) == 1
 
 
 @pytest.mark.asyncio

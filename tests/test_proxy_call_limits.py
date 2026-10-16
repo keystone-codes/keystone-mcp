@@ -481,7 +481,7 @@ async def test_tool_timeout_override_by_published_name():
         t0 = time.monotonic()
         async with asgi_server(main) as running:
             async with running.client() as client:
-                with pytest.raises(ToolError, match="timed out"):
+                with pytest.raises(ToolError, match="did not answer within"):
                     await client.call_tool("hello_slow", {})
         assert time.monotonic() - t0 < 1.0
 
@@ -514,7 +514,7 @@ async def test_tool_timeout_override_by_upstream_name_still_works_with_warning(
         t0 = time.monotonic()
         async with asgi_server(main) as running:
             async with running.client() as client:
-                with pytest.raises(ToolError, match="timed out"):
+                with pytest.raises(ToolError, match="did not answer within"):
                     await client.call_tool("hello_slow", {})
         assert time.monotonic() - t0 < 1.0
 
@@ -550,7 +550,7 @@ async def test_same_upstream_tool_name_in_two_namespaces_gets_own_timeout():
         t0 = time.monotonic()
         async with asgi_server(main) as running:
             async with running.client() as client:
-                with pytest.raises(ToolError, match="timed out"):
+                with pytest.raises(ToolError, match="did not answer within"):
                     await client.call_tool("other_slow", {})
         assert time.monotonic() - t0 > 1.0
 
