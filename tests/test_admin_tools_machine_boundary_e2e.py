@@ -94,14 +94,10 @@ async def admin_boundary_stack(tmp_path: Path):
     )
     http_app = mcp.http_app(path=settings.http_path)
     async with LifespanManager(http_app):
-        transport = StreamableHttpTransport(
-            settings.transport_url,
-            auth=issued.key,
-            httpx_client_factory=lambda **kw: AsyncClient(
-                transport=ASGITransport(app=http_app),
-                base_url=BASE_URL,
-                **kw,
-            ),
+        from support.fastmcp_transport import streamable_http_transport_to_app
+
+        transport = streamable_http_transport_to_app(
+            http_app, settings.transport_url, issued.key
         )
         async with Client(transport) as client:
             yield client, users_store

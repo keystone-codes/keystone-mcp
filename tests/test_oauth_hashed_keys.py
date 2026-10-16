@@ -12,7 +12,6 @@ import pytest
 import pytest_asyncio
 from asgi_lifespan import LifespanManager
 from fastmcp import Client
-from fastmcp.client.transports import StreamableHttpTransport
 from httpx import ASGITransport, AsyncClient
 from mcp.server.auth.provider import AccessToken
 from mcp.shared.auth import OAuthClientInformationFull
@@ -27,6 +26,7 @@ from keystone_mcp.auth.oauth_store import (
 from keystone_mcp.config import Settings
 from keystone_mcp.identity import VerifiedIdentity
 from keystone_mcp.server import bootstrap_platform, build_server
+from support.fastmcp_transport import streamable_http_transport_to_app
 from support.login import dev_token_login
 from support.oauth_harness import BASE_URL, VALID_TOKEN, obtain_access_token, refresh_access_token
 from support.test_env import redis_key_prefix, require_redis_url
@@ -161,21 +161,7 @@ async def redis_block_harness(tmp_path: Path):
     app = mcp.http_app(path=settings.http_path)
 
     def _transport(token: str):
-        def factory(headers=None, timeout=None, auth=None, **_kw):
-            return AsyncClient(
-                transport=ASGITransport(app=app),
-                base_url=BASE_URL,
-                headers=headers,
-                timeout=timeout or httpx.Timeout(30.0),
-                auth=auth,
-                follow_redirects=True,
-            )
-
-        return StreamableHttpTransport(
-            settings.transport_url,
-            auth=token,
-            httpx_client_factory=factory,
-        )
+        return streamable_http_transport_to_app(app, settings.transport_url, token)
 
     async with LifespanManager(app):
         async with AsyncClient(transport=ASGITransport(app=app), base_url=BASE_URL) as http_client:

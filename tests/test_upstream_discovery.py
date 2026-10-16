@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from typing import Any, Callable
 
 import httpx
+import httpx2
 import pydantic
 import pytest
 from asgi_lifespan import LifespanManager
@@ -338,22 +339,22 @@ def _build_schema_upstream() -> FastMCP:
     return mcp
 
 
-def _asgi_http_client_factory(app) -> Callable[[float], Callable[..., httpx.AsyncClient]]:
+def _asgi_http_client_factory(app) -> Callable[[float], Callable[..., httpx2.AsyncClient]]:
     """Same shape as ``support.lowlevel_upstream.asgi_http_client_factory``,
     for a FastMCP (not low-level-SDK) ASGI app."""
 
-    def builder(timeout_seconds: float) -> Callable[..., httpx.AsyncClient]:
+    def builder(timeout_seconds: float) -> Callable[..., httpx2.AsyncClient]:
         def factory(
             headers: dict[str, str] | None = None,
             timeout: Any = None,  # noqa: ARG001 — superseded by timeout_seconds
             auth: Any = None,
             **_kwargs: Any,
-        ) -> httpx.AsyncClient:
-            return httpx.AsyncClient(
-                transport=httpx.ASGITransport(app=app),
+        ) -> httpx2.AsyncClient:
+            return httpx2.AsyncClient(
+                transport=httpx2.ASGITransport(app=app),
                 base_url="http://schema.test",
                 headers=headers,
-                timeout=httpx.Timeout(timeout_seconds),
+                timeout=httpx2.Timeout(timeout_seconds),
                 auth=auth,
                 follow_redirects=False,
             )

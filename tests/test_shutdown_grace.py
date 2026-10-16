@@ -155,7 +155,22 @@ async def test_in_flight_call_survives_sigterm(redis_url: str, tmp_path: Path) -
             token_res = await obtain_access_token(http, resource, api_token="dev")
             access_token = token_res["body"]["access_token"]
 
-        transport = StreamableHttpTransport(url=f"{base_url}/", auth=access_token)
+        import httpx2
+
+        def _remote_mcp_client_factory(headers=None, timeout=None, auth=None, **_kw):
+            return httpx2.AsyncClient(
+                base_url=base_url,
+                headers=headers,
+                timeout=timeout or httpx2.Timeout(30.0),
+                auth=auth,
+                follow_redirects=True,
+            )
+
+        transport = StreamableHttpTransport(
+            url=f"{base_url}/",
+            auth=access_token,
+            httpx_client_factory=_remote_mcp_client_factory,
+        )
 
         async def call_slow() -> str:
             async with Client(transport) as client:

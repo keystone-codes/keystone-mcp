@@ -96,14 +96,10 @@ async def enforce_stack(tmp_path: Path):
     )
     http_app = mcp.http_app(path=settings.http_path)
     async with LifespanManager(http_app):
-        transport = StreamableHttpTransport(
-            settings.transport_url,
-            auth=SERVICE_TOKEN,
-            httpx_client_factory=lambda **kw: AsyncClient(
-                transport=ASGITransport(app=http_app),
-                base_url=BASE_URL,
-                **kw,
-            ),
+        from support.fastmcp_transport import streamable_http_transport_to_app
+
+        transport = streamable_http_transport_to_app(
+            http_app, settings.transport_url, SERVICE_TOKEN
         )
         async with Client(transport) as client:
             yield client, users_store, oauth_store, settings, http_app
@@ -145,14 +141,10 @@ async def test_subject_type_mismatch_is_refused(enforce_stack):
             },
         )
     )
-    transport = StreamableHttpTransport(
-        settings.transport_url,
-        auth="mismatch-token",
-        httpx_client_factory=lambda **kw: AsyncClient(
-            transport=ASGITransport(app=http_app),
-            base_url=BASE_URL,
-            **kw,
-        ),
+    from support.fastmcp_transport import streamable_http_transport_to_app
+
+    transport = streamable_http_transport_to_app(
+        http_app, settings.transport_url, "mismatch-token"
     )
     async with Client(transport) as mismatch_client:
         with pytest.raises(ToolError, match="access denied"):

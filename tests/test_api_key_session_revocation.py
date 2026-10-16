@@ -6,12 +6,10 @@ import time
 from pathlib import Path
 from unittest.mock import patch
 
-import httpx
 import pytest
 import pytest_asyncio
 from asgi_lifespan import LifespanManager
 from fastmcp import Client
-from fastmcp.client.transports import StreamableHttpTransport
 from fastmcp.exceptions import ToolError
 from httpx import ASGITransport, AsyncClient
 from redis.exceptions import RedisError
@@ -25,6 +23,7 @@ from keystone_mcp.identity import VerifiedIdentity
 from keystone_mcp.server import bootstrap_platform, build_server
 from keystone_mcp.users import service
 from keystone_mcp.users.db import make_session_factory, session_scope
+from support.fastmcp_transport import streamable_http_transport_to_app
 from support.login import dev_token_login
 from support.oauth_harness import BASE_URL, obtain_access_token, refresh_access_token
 from support.test_env import require_redis_url
@@ -49,21 +48,7 @@ critical_tools: []
 
 
 def _transport(app, settings: Settings, token: str):
-    def factory(headers=None, timeout=None, auth=None, **_kw):
-        return AsyncClient(
-            transport=ASGITransport(app=app),
-            base_url=BASE_URL,
-            headers=headers,
-            timeout=timeout or httpx.Timeout(30.0),
-            auth=auth,
-            follow_redirects=True,
-        )
-
-    return StreamableHttpTransport(
-        settings.transport_url,
-        auth=token,
-        httpx_client_factory=factory,
-    )
+    return streamable_http_transport_to_app(app, settings.transport_url, token)
 
 
 @pytest_asyncio.fixture
