@@ -714,7 +714,7 @@ def build_upstream_resource_specs(
     for resource in resources:
         uri = str(resource.uri)
         name = resource.name
-        if cfg.resource_filter is not None and not cfg.resource_filter(name):
+        if getattr(cfg, "resource_filter", None) is not None and not cfg.resource_filter(name):
             continue
         published = namespaced_uri(cfg.namespace, uri)
         if published is None:
@@ -756,12 +756,12 @@ def build_upstream_template_specs(
 ) -> dict[str, UpstreamTemplateSpec]:
     """Map upstream template URI templates to specs (tool filters do not apply)."""
     specs: dict[str, UpstreamTemplateSpec] = {}
-    if not cfg.publish_resources:
+    if not getattr(cfg, "publish_resources", True):
         return specs
     for template in templates:
         uri_template = template.uri_template
         name = template.name
-        if cfg.resource_filter is not None and not cfg.resource_filter(name):
+        if getattr(cfg, "resource_filter", None) is not None and not cfg.resource_filter(name):
             continue
         published = namespaced_uri(cfg.namespace, uri_template)
         if published is None:
@@ -1560,7 +1560,12 @@ class UpstreamRegistry:
             )
         self.content.set_legacy_prompt_rbac_names(namespace, frozenset(legacy))
 
-    async def read_catalog(self, cfg: UpstreamConfig) -> UpstreamCatalogRead:
+    async def read_catalog(
+        self,
+        cfg: UpstreamConfig,
+        *,
+        secondary_via_fetch: bool = False,
+    ) -> UpstreamCatalogRead:
         discovery_timeout = (
             cfg.discovery_timeout_seconds
             if cfg.discovery_timeout_seconds is not None
@@ -1612,8 +1617,36 @@ class UpstreamRegistry:
             client = conn.catalog_client(timeout=discovery_timeout)
             async with client:
                 tools = await list_upstream_tools(client, **list_kw)
+                if not secondary_via_fetch:
+                    try:
+                        prompts_raw = await self._list_prompts_for_config(
+                            cfg, discovery_timeout, catalog_client=client
+                        )
+                    except UpstreamListToolsError as exc:
+                        logger.warning(
+                            "upstream prompts refresh failed namespace=%s: %s; "
+                            "keeping previous prompts",
+                            cfg.namespace,
+                            exc,
+                        )
+                        prompts_raw = None
+                    try:
+                        resources_raw, templates_raw = await self._list_resources_for_config(
+                            cfg, discovery_timeout, catalog_client=client
+                        )
+                    except UpstreamListToolsError as exc:
+                        logger.warning(
+                            "upstream resources refresh failed namespace=%s: %s; "
+                            "keeping previous resources",
+                            cfg.namespace,
+                            exc,
+                        )
+                        resources_raw = None
+                        templates_raw = None
+                conn.remember_era(client)
+            if secondary_via_fetch:
                 try:
-                    prompts_raw = await list_upstream_prompts(client, **list_kw)
+                    prompts_raw = await self._list_prompts_for_config(cfg, discovery_timeout)
                 except UpstreamListToolsError as exc:
                     logger.warning(
                         "upstream prompts refresh failed namespace=%s: %s; "
@@ -1623,8 +1656,9 @@ class UpstreamRegistry:
                     )
                     prompts_raw = None
                 try:
-                    resources_raw = await list_upstream_resources(client, **list_kw)
-                    templates_raw = await list_upstream_resource_templates(client, **list_kw)
+                    resources_raw, templates_raw = await self._list_resources_for_config(
+                        cfg, discovery_timeout
+                    )
                 except UpstreamListToolsError as exc:
                     logger.warning(
                         "upstream resources refresh failed namespace=%s: %s; "
@@ -1634,7 +1668,6 @@ class UpstreamRegistry:
                     )
                     resources_raw = None
                     templates_raw = None
-                conn.remember_era(client)
 
         return UpstreamCatalogRead(
             tools=tools,

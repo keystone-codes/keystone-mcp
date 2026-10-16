@@ -473,7 +473,7 @@ class SurfaceReconciler:
         previous = self._namespace_fingerprints.get(namespace, {})
 
         try:
-            catalog = await self.upstreams.read_catalog(cfg)
+            catalog = await self.upstreams.read_catalog(cfg, secondary_via_fetch=True)
         except UpstreamProcessUnavailableError as exc:
             self.upstreams.mark_unavailable(namespace, str(exc))
             logger.warning(
