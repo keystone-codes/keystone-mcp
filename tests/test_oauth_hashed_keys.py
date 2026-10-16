@@ -211,10 +211,9 @@ async def test_no_redis_key_or_value_contains_a_token(oauth_store_backend):
         )
 
 
+@pytest.mark.parametrize("oauth_store_backend", ["redis"], indirect=True)
 async def test_legacy_plain_access_token_is_accepted_and_moved(oauth_store_backend):
-    store, _pending, settings, backend = oauth_store_backend
-    if backend != "redis":
-        pytest.skip("Redis only")
+    store, _pending, settings, _backend = oauth_store_backend
     assert isinstance(store, RedisOAuthStore)
     now = int(time.time())
     at = f"km_at_{uuid.uuid4().hex}"
@@ -248,10 +247,9 @@ async def test_legacy_plain_access_token_is_accepted_and_moved(oauth_store_backe
     assert f"at:{digest}" in members
 
 
+@pytest.mark.parametrize("oauth_store_backend", ["redis"], indirect=True)
 async def test_legacy_plain_refresh_token_refreshes_and_moves(oauth_store_backend):
-    store, pending, settings, backend = oauth_store_backend
-    if backend != "redis":
-        pytest.skip("Redis only")
+    store, pending, settings, _backend = oauth_store_backend
     assert isinstance(store, RedisOAuthStore)
     client_id = "legacy-refresh-client"
     await store.put_client(
@@ -337,10 +335,9 @@ async def test_legacy_tokens_are_revoked_by_users_block(redis_block_harness):
     assert await _mcp_initialize(http_client, settings, at) == 401
 
 
+@pytest.mark.parametrize("oauth_store_backend", ["redis"], indirect=True)
 async def test_migration_race_is_safe(oauth_store_backend):
-    store, _pending, _settings, backend = oauth_store_backend
-    if backend != "redis":
-        pytest.skip("Redis only")
+    store, _pending, _settings, _backend = oauth_store_backend
     assert isinstance(store, RedisOAuthStore)
     now = int(time.time())
     at = f"km_at_{uuid.uuid4().hex}"
@@ -396,10 +393,9 @@ async def test_revoke_endpoint_works_with_hashed_keys(oauth_store_backend):
         assert renewed["body"].get("error") == "invalid_grant"
 
 
+@pytest.mark.parametrize("oauth_store_backend", ["redis"], indirect=True)
 async def test_migrated_metric(oauth_store_backend):
-    store, _pending, _settings, backend = oauth_store_backend
-    if backend != "redis":
-        pytest.skip("Redis only")
+    store, _pending, _settings, _backend = oauth_store_backend
     before = _counter_snapshot("keystone_mcp_oauth_token_keys_migrated")
     now = int(time.time())
     at = f"km_at_{uuid.uuid4().hex}"
