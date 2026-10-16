@@ -99,6 +99,13 @@ fails the build if they would silently skip).
 The suite must pass without reruns or forced ordering; a flaky test is a bug
 to fix, not to retry (`tests/test_ci_hygiene.py`).
 
+CI runs the full pytest tree once per Python version (Hypothesis ``fuzz`` tests
+run in the Security workflow, not in the main test job). If a job ends with
+exit code **143** and no ``FAILED`` summary, check the log for ``--tb=short``
+tracebacks first; an organization may also cap job duration under **Settings →
+Actions** (repository or ``keystone-codes`` organization), which overrides
+``timeout-minutes`` in workflow YAML when the cap is lower.
+
 Test-only key material lives in `tests/data/test-keys/` (secret scanners skip
 it); a private key block anywhere else fails `tests/test_no_private_keys_in_repo.py`.
 
