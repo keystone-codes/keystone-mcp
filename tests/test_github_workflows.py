@@ -471,5 +471,9 @@ def test_coverage_threshold_is_enforced():
     steps = gate["jobs"]["test"].get("steps") or []
     core = next(step for step in steps if step.get("name") == "Test suite (core)")
     tail = next(step for step in steps if step.get("name") == "Test suite (tail)")
-    assert "--cov" in str(core.get("run", ""))
-    assert "--cov-report=xml" in str(tail.get("run", ""))
+    core_run = str(core.get("run", ""))
+    tail_run = str(tail.get("run", ""))
+    assert "--cov" in core_run
+    assert "--cov-fail-under=0" in core_run
+    assert "--cov-report=xml" in tail_run
+    assert "--cov-fail-under=86" in tail_run
