@@ -97,7 +97,7 @@ jobs:
           mapfile -t IGNORE < <(uv run python scripts/ci_pytest_shard.py core ignore-args)
           args=(--tb=short -m "not fuzz" --junitxml=artifacts/junit-core-py${{ matrix.python }}.xml)
           if [ "${{ matrix.python }}" = "3.12" ]; then
-            args+=(--cov=keystone_mcp --cov-append)
+            args+=(--cov=keystone_mcp --cov-append --cov-fail-under=0)
           fi
           uv run pytest tests/ "${IGNORE[@]}" "${args[@]}"
 
@@ -108,7 +108,7 @@ jobs:
           mapfile -t MODULES < <(uv run python scripts/ci_pytest_shard.py tail paths)
           args=(--tb=short -m "not fuzz" --junitxml=artifacts/junit-tail-py${{ matrix.python }}.xml)
           if [ "${{ matrix.python }}" = "3.12" ]; then
-            args+=(--cov=keystone_mcp --cov-append --cov-report=xml:artifacts/coverage.xml --cov-report=term)
+            args+=(--cov=keystone_mcp --cov-append --cov-fail-under=86 --cov-report=xml:artifacts/coverage.xml --cov-report=term)
           fi
           uv run pytest "${MODULES[@]}" "${args[@]}"
 

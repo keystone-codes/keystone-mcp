@@ -97,4 +97,4 @@ def rethrow_upstream_error(
     message = neutral_upstream_message(namespace, exc, timeout=timeout)
     if message is None:
         raise exc
-    raise error_type(message) from None
+    raise error_type(message) from exc
