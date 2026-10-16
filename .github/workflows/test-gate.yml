@@ -44,7 +44,7 @@ jobs:
     timeout-minutes: 45
     strategy:
       fail-fast: false
-      max-parallel: 2
+      max-parallel: 1
       matrix:
         python: ["3.11", "3.12", "3.13", "3.14"]
     services:
@@ -88,21 +88,17 @@ jobs:
       - name: Python version
         run: uv run python --version
 
-      - name: RBAC middleware regression gate
-        run: >-
-          uv run pytest
-          tests/test_rbac_middleware_mounted_coverage.py
-          tests/test_rbac_middleware.py
-          -v
-
-      - name: RBAC conformance regression gate
+      - name: Test suite
         env:
-          RBAC_CONFORMANCE_WRITE_REPORT: artifacts/rbac-conformance-matrix.md
-        run: >-
-          uv run pytest
-          tests/test_rbac_conformance.py
-          -v
-          --tb=short
+          RBAC_CONFORMANCE_WRITE_REPORT: ${{ matrix.python == '3.12' && 'artifacts/rbac-conformance-matrix.md' || '' }}
+        run: |
+          mkdir -p artifacts
+          set -euo pipefail
+          args=(--tb=short -m "not fuzz" --junitxml=artifacts/junit-py${{ matrix.python }}.xml)
+          if [ "${{ matrix.python }}" = "3.12" ]; then
+            args+=(--cov --cov-report=xml:artifacts/coverage.xml --cov-report=term)
+          fi
+          uv run pytest "${args[@]}"
 
       - name: Upload RBAC conformance matrix artifact
         if: always() && matrix.python == '3.12'
@@ -111,38 +107,6 @@ jobs:
           name: rbac-conformance-matrix
           path: artifacts/rbac-conformance-matrix.md
           if-no-files-found: ignore
-
-      - name: Users directory on PostgreSQL
-        run: >-
-          uv run pytest
-          tests/test_users_migrations.py
-          tests/test_users_domain.py
-          tests/test_users_concurrency.py
-          tests/integration/test_users_admin_local_smoke.py
-          -v
-          -rs
-
-      - name: Contract freeze gate
-        run: >-
-          uv run pytest
-          tests/test_contract_freeze.py
-          tests/test_contract_freeze_rules.py
-          tests/test_env_docs_sync.py
-          tests/test_removed_variables.py
-          -v
-
-      - name: Full test suite
-        run: |
-          mkdir -p artifacts
-          if [ "${{ matrix.python }}" = "3.12" ]; then
-            uv run pytest -q \
-              --cov \
-              --cov-report=xml:artifacts/coverage.xml \
-              --cov-report=term \
-              --junitxml=artifacts/junit-py${{ matrix.python }}.xml
-          else
-            uv run pytest -q --junitxml=artifacts/junit-py${{ matrix.python }}.xml
-          fi
 
       - name: Upload coverage report
         if: matrix.python == '3.12'

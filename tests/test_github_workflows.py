@@ -296,12 +296,13 @@ def test_test_job_has_redis_and_postgres_services():
     assert "test" in postgres_url.lower()
 
 
-def test_contract_freeze_step_runs_before_full_suite():
+def test_test_suite_runs_contract_freeze_and_coverage_gates():
     doc = _load("test-gate.yml")
     names = _job_step_names(doc, "test")
-    assert "Contract freeze gate" in names
-    assert "Full test suite" in names
-    assert names.index("Contract freeze gate") < names.index("Full test suite")
+    assert "Test suite" in names
+    run = _job_step_run_text(doc, "test")
+    assert '-m "not fuzz"' in run
+    assert "junit-py" in run
 
     lint = doc["jobs"]["lint"]
     lint_names = _job_step_names(doc, "lint")
@@ -464,9 +465,9 @@ def test_coverage_threshold_is_enforced():
     assert match is not None
     assert int(match.group(1)) >= 85
     gate = _load("test-gate.yml")
-    full_suite = next(
+    suite = next(
         step
         for step in gate["jobs"]["test"].get("steps") or []
-        if step.get("name") == "Full test suite"
+        if step.get("name") == "Test suite"
     )
-    assert "--cov" in str(full_suite.get("run", ""))
+    assert "--cov" in str(suite.get("run", ""))
