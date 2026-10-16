@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from pathlib import Path
 from unittest.mock import patch
@@ -10,21 +11,23 @@ import pytest
 import pytest_asyncio
 from asgi_lifespan import LifespanManager
 from fastmcp import Client
-from fastmcp.exceptions import ToolError
 from httpx import ASGITransport, AsyncClient
+from mcp.shared.exceptions import MCPError
 from redis.exceptions import RedisError
 
 from keystone_mcp.auth.keystone_oauth_provider import RefreshMeta, encode_refresh_meta
 from keystone_mcp.auth.login_pending_store import InMemoryLoginPendingStore
-from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
+from keystone_mcp.auth.oauth_store import InMemoryOAuthStore, token_digest
 from keystone_mcp.auth.sessions import SessionRevoker
 from keystone_mcp.config import Settings
 from keystone_mcp.identity import VerifiedIdentity
+from keystone_mcp.login.api_key import ApiKeyLoginProvider
 from keystone_mcp.server import bootstrap_platform, build_server
+from keystone_mcp.user_directory.factory import build_user_directory_resolver
+from keystone_mcp.user_directory.local import LocalUserDirectory
 from keystone_mcp.users import service
 from keystone_mcp.users.db import make_session_factory, session_scope
 from support.fastmcp_transport import streamable_http_transport_to_app
-from support.login import dev_token_login
 from support.oauth_harness import BASE_URL, obtain_access_token, refresh_access_token
 from support.test_env import require_redis_url
 from support.users_store import make_users_store
@@ -72,13 +75,28 @@ async def api_key_session_harness(tmp_path: Path, oauth_store_backend):
         enabled_login_methods=frozenset({"api_key", "dev_token"}),
     )
 
+    users_store, revision = await make_users_store(tmp_path)
+    directory = LocalUserDirectory(users_store)
+    resolver = build_user_directory_resolver(
+        settings,
+        directory=directory,
+        revision_reader=revision,
+    )
+    api_key_login = ApiKeyLoginProvider(
+        resolver=resolver,
+        dev_tokens=frozenset({VALID_TOKEN}),
+        resolve_directory_keys=True,
+    )
+
     import keystone_mcp.server as server_module
 
     mcp, registry, _oauth, upstreams, policy_manager, observability, _recon = build_server(
         settings=settings,
         oauth_store=store,
         login_pending_store=pending,
-        login_providers=[dev_token_login({VALID_TOKEN})],
+        users_store=users_store,
+        user_resolver=resolver,
+        login_providers=[api_key_login],
     )
     from keystone_mcp.adapters.stub import StubAdapter
 
@@ -141,6 +159,7 @@ async def api_key_session_harness(tmp_path: Path, oauth_store_backend):
                 "kid1": kid1,
                 "store": store,
                 "pending": pending,
+                "users_store": users_store,
             }
 
 
@@ -156,7 +175,7 @@ async def test_revoke_key_ends_sessions_opened_with_it(api_key_session_harness):
         assert revoked.data["state"] == "done"
         assert revoked.data["revoked_tokens"] >= 2
 
-    with pytest.raises(ToolError):
+    with pytest.raises(MCPError):
         async with Client(_transport(h["app"], h["settings"], h["human1"]["body"]["access_token"])):
             pass
 
@@ -185,9 +204,10 @@ async def test_revoke_key_falls_back_to_subject_for_legacy_marker(api_key_sessio
     h = api_key_session_harness
     pending = h["pending"]
     rt_legacy = h["human1"]["body"]["refresh_token"]
+    legacy_meta_key = token_digest(rt_legacy) if rt_legacy.startswith("km_rt_") else rt_legacy
     await pending.put(
         "refresh_auth",
-        rt_legacy,
+        legacy_meta_key,
         encode_refresh_meta(
             RefreshMeta(
                 auth_method="api_key",
@@ -208,7 +228,7 @@ async def test_revoke_key_falls_back_to_subject_for_legacy_marker(api_key_sessio
     async with h["admin_client_factory"]() as admin_client:
         await admin_client.call_tool("api_keys_revoke", {"key_id": h["kid1"]})
 
-    with pytest.raises(ToolError):
+    with pytest.raises(MCPError):
         async with Client(_transport(h["app"], h["settings"], dev_res["body"]["access_token"])):
             pass
     refresh = await refresh_access_token(
@@ -251,9 +271,15 @@ async def test_cli_keys_revoke_ends_sessions(api_key_session_harness, tmp_path, 
 
     from keystone_mcp.users import api_keys_cli
 
-    exit_code = api_keys_cli._cmd_revoke(  # noqa: SLF001
-        type("NS", (), {"key_id": h["kid1"]})()
-    )
+    def _reuse_users_store(_settings, *, allow_create=True):  # noqa: ANN001, ARG001
+        return h["users_store"]
+
+    ns = type("NS", (), {"key_id": h["kid1"]})()
+    with (
+        patch.object(h["users_store"], "dispose"),
+        patch.object(api_keys_cli, "_open_store", _reuse_users_store),
+    ):
+        exit_code = await asyncio.to_thread(api_keys_cli._cmd_revoke, ns)  # noqa: SLF001
     assert exit_code == 0
 
     refresh = await refresh_access_token(

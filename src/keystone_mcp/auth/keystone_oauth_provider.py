@@ -2758,9 +2758,11 @@ class KeystoneOAuthProvider(OAuthProvider):
         (see ``exchange_refresh_token``).
         """
         ttl = ttl_seconds if ttl_seconds is not None else self._settings.refresh_token_ttl_seconds
-        await self._pending_store.put(
-            _NS_REFRESH_AUTH, refresh_token, encode_refresh_meta(meta), ttl
+        encoded = encode_refresh_meta(meta)
+        meta_key = (
+            token_digest(refresh_token) if refresh_token.startswith("km_rt_") else refresh_token
         )
+        await self._pending_store.put(_NS_REFRESH_AUTH, meta_key, encoded, ttl)
 
     async def _read_refresh_meta(self, refresh_token: str) -> RefreshMeta | None:
         """Return parsed session metadata for a refresh token's marker.

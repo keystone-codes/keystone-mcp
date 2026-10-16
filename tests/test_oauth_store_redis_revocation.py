@@ -15,6 +15,7 @@ from keystone_mcp.auth.oauth_store import (
     KeystoneRefreshToken,
     RedisOAuthStore,
     _subject_key,
+    token_digest,
 )
 from support.test_env import redis_key_prefix, require_redis_url
 
@@ -97,7 +98,7 @@ async def test_revoke_refresh_grant_marks_and_deletes(redis_oauth_store):
     assert await store.get_refresh_token(refresh_tok) is None
     assert await store.get_access_token("at_same") is None
     assert await store.get_access_token("at_other") is not None
-    revoked_key = store._refresh_revoked_key(refresh_tok)
+    revoked_key = store._refresh_revoked_key(token_digest(refresh_tok))
     assert await store.redis.exists(revoked_key) == 1
 
 

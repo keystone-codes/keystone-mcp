@@ -118,27 +118,32 @@ def test_postgres_migration_from_0001() -> None:
     import alembic.config
     from sqlalchemy import inspect, text
 
-    from keystone_mcp.users.db import create_users_engine, make_session_factory, session_scope
+    from keystone_mcp.users.db import create_users_engine
     from keystone_mcp.users.migrate import HEAD_REVISION, current_revision
-    from keystone_mcp.users.service import create_user
 
     engine = create_users_engine(postgres_url)
     cfg = alembic.config.Config()
     cfg.set_main_option("script_location", "keystone_mcp.users:migrations")
     with engine.begin() as conn:
         cfg.attributes["connection"] = conn
+        alembic.command.downgrade(cfg, "base")
+    with engine.begin() as conn:
+        cfg.attributes["connection"] = conn
         alembic.command.upgrade(cfg, "0001_initial")
 
-    factory = make_session_factory(engine)
-    with session_scope(factory) as session:
-        create_user(
-            session,
-            email="migrate@example.com",
-            full_name="Migrate",
-            roles=["member"],
-            note=None,
-            created_by="test",
-            allowed_roles=None,
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO keystone_user "
+                "(email, full_name, is_blocked, created_at, updated_at) "
+                "VALUES ('migrate@example.com', 'Migrate', FALSE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO keystone_user_role (email, role) "
+                "VALUES ('migrate@example.com', 'member')"
+            )
         )
 
     upgrade_to_head(engine)

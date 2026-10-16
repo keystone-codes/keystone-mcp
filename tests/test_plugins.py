@@ -138,6 +138,7 @@ def test_import_error_is_reported_with_distribution(monkeypatch) -> None:
         "keystone_mcp.plugins.discover",
         lambda group: {"broken": ep},
     )
+    monkeypatch.setattr("keystone_mcp.plugins.requires", lambda _name: ())
     with pytest.raises(ConfigError, match="broken-pkg") as exc:
         load_factory(LOGIN_PROVIDERS_GROUP, "broken")
     assert "failed to import" in str(exc.value)

@@ -482,6 +482,7 @@ def test_stage_like_production_configuration_is_accepted(monkeypatch, tmp_path: 
         "KEYSTONE_MCP_REDIS_URL",
         "auth.identity_secret_env",
         "runs local command",
+        "KEYSTONE_MCP_THROTTLE_BACKEND=memory",
     )
     assert all(any(fragment in w for fragment in allowed_fragments) for w in warnings)
     for warning in warnings:

@@ -142,7 +142,7 @@ async def test_unverified_email_refused(okta_harness):
     assert response.status_code == 403
 
 
-async def test_token_endpoint_unavailable_shows_identity_error(okta_harness):
+async def test_token_endpoint_unavailable_shows_provider_error(okta_harness):
     client = okta_harness["client"]
     fake = okta_harness["fake"]
     settings = okta_harness["settings"]
@@ -153,7 +153,7 @@ async def test_token_endpoint_unavailable_shows_identity_error(okta_harness):
     fake.tamper.token_endpoint_status = 503
     callback = await fake.authorize(redirect_url)
     response = await client.get("/login/okta/callback", params=callback)
-    assert response.status_code == 400
+    assert response.status_code == 502
 
 
 async def test_discovery_unavailable_returns_503(okta_harness):

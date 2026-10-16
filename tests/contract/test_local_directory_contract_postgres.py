@@ -24,9 +24,12 @@ from keystone_mcp.user_directory.protocol import UserDirectory
 from keystone_mcp.user_directory.revision import InMemoryRevisionReader
 from keystone_mcp.users import models as users_models
 from keystone_mcp.users import service as users_service
+from keystone_mcp.users.db import create_users_engine, make_session_factory
 from keystone_mcp.users.revision import InProcessRevisionWriter
 from keystone_mcp.users.store import UsersStore
 from support.users_db import postgres_engine  # noqa: F401 -- fixture import
+
+_UNAVAILABLE_POSTGRES_URL = "postgresql+psycopg://127.0.0.1:1/keystone_unavailable"
 
 
 @pytest.fixture
@@ -94,6 +97,11 @@ def keystone_unavailable_directory_factory(
         directory = LocalUserDirectory(store)
         await seed_contract_dataset(directory)
         store.dispose()
+        # dispose() only closes pooled connections; Postgres still accepts new ones.
+        # Point the store at an unreachable host so ping/resolve match the contract.
+        broken_engine = create_users_engine(_UNAVAILABLE_POSTGRES_URL)
+        store._engine = broken_engine
+        store._session_factory = make_session_factory(broken_engine)
         return directory
 
     return factory

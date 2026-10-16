@@ -8,7 +8,9 @@ import re
 import secrets
 from urllib.parse import parse_qs, urlparse
 
-from security.conftest import REDIRECT_URI, AttackerStand
+from httpx import ASGITransport, AsyncClient
+
+from security.conftest import BASE_URL, REDIRECT_URI, AttackerStand
 
 _CSRF_FIELD_RE = re.compile(r'name="csrf" value="([^"]*)"')
 
@@ -26,9 +28,19 @@ def pkce_pair() -> tuple[str, str]:
     return verifier, challenge
 
 
-async def obtain_bearer_token(stand: AttackerStand, *, email: str) -> str:
+async def obtain_bearer_token(
+    stand: AttackerStand, *, email: str, app: object | None = None
+) -> str:
     verifier, challenge = pkce_pair()
-    async with stand.raw_client() as client:
+    if app is None:
+        client_cm = stand.raw_client()
+    else:
+        client_cm = AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url=BASE_URL,
+            follow_redirects=False,
+        )
+    async with client_cm as client:
         reg = await client.post(
             "/register",
             json={"redirect_uris": [REDIRECT_URI], "token_endpoint_auth_method": "none"},
