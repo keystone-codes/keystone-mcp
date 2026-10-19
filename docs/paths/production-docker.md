@@ -166,6 +166,15 @@ users directory — see [observability-logging.md](../observability-logging.md#r
 returns `{"status":"ok"}` (`200`) once all three dependencies answer, or
 `{"status":"degraded"}` (`503`) while one of them is not ready yet.
 
+**Stop here if you are tempted to call the deployment done.** `/healthz` and
+`/readyz` check the process, Redis, the RBAC policy, and the users directory
+— they never contact the login provider. Step 8 (sign in as the first
+administrator) is mandatory, not optional verification: it is the only check
+in this guide that proves Google (or your OIDC provider) actually accepts a
+sign-in and that Keystone-MCP accepts it back. See
+[production-checklist.md](../production-checklist.md#smoke-after-deploy) for
+the full smoke-test split between infrastructure and sign-in checks.
+
 ## 7. Put TLS in front
 
 Keystone-MCP only listens on `127.0.0.1:8080`; a reverse proxy on the host
