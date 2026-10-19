@@ -366,10 +366,13 @@ async def _slow_count(arguments: dict[str, Any], ctx: _ToolCtx | None) -> list[t
             else ()
         )
     )
+    report_progress = (
+        getattr(ctx.session, "report_progress", None) if ctx and ctx.session is not None else None
+    )
     try:
         for i in range(1, n + 1):
-            if token is not None and ctx and ctx.session is not None:
-                await ctx.session.report_progress(i, n, f"tick {i}/{n}")
+            if token is not None and report_progress is not None:
+                await report_progress(i, n, f"tick {i}/{n}")
             await anyio.sleep(1)
     except anyio.get_cancelled_exc_class():
         raise
