@@ -35,6 +35,7 @@ RUN groupadd --system --gid "${APP_GID}" keystone \
 WORKDIR /app
 
 COPY --from=builder /app /app
+COPY --from=builder /opt/hello-stdio /opt/hello-stdio
 
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
