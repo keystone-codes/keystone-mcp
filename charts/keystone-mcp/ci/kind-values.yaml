@@ -7,9 +7,9 @@ secret:
     KEYSTONE_MCP_DEV_TOKENS: demo-token
     KEYSTONE_MCP_RBAC_AUDIT_SUBJECT_SALT: "0123456789abcdef0123456789abcdef"
     KEYSTONE_MCP_REDIS_PASSWORD: demo-redis-password
-    KEYSTONE_MCP_REDIS_URL: redis://:demo-redis-password@keystone-redis:6379/0
+    KEYSTONE_MCP_REDIS_URL: redis://:demo-redis-password@keystone-keystone-mcp-redis:6379/0
     KEYSTONE_MCP_POSTGRES_PASSWORD: demo-postgres-password
-    KEYSTONE_MCP_USERS_DB_URL: postgresql+psycopg://keystone:demo-postgres-password@keystone-postgresql:5432/keystone
+    KEYSTONE_MCP_USERS_DB_URL: postgresql+psycopg://keystone:demo-postgres-password@keystone-keystone-mcp-postgresql:5432/keystone
     KEYSTONE_MCP_UPSTREAM_HELLO_IDENTITY_SECRET: demo-identity-secret-change-me-0123456789
 env:
   KEYSTONE_MCP_UPSTREAM_ALLOW_INSECURE_HTTP: "true"
