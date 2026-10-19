@@ -65,6 +65,7 @@ _InputRequiredResult = getattr(types, "InputRequiredResult", None)
 def _is_input_required_result(result: object) -> bool:
     return _InputRequiredResult is not None and isinstance(result, _InputRequiredResult)
 
+
 HOST = "0.0.0.0"
 PORT = 8081
 
