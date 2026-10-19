@@ -6,6 +6,16 @@ this project uses [Semantic Versioning](https://semver.org/).
 
 Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatibility.md).
 
+## [Unreleased]
+
+### Fixed
+
+- Examples and documentation now pin the `0.6.0` image
+  (`examples/production/docker-compose.yml`, `examples/kubernetes/deployment.yaml`,
+  `docs/connecting-services.md`, `docs/paths/kubernetes.md`); `scripts/check_version.py`
+  now fails when a `ghcr.io/keystone-codes/keystone-mcp:X.Y.Z` reference under
+  `examples/` or `docs/` (other than `docs/upgrading.md`) lags the project version.
+
 ## [0.6.0] - 2026-10-15
 
 0.6.0 fixes security issues in 0.5.x. Upgrade; read ### Migration and [upgrading.md](docs/upgrading.md#05x-060) first.
