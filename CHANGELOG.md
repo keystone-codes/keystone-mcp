@@ -16,6 +16,26 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
   now fails when a `ghcr.io/keystone-codes/keystone-mcp:X.Y.Z` reference under
   `examples/` or `docs/` (other than `docs/upgrading.md`) lags the project version.
 
+### Changed
+
+- `docs/google-oauth.md` is a real walkthrough for the Google Cloud console
+  (project, consent screen, OAuth client, redirect URI, scopes, where
+  `client_id`/`client_secret_env` go, `allowed_domain`, and the
+  `redirect_uri_mismatch` / 403 / 503 failure modes) instead of a stub.
+- `docs/production-checklist.md` splits "Smoke after deploy" into
+  "Infrastructure checks" (healthz, readyz, config check) and "Sign-in check"
+  (interactive sign-in, `list_tools`, one proxied call), states that the
+  infrastructure checks never contact the login provider, and checks the
+  current `X-Keystone-Identity` header instead of the header deprecated since
+  0.5.0.
+- `docs/paths/production-docker.md` states after step 6 that `/healthz` and
+  `/readyz` do not check the login provider and that step 8 (sign in as the
+  first administrator) is mandatory.
+- `docs/quickstart.svg` and `docs/quickstart.md` add the sign-in provider
+  step between publishing the domain and wiring upstreams, and describe the
+  upstream registry reload as "reload on SIGHUP" instead of "restart after
+  change".
+
 ## [0.6.0] - 2026-10-15
 
 0.6.0 fixes security issues in 0.5.x. Upgrade; read ### Migration and [upgrading.md](docs/upgrading.md#05x-060) first.

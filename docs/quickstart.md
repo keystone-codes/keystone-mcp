@@ -4,7 +4,7 @@ From zero to one authenticated catalog with tools grouped by namespace sections.
 The [README](../README.md) covers trying Keystone-MCP locally in one command;
 this page is the step-by-step detail for wiring a deployment from scratch.
 
-![Quick start: install Keystone-MCP, publish TLS on your domain, register private upstream MCP servers in the upstream registry file, restart, then sign in from the client.](quickstart.svg)
+![Quick start: install Keystone-MCP, publish TLS on your domain, configure a sign-in provider, register private upstream MCP servers in the upstream registry file, then sign in from the client.](quickstart.svg)
 
 ## Steps
 
