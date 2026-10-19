@@ -468,22 +468,26 @@ async def test_tool_timeout_override_by_published_name():
         settings = Settings(base_url="http://127.0.0.1:8080")
         main = FastMCP("keystone-test")
         registry = RouterRegistry(RouterEngine(settings), main)
+        override_seconds = 0.5
+        default_seconds = 3.0
         upstreams = UpstreamRegistry(
             main_mcp=main,
             registry=registry,
-            tool_timeout_seconds=3.0,
-            tool_timeout_overrides={"hello_slow": 0.5},
+            tool_timeout_seconds=default_seconds,
+            tool_timeout_overrides={"hello_slow": override_seconds},
             http_client_factory=asgi_http_client_factory(app, streaming=True),
         )
         upstreams.add_upstream("hello-upstream", UPSTREAM_MCP_URL, namespace="hello")
         await upstreams.discover_all()
 
-        t0 = time.monotonic()
         async with asgi_server(main) as running:
             async with running.client() as client:
+                t0 = time.monotonic()
                 with pytest.raises(ToolError, match="did not answer within"):
                     await client.call_tool("hello_slow", {})
-        assert time.monotonic() - t0 < 1.0
+                elapsed = time.monotonic() - t0
+        assert elapsed < default_seconds - 0.5
+        assert elapsed < override_seconds + 1.0
 
 
 async def test_tool_timeout_override_by_upstream_name_still_works_with_warning(
@@ -511,12 +515,13 @@ async def test_tool_timeout_override_by_upstream_name_still_works_with_warning(
         upstreams.add_upstream("hello-upstream", UPSTREAM_MCP_URL, namespace="hello")
         await upstreams.discover_all()
 
-        t0 = time.monotonic()
         async with asgi_server(main) as running:
             async with running.client() as client:
+                t0 = time.monotonic()
                 with pytest.raises(ToolError, match="did not answer within"):
                     await client.call_tool("hello_slow", {})
-        assert time.monotonic() - t0 < 1.0
+                elapsed = time.monotonic() - t0
+        assert elapsed < 1.5
 
         warnings = [
             r.message for r in caplog.records if "use the published name 'hello_slow'" in r.message
