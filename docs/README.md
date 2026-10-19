@@ -50,8 +50,13 @@ find there, not just the file name.
 - [Change the policy from the agent](policy-admin.md)
 - [Check a policy offline](rbac-catalog-registry.md)
 - [Generated role matrix](rbac-role-matrix-per-tool.md)
-- [Agent skill for user administration](../skills/keystone-user-admin/SKILL.md)
-- [Agent skill for policy administration](../skills/keystone-policy-admin/SKILL.md)
+
+### Agent skills
+
+- [`keystone-gateway-bootstrap`](../skills/keystone-gateway-bootstrap/SKILL.md) — install the gateway from scratch and prove it with a live sign-in through the provider
+- [`keystone-user-admin`](../skills/keystone-user-admin/SKILL.md) — add people, service accounts and API keys, grant and revoke roles (`users_*` tools)
+- [`keystone-policy-admin`](../skills/keystone-policy-admin/SKILL.md) — change which roles may call which tools (`policy_*` tools)
+- [`keystonectl`](https://github.com/keystone-codes/keystonectl/blob/main/skills/keystonectl/SKILL.md) (keystonectl repository) — install, upgrade and remove services behind the gateway
 
 ## Project
 

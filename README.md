@@ -68,10 +68,10 @@ Then connect a client and sign in:
   production), or your own directory over HTTP.
 - **Any sign-in method.** Google, OIDC (Okta, Entra, Keycloak), DEV tokens,
   and API keys for machines — one `LoginProvider` interface.
-- **Onboarding and access through the agent.** An administrator adds people,
-  changes roles, and manages access by asking the agent — [two agent
-  skills](docs/README.md#i-manage-who-has-access) (`users_*` and `policy_*`
-  tools), or `setup.sh --non-interactive`.
+- **Install and administer through the agent.** [Agent skills](docs/README.md#agent-skills): `keystone-gateway-bootstrap` installs the gateway and proves it with a live sign-in;
+  `keystone-user-admin` adds people and changes roles (`users_*` tools); `keystone-policy-admin` changes the policy (`policy_*` tools);
+  `keystonectl` (keystonectl repository) installs services behind the gateway.
+  Or `setup.sh --non-interactive`.
 - **Services in any language or SDK.** Each one is a plain MCP server
   behind a transparent proxy; it keeps its own stack and storage.
 - **One policy file, reloaded live.** Access rules live in a single file;

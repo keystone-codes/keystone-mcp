@@ -6,6 +6,14 @@ this project uses [Semantic Versioning](https://semver.org/).
 
 Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatibility.md).
 
+## [Unreleased]
+
+### Added
+
+- Agent skill `keystone-gateway-bootstrap` (`skills/keystone-gateway-bootstrap/`): installs the gateway with Docker on a VM step by step — the questions to ask the operator, who does each step, how secrets reach `.env` without passing through the chat, and a ladder of checks that does not call the gateway ready until the first administrator has signed in through the login provider in a real client. `/healthz`, `/readyz` and `config check` alone do not prove sign-in works.
+- `docs/README.md` and the root `README.md` list every agent skill with its purpose, including the `keystonectl` skill from the keystonectl repository.
+- Static tests for every skill in `skills/`: the frontmatter name matches the folder, the skill is listed in `docs/README.md`, relative links resolve, every `KEYSTONE_MCP_*` variable it names is documented in `docs/environment.md`, and it holds no secret-like values.
+
 ## [0.6.0] - 2026-10-15
 
 0.6.0 fixes security issues in 0.5.x. Upgrade; read ### Migration and [upgrading.md](docs/upgrading.md#05x-060) first.
