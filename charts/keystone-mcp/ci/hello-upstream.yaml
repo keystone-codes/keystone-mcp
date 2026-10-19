@@ -27,6 +27,8 @@ spec:
               value: demo-identity-secret-change-me-0123456789
             - name: HELLO_IDENTITY_AUDIENCE
               value: hello-upstream
+            - name: HELLO_IDENTITY_ISSUER
+              value: http://localhost:8080
           readinessProbe:
             httpGet:
               path: /healthz

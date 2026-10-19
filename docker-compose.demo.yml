@@ -47,6 +47,8 @@ services:
       # signs X-Keystone-Identity with for the "hello" upstream.
       HELLO_IDENTITY_SECRET: ${KEYSTONE_DEMO_HELLO_SECRET:-demo-identity-secret-change-me-0123456789}
       HELLO_IDENTITY_AUDIENCE: hello
+      # Must match KEYSTONE_MCP_BASE_URL on keystone (no trailing slash).
+      HELLO_IDENTITY_ISSUER: http://localhost:8080
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/healthz')"]
       interval: 5s

@@ -27,11 +27,14 @@ def keystone_unavailable_directory_factory() -> Callable[[], Awaitable[UserDirec
     async def factory() -> UserDirectory:
         directory = StaticFileUserDirectory([])
 
-        async def resolve_user(subject: str):
+        async def resolve_user(subject: str) -> None:
+            raise UserDirectoryUnavailableError("unavailable", code="catalog_unavailable")
+
+        async def ping() -> None:
             raise UserDirectoryUnavailableError("unavailable", code="catalog_unavailable")
 
         directory.resolve_user = resolve_user  # type: ignore[method-assign]
-        directory.ping = resolve_user  # type: ignore[method-assign]
+        directory.ping = ping  # type: ignore[method-assign]
         return directory
 
     return factory

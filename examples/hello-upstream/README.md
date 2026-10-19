@@ -56,6 +56,10 @@ the same logic a service in any other language would run against
 - `HELLO_IDENTITY_AUDIENCE` -- this upstream's own registry entry `name`,
   i.e. the assertion's `aud`. Defaults to `hello`, matching
   [`examples/demo/upstreams.yaml`](../demo/upstreams.yaml).
+- `HELLO_IDENTITY_ISSUER` -- Keystone's `KEYSTONE_MCP_BASE_URL` without a
+  trailing slash (the assertion's `iss`). Required when
+  `HELLO_IDENTITY_SECRET` is set; the demo compose and kind CI manifests set
+  it to `http://localhost:8080`.
 
 A request with no valid assertion is rejected once `HELLO_IDENTITY_SECRET` is
 set, even if it carries a forged `X-Author-Email`. With the compose demo

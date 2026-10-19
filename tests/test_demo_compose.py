@@ -88,6 +88,8 @@ def test_demo_hello_uses_identity_secret():
     assert secret_env in keystone_env
     assert keystone_env[secret_env] == hello_env["HELLO_IDENTITY_SECRET"]
     assert "${KEYSTONE_DEMO_HELLO_SECRET" in keystone_env[secret_env]
+    base_url = keystone_env["KEYSTONE_MCP_BASE_URL"].rstrip("/")
+    assert hello_env.get("HELLO_IDENTITY_ISSUER") == base_url
 
 
 def test_demo_registry_validates(monkeypatch):

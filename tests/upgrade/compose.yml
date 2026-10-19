@@ -48,6 +48,7 @@ services:
     environment:
       HELLO_IDENTITY_SECRET: upgrade-hello-identity-secret-0123456789ab
       HELLO_IDENTITY_AUDIENCE: hello
+      HELLO_IDENTITY_ISSUER: http://localhost:8080
     healthcheck:
       test:
         [
