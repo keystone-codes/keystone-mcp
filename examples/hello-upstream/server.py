@@ -57,6 +57,14 @@ try:
 except ImportError:  # pragma: no cover -- MCP SDK 1.x in the demo image
     MODERN_PROTOCOL_VERSIONS = frozenset()
 
+# ``InputRequiredResult`` exists only in MCP Python SDK 2.x; the demo Docker
+# image deliberately stays on 1.x (see ``Dockerfile``).
+_InputRequiredResult = getattr(types, "InputRequiredResult", None)
+
+
+def _is_input_required_result(result: object) -> bool:
+    return _InputRequiredResult is not None and isinstance(result, _InputRequiredResult)
+
 HOST = "0.0.0.0"
 PORT = 8081
 
@@ -367,7 +375,7 @@ async def _slow_count(arguments: dict[str, Any], ctx: _ToolCtx | None) -> list[t
     return [types.TextContent(type="text", text=f"counted to {n}")]
 
 
-async def _ask_name(ctx: _ToolCtx | None) -> list[types.ContentBlock] | types.InputRequiredResult:
+async def _ask_name(ctx: _ToolCtx | None) -> list[types.ContentBlock] | Any:
     if ctx is None or ctx.session is None:
         return [types.TextContent(type="text", text="elicitation not available in this SDK")]
 
@@ -376,7 +384,7 @@ async def _ask_name(ctx: _ToolCtx | None) -> list[types.ContentBlock] | types.In
 
     message = "What is your name?"
     modern = ctx.protocol_version in MODERN_PROTOCOL_VERSIONS
-    if modern and ctx.params is not None:
+    if modern and ctx.params is not None and _InputRequiredResult is not None:
         if ctx.params.input_responses is None:
             request = types.ElicitRequest(
                 params=types.ElicitRequestFormParams(
@@ -384,7 +392,7 @@ async def _ask_name(ctx: _ToolCtx | None) -> list[types.ContentBlock] | types.In
                     requested_schema=ASK_NAME_SCHEMA,
                 )
             )
-            return types.InputRequiredResult(input_requests={"name": request})
+            return _InputRequiredResult(input_requests={"name": request})
         response = ctx.params.input_responses.get("name")
         if not isinstance(response, types.ElicitResult):
             return [types.TextContent(type="text", text="no-answer")]
@@ -413,7 +421,7 @@ async def _run_tool(
     headers: dict[str, str],
     *,
     ctx: _ToolCtx | None = None,
-) -> list[types.ContentBlock] | types.InputRequiredResult:
+) -> list[types.ContentBlock] | Any:
     if name == "greet":
         return [types.TextContent(type="text", text=_greet(arguments, headers))]
     if name == "search":
@@ -479,7 +487,7 @@ def _build_server() -> Server:
             tool_ctx = _tool_ctx_from_server_request(server, headers)
             with _hello_tool_span(name, headers):
                 result = await _run_tool(name, arguments, headers, ctx=tool_ctx)
-            if isinstance(result, types.InputRequiredResult):
+            if _is_input_required_result(result):
                 raise ValueError("elicitation not available in this SDK")
             return result
 
