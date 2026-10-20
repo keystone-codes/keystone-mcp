@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import importlib.metadata
 import importlib.util
 import json
@@ -239,7 +240,7 @@ async def _open_mcp_session(
         event_hooks={"request": [_token_request_hook(trace)]},
     )
     transport_url = f"{base_url.rstrip('/')}/"
-    stack = asyncio.AsyncExitStack()
+    stack = contextlib.AsyncExitStack()
     await stack.enter_async_context(http_client)
     read_stream, write_stream, _ = await stack.enter_async_context(
         streamable_http_client(transport_url, http_client=http_client)
@@ -445,7 +446,7 @@ async def run(args: argparse.Namespace) -> int:
 
         step = "list_changed"
         list_changed_event.clear()
-        listener_stack = asyncio.AsyncExitStack()
+        listener_stack = contextlib.AsyncExitStack()
         if args.protocol == "modern":
             sub = await listener_stack.enter_async_context(
                 listen_subscriptions(session, tools_list_changed=True)
