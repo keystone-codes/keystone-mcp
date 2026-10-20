@@ -32,7 +32,11 @@ from keystone_mcp.router.engine import RouterEngine
 from keystone_mcp.router.registry import RouterRegistry
 from keystone_mcp.router.route import Route
 from keystone_mcp.router.upstream import UpstreamRegistry
-from keystone_mcp.router.upstream_call import DownstreamCall, call_upstream_tool
+from keystone_mcp.router.upstream_call import (
+    DownstreamCall,
+    _progress_token_from_request_meta,
+    call_upstream_tool,
+)
 from support.lowlevel_upstream import (
     UPSTREAM_MCP_URL,
     asgi_http_client_factory,
@@ -204,6 +208,16 @@ async def test_progress_forward_failure_does_not_fail_the_call():
 
 def test_downstream_call_outside_request_is_none():
     assert DownstreamCall.current() is None
+
+
+def test_progress_token_from_request_meta_accepts_snake_case():
+    class _Meta:
+        progress_token = "tok-snake"
+
+    assert _progress_token_from_request_meta(_Meta()) == "tok-snake"
+    assert _progress_token_from_request_meta({"progress_token": "a"}) == "a"
+    assert _progress_token_from_request_meta({"progressToken": "b"}) == "b"
+    assert _progress_token_from_request_meta(None) is None
 
 
 async def test_status_envelope_mode_still_parses_data():
