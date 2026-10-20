@@ -170,9 +170,7 @@ async def _run(
             read_stream,
             write_stream,
         ),
-        ClientSession(
-            read_stream, write_stream, read_timeout_seconds=90.0
-        ) as session,
+        ClientSession(read_stream, write_stream, read_timeout_seconds=90.0) as session,
     ):
         await session.initialize()
         listed = await session.list_tools()
