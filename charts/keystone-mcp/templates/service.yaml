@@ -8,6 +8,7 @@ spec:
   type: {{ .Values.service.type }}
   selector:
     {{- include "keystone-mcp.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: keystone
   ports:
     - name: http
       port: {{ .Values.service.port }}

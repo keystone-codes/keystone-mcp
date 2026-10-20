@@ -242,7 +242,7 @@ async def _open_mcp_session(
     transport_url = f"{base_url.rstrip('/')}/"
     stack = contextlib.AsyncExitStack()
     await stack.enter_async_context(http_client)
-    read_stream, write_stream, _ = await stack.enter_async_context(
+    read_stream, write_stream = await stack.enter_async_context(
         streamable_http_client(transport_url, http_client=http_client)
     )
     session = ClientSession(
