@@ -73,15 +73,18 @@ not invent others. Do not start a step before its answers are in.
    a command that prints one.
 2. **The client secret** goes into `.env` by the operator's own command, from
    the operator's own mode 600 file. Give them these two commands for their
-   terminal; do not run them. `<CLIENT_SECRET_ENV>` is the variable name in
-   `client_secret_env` of `login-providers.yaml` (the shipped example already
-   names one; keep it).
+   terminal; do not run them. `KEYSTONE_MCP_LOGIN_GOOGLE_SECRET` is the
+   variable name the production example uses for Google
+   (`examples/production/login-providers.yaml`); it must match whatever
+   `client_secret_env` actually names in the `login-providers.yaml` this
+   deployment ships (the shipped example already names one; keep it). For an
+   OIDC provider, use that provider's own `client_secret_env` name instead.
 
    ```
    <!-- operator-command -->
    install -m 600 /dev/null /root/keystone-secrets/login-client-secret && nano /root/keystone-secrets/login-client-secret
    <!-- operator-command -->
-   printf '%s=%s\n' '<CLIENT_SECRET_ENV>' "$(cat /root/keystone-secrets/login-client-secret)" >> /srv/keystone/.env
+   printf '%s=%s\n' 'KEYSTONE_MCP_LOGIN_GOOGLE_SECRET' "$(cat /root/keystone-secrets/login-client-secret)" >> /srv/keystone/.env
    ```
 
 3. **Redis and Postgres passwords and the audit salt** you generate with one
