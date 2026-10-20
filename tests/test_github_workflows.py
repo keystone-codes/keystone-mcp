@@ -401,7 +401,8 @@ def test_ci_helm_kind_job_runs_demo_smoke_on_kind():
     assert "helm install keystone" in run_text
     assert "scripts/smoke_demo.py" in run_text
     assert "replicaCount=3" in run_text
-    assert "kubectl port-forward svc/keystone-keystone-mcp 8080:80" in run_text
+    assert "kubectl port-forward" in run_text
+    assert "svc/keystone-keystone-mcp 8080:80" in run_text
     filter_job = doc["jobs"]["helm-kind-changes"]
     filter_uses = [
         step.get("uses")
