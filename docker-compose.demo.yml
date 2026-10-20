@@ -32,7 +32,9 @@ services:
     command:
       - sh
       - -ec
-      - install -m 0666 /seed/rbac-policy.yaml /policy/rbac-policy.yaml
+      - |
+        install -d -m 0777 /policy
+        install -m 0666 /seed/rbac-policy.yaml /policy/rbac-policy.yaml
 
   redis:
     image: redis:7-alpine
