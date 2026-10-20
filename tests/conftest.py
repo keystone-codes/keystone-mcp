@@ -16,6 +16,7 @@ import pytest_asyncio
 import redis
 from fastmcp.utilities.tests import asgi_server
 
+from keystone_mcp import server
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import Settings
 from keystone_mcp.server import _http_asgi_middleware, build_server
@@ -79,6 +80,55 @@ def _isolated_keystone_env(monkeypatch, tmp_path):
     monkeypatch.setenv("KEYSTONE_MCP_LOGIN_PENDING_KEY_PREFIX", redis_key_prefix("login"))
     monkeypatch.setenv("KEYSTONE_MCP_USERS_REDIS_REVISION_KEY", users_revision_key())
     monkeypatch.setenv("KEYSTONE_MCP_POLICY_REDIS_REVISION_KEY", policy_revision_key())
+
+
+@pytest.fixture(autouse=True)
+def _reset_deferred_bootstrap_holders():
+    """Reset the module-global startup holders before and after every test.
+
+    A few tests (``test_server_main.py``, ``test_shutdown_grace.py``) call
+    the real ``server.main()`` with a stubbed ``build_server`` that returns
+    ``upstreams=None``, to check an unrelated detail (an env file, a uvicorn
+    kwarg). ``main()`` unconditionally sets
+    ``server._deferred_bootstrap_holder["factory"]`` to a closure over
+    whatever ``build_server`` returned, win or lose. Left in place, the next
+    test that starts the real ASGI lifespan -- most of the suite -- runs
+    that stale closure as a background task, which immediately raises
+    (``'NoneType' object has no attribute 'start_connections'``) and reaches
+    a startup refusal that the test never substituted a fake for.
+    """
+    server._deferred_bootstrap_holder["factory"] = None
+    server._bootstrap_state_holder["state"] = None
+    server._startup_failure_holder["error"] = None
+    yield
+    server._deferred_bootstrap_holder["factory"] = None
+    server._bootstrap_state_holder["state"] = None
+    server._startup_failure_holder["error"] = None
+
+
+@pytest.fixture(autouse=True)
+def _guard_request_shutdown(monkeypatch):
+    """Never let a real startup refusal send SIGTERM to the test process.
+
+    ``server._request_shutdown`` defaults to ``os.kill(os.getpid(), SIGTERM)``:
+    correct for a real gateway, fatal for the test run, since it kills the
+    whole ``pytest`` process from deep inside a single test with no final
+    summary line. This fixture replaces it with a recorder before every
+    test. A test that substitutes its own fake (as
+    ``test_server_startup_order.py`` does) layers its fake on top of this
+    one via the same ``monkeypatch`` fixture, and is left alone. Any other
+    test whose code path reaches a real startup refusal fails loudly
+    instead of killing the run.
+    """
+    calls: list[BaseException | None] = []
+
+    def _record() -> None:
+        calls.append(server._startup_failure_holder.get("error"))
+
+    monkeypatch.setattr(server, "_request_shutdown", _record)
+    yield
+    if calls and server._request_shutdown is _record:
+        pytest.fail(f"startup refused during the test: {calls[-1]!r}")
 
 
 @pytest.fixture(scope="session", autouse=True)
