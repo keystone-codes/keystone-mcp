@@ -28,6 +28,10 @@ from keystone_mcp.config import Settings
 from keystone_mcp.http.readiness import ReadinessProbe
 from keystone_mcp.rbac.policy import hash_policy_bytes
 from keystone_mcp.server import bootstrap_rbac_policy, build_server
+from keystone_mcp.upstream_registry.reload import (
+    upstream_registry_file_hash,
+    upstream_registry_info_hash,
+)
 from support.login import dev_token_login
 from support.test_env import require_redis_url
 
@@ -431,3 +435,34 @@ async def test_readyz_external_caller_does_not_see_policy_hash(tmp_path: Path):
     body = response.json()
     assert "policy_content_hash" not in body
     assert "policy_in_sync" not in body
+
+
+# ── Upstream registry hash (docs/compatibility.md "Upstream registry") ─────
+async def test_readyz_internal_caller_sees_upstream_registry_hash(tmp_path: Path):
+    """An installer confirms a reload via this field without reading logs."""
+    reg_path = tmp_path / "upstreams.yaml"
+    reg_path.write_text("schema_version: 1\nentries: []\n", encoding="utf-8")
+    settings = Settings(base_url=BASE_URL, upstreams_path=str(reg_path))
+    app = _app(settings, oauth_store=InMemoryOAuthStore())
+    response = await _get(app, "/readyz", client_host="127.0.0.1")
+    assert response.status_code == 200
+    expected = upstream_registry_info_hash(upstream_registry_file_hash(settings))
+    assert expected is not None
+    assert response.json()["upstream_registry_hash"] == expected
+
+
+async def test_readyz_external_caller_does_not_see_upstream_registry_hash(tmp_path: Path):
+    reg_path = tmp_path / "upstreams.yaml"
+    reg_path.write_text("schema_version: 1\nentries: []\n", encoding="utf-8")
+    settings = Settings(base_url=BASE_URL, upstreams_path=str(reg_path))
+    app = _app(settings, oauth_store=InMemoryOAuthStore())
+    response = await _get(app, "/readyz", client_host="203.0.113.1")
+    assert "upstream_registry_hash" not in response.json()
+
+
+async def test_readyz_upstream_registry_hash_absent_without_file_registry():
+    """No ``KEYSTONE_MCP_UPSTREAMS_PATH``: there is no file to hash."""
+    settings = Settings(base_url=BASE_URL)
+    app = _app(settings, oauth_store=InMemoryOAuthStore())
+    response = await _get(app, "/readyz", client_host="127.0.0.1")
+    assert response.json()["upstream_registry_hash"] is None
