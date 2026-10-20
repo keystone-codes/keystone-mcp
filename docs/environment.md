@@ -537,6 +537,14 @@ directory and not be blocked. Provider setup (Google, Okta, Entra ID, Keycloak)
 is [login-providers.md](login-providers.md). The Google redirect URI remains
 `{KEYSTONE_MCP_BASE_URL}/login/google/callback`.
 
+A provider's client secret variable is not a fixed name: `client_secret_env`
+in `login-providers.yaml` picks it, one name per provider. The production
+example (`examples/production/login-providers.yaml`) names it
+`KEYSTONE_MCP_LOGIN_GOOGLE_SECRET` for Google; an OIDC provider in that same
+file names its own. Like other sign-in provider `*_env` options, the value
+may be supplied via `<NAME>_FILE` instead (see
+[Secrets from files](#secrets-from-files)).
+
 ### Registering a client manually
 
 With `KEYSTONE_MCP_OAUTH_DCR_ENABLED=false`, `POST /register` does not exist
