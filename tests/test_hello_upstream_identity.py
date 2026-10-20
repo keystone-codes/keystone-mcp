@@ -283,9 +283,7 @@ async def test_slow_count_progress_through_keystone(monkeypatch):
         await upstreams.discover_all()
 
         async with Client(main) as client:
-            result = await client.call_tool(
-                "hello_slow_count", {"n": 2}, progress_handler=collect
-            )
+            result = await client.call_tool("hello_slow_count", {"n": 2}, progress_handler=collect)
 
     assert result.is_error is False
     assert len(collected) >= 2
