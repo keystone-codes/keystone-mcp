@@ -493,7 +493,14 @@ under the prefixes; the Helm chart values (until 1.0); files under `examples/`
 and `docker-compose.demo.yml`;
 behaviour of `KEYSTONE_MCP_DEPLOYMENT_PROFILE=local` beyond what
 [environment.md](environment.md) documents; OpenTelemetry span names and
-attributes when tracing is enabled.
+attributes when tracing is enabled. `examples/` is not part of this contract,
+but a change to one of the six properties `examples/production` exposes to
+installers (compose file name and location, the single `keystone-mcp` image
+service, its `env_file: .env`, bind-mounted registry/policy/catalog-snapshot
+paths referenced by `KEYSTONE_MCP_UPSTREAMS_PATH` / `KEYSTONE_MCP_RBAC_POLICY_PATH`,
+the service staying off a `keystone-mcp-upstreams` network, and the top-level
+`name: keystone-production`) is called out in [CHANGELOG.md](../CHANGELOG.md)
+under `### Changed`.
 
 ## What counts as a breaking change
 
