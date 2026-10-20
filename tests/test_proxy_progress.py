@@ -220,6 +220,20 @@ def test_progress_token_from_request_meta_accepts_snake_case():
     assert _progress_token_from_request_meta(None) is None
 
 
+def test_progress_token_from_request_meta_reads_typed_dict_style():
+    """SDK ``ServerRequestContext.meta`` is not always duplicated in lifted ``_meta``."""
+    meta = {"progress_token": "from-srctx"}
+
+    class _Srctx:
+        pass
+
+    _Srctx.meta = meta
+    lifted = {"fastmcp": {"version": "1"}}
+    token = _progress_token_from_request_meta(lifted)
+    assert token is None
+    assert _progress_token_from_request_meta(_Srctx.meta) == "from-srctx"
+
+
 async def test_status_envelope_mode_still_parses_data():
     """Guards the private ``Client._parse_call_tool_result`` (see
     ``keystone_mcp.router.upstream_call.parse_for_status_envelope``): if a

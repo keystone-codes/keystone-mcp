@@ -110,10 +110,15 @@ class DownstreamCall:
         rc = ctx.request_context
         if rc is None:
             return None
+        progress_token = _progress_token_from_request_meta(rc.meta)
+        if progress_token is None:
+            progress_token = _progress_token_from_request_meta(
+                getattr(rc._srctx, "meta", None)
+            )
         return cls(
             session=rc.session,
             request_id=rc.request_id,
-            progress_token=_progress_token_from_request_meta(rc.meta),
+            progress_token=progress_token,
         )
 
 
