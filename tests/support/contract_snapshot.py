@@ -150,6 +150,15 @@ def build_cli_parser() -> argparse.ArgumentParser:
     export.add_argument("--live-file", type=Path, required=True)
     export.add_argument("--tier", choices=sorted(_CATALOG_TIERS), default="active")
 
+    builtin = catalog_sub.add_parser("builtin", help="Built-in tool names")
+    builtin.add_argument("--json", action="store_true")
+
+    live = catalog_sub.add_parser("live", help="Live published tool names")
+    live.add_argument("--json", action="store_true")
+    live.add_argument("--host", default="127.0.0.1")
+    live.add_argument("--port", type=int, default=None)
+    live.add_argument("--check-unique", action="store_true")
+
     upstream = subparsers.add_parser("upstream", help="Upstream registry utilities")
     upstream_sub = upstream.add_subparsers(dest="upstream_command", required=True)
     upstream_validate = upstream_sub.add_parser("validate", help="Validate registry file")
