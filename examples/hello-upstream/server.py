@@ -539,7 +539,9 @@ def _build_server() -> Server:
 
 server = _build_server()
 
-manager = StreamableHTTPSessionManager(app=server, stateless=True, json_response=True)
+# json_response=False so tools/call can stream notifications/progress to Keystone
+# (json_response=True buffers the whole call into one JSON body).
+manager = StreamableHTTPSessionManager(app=server, stateless=True, json_response=False)
 
 
 class _McpEndpoint:
