@@ -85,6 +85,178 @@ class ValidationError(ValueError):
 
 
 @dataclass(frozen=True, slots=True)
+class UpstreamProblem:
+    """One structured validation problem, for ``keystone-mcp upstream validate --json``.
+
+    ``code`` is from a short, documented, frozen list (see ``docs/compatibility.md``);
+    ``message`` is free text and not part of the contract. ``entry`` is the
+    registry entry ``name`` when the problem belongs to one entry, otherwise
+    ``None``; ``field`` is the field name (dotted for nested fields, e.g.
+    ``"auth.bearer_env"``) or ``None`` when the problem is not about one field.
+    """
+
+    code: str
+    entry: str | None
+    field: str | None
+    message: str
+
+
+#: Stable problem codes for ``keystone-mcp upstream validate --json``; frozen
+#: once released (see docs/compatibility.md). Additive only.
+CODE_FILE_UNREADABLE = "file_unreadable"
+CODE_DOCUMENT_INVALID = "document_invalid"
+CODE_CONFIG_INVALID = "config_invalid"
+CODE_SCHEMA_VERSION_UNSUPPORTED = "schema_version_unsupported"
+CODE_ENTRIES_INVALID = "entries_invalid"
+CODE_TOO_MANY_ENTRIES = "too_many_entries"
+CODE_ENTRY_INVALID = "entry_invalid"
+CODE_NAME_INVALID = "name_invalid"
+CODE_NAME_DUPLICATE = "name_duplicate"
+CODE_NAMESPACE_INVALID = "namespace_invalid"
+CODE_NAMESPACE_DUPLICATE = "namespace_duplicate"
+CODE_NAMESPACE_TAKEN = "namespace_taken"
+CODE_NAMESPACE_COLLISION = "namespace_collision"
+CODE_TRANSPORT_INVALID = "transport_invalid"
+CODE_STDIO_FIELD_INVALID = "stdio_field_invalid"
+CODE_URL_INVALID = "url_invalid"
+CODE_INSECURE_HTTP_REFUSED = "insecure_http_refused"
+CODE_AUTH_ENV_INVALID = "auth_env_invalid"
+CODE_AUTH_ENV_RESERVED = "auth_env_reserved"
+CODE_AUTH_FIELD_INVALID = "auth_field_invalid"
+CODE_LIMITS_FIELD_INVALID = "limits_field_invalid"
+CODE_FIELD_INVALID = "field_invalid"
+CODE_IDENTITY_SECRET_REUSED = "identity_secret_reused"
+
+
+def _classify_env_message(message: str) -> str:
+    """Classify one ``env.<child>`` message from :func:`env_field_errors`.
+
+    ``env.<child>``'s *value* names a ``KEYSTONE_MCP_UPSTREAM_*`` variable and
+    is validated identically to ``auth.bearer_env`` / ``auth.identity_secret_env``
+    (see ``_BEARER_ENV_RE`` and ``_RESERVED_BEARER_ENV_NAMES``), so those two
+    messages share a code with the ``auth.*`` equivalents; the child-name
+    format check (the key, not the value) is a distinct, stdio-only concern.
+    """
+    if "must not name" in message and "own configuration already reads" in message:
+        return CODE_AUTH_ENV_RESERVED
+    if "must name an environment variable of keystone-mcp" in message:
+        return CODE_AUTH_ENV_INVALID
+    return CODE_STDIO_FIELD_INVALID
+
+
+def _classify_url_message(message: str) -> str:
+    if "KEYSTONE_MCP_UPSTREAM_ALLOW_INSECURE_HTTP=true" in message:
+        return CODE_INSECURE_HTTP_REFUSED
+    return CODE_URL_INVALID
+
+
+def _classify_auth_message(message: str) -> str:
+    if "must be an environment variable name starting with" in message:
+        return CODE_AUTH_ENV_INVALID
+    if "must not name" in message and "own configuration already reads" in message:
+        return CODE_AUTH_ENV_RESERVED
+    return CODE_AUTH_FIELD_INVALID
+
+
+#: Matches the leading ``auth`` or ``auth.<key>`` field path at the start of an
+#: :func:`auth_field_errors` message (stops before punctuation or the next word).
+_AUTH_FIELD_RE = re.compile(r"^(auth(?:\.[A-Za-z0-9_]+)?)")
+
+_ENTRIES_INDEX_RE = re.compile(r"^entries\[(\d+)\]\.(\S+)")
+
+
+def _classify_namespace_errors(
+    namespaces: Sequence[str],
+    *,
+    namespace_to_entry: dict[str, str | None],
+) -> list[UpstreamProblem]:
+    """Structured equivalent of :func:`namespace_errors`, same three checks."""
+    from keystone_mcp.catalog.builtin import BUILTIN_TOOL_NAMES
+
+    problems: list[UpstreamProblem] = []
+
+    for ns in namespaces:
+        if not _NAMESPACE_RE.match(ns):
+            problems.append(
+                UpstreamProblem(
+                    code=CODE_NAMESPACE_INVALID,
+                    entry=namespace_to_entry.get(ns),
+                    field="namespace",
+                    message=(
+                        f"namespace {ns!r} must be 1-64 characters of A-Z, a-z, 0-9, "
+                        "'_' or '-', not starting or ending with '_' or '-'"
+                    ),
+                )
+            )
+
+    for ns in namespaces:
+        prefix = f"{ns}_"
+        for builtin_name in sorted(BUILTIN_TOOL_NAMES):
+            if builtin_name.startswith(prefix):
+                problems.append(
+                    UpstreamProblem(
+                        code=CODE_NAMESPACE_TAKEN,
+                        entry=namespace_to_entry.get(ns),
+                        field="namespace",
+                        message=(
+                            f"namespace {ns!r} is reserved: published names {ns}_* can "
+                            f"collide with built-in tool {builtin_name}"
+                        ),
+                    )
+                )
+
+    distinct = sorted(set(namespaces))
+    for a in distinct:
+        for b in distinct:
+            if a == b:
+                continue
+            if b.startswith(f"{a}_"):
+                problems.append(
+                    UpstreamProblem(
+                        code=CODE_NAMESPACE_COLLISION,
+                        entry=namespace_to_entry.get(b),
+                        field="namespace",
+                        message=(
+                            f"namespaces {a!r} and {b!r} can publish the same tool name "
+                            f"({a}_x_y == {b}_y when {a} has a tool x_y); rename one of them"
+                        ),
+                    )
+                )
+
+    return problems
+
+
+def _classify_identity_secret_reuse_errors(
+    entries: Sequence[Any],
+) -> list[UpstreamProblem]:
+    """Structured equivalent of :func:`identity_secret_reuse_errors`.
+
+    Those messages already carry an ``entries[i].<field>`` prefix (unlike the
+    other ``*_errors`` helpers), so the index and field are parsed back out of
+    the formatted message rather than threaded through a second code path.
+    """
+    problems: list[UpstreamProblem] = []
+    for message in identity_secret_reuse_errors(entries):
+        match = _ENTRIES_INDEX_RE.match(message)
+        entry_name: str | None = None
+        field: str | None = None
+        if match:
+            field = match.group(2)
+            index = int(match.group(1))
+            if 0 <= index < len(entries) and isinstance(entries[index], dict):
+                entry_name = str(entries[index].get("name", "")).strip() or None
+        problems.append(
+            UpstreamProblem(
+                code=CODE_IDENTITY_SECRET_REUSED,
+                entry=entry_name,
+                field=field,
+                message=message,
+            )
+        )
+    return problems
+
+
+@dataclass(frozen=True, slots=True)
 class _HostClassification:
     is_literal_ip: bool
     is_private_or_local: bool
@@ -536,97 +708,250 @@ def namespace_errors(namespaces: Sequence[str]) -> list[str]:
     return errors
 
 
-def validate_upstream_registry(
+def collect_upstream_problems(
     document: dict[str, Any],
     *,
     policy: UpstreamSecurityPolicy,
-) -> list[str]:
-    """Validate a loaded registry document; return all error messages."""
-    errors: list[str] = []
+) -> list[UpstreamProblem]:
+    """Validate a loaded registry document; return all problems, structured.
+
+    :func:`validate_upstream_registry` is a thin projection of this function
+    onto plain message text, so the two can never disagree: add a check here,
+    both callers see it.
+    """
+    problems: list[UpstreamProblem] = []
     if not isinstance(document, dict):
-        return ["registry root must be an object"]
+        return [
+            UpstreamProblem(
+                code=CODE_DOCUMENT_INVALID,
+                entry=None,
+                field=None,
+                message="registry root must be an object",
+            )
+        ]
 
     version = document.get("schema_version")
     if version != 1:
-        errors.append(f"schema_version must be 1 (got {version!r})")
+        problems.append(
+            UpstreamProblem(
+                code=CODE_SCHEMA_VERSION_UNSUPPORTED,
+                entry=None,
+                field="schema_version",
+                message=f"schema_version must be 1 (got {version!r})",
+            )
+        )
 
     entries = document.get("entries")
     if entries is None:
-        errors.append("entries is required")
-        return errors
+        problems.append(
+            UpstreamProblem(
+                code=CODE_ENTRIES_INVALID,
+                entry=None,
+                field="entries",
+                message="entries is required",
+            )
+        )
+        return problems
     if not isinstance(entries, list):
-        errors.append("entries must be an array")
-        return errors
+        problems.append(
+            UpstreamProblem(
+                code=CODE_ENTRIES_INVALID,
+                entry=None,
+                field="entries",
+                message="entries must be an array",
+            )
+        )
+        return problems
     if len(entries) > MAX_REGISTRY_ENTRIES:
-        errors.append(f"entries must contain at most {MAX_REGISTRY_ENTRIES} items")
+        problems.append(
+            UpstreamProblem(
+                code=CODE_TOO_MANY_ENTRIES,
+                entry=None,
+                field="entries",
+                message=f"entries must contain at most {MAX_REGISTRY_ENTRIES} items",
+            )
+        )
 
     seen_names: set[str] = set()
     seen_namespaces: set[str] = set()
     all_namespaces: list[str] = []
+    namespace_to_entry: dict[str, str | None] = {}
 
     for index, item in enumerate(entries):
         prefix = f"entries[{index}]"
         if not isinstance(item, dict):
-            errors.append(f"{prefix} must be an object")
+            problems.append(
+                UpstreamProblem(
+                    code=CODE_ENTRY_INVALID,
+                    entry=None,
+                    field=None,
+                    message=f"{prefix} must be an object",
+                )
+            )
             continue
 
         name = str(item.get("name", "")).strip()
         namespace = str(item.get("namespace", "")).strip()
         url = str(item.get("url", "")).strip()
+        entry_name = name or None
 
         if not name:
-            errors.append(f"{prefix}.name is required")
+            problems.append(
+                UpstreamProblem(
+                    code=CODE_NAME_INVALID,
+                    entry=None,
+                    field="name",
+                    message=f"{prefix}.name is required",
+                )
+            )
         elif name in seen_names:
-            errors.append(f"duplicate upstream name: {name!r}")
+            problems.append(
+                UpstreamProblem(
+                    code=CODE_NAME_DUPLICATE,
+                    entry=name,
+                    field="name",
+                    message=f"duplicate upstream name: {name!r}",
+                )
+            )
         else:
             seen_names.add(name)
 
         if not namespace:
-            errors.append(f"{prefix}.namespace is required")
+            problems.append(
+                UpstreamProblem(
+                    code=CODE_NAMESPACE_INVALID,
+                    entry=entry_name,
+                    field="namespace",
+                    message=f"{prefix}.namespace is required",
+                )
+            )
         elif namespace in seen_namespaces:
-            errors.append(f"duplicate upstream namespace: {namespace!r}")
+            problems.append(
+                UpstreamProblem(
+                    code=CODE_NAMESPACE_DUPLICATE,
+                    entry=entry_name,
+                    field="namespace",
+                    message=f"duplicate upstream namespace: {namespace!r}",
+                )
+            )
         else:
             seen_namespaces.add(namespace)
             all_namespaces.append(namespace)
+            namespace_to_entry[namespace] = entry_name
 
         transport, transport_errors = transport_field_errors(item)
         for message in transport_errors:
-            errors.append(f"{prefix}.{message}")
+            if message.startswith("transport "):
+                code = CODE_TRANSPORT_INVALID
+                field = "transport"
+            elif message.startswith("env."):
+                code = _classify_env_message(message)
+                field = message.split(" ", 1)[0]
+            else:
+                code = CODE_STDIO_FIELD_INVALID
+                field = message.split(" ", 1)[0]
+            problems.append(
+                UpstreamProblem(
+                    code=code,
+                    entry=entry_name,
+                    field=field,
+                    message=f"{prefix}.{message}",
+                )
+            )
 
         if transport == "stdio":
             # transport_field_errors already rejects a non-empty url above.
             pass
         elif not url:
-            errors.append(f"{prefix}.url is required")
+            problems.append(
+                UpstreamProblem(
+                    code=CODE_URL_INVALID,
+                    entry=entry_name,
+                    field="url",
+                    message=f"{prefix}.url is required",
+                )
+            )
         else:
             for message in validate_upstream_url(url, policy=policy):
-                errors.append(f"{prefix}.url: {message}")
+                problems.append(
+                    UpstreamProblem(
+                        code=_classify_url_message(message),
+                        entry=entry_name,
+                        field="url",
+                        message=f"{prefix}.url: {message}",
+                    )
+                )
 
         for message in auth_field_errors(item.get("auth")):
-            errors.append(f"{prefix}.{message}")
+            field_match = _AUTH_FIELD_RE.match(message)
+            field = field_match.group(1) if field_match else "auth"
+            problems.append(
+                UpstreamProblem(
+                    code=_classify_auth_message(message),
+                    entry=entry_name,
+                    field=field,
+                    message=f"{prefix}.{message}",
+                )
+            )
 
         for message in limits_field_errors(item.get("limits")):
-            errors.append(f"{prefix}.{message}")
+            field = message.split(" ", 1)[0] if message.startswith("limits.") else "limits"
+            problems.append(
+                UpstreamProblem(
+                    code=CODE_LIMITS_FIELD_INVALID,
+                    entry=entry_name,
+                    field=field,
+                    message=f"{prefix}.{message}",
+                )
+            )
 
         route_mode = item.get("route_mode", "live")
         if route_mode is not None and route_mode not in ("live", "stub"):
-            errors.append(f"{prefix}.route_mode must be 'live' or 'stub'")
+            problems.append(
+                UpstreamProblem(
+                    code=CODE_FIELD_INVALID,
+                    entry=entry_name,
+                    field="route_mode",
+                    message=f"{prefix}.route_mode must be 'live' or 'stub'",
+                )
+            )
 
         for field_name in ("discovery_timeout_seconds", "tool_timeout_seconds"):
             raw = item.get(field_name)
             if raw is None:
                 continue
             if isinstance(raw, bool) or not isinstance(raw, (int, float)) or raw <= 0:
-                errors.append(f"{prefix}.{field_name} must be a positive number")
+                problems.append(
+                    UpstreamProblem(
+                        code=CODE_FIELD_INVALID,
+                        entry=entry_name,
+                        field=field_name,
+                        message=f"{prefix}.{field_name} must be a positive number",
+                    )
+                )
 
         if item.get("enabled") is not None and not isinstance(
             item.get("enabled"), (bool, str, int)
         ):
-            errors.append(f"{prefix}.enabled must be a boolean")
+            problems.append(
+                UpstreamProblem(
+                    code=CODE_FIELD_INVALID,
+                    entry=entry_name,
+                    field="enabled",
+                    message=f"{prefix}.enabled must be a boolean",
+                )
+            )
 
         publish_resources = item.get("publish_resources")
         if publish_resources is not None and not isinstance(publish_resources, bool):
-            errors.append(f"{prefix}.publish_resources must be a boolean")
+            problems.append(
+                UpstreamProblem(
+                    code=CODE_FIELD_INVALID,
+                    entry=entry_name,
+                    field="publish_resources",
+                    message=f"{prefix}.publish_resources must be a boolean",
+                )
+            )
 
         for field_name in ("resource_include_prefixes", "resource_exclude_prefixes"):
             raw = item.get(field_name)
@@ -636,12 +961,34 @@ def validate_upstream_registry(
                 continue
             if isinstance(raw, list) and all(isinstance(entry, str) for entry in raw):
                 continue
-            errors.append(f"{prefix}.{field_name} must be a string or array of strings")
+            problems.append(
+                UpstreamProblem(
+                    code=CODE_FIELD_INVALID,
+                    entry=entry_name,
+                    field=field_name,
+                    message=f"{prefix}.{field_name} must be a string or array of strings",
+                )
+            )
 
-    errors.extend(namespace_errors(all_namespaces))
-    errors.extend(identity_secret_reuse_errors(entries))
+    problems.extend(
+        _classify_namespace_errors(all_namespaces, namespace_to_entry=namespace_to_entry)
+    )
+    problems.extend(_classify_identity_secret_reuse_errors(entries))
 
-    return errors
+    return problems
+
+
+def validate_upstream_registry(
+    document: dict[str, Any],
+    *,
+    policy: UpstreamSecurityPolicy,
+) -> list[str]:
+    """Validate a loaded registry document; return all error messages.
+
+    A thin projection of :func:`collect_upstream_problems` onto plain text;
+    see that function for the structured, ``--json``-friendly equivalent.
+    """
+    return [problem.message for problem in collect_upstream_problems(document, policy=policy)]
 
 
 def assert_valid_upstream_registry(
