@@ -8,6 +8,8 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-10-20
+
 ### Added
 
 - `keystone-mcp catalog builtin --json` and `keystone-mcp catalog live --json [--host HOST] [--port PORT] [--check-unique]`: structured, frozen JSON lists of this version's built-in tool names and a running server's live published tool names (with multiplicity), so installers like keystonectl no longer need a private copy of `BUILTIN_TOOL_NAMES` or to parse `python -m keystone_mcp.rbac.catalog` output ([#7](https://github.com/keystone-codes/keystone-mcp/issues/7)).
@@ -15,6 +17,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 - Agent skill `keystone-gateway-bootstrap` (`skills/keystone-gateway-bootstrap/`): installs the gateway with Docker on a VM step by step — the questions to ask the operator, who does each step, how secrets reach `.env` without passing through the chat, and a ladder of checks that does not call the gateway ready until the first administrator has signed in through the login provider in a real client. `/healthz`, `/readyz` and `config check` alone do not prove sign-in works.
 - `docs/README.md` and the root `README.md` list every agent skill with its purpose, including the `keystonectl` skill from the keystonectl repository.
 - Static tests for every skill in `skills/`: the frontmatter name matches the folder, the skill is listed in `docs/README.md`, relative links resolve, every `KEYSTONE_MCP_*` variable it names is documented in `docs/environment.md`, and it holds no secret-like values.
+- `docs/paths/production-docker.md` documents adopting the production example with `keystonectl init --adopt .`; static tests guard the six layout properties installers rely on ([#10](https://github.com/keystone-codes/keystone-mcp/issues/10)).
 
 ### Changed
 
@@ -50,12 +53,12 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 - `docs/compatibility.md` lists `upstream_registry_hash` in the `/readyz`
   row (trusted internal callers only), matching `src/keystone_mcp/server.py` (#9).
-- Examples and documentation now pin the `0.6.0` image
-  (`examples/production/docker-compose.yml`, `examples/kubernetes/deployment.yaml`,
-  `docs/connecting-services.md`, `docs/paths/kubernetes.md`); `scripts/check_version.py`
-  now fails when a `ghcr.io/keystone-codes/keystone-mcp:X.Y.Z` reference under
+- Examples and documentation pin the release image tag; `scripts/check_version.py`
+  fails when a `ghcr.io/keystone-codes/keystone-mcp:X.Y.Z` reference under
   `examples/` or `docs/` (other than `docs/upgrading.md`) lags the project version.
 - The full local test suite could kill its own `pytest` process with a real `SIGTERM` partway through: a few tests exercise the deferred-bootstrap path without substituting `server._request_shutdown`, so a startup refusal there called the real, process-killing default. An autouse fixture in `tests/conftest.py` now replaces `_request_shutdown` for every test and fails the offending test instead of sending a signal; tests that substitute their own fake (`tests/test_server_startup_order.py`) are unaffected.
+- Compose demo: RBAC `policy_*` mutations persist on a writable `demo-policy` volume; `list_changed` is broadcast right after a successful policy mutation instead of waiting for the reconciler tick.
+- Compose smoke: `hello-upstream` streams tool responses so MCP progress events reach Keystone; legacy `client_e2e` uses `notes_read` so modern and legacy checks can share one stack.
 
 ## [0.6.0] - 2026-10-15
 
