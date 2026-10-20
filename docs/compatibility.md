@@ -344,6 +344,8 @@ Frozen since 0.5.0. Exit codes are part of the contract; command output text is 
 |---|---|
 | `keystone-mcp catalog validate`, `keystone-mcp catalog diff` | `0` success; `1` validation error; `3` `--live-url` unreachable |
 | `keystone-mcp catalog export` | `0` success; `1` validation error |
+| `keystone-mcp catalog builtin --json` | `0` success; `2` usage error |
+| `keystone-mcp catalog live --json [--host HOST] [--port PORT] [--check-unique]` | `0` success; `1` non-loopback `--host` or (with `--check-unique`) a name occurs more than once; `3` server unreachable |
 | `keystone-mcp upstream validate --path <file>` | `0` ok; `1` validation or I/O error |
 | `keystone-mcp users grant-admin`, `users import`, `users admins`, `users block`, `users unblock`, `users logout`, `users export`, `users delete`, `users unbind-identity` | per `users/cli.py` (`0` success, non-zero documented failures; `users admins` and `users delete` on the last administrator exit `1`; `users delete` exits `2` when confirmation is refused, `3` when the person was removed but sessions were not revoked) |
 | `keystone-mcp users db current` | `0` when the database revision matches this binary; `4` when the database is newer; `5` when it is older |
@@ -359,10 +361,51 @@ Frozen since 0.5.0. Exit codes are part of the contract; command output text is 
 | `python -m keystone_mcp.healthcheck <path>` | `0` when the HTTP probe succeeds, non-zero otherwise |
 
 Flags for `catalog` (`--policy`, `--snapshot`, `--live-file`, `--live-url`,
-`--strict-unreachable`, `--tier`) and `users import` (`--from-url`, `--token`,
+`--strict-unreachable`, `--tier`, `--json`, `--host`, `--port`,
+`--check-unique`) and `users import` (`--from-url`, `--token`,
 `--policy`, `--dry-run`) are frozen. `users grant-admin` accepts an
 optional `--role <name>` (must grant full administration). `users admins`
 accepts `--json`.
+
+`keystone-mcp catalog builtin --json` needs no running server, Redis, or
+database; it prints this version's built-in tool names. Frozen JSON shape:
+
+```json
+{
+  "schema_version": 1,
+  "keystone_mcp_version": "0.6.0",
+  "tools": ["api_keys_issue", "api_keys_list", "policy_read", "users_list"],
+  "registry": {
+    "max_entries": 64,
+    "namespace_pattern": "^[A-Za-z0-9](?:[A-Za-z0-9_-]{0,62}[A-Za-z0-9])?$",
+    "reserved_env_names": ["KEYSTONE_MCP_UPSTREAM_ALLOW_INSECURE_HTTP", "..."]
+  }
+}
+```
+
+`tools` is sorted; `registry` carries the limits enforced by the upstream
+registry validator (`max_entries`, `namespace_pattern`, `reserved_env_names`)
+so installers do not need a private copy. New top-level or `registry` keys
+are additive.
+
+`keystone-mcp catalog live --json [--host HOST] [--port PORT]` prints the
+names a running server currently publishes, with multiplicity (the structured
+form of `python -m keystone_mcp.rbac.catalog`); same loopback-only rule as
+that module (`--host` defaults to `127.0.0.1`, `--port` to the configured
+server port). Frozen JSON shape:
+
+```json
+{
+  "schema_version": 1,
+  "names": [
+    {"name": "files_create_upload_url", "count": 1},
+    {"name": "users_list", "count": 1}
+  ]
+}
+```
+
+With `--check-unique`, exits `1` when any name occurs more than once. Text
+output (without `--json`) for both commands is free-form.
 
 ## Users directory database
 

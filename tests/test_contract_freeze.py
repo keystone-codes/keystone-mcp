@@ -394,6 +394,9 @@ def _documented_frozen_cli_flags(section: str) -> set[str]:
     flags.add("catalog validate --strict-unreachable")
     flags.add("catalog export --live-file")
     flags.add("catalog export --tier")
+    flags.add("catalog builtin --json")
+    for option in ("--json", "--host", "--port", "--check-unique"):
+        flags.add(f"catalog live {option}")
     for option in ("--from-url", "--token", "--policy", "--dry-run"):
         flags.add(f"users import {option}")
     flags.add("users grant-admin --role")
