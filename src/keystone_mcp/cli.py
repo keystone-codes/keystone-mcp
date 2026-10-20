@@ -311,7 +311,8 @@ def _settings_required_for_cli(command: str) -> frozenset[str]:
     return frozenset()
 
 
-def main(argv: list[str] | None = None) -> int:
+def build_cli_argument_parser() -> argparse.ArgumentParser:
+    """Build the keystone-mcp CLI parser (used by main and contract snapshots)."""
     parser = argparse.ArgumentParser(prog="keystone-mcp")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -398,7 +399,11 @@ def main(argv: list[str] | None = None) -> int:
     add_plugins_commands(subparsers)
     add_oauth_commands(subparsers)
     add_config_commands(subparsers)
+    return parser
 
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_cli_argument_parser()
     args = parser.parse_args(argv)
     if args.command == "config":
         return args.handler(args)

@@ -125,7 +125,8 @@ def _collect_cli_commands(parser: argparse.ArgumentParser, prefix: tuple[str, ..
     return commands
 
 
-def build_cli_parser() -> argparse.ArgumentParser:
+def _legacy_frozen_baseline_cli_parser() -> argparse.ArgumentParser:
+    """CLI layout frozen at v0.5.0 for ``--from-tag v0.5.0`` baseline checks."""
     from keystone_mcp.cli import _CATALOG_TIERS, _catalog_parent_parser
     from keystone_mcp.plugins_cli import add_plugins_commands
     from keystone_mcp.users.api_keys_cli import add_api_keys_commands
@@ -150,15 +151,6 @@ def build_cli_parser() -> argparse.ArgumentParser:
     export.add_argument("--live-file", type=Path, required=True)
     export.add_argument("--tier", choices=sorted(_CATALOG_TIERS), default="active")
 
-    builtin = catalog_sub.add_parser("builtin", help="Built-in tool names")
-    builtin.add_argument("--json", action="store_true")
-
-    live = catalog_sub.add_parser("live", help="Live published tool names")
-    live.add_argument("--json", action="store_true")
-    live.add_argument("--host", default="127.0.0.1")
-    live.add_argument("--port", type=int, default=None)
-    live.add_argument("--check-unique", action="store_true")
-
     upstream = subparsers.add_parser("upstream", help="Upstream registry utilities")
     upstream_sub = upstream.add_subparsers(dest="upstream_command", required=True)
     upstream_validate = upstream_sub.add_parser("validate", help="Validate registry file")
@@ -170,6 +162,15 @@ def build_cli_parser() -> argparse.ArgumentParser:
     add_service_accounts_commands(subparsers)
     add_plugins_commands(subparsers)
     return parser
+
+
+def build_cli_parser() -> argparse.ArgumentParser:
+    import keystone_mcp.cli as cli_module
+
+    builder = getattr(cli_module, "build_cli_argument_parser", None)
+    if builder is not None:
+        return builder()
+    return _legacy_frozen_baseline_cli_parser()
 
 
 def generate_cli_commands(_src_root: Path) -> dict[str, str]:
