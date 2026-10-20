@@ -8,7 +8,7 @@ that path; only the packaging differs.
 From the published OCI chart (replace the version with yours):
 
 ```bash
-helm install keystone oci://ghcr.io/keystone-codes/charts/keystone-mcp --version 0.6.0 -f my-values.yaml
+helm install keystone oci://ghcr.io/keystone-codes/charts/keystone-mcp --version 0.6.1 -f my-values.yaml
 ```
 
 From a checkout of this repository:
