@@ -369,6 +369,20 @@ WARNING and the previous registry stays in effect. Upstream secret values
 companions) are re-read on `SIGHUP` even when the file bytes are unchanged.
 Compare replicas with `keystone_mcp_upstream_registry_info{content_hash}` and
 `/readyz` `upstream_registry_hash` (internal callers).
+
+A registry file mounted into a container as a single bind-mounted file, as
+in `examples/production/docker-compose.yml`
+(`./upstreams.yaml:/etc/keystone-mcp/upstreams.yaml:ro`), keeps the inode it
+had at mount time. When the host replaces the file atomically — an editor,
+or an installer writing a temp file and renaming it over the original — the
+container's bind mount still resolves to the old, now-unlinked inode: every
+reload trigger inside the container (a refresh tick or `SIGHUP`) keeps
+reading the old bytes, computes the same hash, and reports `unchanged`
+forever, until the container is recreated. Mount the containing directory
+instead (for example `./keystonectl:/etc/keystone-mcp/keystonectl:ro`, one
+level up from the file) so the lookup resolves to whatever file currently
+has that name.
+
 - When RBAC is enabled, startup is refused only if every configured upstream
   is unreachable, not running with an empty live catalog; a single
   unreachable upstream among several is a warning, not a refusal.

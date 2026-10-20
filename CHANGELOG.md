@@ -33,9 +33,21 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
   step between publishing the domain and wiring upstreams, and describe the
   upstream registry reload as "reload on SIGHUP" instead of "restart after
   change".
+- `docs/compatibility.md` "Upstream registry" states the reload timing (next
+  refresh tick after the file changes, or at once on `SIGHUP`), the settings
+  that still need a process restart, and how an installer confirms a reload
+  without reading logs (`keystone_mcp_upstream_registry_reload_total`,
+  `keystone_mcp_upstream_registry_info`, `/readyz` `upstream_registry_hash`)
+  instead of leaving the timing undocumented outside `docs/facade.md`.
+  `docs/facade.md` adds the single-file bind-mount inode caveat where the
+  reload is documented: a host-side atomic file replace is invisible to a
+  container that bind-mounts the registry file itself rather than its
+  directory. (#9)
 
 ### Fixed
 
+- `docs/compatibility.md` lists `upstream_registry_hash` in the `/readyz`
+  row (trusted internal callers only), matching `src/keystone_mcp/server.py` (#9).
 - Examples and documentation now pin the `0.6.0` image
   (`examples/production/docker-compose.yml`, `examples/kubernetes/deployment.yaml`,
   `docs/connecting-services.md`, `docs/paths/kubernetes.md`); `scripts/check_version.py`

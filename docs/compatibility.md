@@ -157,6 +157,35 @@ Frozen since 0.5.0. Structural validation:
 - Document shape: `schema_version: 1`, `entries:` (YAML or JSON; the same
   array may be supplied in `KEYSTONE_MCP_UPSTREAMS` when no registry file is
   loaded). Changes to the registry file are applied without a restart (since 0.6.0).
+- Reload timing (since 0.6.0, frozen): a registry file named by
+  `KEYSTONE_MCP_UPSTREAMS_PATH` is read once at process start, then re-read
+  either on the next refresh tick after its bytes change
+  (`KEYSTONE_MCP_REFRESH_INTERVAL_SECONDS`, default 300s) or at once on
+  `SIGHUP` (`kill -HUP <pid>`). Added entries are discovered and published,
+  removed ones disappear with their tools, prompts and resources, and
+  changed ones are rebuilt. A file that fails validation is rejected (a
+  WARNING is logged, `keystone_mcp_upstream_registry_reload_total{outcome="rejected"}`
+  increments) and the previous registry stays in service. `SIGHUP` also
+  re-reads upstream secret values (`auth.bearer_env`, `identity_secret_env`,
+  stdio `env`, and their `*_FILE` companions) even when the file's bytes are
+  unchanged. Full mechanics: [facade.md](facade.md#changing-the-registry-without-a-restart).
+- Still needs a process restart: the registry file path itself
+  (`KEYSTONE_MCP_UPSTREAMS_PATH`), inline registry JSON
+  (`KEYSTONE_MCP_UPSTREAMS`), `KEYSTONE_MCP_PROXY_SCHEMA_PATCHES`,
+  `KEYSTONE_MCP_UPSTREAM_TOOL_TIMEOUTS`, and the upstream egress flags
+  (`KEYSTONE_MCP_UPSTREAM_ALLOW_INSECURE_HTTP`,
+  `KEYSTONE_MCP_UPSTREAM_EGRESS_ALLOW_PRIVATE`).
+- Confirming a reload without reading logs: gauge
+  `keystone_mcp_upstream_registry_info{content_hash}` (value `1`; the
+  12-hex-character prefix of the SHA-256 of the registry file's bytes) names
+  the registry currently in service, and counter
+  `keystone_mcp_upstream_registry_reload_total{outcome}` counts attempts by
+  `applied`, `rejected` or `unchanged`. `GET /readyz` exposes the same hash as
+  `upstream_registry_hash` to trusted internal callers (see "HTTP routes").
+  An installer that wrote the file computes its own hash and waits for one
+  of these to show it, instead of restarting to be sure; on
+  `outcome="rejected"` it should report the problem instead of retrying a
+  restart.
 - Per-entry fields accepted by the loader and validator: `name`, `url`
   (required for `transport: http`), `namespace` (1–64 characters
   `A-Za-z0-9_-`, not starting or ending with `_` or `-`), `enabled`,
@@ -301,7 +330,7 @@ an IP-literal `Host` is also accepted. Wrong `Host` → `421`; wrong `Origin` �
 | `/login/redirect-not-allowed` | GET | Error page when the client's redirect host is not allowed |
 | `/login/<provider>/callback` | GET | Redirect provider callback; Google uses `/login/google/callback` when the provider name is `google` |
 | `/healthz` | GET | Liveness: `{"status": "ok"}`, always `200` |
-| `/readyz` | GET | Readiness: `{"status": "ok"|"degraded"}`, `200` or `503`. Trusted internal callers also see `checks`, `upstreams`, `policy_content_hash`, and `policy_in_sync`. |
+| `/readyz` | GET | Readiness: `{"status": "ok"|"degraded"}`, `200` or `503`. Trusted internal callers also see `checks`, `upstreams`, `policy_content_hash`, `policy_in_sync`, and `upstream_registry_hash` (0.6.0; same value as `keystone_mcp_upstream_registry_info{content_hash}`). |
 | `KEYSTONE_MCP_METRICS_PATH` | GET | Prometheus when `KEYSTONE_MCP_METRICS_ENABLED=true` |
 | `/internal/live-published-names` | GET | When `KEYSTONE_MCP_INTERNAL_ENDPOINTS_ENABLED=true` |
 
