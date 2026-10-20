@@ -24,7 +24,6 @@ import json
 import sys
 import time
 from dataclasses import dataclass, field
-from datetime import timedelta
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
@@ -248,7 +247,7 @@ async def _open_mcp_session(
     session = ClientSession(
         read_stream,
         write_stream,
-        read_timeout_seconds=timedelta(seconds=120),
+        read_timeout_seconds=120.0,
         elicitation_callback=elicitation_handler,
         message_handler=message_handler,
     )
