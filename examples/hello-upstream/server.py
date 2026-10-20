@@ -366,13 +366,26 @@ async def _slow_count(arguments: dict[str, Any], ctx: _ToolCtx | None) -> list[t
             else ()
         )
     )
-    report_progress = (
-        getattr(ctx.session, "report_progress", None) if ctx and ctx.session is not None else None
+    session = ctx.session if ctx is not None else None
+    report_progress = getattr(session, "report_progress", None) if session is not None else None
+    send_progress = (
+        getattr(session, "send_progress_notification", None) if session is not None else None
     )
+    request_id = ctx.request_id if ctx is not None else None
     try:
         for i in range(1, n + 1):
-            if token is not None and report_progress is not None:
-                await report_progress(i, n, f"tick {i}/{n}")
+            if token is not None and session is not None:
+                message = f"tick {i}/{n}"
+                if report_progress is not None:
+                    await report_progress(float(i), float(n), message)
+                elif send_progress is not None:
+                    await send_progress(
+                        token,
+                        float(i),
+                        float(n),
+                        message,
+                        related_request_id=request_id,
+                    )
             await anyio.sleep(1)
     except anyio.get_cancelled_exc_class():
         raise
@@ -526,7 +539,9 @@ def _build_server() -> Server:
 
 server = _build_server()
 
-manager = StreamableHTTPSessionManager(app=server, stateless=True, json_response=True)
+# json_response=False so tools/call can stream notifications/progress to Keystone
+# (json_response=True buffers the whole call into one JSON body).
+manager = StreamableHTTPSessionManager(app=server, stateless=True, json_response=False)
 
 
 class _McpEndpoint:

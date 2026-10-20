@@ -24,7 +24,6 @@ import json
 import sys
 import time
 from dataclasses import dataclass, field
-from datetime import timedelta
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
@@ -248,7 +247,7 @@ async def _open_mcp_session(
     session = ClientSession(
         read_stream,
         write_stream,
-        read_timeout_seconds=timedelta(seconds=120),
+        read_timeout_seconds=120.0,
         elicitation_callback=elicitation_handler,
         message_handler=message_handler,
     )
@@ -461,11 +460,14 @@ async def run(args: argparse.Namespace) -> int:
                 asyncio.wait_for(list_changed_event.wait(), timeout=10.0)
             )
 
+        # CI runs modern then legacy on one stack; the first pass already grants
+        # notes_list, so the second needs a fresh catalog delta.
+        list_changed_pattern = "notes_read" if args.protocol == "legacy" else "notes_list"
         await _admin_policy_allow_member_pattern(
             base_url=base_url,
             dev_token=args.dev_token,
             admin_email=args.admin_email,
-            pattern="notes_list",
+            pattern=list_changed_pattern,
             trace=OAuthFlowTrace(),
         )
         try:

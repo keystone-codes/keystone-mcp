@@ -61,6 +61,18 @@ async def _accept_upstream_tool_result(_name: str, _result: Any) -> None:
     return None
 
 
+def _progress_token_from_request_meta(meta: Any) -> "ProgressToken | None":
+    """Read ``progressToken`` / ``progress_token`` from request ``_meta`` (dict or model)."""
+    if meta is None:
+        return None
+    if isinstance(meta, dict):
+        return meta.get("progressToken") or meta.get("progress_token")
+    token = getattr(meta, "progressToken", None)
+    if token is not None:
+        return token
+    return getattr(meta, "progress_token", None)
+
+
 def skip_upstream_output_validation(client: "Client") -> None:
     """Disable the MCP client's synchronous outputSchema validation for this session.
 
@@ -98,11 +110,13 @@ class DownstreamCall:
         rc = ctx.request_context
         if rc is None:
             return None
-        meta = rc.meta or {}
+        progress_token = _progress_token_from_request_meta(rc.meta)
+        if progress_token is None:
+            progress_token = _progress_token_from_request_meta(getattr(rc._srctx, "meta", None))
         return cls(
             session=rc.session,
             request_id=rc.request_id,
-            progress_token=meta.get("progressToken"),
+            progress_token=progress_token,
         )
 
 

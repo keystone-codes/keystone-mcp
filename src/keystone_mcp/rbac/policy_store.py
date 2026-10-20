@@ -229,6 +229,9 @@ class PolicyStore:
     interactive_login_available: bool = True
     clock: Callable[[], datetime] = field(default=_default_clock, repr=False)
     file_lock_timeout_seconds: float = 10.0
+    #: Optional hook (set by :func:`keystone_mcp.server.build_server`) to wake the
+    #: surface reconciler after a mutation reloads the in-process policy snapshot.
+    surface_mutator: Callable[[], None] | None = field(default=None, repr=False)
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
     _file_lock_warning_logged: bool = field(default=False, init=False, repr=False)
 
@@ -434,6 +437,7 @@ class PolicyStore:
             changes=changes,
             warnings_count=len(result.warnings),
         )
+        self._wake_surface_after_mutation(result)
         return result
 
     async def rollback(
@@ -518,7 +522,15 @@ class PolicyStore:
             changes=(),
             warnings_count=len(result.warnings),
         )
+        self._wake_surface_after_mutation(result)
         return result
+
+    def _wake_surface_after_mutation(self, result: PolicyChangeResult) -> None:
+        if not (result.changed and result.reloaded):
+            return
+        mutator = self.surface_mutator
+        if mutator is not None:
+            mutator()
 
     async def _publish_revision_after_write(self, result: PolicyChangeResult) -> PolicyChangeResult:
         if not result.changed or not result.reloaded or self.revision_watcher is None:

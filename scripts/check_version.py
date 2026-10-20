@@ -10,6 +10,11 @@ Sources checked:
   heading that is not ``[Unreleased]``)
 - ``charts/keystone-mcp/Chart.yaml`` -> ``version`` and ``appVersion`` (Helm chart)
 
+Every ``ghcr.io/keystone-codes/keystone-mcp:X.Y.Z`` image reference under
+``examples/`` and ``docs/`` (excluding ``docs/upgrading.md``, which documents
+past releases) must also match ``pyproject.toml``'s version, so a shipped
+example or doc never silently pins a stale release.
+
 With ``--tag``, additionally checks that the tag starts with ``v`` and that
 ``tag[1:]`` matches all three sources, and that the matching CHANGELOG
 heading carries a release date.
@@ -53,6 +58,19 @@ PYPROJECT_SOURCE = "pyproject.toml"
 DUNDER_SOURCE = "src/keystone_mcp/__init__.py"
 CHANGELOG_SOURCE = "CHANGELOG.md"
 CHART_SOURCE = "charts/keystone-mcp/Chart.yaml"
+
+# Directories scanned for pinned ``ghcr.io/keystone-codes/keystone-mcp:X.Y.Z``
+# image references that must track the current release.
+IMAGE_PIN_SOURCE_DIRS: tuple[str, ...] = ("examples", "docs")
+
+# Files that intentionally pin a past release (upgrade history) and are
+# excluded from the image-pin check. Paths are relative to the repo root,
+# using "/" regardless of platform.
+IMAGE_PIN_EXCLUDED_FILES: frozenset[str] = frozenset({"docs/upgrading.md"})
+
+# Matches only concrete "X.Y.Z" tags -- never the "<version>" placeholder used
+# in generic command examples, nor floating tags such as "latest".
+_IMAGE_PIN_RE = re.compile(r"ghcr\.io/keystone-codes/keystone-mcp:(?P<version>\d+\.\d+\.\d+)")
 
 # The project's PyPI distribution name: "keystone-mcp" was
 # already taken by an unrelated project, so the distribution is named
@@ -160,6 +178,43 @@ def _read_changelog_version(root: Path) -> tuple[str, str | None]:
         return version, match.group("date")
 
     raise VersionCheckError(f"{CHANGELOG_SOURCE}: no released heading found (only [Unreleased]?)")
+
+
+def _check_pinned_images(root: Path, pyproject_version: str) -> list[str]:
+    """Check every pinned ``ghcr.io/keystone-codes/keystone-mcp`` image tag.
+
+    Scans :data:`IMAGE_PIN_SOURCE_DIRS` (``examples/`` and ``docs/``) for the
+    literal pattern ``ghcr.io/keystone-codes/keystone-mcp:X.Y.Z`` and reports
+    every occurrence whose version does not match ``pyproject_version``.
+    Files listed in :data:`IMAGE_PIN_EXCLUDED_FILES` (upgrade history, which
+    is expected to mention past releases) are skipped. Each error names the
+    file and line so it can be found directly.
+    """
+    errors: list[str] = []
+    for source_dir in IMAGE_PIN_SOURCE_DIRS:
+        base = root / source_dir
+        if not base.is_dir():
+            continue
+        for path in sorted(base.rglob("*")):
+            if not path.is_file():
+                continue
+            relative = path.relative_to(root).as_posix()
+            if relative in IMAGE_PIN_EXCLUDED_FILES:
+                continue
+            try:
+                text = path.read_text(encoding="utf-8")
+            except (UnicodeDecodeError, OSError):
+                continue
+            for line_number, line in enumerate(text.splitlines(), start=1):
+                for match in _IMAGE_PIN_RE.finditer(line):
+                    tag_version = match.group("version")
+                    if tag_version != pyproject_version:
+                        errors.append(
+                            f"{relative}:{line_number}: pinned image "
+                            f"ghcr.io/keystone-codes/keystone-mcp:{tag_version} != "
+                            f"{PYPROJECT_SOURCE} ({pyproject_version})"
+                        )
+    return errors
 
 
 def read_versions(root: Path) -> dict[str, str]:
@@ -388,6 +443,8 @@ def check(root: Path, tag: str | None, dist_dir: Path | None = None) -> list[str
         errors.append(
             f"{CHART_SOURCE} version ({chart_version}) != appVersion ({chart_app_version})"
         )
+
+    errors.extend(_check_pinned_images(root, pyproject_version))
 
     if tag is not None:
         if not tag.startswith("v"):

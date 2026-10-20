@@ -57,11 +57,20 @@ Keystone-MCP.
 
 ## Smoke after deploy
 
+The infrastructure checks do not contact the login provider. A deployment is
+not ready until the sign-in check passes.
+
+### Infrastructure checks
+
 - [ ] `GET /healthz` → 200 soon after the process starts (port open after migrations).
 - [ ] `GET /readyz` → 200 `{"status":"ok"}` once background startup, Redis, the RBAC
       policy, and the users database are up.
+- [ ] `keystone-mcp config check` reports no `ERROR` lines.
+
+### Sign-in check
+
 - [ ] OAuth login for an existing user; `list_tools` reflects role policy.
-- [ ] One proxied tool call succeeds; upstream sees expected `X-Author-Email`.
+- [ ] One proxied tool call succeeds; the upstream verifies `X-Keystone-Identity`.
 
 ## Deploy
 
