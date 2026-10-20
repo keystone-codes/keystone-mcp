@@ -19,8 +19,24 @@ networks:
 volumes:
   redis-data:
   keystone-data:
+  demo-policy:
 
 services:
+  policy-seed:
+    image: alpine:3.20
+    networks:
+      - keystone-demo
+    volumes:
+      - demo-policy:/policy
+      - ./examples/demo/policy/rbac-policy.yaml:/seed/rbac-policy.yaml:ro
+    command:
+      - sh
+      - -ec
+      - |
+        install -d /policy
+        install -m 0644 /seed/rbac-policy.yaml /policy/rbac-policy.yaml
+        chown -R 10001:10001 /policy
+
   redis:
     image: redis:7-alpine
     restart: unless-stopped
@@ -47,6 +63,8 @@ services:
       # signs X-Keystone-Identity with for the "hello" upstream.
       HELLO_IDENTITY_SECRET: ${KEYSTONE_DEMO_HELLO_SECRET:-demo-identity-secret-change-me-0123456789}
       HELLO_IDENTITY_AUDIENCE: hello
+      # Must match KEYSTONE_MCP_BASE_URL on keystone (no trailing slash).
+      HELLO_IDENTITY_ISSUER: http://localhost:8080
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/healthz')"]
       interval: 5s
@@ -58,6 +76,8 @@ services:
     image: keystone-mcp:demo
     restart: unless-stopped
     depends_on:
+      policy-seed:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
       hello-upstream:
@@ -68,7 +88,7 @@ services:
       - "127.0.0.1:8080:8080"
     volumes:
       - ./examples/demo/upstreams.yaml:/etc/keystone-mcp/upstreams.yaml:ro
-      - ./examples/demo/policy:/etc/keystone-mcp/policy
+      - demo-policy:/etc/keystone-mcp/policy
       - ./examples/hello-stdio:/opt/hello-stdio:ro
       - keystone-data:/data
     environment:

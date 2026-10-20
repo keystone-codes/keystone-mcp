@@ -57,6 +57,15 @@ try:
 except ImportError:  # pragma: no cover -- MCP SDK 1.x in the demo image
     MODERN_PROTOCOL_VERSIONS = frozenset()
 
+# ``InputRequiredResult`` exists only in MCP Python SDK 2.x; the demo Docker
+# image deliberately stays on 1.x (see ``Dockerfile``).
+_InputRequiredResult = getattr(types, "InputRequiredResult", None)
+
+
+def _is_input_required_result(result: object) -> bool:
+    return _InputRequiredResult is not None and isinstance(result, _InputRequiredResult)
+
+
 HOST = "0.0.0.0"
 PORT = 8081
 
@@ -357,17 +366,33 @@ async def _slow_count(arguments: dict[str, Any], ctx: _ToolCtx | None) -> list[t
             else ()
         )
     )
+    session = ctx.session if ctx is not None else None
+    report_progress = getattr(session, "report_progress", None) if session is not None else None
+    send_progress = (
+        getattr(session, "send_progress_notification", None) if session is not None else None
+    )
+    request_id = ctx.request_id if ctx is not None else None
     try:
         for i in range(1, n + 1):
-            if token is not None and ctx and ctx.session is not None:
-                await ctx.session.report_progress(i, n, f"tick {i}/{n}")
+            if token is not None and session is not None:
+                message = f"tick {i}/{n}"
+                if report_progress is not None:
+                    await report_progress(float(i), float(n), message)
+                elif send_progress is not None:
+                    await send_progress(
+                        token,
+                        float(i),
+                        float(n),
+                        message,
+                        related_request_id=request_id,
+                    )
             await anyio.sleep(1)
     except anyio.get_cancelled_exc_class():
         raise
     return [types.TextContent(type="text", text=f"counted to {n}")]
 
 
-async def _ask_name(ctx: _ToolCtx | None) -> list[types.ContentBlock] | types.InputRequiredResult:
+async def _ask_name(ctx: _ToolCtx | None) -> list[types.ContentBlock] | Any:
     if ctx is None or ctx.session is None:
         return [types.TextContent(type="text", text="elicitation not available in this SDK")]
 
@@ -376,7 +401,7 @@ async def _ask_name(ctx: _ToolCtx | None) -> list[types.ContentBlock] | types.In
 
     message = "What is your name?"
     modern = ctx.protocol_version in MODERN_PROTOCOL_VERSIONS
-    if modern and ctx.params is not None:
+    if modern and ctx.params is not None and _InputRequiredResult is not None:
         if ctx.params.input_responses is None:
             request = types.ElicitRequest(
                 params=types.ElicitRequestFormParams(
@@ -384,7 +409,7 @@ async def _ask_name(ctx: _ToolCtx | None) -> list[types.ContentBlock] | types.In
                     requested_schema=ASK_NAME_SCHEMA,
                 )
             )
-            return types.InputRequiredResult(input_requests={"name": request})
+            return _InputRequiredResult(input_requests={"name": request})
         response = ctx.params.input_responses.get("name")
         if not isinstance(response, types.ElicitResult):
             return [types.TextContent(type="text", text="no-answer")]
@@ -413,7 +438,7 @@ async def _run_tool(
     headers: dict[str, str],
     *,
     ctx: _ToolCtx | None = None,
-) -> list[types.ContentBlock] | types.InputRequiredResult:
+) -> list[types.ContentBlock] | Any:
     if name == "greet":
         return [types.TextContent(type="text", text=_greet(arguments, headers))]
     if name == "search":
@@ -479,7 +504,7 @@ def _build_server() -> Server:
             tool_ctx = _tool_ctx_from_server_request(server, headers)
             with _hello_tool_span(name, headers):
                 result = await _run_tool(name, arguments, headers, ctx=tool_ctx)
-            if isinstance(result, types.InputRequiredResult):
+            if _is_input_required_result(result):
                 raise ValueError("elicitation not available in this SDK")
             return result
 
@@ -514,7 +539,9 @@ def _build_server() -> Server:
 
 server = _build_server()
 
-manager = StreamableHTTPSessionManager(app=server, stateless=True, json_response=True)
+# json_response=False so tools/call can stream notifications/progress to Keystone
+# (json_response=True buffers the whole call into one JSON body).
+manager = StreamableHTTPSessionManager(app=server, stateless=True, json_response=False)
 
 
 class _McpEndpoint:

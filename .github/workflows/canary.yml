@@ -53,7 +53,7 @@ jobs:
           cp -r "$GITHUB_WORKSPACE/." "$work"
           cd "$work"
           uv lock --upgrade
-          uv sync --extra dev
+          uv sync --extra dev --extra otel
 
       - name: Print dependency versions
         run: |
@@ -121,7 +121,7 @@ jobs:
           cp -r "$GITHUB_WORKSPACE/." "$work"
           cd "$work"
           uv lock --upgrade --upgrade-package fastmcp --upgrade-package mcp --prerelease allow
-          uv sync --extra dev
+          uv sync --extra dev --extra otel
 
       - name: Pytest
         run: |
@@ -171,7 +171,7 @@ jobs:
       - name: Install lowest direct versions
         run: |
           uv venv "$RUNNER_TEMP/canary-low"
-          uv pip install --python "$RUNNER_TEMP/canary-low/bin/python" --resolution lowest-direct ".[dev]"
+          uv pip install --python "$RUNNER_TEMP/canary-low/bin/python" --resolution lowest-direct ".[dev,otel]"
 
       - name: Pytest
         run: |

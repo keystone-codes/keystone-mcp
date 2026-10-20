@@ -17,13 +17,13 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import importlib.metadata
 import importlib.util
 import json
 import sys
 import time
 from dataclasses import dataclass, field
-from datetime import timedelta
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
@@ -239,15 +239,15 @@ async def _open_mcp_session(
         event_hooks={"request": [_token_request_hook(trace)]},
     )
     transport_url = f"{base_url.rstrip('/')}/"
-    stack = asyncio.AsyncExitStack()
+    stack = contextlib.AsyncExitStack()
     await stack.enter_async_context(http_client)
-    read_stream, write_stream, _ = await stack.enter_async_context(
+    read_stream, write_stream = await stack.enter_async_context(
         streamable_http_client(transport_url, http_client=http_client)
     )
     session = ClientSession(
         read_stream,
         write_stream,
-        read_timeout_seconds=timedelta(seconds=120),
+        read_timeout_seconds=120.0,
         elicitation_callback=elicitation_handler,
         message_handler=message_handler,
     )
@@ -445,7 +445,7 @@ async def run(args: argparse.Namespace) -> int:
 
         step = "list_changed"
         list_changed_event.clear()
-        listener_stack = asyncio.AsyncExitStack()
+        listener_stack = contextlib.AsyncExitStack()
         if args.protocol == "modern":
             sub = await listener_stack.enter_async_context(
                 listen_subscriptions(session, tools_list_changed=True)
@@ -460,11 +460,14 @@ async def run(args: argparse.Namespace) -> int:
                 asyncio.wait_for(list_changed_event.wait(), timeout=10.0)
             )
 
+        # CI runs modern then legacy on one stack; the first pass already grants
+        # notes_list, so the second needs a fresh catalog delta.
+        list_changed_pattern = "notes_read" if args.protocol == "legacy" else "notes_list"
         await _admin_policy_allow_member_pattern(
             base_url=base_url,
             dev_token=args.dev_token,
             admin_email=args.admin_email,
-            pattern="notes_list",
+            pattern=list_changed_pattern,
             trace=OAuthFlowTrace(),
         )
         try:

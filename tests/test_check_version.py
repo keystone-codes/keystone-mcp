@@ -329,3 +329,76 @@ def test_missing_released_heading_is_usage_error(tmp_path: Path) -> None:
 
 def test_repository_is_consistent() -> None:
     assert check_version.main(["--root", str(_REPO_ROOT)]) == 0
+
+
+def test_stale_pinned_image_in_examples_fails(tmp_path: Path) -> None:
+    root = _write_project(tmp_path)  # pyproject.toml version is 0.4.0
+    compose_dir = tmp_path / "examples" / "production"
+    compose_dir.mkdir(parents=True)
+    compose_path = compose_dir / "docker-compose.yml"
+    compose_path.write_text(
+        "services:\n  keystone:\n    image: ghcr.io/keystone-codes/keystone-mcp:0.3.9\n",
+        encoding="utf-8",
+    )
+
+    errors = check_version.check(root, None)
+    assert errors
+    joined = " ".join(errors)
+    assert "examples/production/docker-compose.yml:3" in joined
+    assert "0.3.9" in joined
+    assert "0.4.0" in joined
+    assert check_version.main(["--root", str(root)]) == 1
+
+
+def test_stale_pinned_image_in_docs_fails(tmp_path: Path) -> None:
+    root = _write_project(tmp_path)  # pyproject.toml version is 0.4.0
+    docs_dir = tmp_path / "docs"
+    docs_dir.mkdir(parents=True)
+    (docs_dir / "connecting-services.md").write_text(
+        "FROM ghcr.io/keystone-codes/keystone-mcp:0.3.9\n",
+        encoding="utf-8",
+    )
+
+    errors = check_version.check(root, None)
+    assert errors
+    joined = " ".join(errors)
+    assert "docs/connecting-services.md:1" in joined
+    assert "0.3.9" in joined
+
+
+def test_pinned_image_matching_version_passes(tmp_path: Path) -> None:
+    root = _write_project(tmp_path)  # pyproject.toml version is 0.4.0
+    examples_dir = tmp_path / "examples"
+    examples_dir.mkdir(parents=True)
+    (examples_dir / "deployment.yaml").write_text(
+        "image: ghcr.io/keystone-codes/keystone-mcp:0.4.0\n",
+        encoding="utf-8",
+    )
+
+    assert check_version.check(root, None) == []
+    assert check_version.main(["--root", str(root)]) == 0
+
+
+def test_pinned_image_placeholder_and_latest_are_ignored(tmp_path: Path) -> None:
+    root = _write_project(tmp_path)  # pyproject.toml version is 0.4.0
+    docs_dir = tmp_path / "docs"
+    docs_dir.mkdir(parents=True)
+    (docs_dir / "environment.md").write_text(
+        "docker run ghcr.io/keystone-codes/keystone-mcp:<version>\n"
+        "docker pull ghcr.io/keystone-codes/keystone-mcp:latest\n",
+        encoding="utf-8",
+    )
+
+    assert check_version.check(root, None) == []
+
+
+def test_stale_pinned_image_in_upgrading_doc_is_excluded(tmp_path: Path) -> None:
+    root = _write_project(tmp_path)  # pyproject.toml version is 0.4.0
+    docs_dir = tmp_path / "docs"
+    docs_dir.mkdir(parents=True)
+    (docs_dir / "upgrading.md").write_text(
+        "Old releases pulled ghcr.io/keystone-codes/keystone-mcp:0.3.0\n",
+        encoding="utf-8",
+    )
+
+    assert check_version.check(root, None) == []

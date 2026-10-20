@@ -27,7 +27,6 @@ import json
 import os
 import sys
 from dataclasses import dataclass, field
-from datetime import timedelta
 from pathlib import Path
 
 import httpx
@@ -170,11 +169,8 @@ async def _run(
         streamable_http_client(proxy_url, http_client=http_client) as (
             read_stream,
             write_stream,
-            _,
         ),
-        ClientSession(
-            read_stream, write_stream, read_timeout_seconds=timedelta(seconds=90)
-        ) as session,
+        ClientSession(read_stream, write_stream, read_timeout_seconds=90.0) as session,
     ):
         await session.initialize()
         listed = await session.list_tools()

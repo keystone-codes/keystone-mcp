@@ -88,6 +88,8 @@ def test_demo_hello_uses_identity_secret():
     assert secret_env in keystone_env
     assert keystone_env[secret_env] == hello_env["HELLO_IDENTITY_SECRET"]
     assert "${KEYSTONE_DEMO_HELLO_SECRET" in keystone_env[secret_env]
+    base_url = keystone_env["KEYSTONE_MCP_BASE_URL"].rstrip("/")
+    assert hello_env.get("HELLO_IDENTITY_ISSUER") == base_url
 
 
 def test_demo_registry_validates(monkeypatch):
@@ -125,7 +127,8 @@ def test_demo_mounts_policy_writable():
     volumes = demo["services"]["keystone"]["volumes"]
 
     assert env["KEYSTONE_MCP_RBAC_POLICY_PATH"] == "/etc/keystone-mcp/policy/rbac-policy.yaml"
-    assert "./examples/demo/policy:/etc/keystone-mcp/policy" in volumes
+    assert "demo-policy:/etc/keystone-mcp/policy" in volumes
+    assert demo["services"]["policy-seed"]["volumes"][0] == "demo-policy:/policy"
     assert "./examples/demo/upstreams.yaml:/etc/keystone-mcp/upstreams.yaml:ro" in volumes
 
 
@@ -143,7 +146,10 @@ def test_demo_services_have_healthchecks():
     services = _services(demo, overlay)
 
     assert services, "expected at least one service"
+    init_only = frozenset({"policy-seed"})
     for name, body in services.items():
+        if name in init_only:
+            continue
         assert "healthcheck" in body, f"service {name!r} has no healthcheck"
 
 

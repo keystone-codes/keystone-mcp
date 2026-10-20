@@ -66,6 +66,16 @@ pytest -q
 uv run pytest -q
 ```
 
+To run the complete suite locally (not a subset), install the `otel`
+extra as well and point `KEYSTONE_MCP_REDIS_URL` at a Redis on
+`localhost:6379`:
+
+```bash
+uv sync --frozen --extra dev --extra otel
+docker run -d -p 6379:6379 redis:7
+KEYSTONE_MCP_REDIS_URL=redis://localhost:6379/0 uv run pytest -q
+```
+
 The suite reads only `KEYSTONE_MCP_REDIS_URL` from your shell; other
 `KEYSTONE_MCP_*` exports are cleared so local config cannot skew results.
 Redis keys are written under `km:test:<run>:` and deleted at the end of the

@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 920" width="1200" height="920" role="img" aria-labelledby="qsTitle qsDesc">
   <title id="qsTitle">Keystone-MCP quick start</title>
-  <desc id="qsDesc">Install Keystone-MCP, publish it behind TLS on your domain, register private MCP services in the upstream registry file, then sign in from the client to get one authenticated catalog with tools grouped by namespace sections.</desc>
+  <desc id="qsDesc">Install Keystone-MCP, publish it behind TLS on your domain, configure a sign-in provider, register private MCP services in the upstream registry file, then sign in from the client to get one authenticated catalog with tools grouped by namespace sections.</desc>
   <defs>
     <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
       <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#e2e8f0" stroke-opacity="0.045"/>
@@ -23,50 +23,61 @@
   <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">
     <text x="48" y="40" fill="#34d399" font-size="12" letter-spacing="2.4">QUICK START</text>
     <text x="48" y="70" fill="#f8fafc" font-size="26">Domain in front, services behind</text>
-    <text x="48" y="96" fill="#94a3b8" font-size="14">Install Keystone-MCP, point a reverse proxy at it, list upstream MCP servers, restart, then connect the client.</text>
+    <text x="48" y="96" fill="#94a3b8" font-size="14">Install Keystone-MCP, point a reverse proxy at it, add a sign-in provider, list upstream MCP servers, then connect the client.</text>
 
-    <!-- Four steps -->
+    <!-- Five steps -->
     <g>
-      <rect x="32" y="118" width="264" height="108" rx="14" fill="#03141a" stroke="#155e75" stroke-width="1.5"/>
+      <rect x="32" y="118" width="212" height="108" rx="14" fill="#03141a" stroke="#155e75" stroke-width="1.5"/>
       <circle cx="56" cy="148" r="14" fill="#155e75"/>
       <text x="56" y="153" fill="#f8fafc" font-size="14" text-anchor="middle">1</text>
       <text x="80" y="152" fill="#67e8f9" font-size="11" letter-spacing="1.2">INSTALL</text>
       <text x="48" y="178" fill="#f8fafc" font-size="14">Clone · ./setup.sh</text>
       <text x="48" y="200" fill="#94a3b8" font-size="12">Redis · Postgres</text>
-      <text x="48" y="218" fill="#94a3b8" font-size="12">rbac-policy.yaml · enforce</text>
+      <text x="48" y="218" fill="#94a3b8" font-size="12">rbac policy: enforce</text>
     </g>
-    <line x1="296" y1="172" x2="318" y2="172" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <line x1="244" y1="172" x2="262" y2="172" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
 
     <g>
-      <rect x="318" y="118" width="264" height="108" rx="14" fill="#1c1408" stroke="#b45309" stroke-width="1.5"/>
-      <circle cx="342" cy="148" r="14" fill="#92400e"/>
-      <text x="342" y="153" fill="#f8fafc" font-size="14" text-anchor="middle">2</text>
-      <text x="366" y="152" fill="#fcd34d" font-size="11" letter-spacing="1.2">DOMAIN</text>
-      <text x="334" y="178" fill="#f8fafc" font-size="14">TLS reverse proxy</text>
-      <text x="334" y="200" fill="#fde68a" font-size="12">nginx · Caddy · Traefik</text>
-      <text x="334" y="218" fill="#fde68a" font-size="12">KEYSTONE_MCP_BASE_URL</text>
+      <rect x="262" y="118" width="212" height="108" rx="14" fill="#1c1408" stroke="#b45309" stroke-width="1.5"/>
+      <circle cx="286" cy="148" r="14" fill="#92400e"/>
+      <text x="286" y="153" fill="#f8fafc" font-size="14" text-anchor="middle">2</text>
+      <text x="310" y="152" fill="#fcd34d" font-size="11" letter-spacing="1.2">DOMAIN</text>
+      <text x="278" y="178" fill="#f8fafc" font-size="14">TLS reverse proxy</text>
+      <text x="278" y="200" fill="#fde68a" font-size="12">nginx · Caddy · Traefik</text>
+      <text x="278" y="218" fill="#fde68a" font-size="12">KEYSTONE_MCP_BASE_URL</text>
     </g>
-    <line x1="582" y1="172" x2="604" y2="172" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <line x1="474" y1="172" x2="492" y2="172" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
 
     <g>
-      <rect x="604" y="118" width="264" height="108" rx="14" fill="#052e24" stroke="#047857" stroke-width="1.5"/>
-      <circle cx="628" cy="148" r="14" fill="#065f46"/>
-      <text x="628" y="153" fill="#f8fafc" font-size="14" text-anchor="middle">3</text>
-      <text x="652" y="152" fill="#6ee7b7" font-size="11" letter-spacing="1.2">UPSTREAMS</text>
-      <text x="620" y="178" fill="#f8fafc" font-size="14">KEYSTONE_MCP_UPSTREAMS_PATH</text>
-      <text x="620" y="200" fill="#a7f3d0" font-size="12">private MCP URLs + namespace</text>
-      <text x="620" y="218" fill="#a7f3d0" font-size="12">restart Keystone-MCP</text>
+      <rect x="492" y="118" width="212" height="108" rx="14" fill="#140a1f" stroke="#7c3aed" stroke-width="1.5"/>
+      <circle cx="516" cy="148" r="14" fill="#5b21b6"/>
+      <text x="516" y="153" fill="#f8fafc" font-size="14" text-anchor="middle">3</text>
+      <text x="540" y="152" fill="#c4b5fd" font-size="11" letter-spacing="1.2">SIGN-IN</text>
+      <text x="508" y="178" fill="#f8fafc" font-size="14">Google OAuth or OIDC</text>
+      <text x="508" y="200" fill="#ddd6fe" font-size="12">login-providers.yaml</text>
+      <text x="508" y="218" fill="#ddd6fe" font-size="12">/login/&lt;name&gt;/callback</text>
     </g>
-    <line x1="868" y1="172" x2="890" y2="172" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <line x1="704" y1="172" x2="722" y2="172" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
 
     <g>
-      <rect x="890" y="118" width="278" height="108" rx="14" fill="#1a0c12" stroke="#9f1239" stroke-width="1.5"/>
-      <circle cx="914" cy="148" r="14" fill="#9f1239"/>
-      <text x="914" y="153" fill="#f8fafc" font-size="14" text-anchor="middle">4</text>
-      <text x="938" y="152" fill="#fda4af" font-size="11" letter-spacing="1.2">CONNECT</text>
-      <text x="906" y="178" fill="#f8fafc" font-size="14">MCP client · your domain</text>
-      <text x="906" y="200" fill="#fecdd3" font-size="12">OAuth sign-in</text>
-      <text x="906" y="218" fill="#fecdd3" font-size="12">one catalog · sections · RBAC</text>
+      <rect x="722" y="118" width="212" height="108" rx="14" fill="#052e24" stroke="#047857" stroke-width="1.5"/>
+      <circle cx="746" cy="148" r="14" fill="#065f46"/>
+      <text x="746" y="153" fill="#f8fafc" font-size="14" text-anchor="middle">4</text>
+      <text x="770" y="152" fill="#6ee7b7" font-size="11" letter-spacing="1.2">UPSTREAMS</text>
+      <text x="738" y="178" fill="#f8fafc" font-size="14">upstreams.yaml</text>
+      <text x="738" y="200" fill="#a7f3d0" font-size="12">private URL · namespace</text>
+      <text x="738" y="218" fill="#a7f3d0" font-size="12">reload on SIGHUP</text>
+    </g>
+    <line x1="934" y1="172" x2="952" y2="172" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+    <g>
+      <rect x="952" y="118" width="216" height="108" rx="14" fill="#1a0c12" stroke="#9f1239" stroke-width="1.5"/>
+      <circle cx="976" cy="148" r="14" fill="#9f1239"/>
+      <text x="976" y="153" fill="#f8fafc" font-size="14" text-anchor="middle">5</text>
+      <text x="1000" y="152" fill="#fda4af" font-size="11" letter-spacing="1.2">CONNECT</text>
+      <text x="968" y="178" fill="#f8fafc" font-size="14">MCP client</text>
+      <text x="968" y="200" fill="#fecdd3" font-size="12">OAuth sign-in</text>
+      <text x="968" y="218" fill="#fecdd3" font-size="12">one catalog · RBAC</text>
     </g>
 
     <!-- Runtime diagram -->
@@ -82,7 +93,7 @@
     <text x="68" y="478" fill="#67e8f9" font-size="12">HTTPS only</text>
 
     <line x1="248" y1="404" x2="288" y2="404" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arrow)"/>
-    <text x="252" y="392" fill="#cbd5e1" font-size="11">step 4</text>
+    <text x="252" y="392" fill="#cbd5e1" font-size="11">step 5</text>
 
     <!-- Domain / proxy -->
     <rect x="288" y="304" width="248" height="200" rx="14" fill="#1c1408" stroke="#b45309" stroke-width="1.5"/>
@@ -103,13 +114,11 @@
     <text x="600" y="358" fill="#6ee7b7" font-size="12">step 1 · OAuth 2.1 · RBAC enforce</text>
     <text x="600" y="384" fill="#a7f3d0" font-size="13">discover upstream tools</text>
     <text x="600" y="408" fill="#a7f3d0" font-size="13">publish namespace sections</text>
-    <text x="600" y="432" fill="#a7f3d0" font-size="13">proxy calls · audit allow/deny</text>
+    <text x="600" y="432" fill="#a7f3d0" font-size="13">proxy calls · sign identity</text>
     <text x="600" y="464" fill="#34d399" font-size="12">BASE_URL = public https URL</text>
-    <text x="600" y="488" fill="#6ee7b7" font-size="12">steps 1 + 3 config live here</text>
+    <text x="600" y="488" fill="#6ee7b7" font-size="12">steps 1 + 3 + 4 config live here</text>
 
     <line x1="896" y1="404" x2="936" y2="404" stroke="#34d399" stroke-width="1.5" marker-end="url(#arrowGreen)"/>
-    <rect x="904" y="388" width="124" height="20" rx="6" fill="#071410" stroke="#065f46"/>
-    <text x="912" y="402" fill="#a7f3d0" font-size="10">X-Author-Email</text>
 
     <!-- Private zone -->
     <rect x="936" y="304" width="216" height="416" rx="14" fill="#14080c" stroke="#9f1239" stroke-width="1.5" stroke-dasharray="7 5"/>
@@ -123,14 +132,14 @@
     <text x="968" y="506" fill="#fde68a" font-size="11">namespace: billing</text>
     <text x="956" y="536" fill="#94a3b8" font-size="12">+ your services</text>
     <text x="956" y="562" fill="#fb7185" font-size="12">no public port</text>
-    <text x="956" y="588" fill="#fda4af" font-size="12">step 3 registry file</text>
+    <text x="956" y="588" fill="#fda4af" font-size="12">step 4 registry file</text>
     <text x="956" y="614" fill="#fecdd3" font-size="11">upstreams.yaml</text>
     <text x="956" y="636" fill="#fecdd3" font-size="11">name · url · namespace</text>
-    <text x="956" y="692" fill="#fda4af" font-size="12">restart after change</text>
+    <text x="956" y="692" fill="#fda4af" font-size="12">reload on SIGHUP</text>
 
     <!-- Catalog outcome -->
     <rect x="48" y="528" width="864" height="192" rx="14" fill="#052e24" stroke="#047857" stroke-width="1.25"/>
-    <text x="68" y="558" fill="#6ee7b7" font-size="12" letter-spacing="1.2">WHAT THE CLIENT SEES AFTER STEP 4</text>
+    <text x="68" y="558" fill="#6ee7b7" font-size="12" letter-spacing="1.2">WHAT THE CLIENT SEES AFTER STEP 5</text>
     <text x="68" y="588" fill="#f8fafc" font-size="15">One signed-in catalog on https://mcp.example.com</text>
     <text x="68" y="618" fill="#a7f3d0" font-size="13">Section docs_* · tools allowed by role</text>
     <text x="68" y="642" fill="#a7f3d0" font-size="13">Section billing_* · tools allowed by role</text>

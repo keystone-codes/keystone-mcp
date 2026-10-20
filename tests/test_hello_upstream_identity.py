@@ -254,6 +254,41 @@ async def test_slow_count_through_keystone(monkeypatch):
     assert result.content[0].text == "counted to 1"
 
 
+async def test_slow_count_progress_through_keystone(monkeypatch):
+    """Compose client_e2e progress step needs hello-upstream json_response=False."""
+    hello = _load_hello_module(monkeypatch, secret=SECRET)
+    monkeypatch.setenv(KEYSTONE_SECRET_ENV, SECRET)
+
+    collected: list[tuple[float, float | None, str | None]] = []
+
+    async def collect(progress: float, total: float | None, message: str | None) -> None:
+        collected.append((progress, total, message))
+
+    async with LifespanManager(hello.app):
+        settings = Settings(base_url="http://localhost:8080")
+        main = FastMCP("keystone-test")
+        registry = RouterRegistry(RouterEngine(settings), main)
+        upstreams = UpstreamRegistry(
+            main_mcp=main,
+            registry=registry,
+            http_client_factory=asgi_http_client_factory(hello.app),
+            identity_issuer=settings.base_url.rstrip("/"),
+        )
+        upstreams.add_upstream(
+            AUDIENCE,
+            UPSTREAM_MCP_URL,
+            namespace="hello",
+            identity_secret_env=KEYSTONE_SECRET_ENV,
+        )
+        await upstreams.discover_all()
+
+        async with Client(main) as client:
+            result = await client.call_tool("hello_slow_count", {"n": 2}, progress_handler=collect)
+
+    assert result.is_error is False
+    assert len(collected) >= 2
+
+
 async def test_ask_name_through_keystone_without_elicitation(monkeypatch):
     """Without a client elicitation handler, ask_name answers no-elicitation."""
     hello = _load_hello_module(monkeypatch, secret=SECRET)

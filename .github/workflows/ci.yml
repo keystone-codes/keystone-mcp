@@ -153,9 +153,11 @@ jobs:
         id: pf
         run: |
           set -euo pipefail
-          nohup kubectl port-forward svc/keystone-keystone-mcp 8080:80 > /tmp/port-forward.log 2>&1 &
+          kubectl wait --for=condition=available deployment/keystone-keystone-mcp --timeout=120s
+          kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=keystone-mcp,app.kubernetes.io/component=keystone --timeout=120s
+          nohup kubectl port-forward --address 127.0.0.1 svc/keystone-keystone-mcp 8080:80 > /tmp/port-forward.log 2>&1 &
           echo $! > /tmp/port-forward.pid
-          for i in $(seq 1 60); do
+          for i in $(seq 1 120); do
             if curl -fsS -o /dev/null http://127.0.0.1:8080/readyz; then
               echo "ready after ${i}s"
               exit 0
@@ -163,6 +165,7 @@ jobs:
             sleep 1
           done
           echo "timed out waiting for /readyz"
+          cat /tmp/port-forward.log || true
           exit 1
 
       - name: Demo smoke

@@ -779,6 +779,9 @@ def build_server(
     _reconciler_holder["reconciler"] = reconciler
     _upstreams_holder["upstreams"] = upstreams
 
+    if policy_store is not None:
+        policy_store.surface_mutator = reconciler.request_policy_reload
+
     return mcp, registry, oauth, upstreams, policy_manager, rbac_observability, reconciler
 
 
