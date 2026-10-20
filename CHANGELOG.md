@@ -41,6 +41,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
   `docs/connecting-services.md`, `docs/paths/kubernetes.md`); `scripts/check_version.py`
   now fails when a `ghcr.io/keystone-codes/keystone-mcp:X.Y.Z` reference under
   `examples/` or `docs/` (other than `docs/upgrading.md`) lags the project version.
+- The full local test suite could kill its own `pytest` process with a real `SIGTERM` partway through: a few tests exercise the deferred-bootstrap path without substituting `server._request_shutdown`, so a startup refusal there called the real, process-killing default. An autouse fixture in `tests/conftest.py` now replaces `_request_shutdown` for every test and fails the offending test instead of sending a signal; tests that substitute their own fake (`tests/test_server_startup_order.py`) are unaffected.
 
 ## [0.6.0] - 2026-10-15
 
