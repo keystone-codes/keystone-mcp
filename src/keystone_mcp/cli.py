@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 import urllib.error
 import urllib.request
@@ -11,7 +12,9 @@ from typing import Sequence
 
 import yaml
 
+from keystone_mcp import __version__
 from keystone_mcp.auth.oauth_cli import add_oauth_commands
+from keystone_mcp.catalog.names import BUILTIN_TOOL_NAMES
 from keystone_mcp.config import (
     OAUTH_CLI_VARIABLES,
     USERS_CLI_VARIABLES,
@@ -26,6 +29,9 @@ from keystone_mcp.rbac.catalog import (
     DuplicateLivePublishedNameError,
     assert_loopback_live_catalog_url,
     assert_unique_live_published_names,
+    fetch_live_published_names,
+    format_live_published_names,
+    live_published_name_counts,
     parse_live_published_names,
 )
 from keystone_mcp.rbac.catalog_snapshot import (
@@ -40,6 +46,11 @@ from keystone_mcp.rbac.policy import (
     PolicyContractError,
     load_policy_file,
     validate_policy_against_catalog,
+)
+from keystone_mcp.upstream_registry.validate import (
+    _NAMESPACE_RE,
+    _RESERVED_BEARER_ENV_NAMES,
+    MAX_REGISTRY_ENTRIES,
 )
 from keystone_mcp.users.api_keys_cli import add_api_keys_commands
 from keystone_mcp.users.cli import add_users_commands
@@ -195,6 +206,53 @@ def _cmd_catalog_export(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_catalog_builtin(args: argparse.Namespace) -> int:
+    tools = sorted(BUILTIN_TOOL_NAMES)
+    if not args.json:
+        for name in tools:
+            print(name)
+        return 0
+    payload = {
+        "schema_version": 1,
+        "keystone_mcp_version": __version__,
+        "tools": tools,
+        "registry": {
+            "max_entries": MAX_REGISTRY_ENTRIES,
+            "namespace_pattern": _NAMESPACE_RE.pattern,
+            "reserved_env_names": sorted(_RESERVED_BEARER_ENV_NAMES),
+        },
+    }
+    sys.stdout.write(json.dumps(payload) + "\n")
+    return 0
+
+
+def _cmd_catalog_live(args: argparse.Namespace) -> int:
+    try:
+        names = fetch_live_published_names(host=args.host, port=args.port)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return _EXIT_VALIDATION
+    except (urllib.error.URLError, OSError, TimeoutError) as exc:
+        print(f"live catalog unreachable: {exc}", file=sys.stderr)
+        return _EXIT_LIVE_URL
+    if args.json:
+        counts = live_published_name_counts(names)
+        payload = {
+            "schema_version": 1,
+            "names": [{"name": name, "count": count} for name, count in sorted(counts.items())],
+        }
+        sys.stdout.write(json.dumps(payload) + "\n")
+    else:
+        sys.stdout.write(format_live_published_names(names))
+    if args.check_unique:
+        try:
+            assert_unique_live_published_names(names)
+        except DuplicateLivePublishedNameError as exc:
+            print(str(exc), file=sys.stderr)
+            return _EXIT_VALIDATION
+    return 0
+
+
 def _cmd_serve(args: argparse.Namespace) -> int:
     # Imported lazily (and module-qualified, not "from ... import main") so
     # that `keystone-mcp serve` and `python -m keystone_mcp.server` always
@@ -253,7 +311,8 @@ def _settings_required_for_cli(command: str) -> frozenset[str]:
     return frozenset()
 
 
-def main(argv: list[str] | None = None) -> int:
+def build_cli_argument_parser() -> argparse.ArgumentParser:
+    """Build the keystone-mcp CLI parser (used by main and contract snapshots)."""
     parser = argparse.ArgumentParser(prog="keystone-mcp")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -293,6 +352,29 @@ def main(argv: list[str] | None = None) -> int:
     )
     export.set_defaults(handler=_cmd_catalog_export)
 
+    builtin = catalog_sub.add_parser(
+        "builtin",
+        help="Print this version's built-in tool names (no server, Redis, or database needed)",
+    )
+    builtin.add_argument("--json", action="store_true", help="Emit the frozen JSON shape")
+    builtin.set_defaults(handler=_cmd_catalog_builtin)
+
+    live = catalog_sub.add_parser(
+        "live",
+        help="Print the running server's live published tool names, with multiplicity",
+    )
+    live.add_argument("--json", action="store_true", help="Emit the frozen JSON shape")
+    live.add_argument("--host", default="127.0.0.1", help="Loopback host of the running server")
+    live.add_argument(
+        "--port", type=int, default=None, help="Server port (default: configured port)"
+    )
+    live.add_argument(
+        "--check-unique",
+        action="store_true",
+        help="Exit 1 when a published name occurs more than once",
+    )
+    live.set_defaults(handler=_cmd_catalog_live)
+
     upstream = subparsers.add_parser("upstream", help="Upstream registry utilities")
     upstream_sub = upstream.add_subparsers(dest="upstream_command", required=True)
 
@@ -317,7 +399,11 @@ def main(argv: list[str] | None = None) -> int:
     add_plugins_commands(subparsers)
     add_oauth_commands(subparsers)
     add_config_commands(subparsers)
+    return parser
 
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_cli_argument_parser()
     args = parser.parse_args(argv)
     if args.command == "config":
         return args.handler(args)
