@@ -144,6 +144,15 @@ on the next refresh tick; set `KEYSTONE_MCP_UPSTREAM_REQUIRE_ALL=true` to
 refuse startup instead. Contract your services must meet:
 [connecting-services.md](../connecting-services.md).
 
+## Adding catalog services
+
+Instead of editing `upstreams.yaml` by hand, this directory can be adopted
+by an installer such as [keystonectl](https://github.com/keystone-codes/keystonectl)
+with `keystonectl init --adopt .`: it recognizes the layout from this guide
+and adds its own Compose override file to install catalog services next to
+Keystone-MCP, without editing `docker-compose.yml`, `.env`, the policy, or
+`upstreams.yaml`.
+
 ## 6. Start the stack
 
 ```bash

@@ -9,6 +9,8 @@ from pathlib import Path
 
 import pytest
 
+from keystone_mcp import __version__
+from keystone_mcp.catalog.names import BUILTIN_TOOL_NAMES
 from keystone_mcp.cli import main
 from keystone_mcp.rbac.catalog import format_live_published_names
 
@@ -469,3 +471,155 @@ def test_catalog_validate_text_mode_unaffected_by_json_support(policy_path: Path
     assert exit_code == 1
     assert out.getvalue() == ""
     assert "editor:docments_*" in err.getvalue()
+
+
+# -- catalog builtin ---------------------------------------------------------
+
+
+def test_catalog_builtin_json_shape(capsys: pytest.CaptureFixture[str]):
+    assert main(["catalog", "builtin", "--json"]) == 0
+    out = capsys.readouterr().out
+    payload = json.loads(out)
+    assert payload["schema_version"] == 1
+    assert payload["keystone_mcp_version"] == __version__
+    assert payload["tools"] == sorted(BUILTIN_TOOL_NAMES)
+    assert payload["tools"] == sorted(payload["tools"])
+    registry = payload["registry"]
+    assert registry["max_entries"] == 64
+    assert "reserved_env_names" in registry
+    assert registry["reserved_env_names"] == sorted(registry["reserved_env_names"])
+    assert "KEYSTONE_MCP_UPSTREAM_ALLOW_INSECURE_HTTP" in registry["reserved_env_names"]
+    assert "namespace_pattern" in registry
+
+
+def test_catalog_builtin_text_lists_one_name_per_line(capsys: pytest.CaptureFixture[str]):
+    assert main(["catalog", "builtin"]) == 0
+    out = capsys.readouterr().out
+    lines = out.splitlines()
+    assert lines == sorted(BUILTIN_TOOL_NAMES)
+
+
+def test_catalog_builtin_rejects_unknown_flag():
+    with pytest.raises(SystemExit) as excinfo:
+        main(["catalog", "builtin", "--not-a-flag"])
+    assert excinfo.value.code == 2
+
+
+# -- catalog live -------------------------------------------------------------
+
+
+class _FakeHttpResponse:
+    def __init__(self, body: str):
+        self._body = body.encode("utf-8")
+
+    def read(self) -> bytes:
+        return self._body
+
+    def __enter__(self) -> "_FakeHttpResponse":
+        return self
+
+    def __exit__(self, *exc_info: object) -> bool:
+        return False
+
+
+def test_catalog_live_json_shape(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+):
+    body = format_live_published_names(("files_create_upload_url", "users_list", "users_list"))
+
+    def _fake_urlopen(url: str, timeout: float = 5.0):
+        assert url == "http://127.0.0.1:8080/internal/live-published-names"
+        return _FakeHttpResponse(body)
+
+    monkeypatch.setattr("urllib.request.urlopen", _fake_urlopen)
+    assert (
+        main(
+            [
+                "catalog",
+                "live",
+                "--json",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                "8080",
+            ]
+        )
+        == 0
+    )
+    out = capsys.readouterr().out
+    payload = json.loads(out)
+    assert payload == {
+        "schema_version": 1,
+        "names": [
+            {"name": "files_create_upload_url", "count": 1},
+            {"name": "users_list", "count": 2},
+        ],
+    }
+
+
+def test_catalog_live_text_one_name_per_line(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+):
+    body = format_live_published_names(("users_list", "files_create_upload_url"))
+
+    def _fake_urlopen(url: str, timeout: float = 5.0):
+        return _FakeHttpResponse(body)
+
+    monkeypatch.setattr("urllib.request.urlopen", _fake_urlopen)
+    assert main(["catalog", "live", "--host", "127.0.0.1", "--port", "8080"]) == 0
+    out = capsys.readouterr().out
+    assert out == body
+
+
+def test_catalog_live_unreachable_exits_3(monkeypatch: pytest.MonkeyPatch):
+    def _fail(url: str, timeout: float = 5.0):
+        raise OSError("connection refused")
+
+    monkeypatch.setattr("urllib.request.urlopen", _fail)
+    assert main(["catalog", "live", "--json", "--host", "127.0.0.1", "--port", "8080"]) == 3
+
+
+def test_catalog_live_check_unique_duplicate_exits_1(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+):
+    body = format_live_published_names(("users_list", "users_list"))
+
+    def _fake_urlopen(url: str, timeout: float = 5.0):
+        return _FakeHttpResponse(body)
+
+    monkeypatch.setattr("urllib.request.urlopen", _fake_urlopen)
+    assert (
+        main(
+            [
+                "catalog",
+                "live",
+                "--json",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                "8080",
+                "--check-unique",
+            ]
+        )
+        == 1
+    )
+    # Even on refusal, the JSON payload was already printed to stdout.
+    out = capsys.readouterr().out
+    assert json.loads(out)["names"] == [{"name": "users_list", "count": 2}]
+
+
+def test_catalog_live_rejects_non_loopback_host():
+    assert (
+        main(
+            [
+                "catalog",
+                "live",
+                "--json",
+                "--host",
+                "169.254.169.254",
+                "--port",
+                "8080",
+            ]
+        )
+        == 1
+    )

@@ -10,6 +10,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ### Added
 
+- `keystone-mcp catalog builtin --json` and `keystone-mcp catalog live --json [--host HOST] [--port PORT] [--check-unique]`: structured, frozen JSON lists of this version's built-in tool names and a running server's live published tool names (with multiplicity), so installers like keystonectl no longer need a private copy of `BUILTIN_TOOL_NAMES` or to parse `python -m keystone_mcp.rbac.catalog` output ([#7](https://github.com/keystone-codes/keystone-mcp/issues/7)).
 - `--json` for `keystone-mcp catalog validate` and `keystone-mcp upstream validate`: with the flag, stdout carries exactly one JSON document (`schema_version`, `ok`, `problems` with stable, frozen problem codes; `catalog validate` also carries `unmatched_allow_patterns`, `unreachable_tools`, `duplicate_live_names`) instead of free-form text. Exit codes are unchanged ([#8](https://github.com/keystone-codes/keystone-mcp/issues/8)).
 - Agent skill `keystone-gateway-bootstrap` (`skills/keystone-gateway-bootstrap/`): installs the gateway with Docker on a VM step by step — the questions to ask the operator, who does each step, how secrets reach `.env` without passing through the chat, and a ladder of checks that does not call the gateway ready until the first administrator has signed in through the login provider in a real client. `/healthz`, `/readyz` and `config check` alone do not prove sign-in works.
 - `docs/README.md` and the root `README.md` list every agent skill with its purpose, including the `keystonectl` skill from the keystonectl repository.
@@ -34,9 +35,21 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
   step between publishing the domain and wiring upstreams, and describe the
   upstream registry reload as "reload on SIGHUP" instead of "restart after
   change".
+- `docs/compatibility.md` "Upstream registry" states the reload timing (next
+  refresh tick after the file changes, or at once on `SIGHUP`), the settings
+  that still need a process restart, and how an installer confirms a reload
+  without reading logs (`keystone_mcp_upstream_registry_reload_total`,
+  `keystone_mcp_upstream_registry_info`, `/readyz` `upstream_registry_hash`)
+  instead of leaving the timing undocumented outside `docs/facade.md`.
+  `docs/facade.md` adds the single-file bind-mount inode caveat where the
+  reload is documented: a host-side atomic file replace is invisible to a
+  container that bind-mounts the registry file itself rather than its
+  directory. (#9)
 
 ### Fixed
 
+- `docs/compatibility.md` lists `upstream_registry_hash` in the `/readyz`
+  row (trusted internal callers only), matching `src/keystone_mcp/server.py` (#9).
 - Examples and documentation now pin the `0.6.0` image
   (`examples/production/docker-compose.yml`, `examples/kubernetes/deployment.yaml`,
   `docs/connecting-services.md`, `docs/paths/kubernetes.md`); `scripts/check_version.py`
