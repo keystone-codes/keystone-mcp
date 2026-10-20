@@ -127,7 +127,8 @@ def test_demo_mounts_policy_writable():
     volumes = demo["services"]["keystone"]["volumes"]
 
     assert env["KEYSTONE_MCP_RBAC_POLICY_PATH"] == "/etc/keystone-mcp/policy/rbac-policy.yaml"
-    assert "./examples/demo/policy:/etc/keystone-mcp/policy" in volumes
+    assert "demo-policy:/etc/keystone-mcp/policy" in volumes
+    assert demo["services"]["policy-seed"]["volumes"][0] == "demo-policy:/policy"
     assert "./examples/demo/upstreams.yaml:/etc/keystone-mcp/upstreams.yaml:ro" in volumes
 
 
