@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import sys
 import textwrap
@@ -1313,3 +1315,254 @@ def test_json_upstreams_over_64_entries_warn(monkeypatch, caplog):
         "KEYSTONE_MCP_UPSTREAMS: entries must contain at most" in record.message
         for record in caplog.records
     )
+
+
+# --- structured problems / `upstream validate --json` (issue #8) --------------------
+
+
+def test_collect_upstream_problems_projects_to_the_same_text(permissive_policy):
+    """`validate_upstream_registry` must stay a pure projection of the structured list."""
+    from keystone_mcp.upstream_registry.validate import (
+        collect_upstream_problems,
+        validate_upstream_registry,
+    )
+
+    document = {
+        "schema_version": 2,
+        "entries": [
+            {"name": "svc", "namespace": "users"},
+            {"name": "svc", "namespace": "other", "url": "not-a-url"},
+        ],
+    }
+    problems = collect_upstream_problems(document, policy=permissive_policy)
+    messages = validate_upstream_registry(document, policy=permissive_policy)
+    assert [problem.message for problem in problems] == messages
+    assert messages  # sanity: this document is indeed invalid
+
+
+def test_collect_upstream_problems_empty_on_valid_document(permissive_policy):
+    from keystone_mcp.upstream_registry.validate import collect_upstream_problems
+
+    document = {
+        "schema_version": 1,
+        "entries": [
+            {"name": "svc", "namespace": "svc", "url": "https://svc.example/mcp"},
+        ],
+    }
+    assert collect_upstream_problems(document, policy=permissive_policy) == []
+
+
+def test_collect_upstream_problems_reports_code_entry_field(permissive_policy):
+    from keystone_mcp.upstream_registry.validate import collect_upstream_problems
+
+    document = {
+        "schema_version": 1,
+        "entries": [
+            {"name": "files", "url": "https://files.example/mcp", "namespace": "users"},
+        ],
+    }
+    problems = collect_upstream_problems(document, policy=permissive_policy)
+    assert problems  # at least one built-in collision (one per users_* built-in tool)
+    assert all(problem.code == "namespace_taken" for problem in problems)
+    assert all(problem.entry == "files" for problem in problems)
+    assert all(problem.field == "namespace" for problem in problems)
+    assert any("users_list" in problem.message for problem in problems)
+
+
+def test_collect_upstream_problems_duplicate_name_has_no_field_prefix_issue(permissive_policy):
+    from keystone_mcp.upstream_registry.validate import collect_upstream_problems
+
+    document = {
+        "schema_version": 1,
+        "entries": [
+            {"name": "svc", "url": "https://svc-a.example/mcp", "namespace": "svc_a"},
+            {"name": "svc", "url": "https://svc-b.example/mcp", "namespace": "svc_b"},
+        ],
+    }
+    problems = collect_upstream_problems(document, policy=permissive_policy)
+    duplicate = next(p for p in problems if p.code == "name_duplicate")
+    assert duplicate.entry == "svc"
+    assert duplicate.field == "name"
+
+
+def test_collect_upstream_problems_document_not_a_dict(permissive_policy):
+    from keystone_mcp.upstream_registry.validate import collect_upstream_problems
+
+    problems = collect_upstream_problems([], policy=permissive_policy)
+    assert len(problems) == 1
+    assert problems[0].code == "document_invalid"
+    assert problems[0].entry is None
+    assert problems[0].field is None
+
+
+def test_collect_upstream_problems_schema_version_and_entries_codes(permissive_policy):
+    from keystone_mcp.upstream_registry.validate import collect_upstream_problems
+
+    problems = collect_upstream_problems(
+        {"schema_version": 2, "entries": "not-a-list"}, policy=permissive_policy
+    )
+    codes = {p.code for p in problems}
+    assert "schema_version_unsupported" in codes
+    assert "entries_invalid" in codes
+
+
+def test_collect_upstream_problems_too_many_entries(permissive_policy):
+    from keystone_mcp.upstream_registry.validate import collect_upstream_problems
+
+    entries = [
+        {"name": f"svc-{i}", "url": f"https://svc-{i}.example/mcp", "namespace": f"ns{i}"}
+        for i in range(65)
+    ]
+    problems = collect_upstream_problems(
+        {"schema_version": 1, "entries": entries}, policy=permissive_policy
+    )
+    assert any(p.code == "too_many_entries" and p.field == "entries" for p in problems)
+
+
+def test_collect_upstream_problems_auth_env_codes(permissive_policy):
+    from keystone_mcp.upstream_registry.validate import collect_upstream_problems
+
+    document = {
+        "schema_version": 1,
+        "entries": [
+            {
+                "name": "svc",
+                "url": "https://svc.example/mcp",
+                "namespace": "svc",
+                "auth": {"bearer_env": "NOT_A_KEYSTONE_VAR"},
+            },
+            {
+                "name": "svc2",
+                "url": "https://svc2.example/mcp",
+                "namespace": "svc2",
+                "auth": {"bearer_env": "KEYSTONE_MCP_UPSTREAM_ALLOW_INSECURE_HTTP"},
+            },
+        ],
+    }
+    problems = collect_upstream_problems(document, policy=permissive_policy)
+    by_entry = {p.entry: p.code for p in problems}
+    assert by_entry["svc"] == "auth_env_invalid"
+    assert by_entry["svc2"] == "auth_env_reserved"
+
+
+def test_collect_upstream_problems_stdio_field_invalid(permissive_policy):
+    from keystone_mcp.upstream_registry.validate import collect_upstream_problems
+
+    document = {
+        "schema_version": 1,
+        "entries": [
+            {
+                "name": "svc",
+                "namespace": "svc",
+                "transport": "stdio",
+                "command": "true",
+                "url": "https://not-allowed/mcp",
+            },
+        ],
+    }
+    problems = collect_upstream_problems(document, policy=permissive_policy)
+    assert any(p.code == "stdio_field_invalid" and p.field == "url" for p in problems)
+
+
+def test_upstream_validate_cli_json_ok(tmp_path: Path):
+    from keystone_mcp.cli import main
+
+    path = tmp_path / "good.yaml"
+    path.write_text(
+        textwrap.dedent(
+            """
+            schema_version: 1
+            entries:
+              - name: svc
+                url: https://svc.example/mcp
+                namespace: svc
+            """
+        ),
+        encoding="utf-8",
+    )
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        assert main(["upstream", "validate", "--path", str(path), "--json"]) == 0
+    payload = json.loads(out.getvalue())
+    assert payload == {"schema_version": 1, "ok": True, "problems": []}
+
+
+def test_upstream_validate_cli_json_reports_problems(tmp_path: Path):
+    from keystone_mcp.cli import main
+
+    path = tmp_path / "bad.yaml"
+    path.write_text(
+        textwrap.dedent(
+            """
+            schema_version: 1
+            entries:
+              - name: files
+                url: https://files.example/mcp
+                namespace: users
+            """
+        ),
+        encoding="utf-8",
+    )
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        assert main(["upstream", "validate", "--path", str(path), "--json"]) == 1
+    payload = json.loads(out.getvalue())
+    assert payload["schema_version"] == 1
+    assert payload["ok"] is False
+    assert payload["problems"]
+    for problem in payload["problems"]:
+        assert problem["code"] == "namespace_taken"
+        assert problem["entry"] == "files"
+        assert problem["field"] == "namespace"
+        assert "message" in problem
+
+
+def test_upstream_validate_cli_json_file_not_found(tmp_path: Path):
+    from keystone_mcp.cli import main
+
+    missing = tmp_path / "missing.yaml"
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        assert main(["upstream", "validate", "--path", str(missing), "--json"]) == 1
+    payload = json.loads(out.getvalue())
+    assert payload["ok"] is False
+    assert payload["problems"][0]["code"] == "file_unreadable"
+
+
+def test_upstream_validate_cli_json_malformed_document(tmp_path: Path):
+    from keystone_mcp.cli import main
+
+    path = tmp_path / "malformed.yaml"
+    path.write_text("- 1\n- 2\n", encoding="utf-8")
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        assert main(["upstream", "validate", "--path", str(path), "--json"]) == 1
+    payload = json.loads(out.getvalue())
+    assert payload["ok"] is False
+    assert payload["problems"][0]["code"] == "document_invalid"
+
+
+def test_upstream_validate_cli_text_mode_unaffected_by_json_support(tmp_path: Path):
+    """Adding --json must not change a single character of the default text output."""
+    from keystone_mcp.cli import main
+
+    path = tmp_path / "bad.yaml"
+    path.write_text(
+        textwrap.dedent(
+            """
+            schema_version: 1
+            entries:
+              - name: files
+                url: https://files.example/mcp
+                namespace: users
+            """
+        ),
+        encoding="utf-8",
+    )
+    out = io.StringIO()
+    err = io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        exit_code = main(["upstream", "validate", "--path", str(path)])
+    assert exit_code == 1
+    assert out.getvalue() == ""
+    assert "users_list" in err.getvalue()
