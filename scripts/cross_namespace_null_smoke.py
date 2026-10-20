@@ -27,7 +27,6 @@ import json
 import os
 import sys
 from dataclasses import dataclass, field
-from datetime import timedelta
 from pathlib import Path
 
 import httpx
@@ -172,7 +171,7 @@ async def _run(
             write_stream,
         ),
         ClientSession(
-            read_stream, write_stream, read_timeout_seconds=timedelta(seconds=90)
+            read_stream, write_stream, read_timeout_seconds=90.0
         ) as session,
     ):
         await session.initialize()
