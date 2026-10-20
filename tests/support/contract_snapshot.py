@@ -125,7 +125,8 @@ def _collect_cli_commands(parser: argparse.ArgumentParser, prefix: tuple[str, ..
     return commands
 
 
-def build_cli_parser() -> argparse.ArgumentParser:
+def _legacy_frozen_baseline_cli_parser() -> argparse.ArgumentParser:
+    """CLI layout frozen at v0.5.0 for ``--from-tag v0.5.0`` baseline checks."""
     from keystone_mcp.cli import _CATALOG_TIERS, _catalog_parent_parser
     from keystone_mcp.plugins_cli import add_plugins_commands
     from keystone_mcp.users.api_keys_cli import add_api_keys_commands
@@ -145,7 +146,6 @@ def build_cli_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Fail when tools are unreachable by every role",
     )
-    validate.add_argument("--json", action="store_true")
     catalog_sub.add_parser("diff", parents=[parent], help="Diff policy")
     export = catalog_sub.add_parser("export", help="Export snapshot")
     export.add_argument("--live-file", type=Path, required=True)
@@ -155,7 +155,6 @@ def build_cli_parser() -> argparse.ArgumentParser:
     upstream_sub = upstream.add_subparsers(dest="upstream_command", required=True)
     upstream_validate = upstream_sub.add_parser("validate", help="Validate registry file")
     upstream_validate.add_argument("--path", required=True, type=Path)
-    upstream_validate.add_argument("--json", action="store_true")
 
     subparsers.add_parser("serve", help="Start the Keystone-MCP server")
     add_users_commands(subparsers)
@@ -163,6 +162,15 @@ def build_cli_parser() -> argparse.ArgumentParser:
     add_service_accounts_commands(subparsers)
     add_plugins_commands(subparsers)
     return parser
+
+
+def build_cli_parser() -> argparse.ArgumentParser:
+    import keystone_mcp.cli as cli_module
+
+    builder = getattr(cli_module, "build_cli_argument_parser", None)
+    if builder is not None:
+        return builder()
+    return _legacy_frozen_baseline_cli_parser()
 
 
 def generate_cli_commands(_src_root: Path) -> dict[str, str]:
