@@ -170,7 +170,6 @@ async def _run(
         streamable_http_client(proxy_url, http_client=http_client) as (
             read_stream,
             write_stream,
-            _,
         ),
         ClientSession(
             read_stream, write_stream, read_timeout_seconds=timedelta(seconds=90)

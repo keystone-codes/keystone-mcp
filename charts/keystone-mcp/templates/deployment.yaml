@@ -12,6 +12,7 @@ spec:
   selector:
     matchLabels:
       {{- include "keystone-mcp.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: keystone
   template:
     metadata:
       annotations:
@@ -21,6 +22,7 @@ spec:
         {{- end }}
       labels:
         {{- include "keystone-mcp.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: keystone
     spec:
       serviceAccountName: {{ include "keystone-mcp.serviceAccountName" . }}
       automountServiceAccountToken: false

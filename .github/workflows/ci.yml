@@ -154,7 +154,7 @@ jobs:
         run: |
           set -euo pipefail
           kubectl wait --for=condition=available deployment/keystone-keystone-mcp --timeout=120s
-          kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=keystone-mcp --timeout=120s
+          kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=keystone-mcp,app.kubernetes.io/component=keystone --timeout=120s
           nohup kubectl port-forward --address 127.0.0.1 svc/keystone-keystone-mcp 8080:80 > /tmp/port-forward.log 2>&1 &
           echo $! > /tmp/port-forward.pid
           for i in $(seq 1 120); do
