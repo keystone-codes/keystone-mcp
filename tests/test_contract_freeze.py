@@ -392,6 +392,7 @@ def _documented_frozen_cli_flags(section: str) -> set[str]:
         for option in catalog_parent_flags:
             flags.add(f"{command} {option}")
     flags.add("catalog validate --strict-unreachable")
+    flags.add("catalog validate --json")
     flags.add("catalog export --live-file")
     flags.add("catalog export --tier")
     for option in ("--from-url", "--token", "--policy", "--dry-run"):
@@ -400,6 +401,7 @@ def _documented_frozen_cli_flags(section: str) -> set[str]:
     flags.add("users admins --json")
     if "upstream validate --path" in section or "--path <file>" in section:
         flags.add("upstream validate --path")
+    flags.add("upstream validate --json")
     assert "--email" not in section.split("users import", 1)[-1].split("##", 1)[0], (
         "docs/compatibility.md must not freeze a removed users import --email flag"
     )

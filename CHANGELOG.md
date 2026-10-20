@@ -10,6 +10,7 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ### Added
 
+- `--json` for `keystone-mcp catalog validate` and `keystone-mcp upstream validate`: with the flag, stdout carries exactly one JSON document (`schema_version`, `ok`, `problems` with stable, frozen problem codes; `catalog validate` also carries `unmatched_allow_patterns`, `unreachable_tools`, `duplicate_live_names`) instead of free-form text. Exit codes are unchanged ([#8](https://github.com/keystone-codes/keystone-mcp/issues/8)).
 - Agent skill `keystone-gateway-bootstrap` (`skills/keystone-gateway-bootstrap/`): installs the gateway with Docker on a VM step by step — the questions to ask the operator, who does each step, how secrets reach `.env` without passing through the chat, and a ladder of checks that does not call the gateway ready until the first administrator has signed in through the login provider in a real client. `/healthz`, `/readyz` and `config check` alone do not prove sign-in works.
 - `docs/README.md` and the root `README.md` list every agent skill with its purpose, including the `keystonectl` skill from the keystonectl repository.
 - Static tests for every skill in `skills/`: the frontmatter name matches the folder, the skill is listed in `docs/README.md`, relative links resolve, every `KEYSTONE_MCP_*` variable it names is documented in `docs/environment.md`, and it holds no secret-like values.

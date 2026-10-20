@@ -145,6 +145,7 @@ def build_cli_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Fail when tools are unreachable by every role",
     )
+    validate.add_argument("--json", action="store_true")
     catalog_sub.add_parser("diff", parents=[parent], help="Diff policy")
     export = catalog_sub.add_parser("export", help="Export snapshot")
     export.add_argument("--live-file", type=Path, required=True)
@@ -154,6 +155,7 @@ def build_cli_parser() -> argparse.ArgumentParser:
     upstream_sub = upstream.add_subparsers(dest="upstream_command", required=True)
     upstream_validate = upstream_sub.add_parser("validate", help="Validate registry file")
     upstream_validate.add_argument("--path", required=True, type=Path)
+    upstream_validate.add_argument("--json", action="store_true")
 
     subparsers.add_parser("serve", help="Start the Keystone-MCP server")
     add_users_commands(subparsers)

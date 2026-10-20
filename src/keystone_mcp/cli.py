@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 import urllib.error
 import urllib.request
+from collections import Counter
 from pathlib import Path
-from typing import Sequence
+from typing import TYPE_CHECKING, Sequence
 
 import yaml
 
@@ -45,10 +47,18 @@ from keystone_mcp.users.api_keys_cli import add_api_keys_commands
 from keystone_mcp.users.cli import add_users_commands
 from keystone_mcp.users.service_accounts_cli import add_service_accounts_commands
 
+if TYPE_CHECKING:
+    from keystone_mcp.upstream_registry.validate import UpstreamProblem
+
 _EXIT_VALIDATION = 1
 _EXIT_LIVE_URL = 3
 
 _CATALOG_TIERS = frozenset({"active", "reserved", "wip"})
+
+#: ``--json`` schema version for ``catalog validate`` and ``upstream validate``
+#: (frozen since 0.6.0; see docs/compatibility.md). Each command's own document
+#: shape is versioned independently, but both start at 1.
+_JSON_SCHEMA_VERSION = 1
 
 
 class LiveNamesFetchError(OSError):
@@ -132,27 +142,103 @@ def _format_diff_summary(
     return "\n".join(lines) + "\n"
 
 
+def _duplicate_live_names(names: Sequence[str]) -> tuple[str, ...]:
+    return tuple(sorted(name for name, count in Counter(names).items() if count > 1))
+
+
+def _catalog_problem(code: str, message: str) -> dict[str, str | None]:
+    """One ``{code, entry, field, message}`` problem for ``catalog validate --json``.
+
+    ``entry``/``field`` are always ``null``: unlike an upstream registry entry,
+    a catalog problem is never about one field of one object.
+    """
+    return {"code": code, "entry": None, "field": None, "message": message}
+
+
+def _classify_catalog_exception(exc: Exception) -> str:
+    if isinstance(exc, DuplicateLivePublishedNameError):
+        return "duplicate_live_name"
+    if isinstance(exc, CatalogSnapshotError):
+        return "snapshot_invalid"
+    return "policy_invalid"
+
+
+def _emit_catalog_json(
+    *,
+    ok: bool,
+    unmatched_allow_patterns: Sequence[str],
+    unreachable_tools: Sequence[str],
+    duplicate_live_names: Sequence[str],
+    problems: Sequence[dict[str, str | None]],
+) -> None:
+    payload = {
+        "schema_version": _JSON_SCHEMA_VERSION,
+        "ok": ok,
+        "unmatched_allow_patterns": sorted(unmatched_allow_patterns),
+        "unreachable_tools": sorted(unreachable_tools),
+        "duplicate_live_names": sorted(duplicate_live_names),
+        "problems": list(problems),
+    }
+    print(json.dumps(payload, indent=2, sort_keys=True))
+
+
 def _cmd_catalog_validate(args: argparse.Namespace) -> int:
+    as_json: bool = getattr(args, "json", False)
+    unmatched_allow_patterns: Sequence[str] = ()
+    unreachable_tools: Sequence[str] = ()
+    duplicate_live_names: tuple[str, ...] = ()
+    problems: list[dict[str, str | None]] = []
+    exit_code = 0
+
     try:
         policy = load_policy_file(args.policy)
         snapshot = _load_snapshot(args.snapshot)
         live_names = _load_live_names(live_file=args.live_file, live_url=args.live_url)
+        duplicate_live_names = _duplicate_live_names(live_names)
         assert_unique_live_published_names(live_names)
+
+        # Computed directly (not only via assert_live_catalog_validation below) so
+        # unmatched_allow_patterns/unreachable_tools are captured for --json even
+        # when that call raises on unmatched allow patterns (P06/S4 errors).
+        live_set = frozenset(live_names)
+        precheck_result = validate_policy_against_catalog(
+            policy,
+            live_set | snapshot.active,
+            reserved_tool_names=snapshot.reserved,
+            wip_tool_names=snapshot.wip,
+        )
+        unmatched_allow_patterns = precheck_result.unmatched_allow_patterns
+        unreachable_tools = tuple(precheck_result.unreachable_tools)
+
         result = assert_live_catalog_validation(policy, live_names, catalog_snapshot=snapshot)
         if args.strict_unreachable and result.unreachable_tools:
-            print(
-                "unreachable live tools (strict-unreachable): "
-                + ", ".join(sorted(result.unreachable_tools)),
-                file=sys.stderr,
+            message = "unreachable live tools (strict-unreachable): " + ", ".join(
+                sorted(result.unreachable_tools)
             )
-            return _EXIT_VALIDATION
+            if not as_json:
+                print(message, file=sys.stderr)
+            problems.append(_catalog_problem("unreachable_tools_strict", message))
+            exit_code = _EXIT_VALIDATION
     except LiveNamesFetchError as exc:
-        print(str(exc), file=sys.stderr)
-        return _EXIT_LIVE_URL
+        if not as_json:
+            print(str(exc), file=sys.stderr)
+        problems.append(_catalog_problem("live_url_unreachable", str(exc)))
+        exit_code = _EXIT_LIVE_URL
     except (PolicyContractError, CatalogSnapshotError, DuplicateLivePublishedNameError) as exc:
-        print(str(exc), file=sys.stderr)
-        return _EXIT_VALIDATION
-    return 0
+        if not as_json:
+            print(str(exc), file=sys.stderr)
+        problems.append(_catalog_problem(_classify_catalog_exception(exc), str(exc)))
+        exit_code = _EXIT_VALIDATION
+
+    if as_json:
+        _emit_catalog_json(
+            ok=exit_code == 0,
+            unmatched_allow_patterns=unmatched_allow_patterns,
+            unreachable_tools=unreachable_tools,
+            duplicate_live_names=duplicate_live_names,
+            problems=problems,
+        )
+    return exit_code
 
 
 def _cmd_catalog_diff(args: argparse.Namespace) -> int:
@@ -207,20 +293,61 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_upstream_validate(path: Path) -> int:
+def _emit_upstream_json(*, ok: bool, problems: Sequence[UpstreamProblem]) -> None:
+    payload = {
+        "schema_version": _JSON_SCHEMA_VERSION,
+        "ok": ok,
+        "problems": [
+            {
+                "code": problem.code,
+                "entry": problem.entry,
+                "field": problem.field,
+                "message": problem.message,
+            }
+            for problem in problems
+        ],
+    }
+    print(json.dumps(payload, indent=2, sort_keys=True))
+
+
+def _cmd_upstream_validate(args: argparse.Namespace) -> int:
     from keystone_mcp.config import _env_bool
     from keystone_mcp.upstream_registry.load import read_registry_document
     from keystone_mcp.upstream_registry.policy import UpstreamSecurityPolicy
-    from keystone_mcp.upstream_registry.validate import validate_upstream_registry
+    from keystone_mcp.upstream_registry.validate import UpstreamProblem, collect_upstream_problems
+
+    path: Path = args.path
+    as_json: bool = getattr(args, "json", False)
 
     if not path.is_file():
-        print(f"error: file not found: {path}", file=sys.stderr)
+        if not as_json:
+            print(f"error: file not found: {path}", file=sys.stderr)
+        else:
+            _emit_upstream_json(
+                ok=False,
+                problems=[
+                    UpstreamProblem(
+                        code="file_unreadable",
+                        entry=None,
+                        field=None,
+                        message=f"file not found: {path}",
+                    )
+                ],
+            )
         return 1
     try:
         allow_insecure_http = _env_bool("KEYSTONE_MCP_UPSTREAM_ALLOW_INSECURE_HTTP", False)
         egress_allow_private = _env_bool("KEYSTONE_MCP_UPSTREAM_EGRESS_ALLOW_PRIVATE", False)
     except ConfigError as exc:
-        print(f"keystone-mcp: {exc}", file=sys.stderr)
+        if not as_json:
+            print(f"keystone-mcp: {exc}", file=sys.stderr)
+        else:
+            _emit_upstream_json(
+                ok=False,
+                problems=[
+                    UpstreamProblem(code="config_invalid", entry=None, field=None, message=str(exc))
+                ],
+            )
         return 1
     policy = UpstreamSecurityPolicy(
         allow_insecure_http=allow_insecure_http,
@@ -228,15 +355,46 @@ def _cmd_upstream_validate(path: Path) -> int:
     )
     try:
         document = read_registry_document(path)
-        messages = validate_upstream_registry(document, policy=policy)
-    except (OSError, ValueError) as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        problems = collect_upstream_problems(document, policy=policy)
+    except OSError as exc:
+        if not as_json:
+            print(f"error: {exc}", file=sys.stderr)
+        else:
+            _emit_upstream_json(
+                ok=False,
+                problems=[
+                    UpstreamProblem(
+                        code="file_unreadable", entry=None, field=None, message=str(exc)
+                    )
+                ],
+            )
         return 1
-    if messages:
-        for message in messages:
-            print(message, file=sys.stderr)
+    except ValueError as exc:
+        if not as_json:
+            print(f"error: {exc}", file=sys.stderr)
+        else:
+            _emit_upstream_json(
+                ok=False,
+                problems=[
+                    UpstreamProblem(
+                        code="document_invalid", entry=None, field=None, message=str(exc)
+                    )
+                ],
+            )
         return 1
-    print(f"ok: {path}")
+
+    if problems:
+        if not as_json:
+            for problem in problems:
+                print(problem.message, file=sys.stderr)
+        else:
+            _emit_upstream_json(ok=False, problems=problems)
+        return 1
+
+    if not as_json:
+        print(f"ok: {path}")
+    else:
+        _emit_upstream_json(ok=True, problems=[])
     return 0
 
 
@@ -270,6 +428,11 @@ def main(argv: list[str] | None = None) -> int:
         "--strict-unreachable",
         action="store_true",
         help="Fail when tools are unreachable by every role (normally a warning only)",
+    )
+    validate.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit one machine-readable JSON document on stdout instead of text",
     )
     validate.set_defaults(handler=_cmd_catalog_validate)
 
@@ -306,7 +469,12 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         help="Path to YAML or JSON upstream registry (schema_version 1)",
     )
-    upstream_validate.set_defaults(handler=lambda args: _cmd_upstream_validate(args.path))
+    upstream_validate.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit one machine-readable JSON document on stdout instead of text",
+    )
+    upstream_validate.set_defaults(handler=_cmd_upstream_validate)
 
     serve = subparsers.add_parser("serve", help="Start the Keystone-MCP server")
     serve.set_defaults(handler=_cmd_serve)

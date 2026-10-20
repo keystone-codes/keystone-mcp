@@ -330,10 +330,71 @@ Frozen since 0.5.0. Exit codes are part of the contract; command output text is 
 | `python -m keystone_mcp.healthcheck <path>` | `0` when the HTTP probe succeeds, non-zero otherwise |
 
 Flags for `catalog` (`--policy`, `--snapshot`, `--live-file`, `--live-url`,
-`--strict-unreachable`, `--tier`) and `users import` (`--from-url`, `--token`,
-`--policy`, `--dry-run`) are frozen. `users grant-admin` accepts an
+`--strict-unreachable`, `--tier`, `--json`) and `users import` (`--from-url`,
+`--token`, `--policy`, `--dry-run`) are frozen. `users grant-admin` accepts an
 optional `--role <name>` (must grant full administration). `users admins`
-accepts `--json`.
+and `upstream validate` accept `--json`.
+
+### `--json` output for `catalog validate` and `upstream validate`
+
+With `--json`, stdout carries exactly one JSON document and nothing else
+(stderr may still carry logs); exit codes are unchanged from the table above.
+Text output (without `--json`) stays free-form. `schema_version` is `1` for
+both commands; new keys and new problem codes are additive, existing keys and
+codes are frozen once released.
+
+`keystone-mcp catalog validate --json`:
+
+```json
+{
+  "schema_version": 1,
+  "ok": true,
+  "unmatched_allow_patterns": ["editor:hello_*"],
+  "unreachable_tools": ["files_get_file_info"],
+  "duplicate_live_names": [],
+  "problems": []
+}
+```
+
+- `unmatched_allow_patterns` and `unreachable_tools` are always present
+  (sorted, empty when none) regardless of exit code; with `--strict-unreachable`
+  the exit code changes as today, the document does not. `duplicate_live_names`
+  lists every live name that occurs more than once (sorted, empty when none).
+- `problems` holds `{code, entry, field, message}` objects, `entry` and
+  `field` always `null` (a catalog problem is never about one field of one
+  registry entry). Codes: `policy_invalid`, `snapshot_invalid`,
+  `live_url_unreachable`, `duplicate_live_name`, `unreachable_tools_strict`.
+
+`keystone-mcp upstream validate --path FILE --json`:
+
+```json
+{
+  "schema_version": 1,
+  "ok": false,
+  "problems": [
+    {
+      "code": "namespace_taken",
+      "entry": "files",
+      "field": "namespace",
+      "message": "namespace 'users' is reserved: published names users_* can collide with built-in tool users_list"
+    }
+  ]
+}
+```
+
+- `ok: true` with an empty `problems` list on exit `0`.
+- `entry` is the registry entry `name` when the problem belongs to one entry,
+  otherwise `null`; `field` is the field name (dotted for nested fields, e.g.
+  `auth.bearer_env`) or `null` when the problem is not about one field.
+- Codes: `file_unreadable`, `document_invalid`, `config_invalid`,
+  `schema_version_unsupported`, `entries_invalid`, `too_many_entries`,
+  `entry_invalid`, `name_invalid`, `name_duplicate`, `namespace_invalid`,
+  `namespace_duplicate`, `namespace_taken` (collides with a built-in tool),
+  `namespace_collision` (two namespaces can publish the same tool name),
+  `transport_invalid`, `stdio_field_invalid`, `url_invalid`,
+  `insecure_http_refused`, `auth_env_invalid`, `auth_env_reserved`,
+  `auth_field_invalid`, `limits_field_invalid`, `field_invalid`,
+  `identity_secret_reused`.
 
 ## Users directory database
 
