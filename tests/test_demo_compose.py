@@ -146,7 +146,10 @@ def test_demo_services_have_healthchecks():
     services = _services(demo, overlay)
 
     assert services, "expected at least one service"
+    init_only = frozenset({"policy-seed"})
     for name, body in services.items():
+        if name in init_only:
+            continue
         assert "healthcheck" in body, f"service {name!r} has no healthcheck"
 
 
