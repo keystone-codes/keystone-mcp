@@ -299,13 +299,10 @@ def test_test_job_has_redis_and_postgres_services():
 def test_test_suite_runs_contract_freeze_and_coverage_gates():
     doc = _load("test-gate.yml")
     names = _job_step_names(doc, "test")
-    assert "Test suite (core)" in names
-    assert "Test suite (tail)" in names
-    core_run = _job_step_run_text(doc, "test")
-    assert '-m "not fuzz"' in core_run
-    assert "ci_pytest_shard.py" in core_run
-    assert "junit-core-py" in core_run
-    assert "junit-tail-py" in core_run
+    assert "Test suite" in names
+    test_run = _job_step_run_text(doc, "test")
+    assert '-m "not fuzz"' in test_run
+    assert "junit-py" in test_run
 
     lint = doc["jobs"]["lint"]
     lint_names = _job_step_names(doc, "lint")
@@ -470,11 +467,8 @@ def test_coverage_threshold_is_enforced():
     assert int(match.group(1)) >= 85
     gate = _load("test-gate.yml")
     steps = gate["jobs"]["test"].get("steps") or []
-    core = next(step for step in steps if step.get("name") == "Test suite (core)")
-    tail = next(step for step in steps if step.get("name") == "Test suite (tail)")
-    core_run = str(core.get("run", ""))
-    tail_run = str(tail.get("run", ""))
-    assert "--cov" in core_run
-    assert "--cov-fail-under=0" in core_run
-    assert "--cov-report=xml" in tail_run
-    assert "--cov-fail-under=86" in tail_run
+    test_step = next(step for step in steps if step.get("name") == "Test suite")
+    test_run = str(test_step.get("run", ""))
+    assert "--cov" in test_run
+    assert "--cov-report=xml" in test_run
+    assert "--cov-fail-under=86" in test_run
