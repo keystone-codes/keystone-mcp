@@ -12,6 +12,10 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 - CI runs each Python version's pytest tree as a single `pytest tests/` process instead of splitting it into "core" and "tail" steps; `scripts/ci_pytest_shard.py` is removed. `docs/CONTRIBUTING.md` explains exit code 143 as `SIGTERM` (128 + 15), now caught by a `tests/conftest.py` fixture as an ordinary test failure ("startup refused during the test"), distinct from a GitHub Actions job-duration timeout (reported as cancelled).
 
+### Security
+
+- `certifi` 2026.10.19 in `uv.lock` and the image: drops the emSign root CAs whose intermediate keys were compromised ([GHSA-6q48-6c7w-9gw2](https://github.com/advisories/GHSA-6q48-6c7w-9gw2)).
+
 ## [0.6.1] - 2026-10-20
 
 ### Added
