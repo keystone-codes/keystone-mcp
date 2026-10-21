@@ -109,14 +109,16 @@ fails the build if they would silently skip).
 The suite must pass without reruns or forced ordering; a flaky test is a bug
 to fix, not to retry (`tests/test_ci_hygiene.py`).
 
-CI runs the pytest tree in two steps per Python version (core then tail, split
-at ``tests/test_stdio_upstream_e2e.py`` via ``scripts/ci_pytest_shard.py``) so
-each job stays under typical organization job-duration caps. Hypothesis ``fuzz`` tests run in the Security workflow, not
-in the main test jobs. If a job ends with exit code **143** and no ``FAILED``
-summary, check the log for ``--tb=short`` tracebacks first; an organization
-may also cap job duration under **Settings → Actions** (repository or
-``keystone-codes`` organization), which overrides ``timeout-minutes`` in
-workflow YAML when the cap is lower.
+Hypothesis ``fuzz`` tests run in the Security workflow, not in the main test
+jobs. Exit code **143** is **128 + 15**: the process received ``SIGTERM``.
+That used to come from the gateway itself, through
+``server._request_shutdown``, whenever a test reached a real startup
+refusal; now a fixture in ``tests/conftest.py`` replaces that call and turns
+the same case into an ordinary test failure with the text "startup refused
+during the test". If **143** still shows up, look for that text first. A
+GitHub Actions job-duration timeout looks different: the job is reported as
+**cancelled**, with a message about the maximum execution time, not as a
+plain exit code.
 
 Test-only key material lives in `tests/data/test-keys/` (secret scanners skip
 it); a private key block anywhere else fails `tests/test_no_private_keys_in_repo.py`.

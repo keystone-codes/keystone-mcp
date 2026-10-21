@@ -88,34 +88,21 @@ jobs:
       - name: Python version
         run: uv run python --version
 
-      - name: Test suite (core)
+      - name: Test suite
         env:
           RBAC_CONFORMANCE_WRITE_REPORT: ${{ matrix.python == '3.12' && 'artifacts/rbac-conformance-matrix.md' || '' }}
         run: |
           mkdir -p artifacts
           set -euo pipefail
-          mapfile -t IGNORE < <(uv run python scripts/ci_pytest_shard.py core ignore-args)
-          args=(--tb=short -m "not fuzz" --junitxml=artifacts/junit-core-py${{ matrix.python }}.xml)
+          args=(--tb=short -m "not fuzz" --junitxml=artifacts/junit-py${{ matrix.python }}.xml)
           if [ "${{ matrix.python }}" = "3.12" ]; then
-            args+=(--cov=keystone_mcp --cov-append --cov-fail-under=0)
+            args+=(--cov=keystone_mcp --cov-fail-under=86 --cov-report=xml:artifacts/coverage.xml --cov-report=term)
           fi
-          uv run pytest tests/ "${IGNORE[@]}" "${args[@]}"
-
-      - name: Test suite (tail)
-        run: |
-          mkdir -p artifacts
-          set -euo pipefail
-          mapfile -t MODULES < <(uv run python scripts/ci_pytest_shard.py tail paths)
-          args=(--tb=short -m "not fuzz" --junitxml=artifacts/junit-tail-py${{ matrix.python }}.xml)
-          if [ "${{ matrix.python }}" = "3.12" ]; then
-            args+=(--cov=keystone_mcp --cov-append --cov-fail-under=86 --cov-report=xml:artifacts/coverage.xml --cov-report=term)
-          fi
-          uv run pytest "${MODULES[@]}" "${args[@]}"
+          uv run pytest tests/ "${args[@]}"
 
       - name: Check skipped tests
         run: |
-          uv run python scripts/check_ci_skips.py artifacts/junit-core-py${{ matrix.python }}.xml tests/data/ci-allowed-skips.txt
-          uv run python scripts/check_ci_skips.py artifacts/junit-tail-py${{ matrix.python }}.xml tests/data/ci-allowed-skips.txt
+          uv run python scripts/check_ci_skips.py artifacts/junit-py${{ matrix.python }}.xml tests/data/ci-allowed-skips.txt
 
       - name: Upload RBAC conformance matrix artifact
         if: always() && matrix.python == '3.12'
