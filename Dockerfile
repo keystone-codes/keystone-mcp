@@ -22,7 +22,7 @@ COPY examples/hello-stdio /opt/hello-stdio
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --extra otel
 
-FROM python:3.12-slim-bookworm@sha256:34386ef0cb081344d7ec1c103ba398e6e9f64e9ab3a1509accc92a4e24a07258 AS runtime
+FROM python:3.12-slim-bookworm@sha256:6a0e06f5ba0b373d051aabd3fffb9b873f27f9a2a3a14bcbe37dee6f0e3bbc70 AS runtime
 
 ARG APP_UID=10001
 ARG APP_GID=10001
