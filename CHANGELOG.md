@@ -15,6 +15,8 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 ### Security
 
 - `certifi` 2026.10.19 in `uv.lock` and the image: drops the emSign root CAs whose intermediate keys were compromised ([GHSA-6q48-6c7w-9gw2](https://github.com/advisories/GHSA-6q48-6c7w-9gw2)).
+- `fastmcp` and `fastmcp-slim` 4.1.4 in `uv.lock` and the image, minimum `fastmcp>=4.1.2`: fixes [GHSA-vqqp-x5qm-5qp4](https://github.com/advisories/GHSA-vqqp-x5qm-5qp4) (M2M OAuth client providers without issuer binding) and [GHSA-7xgj-8392-5q4r](https://github.com/advisories/GHSA-7xgj-8392-5q4r) (component authorization skipped after transforms on direct calls). The gateway uses neither code path — it builds no `ClientCredentialsOAuthProvider` or `PrivateKeyJWTOAuthProvider`, and its RBAC runs in `RbacMiddleware` on the published name rather than as a component `auth=` check — so behaviour does not change.
+- The image upgrades `libssl3` and `openssl` to `3.0.22-1~deb12u2` from bookworm-security in the runtime stage, fixing CVE-2026-84782 (DTLS handshake retransmission, HIGH): the current `python:3.12-slim-bookworm` base still ships `deb12u1`. The extra layer goes away once the base image is published with the fix.
 
 ## [0.6.1] - 2026-10-20
 

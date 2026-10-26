@@ -18,7 +18,7 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "fastmcp>=4.1.0,<5",
+    "fastmcp>=4.1.2,<5",
     "starlette>=0.37,<2",
     "mcp>=2.0,<3",
     "httpx>=0.27",
