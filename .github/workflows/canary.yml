@@ -120,7 +120,23 @@ jobs:
           work="$RUNNER_TEMP/canary-prerelease"
           cp -r "$GITHUB_WORKSPACE/." "$work"
           cd "$work"
-          uv lock --upgrade --upgrade-package fastmcp --upgrade-package mcp --prerelease allow
+          # `--prerelease allow` is a *global* resolver policy, not scoped to
+          # the two packages below: with no fastmcp/mcp prerelease published
+          # (as of this writing, both are already at their latest stable),
+          # it had no effect on them but did let the resolver pick an
+          # unrelated, unpinned transitive dependency's prerelease instead
+          # (httpx 0.28.1 -> 1.0.dev6, which dropped `httpx.ASGITransport`
+          # and broke most of the suite). uv's per-package
+          # `--prerelease-package name=allow` flag would scope this
+          # correctly, but it needs uv>=0.12.1 and every job in this repo is
+          # pinned to the same uv version on purpose (see
+          # tests/test_github_workflows.py::test_every_setup_uv_step_pins_one_version).
+          # `if-necessary-or-explicit` is the narrower, same-uv-version fix:
+          # it only reaches for a prerelease when a stable release cannot
+          # satisfy the resolution, so unrelated deps never get bumped into
+          # one, and it will still surface a genuine fastmcp/mcp prerelease
+          # once one exists and fastmcp/mcp's own bounds require it.
+          uv lock --upgrade --upgrade-package fastmcp --upgrade-package mcp --prerelease if-necessary-or-explicit
           uv sync --extra dev --extra otel
 
       - name: Pytest
@@ -176,5 +192,17 @@ jobs:
       - name: Pytest
         run: |
           export PATH="$RUNNER_TEMP/canary-low/bin:$PATH"
+          # ".[dev,otel]" is installed non-editable into canary-low, so
+          # keystone_mcp is physically copied into that venv's site-packages.
+          # pytest's own "-p keystone_mcp.contract_tests" addopts plugin
+          # imports the keystone_mcp package during early argument parsing,
+          # before pyproject.toml's `pythonpath = ["src", ...]` entry is
+          # applied -- so without this, keystone_mcp (and anything computing
+          # paths from its own __file__, e.g. default_policy_path()) resolves
+          # to the throwaway copy in canary-low, not this checkout. Priming
+          # PYTHONPATH up front makes the interpreter see src/ first, like an
+          # editable install, so the installed non-editable copy is never
+          # imported.
+          export PYTHONPATH="$GITHUB_WORKSPACE/src"
           pytest -q
           pytest tests/test_private_api_sentinels.py -v
