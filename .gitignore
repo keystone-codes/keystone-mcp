@@ -20,6 +20,8 @@ htmlcov/
 .idea/
 .vscode/
 .history/
+# Local SQLite users database (default KEYSTONE_MCP_USERS_DB_URL target).
+keystone-users.db*
 artifacts/
 skills/*.zip
 .cursor/
