@@ -24,6 +24,13 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 FROM python:3.12-slim-bookworm@sha256:34386ef0cb081344d7ec1c103ba398e6e9f64e9ab3a1509accc92a4e24a07258 AS runtime
 
+# CVE-2026-84782: the base image ships openssl 3.0.22-1~deb12u1; the fix
+# (3.0.22-1~deb12u2) is only in bookworm-security. Remove this layer once
+# python:3.12-slim-bookworm is published with deb12u2 or later.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends --only-upgrade libssl3 openssl \
+    && rm -rf /var/lib/apt/lists/*
+
 ARG APP_UID=10001
 ARG APP_GID=10001
 RUN groupadd --system --gid "${APP_GID}" keystone \
