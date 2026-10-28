@@ -8,6 +8,12 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ## [Unreleased]
 
+## [0.6.3] - 2026-10-28
+
+### Added
+
+- Release image carries `org.opencontainers.image.source`, `.licenses`, `.revision` and `.version` OCI labels, set by the release workflow's build step; the `Dockerfile` also sets static `source`/`licenses` labels so a local `docker build` carries them too.
+
 ### Security
 
 - `authlib` 1.9.1 in `uv.lock` and the image (transitive, via `fastmcp-slim[server]`): fixes [GHSA-6v38-4h7w-rj9h](https://github.com/advisories/GHSA-6v38-4h7w-rj9h) (CRITICAL) and CVE-2026-114615/CVE-2026-114616 (HIGH) in 1.7.2.
