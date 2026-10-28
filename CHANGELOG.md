@@ -8,6 +8,11 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ## [Unreleased]
 
+### Security
+
+- `authlib` 1.9.1 in `uv.lock` and the image (transitive, via `fastmcp-slim[server]`): fixes [GHSA-6v38-4h7w-rj9h](https://github.com/advisories/GHSA-6v38-4h7w-rj9h) (CRITICAL) and CVE-2026-114615/CVE-2026-114616 (HIGH) in 1.7.2.
+- `dnspython` 2.9.0 in `uv.lock` and the image (transitive, via `email-validator`): fixes [GHSA-45c3-73f7-pv4m](https://github.com/advisories/GHSA-45c3-73f7-pv4m) in 2.8.0.
+
 ## [0.6.2] - 2026-10-27
 
 ### Changed
