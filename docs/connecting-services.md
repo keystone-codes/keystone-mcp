@@ -392,7 +392,7 @@ baking the package into the image and setting a generous
 `discovery_timeout_seconds` on the entry. Minimal pattern:
 
 ```dockerfile
-FROM ghcr.io/keystone-codes/keystone-mcp:0.6.2
+FROM ghcr.io/keystone-codes/keystone-mcp:0.6.3
 RUN apt-get update && apt-get install -y nodejs npm && rm -rf /var/lib/apt/lists/*
 ```
 
@@ -497,7 +497,7 @@ services:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/healthz')"]
 
   keystone-mcp:
-    image: ghcr.io/keystone-codes/keystone-mcp:0.6.2
+    image: ghcr.io/keystone-codes/keystone-mcp:0.6.3
     environment:
       KEYSTONE_MCP_UPSTREAMS_PATH: /etc/keystone-mcp/upstreams.yaml
       # Plain http is fine on this internal Docker network, which is not

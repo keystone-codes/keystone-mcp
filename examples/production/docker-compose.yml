@@ -56,7 +56,7 @@ services:
 
   keystone:
     # Pin the tag before you deploy; never run ":latest" in production.
-    image: ghcr.io/keystone-codes/keystone-mcp:0.6.2
+    image: ghcr.io/keystone-codes/keystone-mcp:0.6.3
     init: true
     stop_grace_period: 35s
     restart: unless-stopped

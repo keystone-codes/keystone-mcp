@@ -207,10 +207,10 @@ def test_effective_allowed_hosts_pins_base_host_and_adds_loopback_aliases() -> N
 
 
 def test_effective_allowed_hosts_does_not_add_loopback_aliases_for_a_public_host() -> None:
-    settings = Settings(base_url="https://mcp-stage.keystone.codes")
+    settings = Settings(base_url="https://mcp.example.com")
     hosts = effective_allowed_hosts(settings)
-    assert "mcp-stage.keystone.codes" in hosts
-    assert "mcp-stage.keystone.codes:443" in hosts
+    assert "mcp.example.com" in hosts
+    assert "mcp.example.com:443" in hosts
     assert not any("127.0.0.1" in h for h in hosts)
     assert not any("localhost" in h for h in hosts)
 

@@ -30,7 +30,7 @@ body:
     id: compatibility_impact
     attributes:
       label: Would this change something listed in docs/compatibility.md?
-      description: See [docs/compatibility.md](https://github.com/keystone-codes/keystone-mcp/blob/main/docs/compatibility.md) for the frozen public contract.
+      description: See [docs/compatibility.md](https://github.com/keystone-codes/keystone-mcp/blob/master/docs/compatibility.md) for the frozen public contract.
       options:
         - No, it only adds
         - Yes, it changes or removes

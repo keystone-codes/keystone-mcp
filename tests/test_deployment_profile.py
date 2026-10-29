@@ -442,7 +442,7 @@ def test_stage_like_production_configuration_is_accepted(monkeypatch, tmp_path: 
     policy = tmp_path / "rbac-policy.yaml"
     policy.write_text("default_deny: true\nroles: {}\n", encoding="utf-8")
     monkeypatch.setenv("KEYSTONE_MCP_DEPLOYMENT_PROFILE", "production")
-    monkeypatch.setenv("KEYSTONE_MCP_BASE_URL", "https://mcp-stage.keystone.codes")
+    monkeypatch.setenv("KEYSTONE_MCP_BASE_URL", "https://mcp.example.com")
     monkeypatch.setenv("KEYSTONE_MCP_USERS_BACKEND", "http")
     monkeypatch.setenv(
         "KEYSTONE_MCP_USERS_SERVICE_URL", "http://users-directory.internal.example:8000"

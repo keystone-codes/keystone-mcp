@@ -434,7 +434,7 @@ database; it prints this version's built-in tool names. Frozen JSON shape:
 ```json
 {
   "schema_version": 1,
-  "keystone_mcp_version": "0.6.2",
+  "keystone_mcp_version": "0.6.3",
   "tools": ["api_keys_issue", "api_keys_list", "policy_read", "users_list"],
   "registry": {
     "max_entries": 64,
