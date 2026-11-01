@@ -22,7 +22,7 @@ COPY examples/hello-stdio /opt/hello-stdio
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --extra otel
 
-FROM python:3.12-slim-bookworm@sha256:34386ef0cb081344d7ec1c103ba398e6e9f64e9ab3a1509accc92a4e24a07258 AS runtime
+FROM python:3.12-slim-bookworm@sha256:e697c81897302a4c4333bade000d98038fbb21eb064f8ee1fd42d02ebcd9d337 AS runtime
 
 LABEL org.opencontainers.image.source="https://github.com/keystone-codes/keystone-mcp" \
       org.opencontainers.image.licenses="Apache-2.0"
