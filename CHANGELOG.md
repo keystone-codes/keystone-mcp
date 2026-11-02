@@ -8,6 +8,10 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 
 ## [Unreleased]
 
+### Security
+
+- `joserfc` 1.7.7 in `uv.lock` and the image (transitive, via `authlib`/`fastmcp-slim`): fixes [GHSA-jpxq-7h8p-2q76](https://github.com/advisories/GHSA-jpxq-7h8p-2q76) (fixed in 1.7.5) and [GHSA-9pg5-8c7x-5hfx](https://github.com/advisories/GHSA-9pg5-8c7x-5hfx) (fixed in 1.7.6) in 1.7.4.
+
 ## [0.6.3] - 2026-10-28
 
 ### Added
