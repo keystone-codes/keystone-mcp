@@ -1021,7 +1021,7 @@ wheels = [
 
 [[package]]
 name = "keystone-mcp-gateway"
-version = "0.6.3"
+version = "0.6.4"
 source = { editable = "." }
 dependencies = [
     { name = "alembic" },
