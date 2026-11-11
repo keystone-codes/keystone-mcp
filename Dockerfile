@@ -22,7 +22,7 @@ COPY examples/hello-stdio /opt/hello-stdio
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --extra otel
 
-FROM python:3.12-slim-bookworm@sha256:34386ef0cb081344d7ec1c103ba398e6e9f64e9ab3a1509accc92a4e24a07258 AS runtime
+FROM python:3.12-slim-bookworm@sha256:935c3c5b12357a7e10caa9c1e6ca5692344d97cf229832ef584be2cec9fc03df AS runtime
 
 LABEL org.opencontainers.image.source="https://github.com/keystone-codes/keystone-mcp" \
       org.opencontainers.image.licenses="Apache-2.0"
@@ -31,7 +31,7 @@ LABEL org.opencontainers.image.source="https://github.com/keystone-codes/keyston
 # (3.0.22-1~deb12u2) is only in bookworm-security. Remove this layer once
 # python:3.12-slim-bookworm is published with deb12u2 or later.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends --only-upgrade libssl3 openssl \
+    && apt-get install -y --no-install-recommends --only-upgrade libssl3 openssl apt \
     && rm -rf /var/lib/apt/lists/*
 
 ARG APP_UID=10001
