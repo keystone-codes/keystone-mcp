@@ -6,6 +6,12 @@ this project uses [Semantic Versioning](https://semver.org/).
 
 Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatibility.md).
 
+## [0.6.5] - 2026-11-11
+
+### Security
+
+- Base image repinned to `python:3.12-slim-bookworm@sha256:935c3c5b12357a7e10caa9c1e6ca5692344d97cf229832ef584be2cec9fc03df`: fixes `apt` 2.6.1 → 2.6.2 (CVE-2026-109518, HIGH). The runtime stage's `--only-upgrade` step now also upgrades `apt` explicitly, so future bookworm-security fixes for it land even before the base image is repinned.
+
 ## [0.6.4] - 2026-11-03
 
 ### Security
