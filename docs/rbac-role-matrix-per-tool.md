@@ -24,3 +24,4 @@ Policy version: `2.0.0`.
 | `users_set_roles` | W | allow |
 | `users_unblock` | W | allow |
 | `users_update` | W | allow |
+| `whoami` | R | allow |

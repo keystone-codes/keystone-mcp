@@ -40,8 +40,10 @@ critical_tools: []
 
 # Documentation-only labels used by scripts/generate_role_matrix.py; the first
 # matching label wins and unmatched tools are labelled "W".
+# keystone sign-in roles: examples/keystone-platform/rbac-policy.yaml
 tool_dispositions:
   R:
+    - whoami
     - users_list
     - policy_read
     - policy_catalog

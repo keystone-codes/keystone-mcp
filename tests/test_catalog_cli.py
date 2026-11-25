@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from keystone_mcp import __version__
-from keystone_mcp.catalog.names import BUILTIN_TOOL_NAMES
+from keystone_mcp.catalog.names import ALL_BUILTIN_TOOL_NAMES
 from keystone_mcp.cli import main
 from keystone_mcp.rbac.catalog import format_live_published_names
 
@@ -482,7 +482,7 @@ def test_catalog_builtin_json_shape(capsys: pytest.CaptureFixture[str]):
     payload = json.loads(out)
     assert payload["schema_version"] == 1
     assert payload["keystone_mcp_version"] == __version__
-    assert payload["tools"] == sorted(BUILTIN_TOOL_NAMES)
+    assert payload["tools"] == sorted(ALL_BUILTIN_TOOL_NAMES)
     assert payload["tools"] == sorted(payload["tools"])
     registry = payload["registry"]
     assert registry["max_entries"] == 64
@@ -496,7 +496,7 @@ def test_catalog_builtin_text_lists_one_name_per_line(capsys: pytest.CaptureFixt
     assert main(["catalog", "builtin"]) == 0
     out = capsys.readouterr().out
     lines = out.splitlines()
-    assert lines == sorted(BUILTIN_TOOL_NAMES)
+    assert lines == sorted(ALL_BUILTIN_TOOL_NAMES)
 
 
 def test_catalog_builtin_rejects_unknown_flag():

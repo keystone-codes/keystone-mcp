@@ -9,11 +9,13 @@ from urllib.parse import parse_qs, urlparse, urlunparse
 import httpx
 import pytest
 from asgi_lifespan import LifespanManager
+from mcp.shared.auth import OAuthClientInformationFull
 from redis.exceptions import RedisError
 
 from keystone_mcp import cli
 from keystone_mcp.auth.oauth_store import (
     UNUSED_CLIENT_TTL_SECONDS,
+    InMemoryOAuthStore,
     RedisOAuthStore,
     build_oauth_store,
     build_shared_auth_stores,
@@ -23,7 +25,7 @@ from keystone_mcp.config import Settings
 from keystone_mcp.server import build_server
 from support.login import dev_token_login
 from support.oauth_harness import BASE_URL, VALID_TOKEN, make_pkce
-from support.test_env import redis_key_prefix, require_redis_url
+from support.test_env import UNUSED_REDIS_URL, redis_key_prefix, require_redis_url
 
 _CLAUDE_REDIRECT = "https://claude.ai/api/mcp/auth_callback"
 _CLIENT_ID = "claude-desktop"
@@ -152,6 +154,11 @@ def test_register_client_reports_redis_down(capsys, monkeypatch: pytest.MonkeyPa
         async def get_client(self, client_id: str) -> None:
             return None
 
+        async def set_client_flags(
+            self, client_id: str, *, no_expiry: bool, first_party: bool
+        ) -> None:
+            raise RedisError("down")
+
         async def put_client(self, client) -> None:
             raise RedisError("down")
 
@@ -264,3 +271,67 @@ async def test_registered_client_can_sign_in(capsys, monkeypatch: pytest.MonkeyP
             },
         )
         assert token.status_code == 200, token.text
+
+
+def _memory_client(client_id: str) -> OAuthClientInformationFull:
+    return OAuthClientInformationFull(
+        client_id=client_id,
+        redirect_uris=["https://keystone.example/api/auth/callback"],  # type: ignore[list-item]
+        token_endpoint_auth_method="none",
+    )
+
+
+async def test_register_client_no_expiry_never_expires(monkeypatch: pytest.MonkeyPatch) -> None:
+    now = {"t": 1_700_000_000.0}
+    monkeypatch.setattr("keystone_mcp.auth.oauth_store.time.time", lambda: now["t"])
+    store = InMemoryOAuthStore(client_ttl_seconds=10 * 86400)
+    await store.set_client_flags("keystone-web", no_expiry=True, first_party=True)
+    await store.put_client(_memory_client("keystone-web"))
+    await store.touch_client("keystone-web")
+    await store.set_client_flags("temp", no_expiry=False, first_party=False)
+    await store.put_client(_memory_client("temp"))
+
+    now["t"] += 10 * 86400 + 86400
+    assert await store.get_client("keystone-web") is not None
+    assert await store.evict_unused_client() == "temp"
+    assert await store.get_client("keystone-web") is not None
+
+
+async def test_register_client_again_without_flag_restores_ttl(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = {"t": 1_700_000_000.0}
+    monkeypatch.setattr("keystone_mcp.auth.oauth_store.time.time", lambda: now["t"])
+    store = InMemoryOAuthStore(client_ttl_seconds=10 * 86400)
+    client = _memory_client("keystone-web")
+    await store.set_client_flags("keystone-web", no_expiry=True, first_party=False)
+    await store.put_client(client)
+    await store.touch_client("keystone-web")
+
+    await store.set_client_flags("keystone-web", no_expiry=False, first_party=False)
+    await store.put_client(client)
+    await store.touch_client("keystone-web")
+    assert await store.get_client("keystone-web") is not None
+
+    now["t"] += 2 * 86400
+    assert await store.get_client("keystone-web") is not None
+    now["t"] += 8 * 86400 + 1
+    assert await store.get_client("keystone-web") is None
+
+
+def test_first_party_requires_redirect_allowlist(capsys, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("KEYSTONE_MCP_REDIS_URL", UNUSED_REDIS_URL)
+    monkeypatch.delenv("KEYSTONE_MCP_OAUTH_ALLOWED_REDIRECT_HOSTS", raising=False)
+    code = main(
+        _register_argv(
+            "--name",
+            "keystone",
+            "--first-party",
+        )
+    )
+    captured = capsys.readouterr()
+    assert code == 1
+    assert (
+        "--first-party needs KEYSTONE_MCP_OAUTH_ALLOWED_REDIRECT_HOSTS: "
+        "the redirect URI must be on an allowed host"
+    ) in captured.err

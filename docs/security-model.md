@@ -134,6 +134,17 @@ cookie at all unless it is `Secure`, path-scoped to `/` and carries no
 `Domain` attribute, which is what keeps a sibling subdomain from setting it
 in the first place.
 
+A client an operator registers with `keystone-mcp oauth register-client
+--first-party` is the exception: sign-in skips the consent screen and goes
+straight to the single redirect provider. That exception is safe because the
+return address is fixed by someone who can write the client store (the CLI
+against Redis), it has to sit on `KEYSTONE_MCP_OAUTH_ALLOWED_REDIRECT_HOSTS`,
+and the address in the authorization request is compared byte for byte with
+one of the client's registered redirect URIs. A client that registered itself
+through dynamic client registration cannot obtain the flag. When more than
+one login provider is enabled, or the return address does not match, the
+consent screen stays.
+
 An operator who knows which clients are legitimate can remove the decision
 from the person entirely: `KEYSTONE_MCP_OAUTH_ALLOWED_REDIRECT_HOSTS`
 restricts `redirect_uri` to a fixed list of hostnames. A bare host entry

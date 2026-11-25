@@ -357,6 +357,46 @@ support service accounts yet.
 
 How a service account proves itself is covered in the next section.
 
+## Who is calling: `whoami`
+
+`whoami` tells the caller who the gateway thinks they are. It takes no
+arguments and cannot look up anyone else. The result is a status envelope
+with `state: "done"` and these fields:
+
+| Field | Meaning |
+|---|---|
+| `sub` | The verified subject: an e-mail, or `svc:<name>` for a service account |
+| `subject_type` | `human` or `service` |
+| `email` | The person's e-mail, or `null` for a service account |
+| `full_name` | The person's name from the directory, or `null` when the directory has no matching row (always `null` for a service account; the account name is already in `sub`) |
+| `roles` | Every gateway role the directory has for this subject, in directory order. keystone picks out its own |
+| `client_id` | The OAuth client that presented the token, or `null` |
+
+Anyone the policy allows to call `whoami` may call it, including service
+accounts. It is published whenever a users directory is configured, in every
+RBAC mode (`off`, `observe` and `enforce`). It is not an administration tool:
+it does not count towards a full administrator, and it is not in the critical
+set (a block is still read straight from the directory, not from the role
+cache).
+
+Error envelopes use `state: "error"` and one of `forbidden` (the account is
+blocked), `user_not_found`, `service_unavailable`, `service_timeout`,
+`service_unconfigured`. A role that is not allowed to call `whoami` does not
+get that envelope: the call fails as an MCP tool error whose text is
+`access denied`.
+
+```json
+{"state": "done", "tool": "whoami", "task_id": "…",
+ "sub": "anna@example.com", "subject_type": "human",
+ "email": "anna@example.com", "full_name": "Anna Ivanova",
+ "roles": ["keystone-member", "mcp-analyst"], "client_id": "keystone-web"}
+```
+
+A sign-in-only role is a role whose `allow` list is just `whoami`. It lets a
+product ask who signed in and grants no other tool. A deployment no longer
+needs `reserved_allow_patterns` to name `whoami` before the tool exists.
+See [examples/keystone-platform/rbac-policy.yaml](../examples/keystone-platform/rbac-policy.yaml).
+
 ## API keys
 
 Why: [ADR 0008](adr/0008-api-keys-and-service-accounts.md).

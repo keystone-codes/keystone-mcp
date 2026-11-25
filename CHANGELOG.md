@@ -6,6 +6,15 @@ this project uses [Semantic Versioning](https://semver.org/).
 
 Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatibility.md).
 
+## [Unreleased]
+
+### Added
+
+- Built-in tool `whoami`: the caller's subject, e-mail, full name, roles and subject type. Published whenever a users directory is configured, in every RBAC mode; not an administration tool.
+- `keystone-mcp oauth register-client --no-expiry`: a manually registered client that never expires.
+- `keystone-mcp oauth register-client --first-party`: sign-in skips the consent screen for this client when the redirect URI matches its registered one on an allowed host and exactly one redirect login provider is enabled.
+- Example policy for keystone: `examples/keystone-platform/rbac-policy.yaml`.
+
 ## [0.6.6] - 2026-11-25
 
 ### Security

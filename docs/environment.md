@@ -574,12 +574,36 @@ substitute the redirect URI of whatever client you are registering.
 `client_id` and `redirect_uris` are the only fields a connecting client
 strictly needs to match; adjust `client_name` freely.
 
-A manually registered client has no special lifetime: it expires on the same
-schedule as a self-registered one (`KEYSTONE_MCP_REFRESH_TOKEN_TTL` /
+A fixed web application operated with this gateway (for example keystone
+itself) is registered once, does not expire, and does not show the consent
+screen:
+
+```bash
+keystone-mcp oauth register-client \
+  --client-id keystone-web \
+  --redirect-uri https://keystone.example/api/auth/callback \
+  --name keystone \
+  --no-expiry \
+  --first-party
+```
+
+`--no-expiry` keeps that client until the same command is run again without
+the flag: it does not age out, and it is not evicted as an unused client.
+`--first-party` skips the consent screen when the browser's return address
+matches one registered redirect URI byte for byte, that URI is on an allowed
+host, and exactly one redirect login provider is enabled. `--first-party`
+requires a non-empty `KEYSTONE_MCP_OAUTH_ALLOWED_REDIRECT_HOSTS`; without it
+the command exits `1` and writes nothing. Running the command again without
+either flag gives the client the usual lifetime and shows the consent screen
+again.
+
+A manually registered client expires on the same schedule as a
+self-registered one (`KEYSTONE_MCP_REFRESH_TOKEN_TTL` /
 `KEYSTONE_MCP_TOKEN_TTL`, whichever is longer, plus one day), and that
-lifetime is renewed on every token issuance. If nobody has used the client
-for longer than that, re-run the command with the same `client_id` — writing
-the client again is idempotent and simply restores it.
+lifetime is renewed on every token issuance, unless registered with
+`--no-expiry`. If nobody has used a client that does expire for longer than
+that, re-run the command with the same `client_id` — writing the client
+again is idempotent and simply restores it.
 
 ## RBAC, audit and metrics
 

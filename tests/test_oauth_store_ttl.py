@@ -248,3 +248,16 @@ async def test_legacy_client_is_added_to_index_on_read(store: RedisOAuthStore):
     assert loaded is not None
     assert await store.redis.zscore(index_key, "c7") is not None
     assert await store.count_clients() == 1
+
+
+async def test_no_expiry_client_has_no_ttl_after_get_and_touch(store: RedisOAuthStore):
+    await store.set_client_flags("c-keep", no_expiry=True, first_party=True)
+    await store.put_client(_client("c-keep"))
+    key = store._client_key("c-keep")
+    assert await store.redis.ttl(key) == -1
+
+    assert await store.get_client("c-keep") is not None
+    await store.touch_client("c-keep")
+    await store.index_legacy_clients()
+
+    assert await store.redis.ttl(key) == -1

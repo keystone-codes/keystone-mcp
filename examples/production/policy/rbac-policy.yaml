@@ -50,6 +50,7 @@ critical_tools: []
 # matching label wins and unmatched tools are labelled "W".
 tool_dispositions:
   R:
+    - whoami
     - users_list
     - policy_read
     - policy_catalog

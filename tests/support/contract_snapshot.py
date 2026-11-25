@@ -298,7 +298,7 @@ def _param_type_name(param_type: type) -> str:
 def generate_builtin_tools(_src_root: Path) -> dict[str, str]:
     import tempfile
 
-    from keystone_mcp.catalog.builtin import BUILTIN_TOOL_NAMES, register_catalog
+    from keystone_mcp.catalog.builtin import ALL_BUILTIN_TOOL_NAMES, register_catalog
     from keystone_mcp.config import Settings
     from keystone_mcp.rbac.loader import RbacPolicyManager
     from keystone_mcp.rbac.policy_store import PolicyStore
@@ -346,7 +346,7 @@ def generate_builtin_tools(_src_root: Path) -> dict[str, str]:
         )
         manager.reload(registry)
         rows: dict[str, str] = {}
-        for tool_name in sorted(BUILTIN_TOOL_NAMES):
+        for tool_name in sorted(ALL_BUILTIN_TOOL_NAMES):
             route = registry.get(tool_name)
             if route is None:
                 continue
@@ -368,7 +368,7 @@ def generate_error_codes(_src_root: Path) -> dict[str, str]:
     from support.admin_error_codes import adapter_error_codes
 
     rows: dict[str, str] = {}
-    for family in ("users", "service_accounts", "api_keys", "policy"):
+    for family in ("users", "service_accounts", "api_keys", "policy", "whoami"):
         for code in sorted(adapter_error_codes(family, src_root=_src_root)):
             rows[f"{family}:{code}"] = ""
     return rows

@@ -11,11 +11,16 @@ CSRF-checked ``POST`` the screen's own form submits.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
+from contextlib import asynccontextmanager
+from urllib.parse import parse_qs, urlparse
 
 import httpx
 import pytest
 from asgi_lifespan import LifespanManager
+from pydantic import AnyUrl
 
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
 from keystone_mcp.config import Settings
@@ -338,3 +343,156 @@ async def test_api_key_flow_unchanged(api_key_client):
     )
     assert response.status_code == 302
     assert "code=" in response.headers["location"]
+
+
+def _first_party_settings(**overrides) -> Settings:
+    base: dict[str, object] = {
+        "base_url": BASE_URL,
+        "refresh_interval_seconds": 0,
+        "enabled_login_methods": frozenset({"google"}),
+        "google_client_id": "test-google-client",
+        "google_client_secret": "test-google-secret",
+        "users_service_url": "http://users.example",
+        "users_service_token": "users-token",
+        "oauth_allowed_redirect_hosts": ("localhost",),
+    }
+    base.update(overrides)
+    return Settings(**base)
+
+
+def _csrf_cookie(response: httpx.Response) -> str:
+    for header in response.headers.get_list("set-cookie"):
+        name, _, _rest = header.partition("=")
+        if name in {"km_login_csrf", "__Host-km_login_csrf"}:
+            return header.split(";", 1)[0].split("=", 1)[1]
+    raise AssertionError(response.headers)
+
+
+@asynccontextmanager
+async def _first_party_app(settings: Settings, *, providers: list):
+    resolver, backend, _revision = build_in_memory_user_directory_resolver()
+    backend.seed("alice@example.com", roles=("operator",))
+    store = InMemoryOAuthStore()
+    mcp, _registry, oauth, *_rest = build_server(
+        settings=settings,
+        oauth_store=store,
+        user_resolver=resolver,
+        login_providers=providers,
+    )
+    app = mcp.http_app(path=settings.http_path)
+    async with LifespanManager(app):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url=BASE_URL
+        ) as client:
+            yield client, store, oauth
+
+
+async def _txn(client: httpx.AsyncClient, settings: Settings) -> tuple[str, str]:
+    client_id = await register_client(client, client_name="Test App")
+    _verifier, challenge = make_pkce()
+    txn = await authorize_to_login(client, client_id, challenge, settings.resource_url)
+    return client_id, txn
+
+
+async def test_first_party_client_skips_consent():
+    settings = _first_party_settings()
+    mock_google = build_mock_google_oidc(settings.google_redirect_uri)
+    async with _first_party_app(settings, providers=[mock_google.provider]) as (
+        client,
+        store,
+        oauth,
+    ):
+        client_id, txn = await _txn(client, settings)
+        await store.set_client_flags(client_id, no_expiry=True, first_party=True)
+
+        page = await client.get("/login", params={"txn": txn})
+
+        assert page.status_code == 302
+        location = page.headers["location"]
+        assert "accounts.google.com" in location
+        csrf = _csrf_cookie(page)
+        assert csrf
+        state = parse_qs(urlparse(location).query)["state"][0]
+        raw = await oauth._pending_store.get("login_attempt", state)
+        assert raw is not None
+        assert json.loads(raw)["csrf_hash"] == hashlib.sha256(csrf.encode()).hexdigest()
+
+        nonce = parse_qs(urlparse(location).query).get("nonce", [None])[0]
+        mock_google.set_pending_identity(email="alice@example.com", nonce=nonce or "nonce")
+        callback_params = await mock_google.fake.authorize(location)
+        callback = await client.get("/login/google/callback", params=callback_params)
+        assert callback.status_code == 302
+        assert "code=" in callback.headers["location"]
+
+
+async def test_first_party_client_with_other_redirect_uri_gets_consent():
+    settings = _first_party_settings()
+    mock_google = build_mock_google_oidc(settings.google_redirect_uri)
+    async with _first_party_app(settings, providers=[mock_google.provider]) as (
+        client,
+        store,
+        _oauth,
+    ):
+        client_id, txn = await _txn(client, settings)
+        await store.set_client_flags(client_id, no_expiry=False, first_party=True)
+        current = await store.get_client(client_id)
+        assert current is not None
+        await store.put_client(
+            current.model_copy(update={"redirect_uris": [AnyUrl("http://localhost:9999/other")]})
+        )
+
+        page = await client.get("/login", params={"txn": txn})
+
+        assert page.status_code == 200
+        assert 'action="/login/google"' in page.text
+
+
+async def test_first_party_client_with_two_providers_gets_consent():
+    settings = _first_party_settings(
+        enabled_login_methods=frozenset({"google", "api_key"}),
+    )
+    mock_google = build_mock_google_oidc(settings.google_redirect_uri)
+    async with _first_party_app(
+        settings, providers=[mock_google.provider, dev_token_login({VALID_TOKEN})]
+    ) as (client, store, _oauth):
+        client_id, txn = await _txn(client, settings)
+        await store.set_client_flags(client_id, no_expiry=False, first_party=True)
+
+        page = await client.get("/login", params={"txn": txn})
+
+        assert page.status_code == 200
+        assert 'action="/login/google"' in page.text
+
+
+async def test_first_party_flag_ignored_when_allowlist_cleared():
+    settings = _first_party_settings(oauth_allowed_redirect_hosts=())
+    mock_google = build_mock_google_oidc(settings.google_redirect_uri)
+    async with _first_party_app(settings, providers=[mock_google.provider]) as (
+        client,
+        store,
+        _oauth,
+    ):
+        client_id, txn = await _txn(client, settings)
+        await store.set_client_flags(client_id, no_expiry=False, first_party=True)
+
+        page = await client.get("/login", params={"txn": txn})
+
+        assert page.status_code == 200
+        assert 'action="/login/google"' in page.text
+
+
+async def test_ordinary_client_still_gets_consent():
+    settings = _first_party_settings()
+    mock_google = build_mock_google_oidc(settings.google_redirect_uri)
+    async with _first_party_app(settings, providers=[mock_google.provider]) as (
+        client,
+        _store,
+        _oauth,
+    ):
+        _client_id, txn = await _txn(client, settings)
+
+        page = await client.get("/login", params={"txn": txn})
+
+        assert page.status_code == 200
+        assert 'action="/login/google"' in page.text
+        assert "Test App" in page.text

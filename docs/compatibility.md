@@ -241,6 +241,8 @@ forwarded).
 
 Published only when `KEYSTONE_MCP_RBAC_MODE=enforce` unless noted.
 
+**Self** (`whoami`): published whenever a users directory is configured, in every RBAC mode. Returns `sub`, `subject_type`, `email`, `full_name`, `roles`, `client_id`. Error codes: `forbidden`, `service_timeout`, `service_unavailable`, `service_unconfigured`, `user_not_found`.
+
 **Users directory** (`users_*`): `users_list` and `users_export` for every
 configured directory; `users_export` is limited to full administrators and is
 refused to service accounts. The export document carries
@@ -354,7 +356,7 @@ Frozen since 0.5.0. Exit codes are part of the contract; command output text is 
 | `keystone-mcp service-accounts add`, `service-accounts list`, `service-accounts update` | `0` on success, non-zero on failure |
 | `keystone-mcp upstream validate` | `0` ok; `1` validation or I/O error |
 | `keystone-mcp plugins list` | `0` on success, non-zero on failure |
-| `keystone-mcp oauth register-client` | `0` registered or updated; `1` invalid arguments, redirect URI not allowed, or no Redis configured; `3` Redis unavailable |
+| `keystone-mcp oauth register-client` | `0` registered or updated; `1` invalid arguments, redirect URI not allowed, `--first-party` without `KEYSTONE_MCP_OAUTH_ALLOWED_REDIRECT_HOSTS`, or no Redis configured; `3` Redis unavailable |
 | `keystone-mcp config check [--env-file PATH] [--strict] [--admins]` | `0` no errors; `1` errors (or warnings with `--strict`); `2` usage or `.env` load failure |
 | `keystone-mcp serve` | runs until stopped; configuration errors refuse startup |
 | `python -m keystone_mcp.server` | same entry point as `keystone-mcp serve` |
@@ -365,7 +367,8 @@ Flags for `catalog` (`--policy`, `--snapshot`, `--live-file`, `--live-url`,
 `--check-unique`) and `users import` (`--from-url`, `--token`,
 `--policy`, `--dry-run`) are frozen. `users grant-admin` accepts an
 optional `--role <name>` (must grant full administration). `users admins`
-and `upstream validate` accept `--json`.
+and `upstream validate` accept `--json`. `oauth register-client` accepts
+`--no-expiry` and `--first-party`.
 
 ### `--json` output for `catalog validate` and `upstream validate`
 

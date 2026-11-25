@@ -13,7 +13,9 @@ RBAC policy plus the RBAC middleware. The ``admin=True`` flag is catalog
 metadata only and enforces nothing. ``users_list`` is published whenever a
 directory is configured; the other seven (administration) are published only
 when that directory declares the ``"admin"`` capability -- a read-only
-directory publishes ``users_list`` alone.
+directory publishes ``users_list`` alone. ``whoami`` is not administration:
+it is published whenever a users directory is configured, in every RBAC mode,
+and does not count towards a full administrator.
 
 Every route here is registered ``mode="live"`` — its adapter is wired and
 serving. Add a route with ``registry.add_route`` when a new built-in target is
@@ -30,7 +32,12 @@ from keystone_mcp.adapters.guards import CatalogNamesSource
 from keystone_mcp.adapters.policy_admin import PolicyAdminAdapter
 from keystone_mcp.adapters.service_accounts_admin import ServiceAccountsAdminAdapter
 from keystone_mcp.adapters.users_admin import RoleSource, UsersAdminAdapter
-from keystone_mcp.catalog.names import BUILTIN_TOOL_NAMES  # noqa: F401 — re-export
+from keystone_mcp.adapters.whoami import WhoamiAdapter
+from keystone_mcp.catalog.names import (  # noqa: F401 — re-export
+    ALL_BUILTIN_TOOL_NAMES,
+    BUILTIN_TOOL_NAMES,
+    SELF_SERVICE_TOOL_NAMES,
+)
 from keystone_mcp.config import Settings
 from keystone_mcp.rbac.catalog import collect_live_tool_names
 from keystone_mcp.rbac.management import ManagementSource, file_management_source
@@ -99,6 +106,22 @@ def register_catalog(
     )
 
     P = Param  # noqa: N806 — local alias for brevity
+
+    # Published in every RBAC mode when a directory exists. Not an admin tool:
+    # a service key may call it, and it is absent from the full-administrator set.
+    if directory is not None:
+        registry.add_route(
+            "whoami",
+            WhoamiAdapter(directory=directory),
+            pattern=Pattern.SYNC,
+            params=[],
+            description=(
+                "Who is calling: subject, e-mail, full name, roles and subject type "
+                "of the signed-in person or service account. No arguments."
+            ),
+            mode="live",
+            admin=False,
+        )
 
     if not settings.rbac_enforcing:
         return

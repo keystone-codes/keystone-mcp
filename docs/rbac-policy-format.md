@@ -110,7 +110,9 @@ other role.
 
 **Multi-role semantics.** A user's effective permission set is the *union* of
 the allow patterns of all roles assigned to them. A user with no roles is
-denied everything.
+denied everything. A role whose only allow entry is `whoami` is a sign-in-only
+role: it admits the caller and grants no other tool (see
+`examples/keystone-platform/rbac-policy.yaml`).
 
 Why: [ADR 0002](adr/0002-roles-in-the-policy-file.md).
 
@@ -191,7 +193,8 @@ exposes key labels and expiry — grant those read tools deliberately.
 
 A **full administrator** is a person whose combined roles reach every
 built-in administration tool name except those blocked by the policy-wide
-`deny` list. The role name does not matter; `owner: ["*"]` and
+`deny` list. `whoami` is not in that set and does not change who counts as a
+full administrator. The role name does not matter; `owner: ["*"]` and
 `administrator: ["*"]` are equivalent when both reach the full tool set.
 
 **Rule:** only a full administrator may perform a change after which someone

@@ -114,6 +114,18 @@ def client_ttl_seconds(settings: object) -> int:
     return max(refresh_ttl, access_ttl) + CLIENT_TTL_MARGIN_SECONDS
 
 
+@dataclass(frozen=True)
+class ClientFlags:
+    """Operator marks stored beside an OAuth client, not inside the SDK record.
+
+    The MCP SDK model drops unknown fields, so ``no_expiry`` and ``first_party``
+    cannot live on ``OAuthClientInformationFull``.
+    """
+
+    no_expiry: bool = False
+    first_party: bool = False
+
+
 @runtime_checkable
 class OAuthStore(Protocol):
     async def get_client(self, client_id: str) -> OAuthClientInformationFull | None: ...
@@ -121,6 +133,12 @@ class OAuthStore(Protocol):
     async def put_client(self, client: OAuthClientInformationFull) -> None: ...
 
     async def touch_client(self, client_id: str) -> None: ...
+
+    async def set_client_flags(
+        self, client_id: str, *, no_expiry: bool, first_party: bool
+    ) -> None: ...
+
+    async def get_client_flags(self, client_id: str) -> ClientFlags: ...
 
     async def count_clients(self) -> int: ...
 
@@ -210,6 +228,7 @@ class InMemoryOAuthStore:
         self._subject_nbf: dict[str, int] = {}
         self._refresh_revoked: set[str] = set()
         self._client_unused: dict[str, float] = {}
+        self._client_flags: dict[str, ClientFlags] = {}
         self._rt_used: dict[str, tuple[str, float]] = {}
         self._rt_grace: dict[str, tuple[str, float]] = {}
         self._commit_lock = asyncio.Lock()
@@ -225,17 +244,35 @@ class InMemoryOAuthStore:
             return None
         return client
 
+    async def set_client_flags(self, client_id: str, *, no_expiry: bool, first_party: bool) -> None:
+        if not no_expiry and not first_party:
+            self._client_flags.pop(client_id, None)
+            return
+        self._client_flags[client_id] = ClientFlags(no_expiry=no_expiry, first_party=first_party)
+
+    async def get_client_flags(self, client_id: str) -> ClientFlags:
+        return self._client_flags.get(client_id, ClientFlags())
+
     async def put_client(self, client: OAuthClientInformationFull) -> None:
-        unused_ttl = min(UNUSED_CLIENT_TTL_SECONDS, self._client_ttl_seconds)
         self._clients[client.client_id] = client
+        flags = await self.get_client_flags(client.client_id)
+        if flags.no_expiry:
+            # No deadline and not eligible for eviction of unused clients.
+            self._client_expires_at.pop(client.client_id, None)
+            self._client_unused.pop(client.client_id, None)
+            return
+        unused_ttl = min(UNUSED_CLIENT_TTL_SECONDS, self._client_ttl_seconds)
         self._client_expires_at[client.client_id] = time.time() + unused_ttl
         self._client_unused[client.client_id] = time.time()
 
     async def touch_client(self, client_id: str) -> None:
         if client_id not in self._clients:
             return
-        self._client_expires_at[client_id] = time.time() + self._client_ttl_seconds
         self._client_unused.pop(client_id, None)
+        flags = await self.get_client_flags(client_id)
+        if flags.no_expiry:
+            return
+        self._client_expires_at[client_id] = time.time() + self._client_ttl_seconds
 
     async def count_clients(self) -> int:
         now = time.time()
@@ -682,6 +719,11 @@ class RedisOAuthStore:
     def _client_unused_key(self) -> str:
         return f"{self._prefix}client_unused"
 
+    def _client_flags_key(self, client_id: str) -> str:
+        # ``client_flags:`` does not match the ``client:*`` scan used to
+        # backfill legacy client records.
+        return f"{self._prefix}client_flags:{client_id}"
+
     def _access_key(self, token: str) -> str:
         return f"{self._prefix}at:{token}"
 
@@ -906,18 +948,44 @@ class RedisOAuthStore:
                 pipe.srem(self._subject_index_key(_subject_key(refresh.subject)), f"rt:{suffix}")
             await pipe.execute()
 
+    async def set_client_flags(self, client_id: str, *, no_expiry: bool, first_party: bool) -> None:
+        key = self._client_flags_key(client_id)
+        if not no_expiry and not first_party:
+            await self._redis.delete(key)
+            return
+        await self._redis.hset(
+            key,
+            mapping={
+                "no_expiry": "1" if no_expiry else "0",
+                "first_party": "1" if first_party else "0",
+            },
+        )
+        # The hash must outlive the client record it describes. persist drops
+        # a TTL if a previous writer left one.
+        await self._redis.persist(key)
+
+    async def get_client_flags(self, client_id: str) -> ClientFlags:
+        raw = await self._redis.hgetall(self._client_flags_key(client_id))
+        return ClientFlags(
+            no_expiry=raw.get("no_expiry") == "1",
+            first_party=raw.get("first_party") == "1",
+        )
+
     async def get_client(self, client_id: str) -> OAuthClientInformationFull | None:
         key = self._client_key(client_id)
         async with self._redis.pipeline(transaction=False) as pipe:
             pipe.get(key)
             pipe.ttl(key)
-            raw, ttl = await pipe.execute()
+            pipe.hget(self._client_flags_key(client_id), "no_expiry")
+            raw, ttl, no_expiry = await pipe.execute()
         if raw is None:
             return None
-        if ttl == -1:
+        if ttl == -1 and no_expiry != "1":
             # Legacy record written without a TTL: give it one now so it does
             # not live forever, and add it to the client-count index (a
             # before the registration index record predates the index entirely).
+            # A no-expiry client is stored the same way (no TTL) on purpose
+            # and must not receive one on read.
             expiry = int(time.time()) + self._client_ttl_seconds
             async with self._redis.pipeline(transaction=False) as pipe:
                 pipe.expire(key, self._client_ttl_seconds)
@@ -926,6 +994,17 @@ class RedisOAuthStore:
         return OAuthClientInformationFull.model_validate_json(raw)
 
     async def put_client(self, client: OAuthClientInformationFull) -> None:
+        flags = await self.get_client_flags(client.client_id)
+        if flags.no_expiry:
+            # SET without EX clears any previous TTL. ``+inf`` keeps the
+            # client in the count index; it is not added to the unused set,
+            # so eviction cannot drop it.
+            async with self._redis.pipeline(transaction=False) as pipe:
+                pipe.set(self._client_key(client.client_id), client.model_dump_json())
+                pipe.zadd(self._client_index_key(), {client.client_id: float("inf")})
+                pipe.zrem(self._client_unused_key(), client.client_id)
+                await pipe.execute()
+            return
         unused_ttl = min(UNUSED_CLIENT_TTL_SECONDS, self._client_ttl_seconds)
         now = time.time()
         expiry = int(now) + unused_ttl
@@ -941,6 +1020,13 @@ class RedisOAuthStore:
 
     async def touch_client(self, client_id: str) -> None:
         key = self._client_key(client_id)
+        flags = await self.get_client_flags(client_id)
+        if flags.no_expiry:
+            # EXPIRE would put a lifetime on a key that is meant to have none.
+            if not await self._redis.exists(key):
+                return
+            await self._redis.zrem(self._client_unused_key(), client_id)
+            return
         existed = await self._redis.expire(key, self._client_ttl_seconds)
         if not existed:
             return
@@ -960,23 +1046,29 @@ class RedisOAuthStore:
             cursor, keys = await self._redis.scan(cursor, match=pattern, count=500)
             if keys:
                 scanned += len(keys)
-                async with self._redis.pipeline(transaction=False) as pipe:
-                    for key in keys:
-                        pipe.ttl(key)
-                    ttls = await pipe.execute()
-                expiry = int(time.time()) + self._client_ttl_seconds
-                async with self._redis.pipeline(transaction=False) as pipe:
-                    batch = 0
-                    for key, ttl in zip(keys, ttls, strict=True):
-                        if ttl != -1 or not key.startswith(client_key_prefix):
-                            continue
-                        client_id = key[len(client_key_prefix) :]
-                        pipe.expire(key, self._client_ttl_seconds)
-                        pipe.zadd(self._client_index_key(), {client_id: expiry})
-                        batch += 1
-                    if batch:
-                        await pipe.execute()
-                        indexed += batch
+                client_keys = [key for key in keys if key.startswith(client_key_prefix)]
+                if client_keys:
+                    async with self._redis.pipeline(transaction=False) as pipe:
+                        for key in client_keys:
+                            client_id = key[len(client_key_prefix) :]
+                            pipe.ttl(key)
+                            pipe.hget(self._client_flags_key(client_id), "no_expiry")
+                        packed = await pipe.execute()
+                    expiry = int(time.time()) + self._client_ttl_seconds
+                    async with self._redis.pipeline(transaction=False) as pipe:
+                        batch = 0
+                        for index, key in enumerate(client_keys):
+                            ttl = packed[index * 2]
+                            no_expiry = packed[index * 2 + 1]
+                            if ttl != -1 or no_expiry == "1":
+                                continue
+                            client_id = key[len(client_key_prefix) :]
+                            pipe.expire(key, self._client_ttl_seconds)
+                            pipe.zadd(self._client_index_key(), {client_id: expiry})
+                            batch += 1
+                        if batch:
+                            await pipe.execute()
+                            indexed += batch
             if scanned >= _LEGACY_CLIENT_SCAN_LIMIT:
                 logger.warning(
                     "client index backfill stopped after %d keys; the rest is indexed on read",
