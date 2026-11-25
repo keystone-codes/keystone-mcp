@@ -185,7 +185,7 @@ class UpstreamGuard:
             probe_pending = False
         except BaseException:
             if probe_pending:
-                self._release_half_open_probe(True)
+                self._release_half_open_probe(half_open_probe)
             if entered:
                 self._inflight -= 1
                 self._set_inflight_gauge()
