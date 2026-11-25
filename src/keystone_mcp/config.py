@@ -1561,6 +1561,36 @@ def _warn_auth_code_ttl(settings: Settings) -> str | None:
     return None
 
 
+def _warn_management_unguarded(settings: Settings) -> str | None:
+    if not settings.rbac_enforcing:
+        return None
+    path_raw = settings.rbac_policy_path.strip()
+    if not path_raw:
+        return None
+    from keystone_mcp.rbac.loader import PolicyLoadError
+    from keystone_mcp.rbac.management import full_administrator_roles, management_role_names
+    from keystone_mcp.rbac.policy import PolicyContractError, load_policy_file_with_hash
+
+    try:
+        policy, _content_hash = load_policy_file_with_hash(Path(path_raw))
+    except (PolicyLoadError, PolicyContractError, OSError):
+        return None
+    if not management_role_names(policy):
+        return (
+            "RBAC policy has no management role: no role in the policy can change users "
+            "or service accounts (users_* / service_accounts_*); review "
+            "KEYSTONE_MCP_RBAC_POLICY_PATH and docs/rbac-policy-format.md section 2.10"
+        )
+    if not full_administrator_roles(policy):
+        return (
+            "RBAC policy has no full-administrator role: nobody can grant or revoke "
+            "management roles (users_* / service_accounts_*); only roles declared in the "
+            "policy file can; review KEYSTONE_MCP_RBAC_POLICY_PATH and "
+            "docs/rbac-policy-format.md section 2.10"
+        )
+    return None
+
+
 def _warn_audit_salt(settings: Settings) -> str | None:
     if not settings.rbac_audit_enabled:
         return None
@@ -2228,6 +2258,7 @@ def startup_warnings(settings: Settings, *, environ: Mapping[str, str] | None = 
         _warn_log_level_debug_production,
         _warn_redis_without_tls,
         _warn_refresh_interval_off,
+        _warn_management_unguarded,
     ):
         line = rule(settings)
         if line:

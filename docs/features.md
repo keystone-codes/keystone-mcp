@@ -137,7 +137,9 @@ through: [paths/local-compose.md](paths/local-compose.md).
 Optional per-upstream `limits` in the registry cap concurrent calls on each
 replica, share a call budget across all callers (and replicas when Redis
 backends throttles), and open a circuit breaker after repeated transport
-failures. Refusals use distinct error text from personal rate limits.
+failures. The circuit breaker, like the concurrency cap, is per process: with
+N replicas it opens on each replica independently. Refusals use distinct
+error text from personal rate limits.
 
 ## Related
 

@@ -409,6 +409,7 @@ Redis-backed state is shared across replicas:
 | — | Tool-call and sign-in IP throttles when `KEYSTONE_MCP_THROTTLE_BACKEND=redis` (`throttle:tool:*`, `throttle:login_ip:*`, `throttle:oauth_ip:*` under `KEYSTONE_MCP_REDIS_KEY_PREFIX`; hashed keys, timestamp values) |
 | Users-directory allow/deny cache | Users-directory revision marker (`km:users:revision`) invalidates every replica's cache at once |
 | Circuit breaker for the users directory | — |
+| Circuit breaker and concurrency limit for upstream `limits` (upstream registry): opens after `breaker_failures` failures on this replica, each replica recovers on its own | — |
 | Live upstream tool catalog | — |
 
 Consequences:

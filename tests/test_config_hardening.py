@@ -203,3 +203,78 @@ def test_warnings_do_not_leak_secrets(monkeypatch):
     for line in startup_warnings(settings):
         assert "secret-pass" not in line
         assert "short" not in line or "shorter than 16 bytes" in line
+
+
+_POLICY_NO_FULL_ADMINISTRATOR = """\
+version: "2.0.0"
+default_deny: true
+roles:
+  operator:
+    description: Can block users, but does not reach every admin tool.
+    allow:
+      - users_block
+"""
+
+_POLICY_NO_MANAGEMENT_ROLE = """\
+version: "2.0.0"
+default_deny: true
+roles:
+  reader:
+    description: Not an administration role.
+    allow:
+      - docs_read
+"""
+
+
+def _management_lines(warnings: list[str]) -> list[str]:
+    return [
+        line for line in warnings if "full-administrator" in line or "no management role" in line
+    ]
+
+
+def test_warns_when_policy_has_no_full_administrator(tmp_path: Path) -> None:
+    policy = tmp_path / "rbac-policy.yaml"
+    policy.write_text(_POLICY_NO_FULL_ADMINISTRATOR, encoding="utf-8")
+    settings = Settings(rbac_mode="enforce", rbac_policy_path=str(policy))
+    lines = _management_lines(startup_warnings(settings))
+    assert len(lines) == 1
+    assert "no full-administrator role" in lines[0]
+    assert "KEYSTONE_MCP_RBAC_POLICY_PATH" in lines[0]
+    assert "docs/rbac-policy-format.md" in lines[0]
+    assert "2.10" in lines[0]
+
+
+def test_warns_when_policy_has_no_management_role(tmp_path: Path) -> None:
+    policy = tmp_path / "rbac-policy.yaml"
+    policy.write_text(_POLICY_NO_MANAGEMENT_ROLE, encoding="utf-8")
+    settings = Settings(rbac_mode="enforce", rbac_policy_path=str(policy))
+    lines = _management_lines(startup_warnings(settings))
+    assert len(lines) == 1
+    assert "no management role" in lines[0]
+    assert "KEYSTONE_MCP_RBAC_POLICY_PATH" in lines[0]
+    assert "docs/rbac-policy-format.md" in lines[0]
+    assert "2.10" in lines[0]
+
+
+def test_shipped_policies_do_not_warn_about_management_roles() -> None:
+    for relative in (
+        "config/rbac-policy.yaml",
+        "examples/production/policy/rbac-policy.yaml",
+    ):
+        settings = Settings(rbac_mode="enforce", rbac_policy_path=str(_REPO / relative))
+        assert _management_lines(startup_warnings(settings)) == [], relative
+
+
+def test_management_warning_absent_in_observe_mode(tmp_path: Path) -> None:
+    policy = tmp_path / "rbac-policy.yaml"
+    policy.write_text(_POLICY_NO_FULL_ADMINISTRATOR, encoding="utf-8")
+    settings = Settings(rbac_mode="observe", rbac_policy_path=str(policy))
+    assert _management_lines(startup_warnings(settings)) == []
+
+
+def test_management_warning_absent_when_policy_file_is_unreadable(tmp_path: Path) -> None:
+    settings = Settings(
+        rbac_mode="enforce",
+        rbac_policy_path=str(tmp_path / "missing-rbac-policy.yaml"),
+    )
+    assert _management_lines(startup_warnings(settings)) == []

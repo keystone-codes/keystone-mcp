@@ -5,7 +5,6 @@ from __future__ import annotations
 import re
 
 import httpx
-import pytest
 from asgi_lifespan import LifespanManager
 
 from keystone_mcp.auth.oauth_store import InMemoryOAuthStore
@@ -32,8 +31,6 @@ from support.users_store import make_users_store
 KELVIN_EMAIL = "mar\u212a@corp.example"
 FULLWIDTH_EMAIL = "\uff41lice@corp.example"
 LIGATURE_EMAIL = "\ufb01n@corp.example"
-
-pytestmark = pytest.mark.asyncio
 
 _CSRF_FIELD_RE = re.compile(r'name="csrf" value="([^"]*)"')
 

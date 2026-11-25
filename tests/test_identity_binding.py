@@ -33,8 +33,6 @@ from support.test_env import require_redis_url
 from support.users_db import sqlite_url
 from support.users_store import make_users_store
 
-pytestmark = pytest.mark.asyncio
-
 _CSRF_FIELD_RE = re.compile(r'name="csrf" value="([^"]*)"')
 
 

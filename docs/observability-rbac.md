@@ -110,6 +110,7 @@ OAuth rotation and replay events. Fields: `action` (`grace_reissue`,
 | `keystone_mcp_upstream_registry_info` | `content_hash` | Active registry file identity (gauge value always `1`; first 12 hex chars of the file SHA-256) |
 | `keystone_mcp_upstream_process_restarts_total` | `namespace` | Cumulative restarts of a stdio upstream child after crash, hang, or failed start |
 | `keystone_mcp_upstream_stderr_suppressed_total` | `namespace` | Stderr log lines dropped by the stdio supervisor's rate limiter |
+| `keystone_mcp_upstream_elicitations_total` | `namespace`, `action` | Upstream elicitation rounds forwarded to the Keystone client (`action` is the elicitation result, including `decline` and `cancel`) |
 | `keystone_mcp_upstream_items_rejected_total` | `namespace`, `kind`, `reason` | Catalog items Keystone refused to publish or pass on. `kind`: `tool`, `prompt`, `resource`, `template`, `catalog`, or `response`. `reason` (at 0.6.0): `name_collision`, `rbac_name_collision`, `unpublishable_schema`, `uri_without_scheme`, `schema_too_large`, `schema_pattern_too_long`, `schema_too_deep`, `catalog_limit`, `response_too_large`. Increments on every reconciliation attempt while the condition persists. |
 | `keystone_mcp_upstream_input_rounds_exceeded_total` | `namespace` | Tool calls stopped because the upstream kept requesting input |
 | `keystone_mcp_upstream_limit_rejections_total` | `namespace`, `reason` | Proxied calls refused by per-service limits (`rate`, `concurrency`, `circuit_open`) |
@@ -128,6 +129,7 @@ OAuth rotation and replay events. Fields: `action` (`grace_reissue`,
 | `keystone_mcp_api_key_cache_entries` | `cache` | Entries in the positive/negative API key verification caches (`positive`, `negative`) |
 | `keystone_mcp_api_key_cache_evictions_total` | `cache` | LRU evictions from those caches |
 | `keystone_mcp_users_revision_bump_failed_total` | — | Users-directory revision `INCR` failed after a successful mutation on this replica |
+| `keystone_mcp_throttle_backend_errors_total` | `kind` | Errors from the Redis throttle backend (`KEYSTONE_MCP_THROTTLE_BACKEND=redis`); alert on a non-zero rate. `kind` is the window (`tool`, `upstream`, `login_ip`, `oauth_ip`) |
 | `keystone_mcp_http_origin_null_total` | `route` | Requests whose `Origin` header was the literal string `null`, grouped by route (`register`, `token`, `authorize`, `revoke`, `login`, `login_provider`, `mcp`, `other`) |
 
 `keystone_mcp_oauth_clients` is a per-replica gauge: it is set to the result of

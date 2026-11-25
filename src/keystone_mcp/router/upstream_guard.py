@@ -130,6 +130,7 @@ class UpstreamGuard:
     ) -> AsyncIterator[None]:
         half_open_probe = False
         call_error: BaseException | None = None
+        probe_pending = False
         if self._breaker is not None:
             if not self._breaker.allow_request():
                 self._record_rejection("circuit_open")
@@ -138,41 +139,60 @@ class UpstreamGuard:
                     "repeated failures; retry later",
                     reason="circuit_open",
                 )
-            half_open_probe = self._breaker.state() == "half_open"
-            self._sync_circuit_gauge()
-
-        if self._limits.rate is not None:
-            decision = await self._window.hit(
-                f"upstream:{self._namespace}",
-                limit=self._limits.rate,
-                window_seconds=int(self._limits.window_seconds),
-            )
-            if not decision.allowed:
-                self._record_rejection("rate")
-                self._release_half_open_probe(half_open_probe)
-                raise UpstreamLimitError(
-                    f"upstream {self._namespace} is over its call limit; "
-                    f"retry in {decision.retry_after}s",
-                    reason="rate",
-                )
+            probe_pending = True
 
         acquired = False
-        if self._semaphore is not None:
-            wait_for_slot = slot_wait_timeout if slot_wait_timeout is not None else timeout
-            wait_budget = min(wait_for_slot, _CONCURRENCY_WAIT_CAP_SECONDS)
-            try:
-                await asyncio.wait_for(self._semaphore.acquire(), timeout=wait_budget)
-            except TimeoutError:
-                self._record_rejection("concurrency")
-                self._release_half_open_probe(half_open_probe)
-                raise UpstreamLimitError(
-                    f"upstream {self._namespace} is busy; retry later",
-                    reason="concurrency",
-                ) from None
-            acquired = True
+        entered = False
+        try:
+            if self._breaker is not None:
+                half_open_probe = self._breaker.state() == "half_open"
+                self._sync_circuit_gauge()
 
-        self._inflight += 1
-        self._set_inflight_gauge()
+            if self._limits.rate is not None:
+                decision = await self._window.hit(
+                    f"upstream:{self._namespace}",
+                    limit=self._limits.rate,
+                    window_seconds=int(self._limits.window_seconds),
+                )
+                if not decision.allowed:
+                    self._record_rejection("rate")
+                    self._release_half_open_probe(half_open_probe)
+                    probe_pending = False
+                    raise UpstreamLimitError(
+                        f"upstream {self._namespace} is over its call limit; "
+                        f"retry in {decision.retry_after}s",
+                        reason="rate",
+                    )
+
+            if self._semaphore is not None:
+                wait_for_slot = slot_wait_timeout if slot_wait_timeout is not None else timeout
+                wait_budget = min(wait_for_slot, _CONCURRENCY_WAIT_CAP_SECONDS)
+                try:
+                    await asyncio.wait_for(self._semaphore.acquire(), timeout=wait_budget)
+                except TimeoutError:
+                    self._record_rejection("concurrency")
+                    self._release_half_open_probe(half_open_probe)
+                    probe_pending = False
+                    raise UpstreamLimitError(
+                        f"upstream {self._namespace} is busy; retry later",
+                        reason="concurrency",
+                    ) from None
+                acquired = True
+
+            self._inflight += 1
+            entered = True
+            self._set_inflight_gauge()
+            probe_pending = False
+        except BaseException:
+            if probe_pending:
+                self._release_half_open_probe(True)
+            if entered:
+                self._inflight -= 1
+                self._set_inflight_gauge()
+            if acquired and self._semaphore is not None:
+                self._semaphore.release()
+            raise
+
         try:
             yield
         except asyncio.CancelledError as exc:

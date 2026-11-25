@@ -413,7 +413,6 @@ async def test_probes_have_no_spans(tracing_exporter, tmp_path):
         assert route not in ("/healthz", "/readyz")
 
 
-@pytest.mark.asyncio
 def test_log_lines_carry_trace_id(tracing_exporter):
     from keystone_mcp.observability.logging.formatters import JsonFormatter
     from keystone_mcp.observability.tracing import traced
