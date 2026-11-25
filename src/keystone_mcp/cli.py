@@ -15,7 +15,7 @@ import yaml
 
 from keystone_mcp import __version__
 from keystone_mcp.auth.oauth_cli import add_oauth_commands
-from keystone_mcp.catalog.names import BUILTIN_TOOL_NAMES
+from keystone_mcp.catalog.names import ALL_BUILTIN_TOOL_NAMES
 from keystone_mcp.config import (
     OAUTH_CLI_VARIABLES,
     USERS_CLI_VARIABLES,
@@ -292,7 +292,7 @@ def _cmd_catalog_export(args: argparse.Namespace) -> int:
 
 
 def _cmd_catalog_builtin(args: argparse.Namespace) -> int:
-    tools = sorted(BUILTIN_TOOL_NAMES)
+    tools = sorted(ALL_BUILTIN_TOOL_NAMES)
     if not args.json:
         for name in tools:
             print(name)

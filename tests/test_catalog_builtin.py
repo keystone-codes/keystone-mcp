@@ -75,8 +75,8 @@ def test_catalog_drops_base64_upload_file():
 
 
 def test_builtin_tool_names_constant_covers_registered_tools(tmp_path: Path):
-    """BUILTIN_TOOL_NAMES (used by P09 namespace validation) matches reality."""
-    from keystone_mcp.catalog.builtin import BUILTIN_TOOL_NAMES
+    """ALL_BUILTIN_TOOL_NAMES (namespace validation and catalog builtin) matches reality."""
+    from keystone_mcp.catalog.names import ALL_BUILTIN_TOOL_NAMES
     from keystone_mcp.rbac.loader import RbacPolicyManager
     from keystone_mcp.rbac.policy_store import PolicyStore
     from keystone_mcp.server import policy_role_source
@@ -107,7 +107,7 @@ def test_builtin_tool_names_constant_covers_registered_tools(tmp_path: Path):
     manager.reload(reg)
 
     registered = {route.name for route in reg.routes.values() if route.namespace is None}
-    assert registered == BUILTIN_TOOL_NAMES
+    assert registered == ALL_BUILTIN_TOOL_NAMES
     store.dispose()
 
 

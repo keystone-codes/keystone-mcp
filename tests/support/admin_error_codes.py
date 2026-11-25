@@ -32,6 +32,7 @@ _ADAPTER_BY_FAMILY: dict[str, tuple[str, str | None]] = {
     ),
     "api_keys": ("keystone_mcp.adapters.api_keys_admin", "API_KEYS_ADMIN_ERROR_CODES"),
     "policy": ("keystone_mcp.adapters.policy_admin", "POLICY_ADMIN_ERROR_CODES"),
+    "whoami": ("keystone_mcp.adapters.whoami", "WHOAMI_ERROR_CODES"),
 }
 
 

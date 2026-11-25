@@ -45,3 +45,9 @@ READ_ONLY_ADMIN_TOOL_NAMES: frozenset[str] = frozenset(
 )
 
 MUTATING_ADMIN_TOOL_NAMES: frozenset[str] = BUILTIN_TOOL_NAMES - READ_ONLY_ADMIN_TOOL_NAMES
+
+# Built-in tools any signed-in caller may use about itself. Not administration:
+# they do not count towards "full administrator" (rbac/management.py).
+SELF_SERVICE_TOOL_NAMES: frozenset[str] = frozenset({"whoami"})
+# Every name the core publishes itself (for namespace validation and `catalog builtin`).
+ALL_BUILTIN_TOOL_NAMES: frozenset[str] = BUILTIN_TOOL_NAMES | SELF_SERVICE_TOOL_NAMES

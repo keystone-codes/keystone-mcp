@@ -1,0 +1,28 @@
+# Roles named keystone-* let a person into keystone and allow only whoami.
+# Agent tools belong on separate working roles; a person holds the union of
+# their roles. The gateway administrator role does not make that person a
+# keystone superadmin.
+
+version: "2.0.0"
+default_deny: true
+roles:
+  administrator:
+    description: "Gateway administrator: full access, including user administration."
+    allow: ["*"]
+  keystone-superadmin:
+    description: "keystone: superadmin (sign-in only; what it allows is keystone's own rules)."
+    allow: [whoami]
+  keystone-manager:
+    description: "keystone: manager (sign-in only)."
+    allow: [whoami]
+  keystone-member:
+    description: "keystone: member (sign-in only)."
+    allow: [whoami]
+  keystone-platform:
+    description: "keystone service account svc:keystone: who-am-I and the people list for sync."
+    allow: [whoami, users_list]
+# Working roles give agents MCP tools on behalf of a person, e.g.:
+#  mcp-analyst:
+#    allow: [docs_search, docs_read]
+requires_human_identity: []
+critical_tools: []

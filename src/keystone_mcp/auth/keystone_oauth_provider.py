@@ -78,6 +78,7 @@ from keystone_mcp.login.protocol import (
     LoginIdentity,
     LoginProvider,
     LoginRejected,
+    RedirectLoginProvider,
 )
 from keystone_mcp.observability.service import RbacObservability
 from keystone_mcp.user_directory.errors import (
@@ -2214,13 +2215,18 @@ class KeystoneOAuthProvider(OAuthProvider):
 
     # ── Login page (custom routes, registered by the server) ──────────────
     async def render_login(self, request: Request) -> Response:
-        """Render the consent screen: always a page, never a Google redirect.
+        """Render the consent screen, or skip it for one first-party client.
 
         Showing the application name and the redirect destination up front, and
         requiring an explicit click on this page before any federated login
         starts, is what closes the "send a victim the /authorize link, they are
         already signed in to Google, the code goes to the attacker's
         redirect_uri" attack: see docs/security-model.md#consent-screen.
+
+        A client the operator registered with ``--first-party`` skips the page
+        only when its redirect URI matches a registered one byte for byte, the
+        host allowlist is non-empty and still allows that URI, and exactly one
+        redirect provider is enabled. Anything else falls through to the page.
         """
         lang = _pick_language(
             request, self._settings.login_default_lang, base_url=self._settings.base_url
@@ -2232,6 +2238,13 @@ class KeystoneOAuthProvider(OAuthProvider):
         client = await self._store.get_client(pending.client_id)
         if client is None:
             return self._html_error(request, lang, "error_request", 400)
+        flags = await self._store.get_client_flags(client.client_id)
+        if flags.first_party and self._first_party_redirect_ok(client, pending):
+            redirect_provider = self._single_redirect_provider()
+            if redirect_provider is not None:
+                return await self._start_first_party_redirect(
+                    request, lang, txn_id, redirect_provider, client.client_id
+                )
         return self._render_consent_page(request, txn_id, lang, pending, client)
 
     async def render_redirect_not_allowed(self, request: Request) -> Response:
@@ -2462,6 +2475,108 @@ class KeystoneOAuthProvider(OAuthProvider):
         if await self._get_pending_txn(txn_id) is None:
             return self._html_error(request, lang, "error_request", 400)
 
+        return await self._begin_redirect_attempt(
+            request,
+            lang,
+            name=name,
+            provider=provider,
+            txn_id=txn_id,
+            csrf_cookie=csrf_cookie,
+        )
+
+    def _first_party_redirect_ok(
+        self, client: OAuthClientInformationFull, pending: _PendingAuthorization
+    ) -> bool:
+        """Whether this authorization may skip the consent screen.
+
+        The return address must equal one registered URI byte for byte, the
+        host allowlist must still be non-empty (an operator may have cleared
+        it after registration), and that URI must pass the same allowlist
+        rule as registration.
+        """
+        allowed_hosts = self._settings.oauth_allowed_redirect_hosts
+        if not allowed_hosts:
+            return False
+        redirect_uri = str(pending.params.redirect_uri)
+        registered = [str(uri) for uri in (client.redirect_uris or [])]
+        if redirect_uri not in registered:
+            return False
+        return _redirect_uri_allowed(
+            redirect_uri,
+            allowed_hosts,
+            self._settings.oauth_allowed_redirect_scheme_hosts,
+        )
+
+    def _single_redirect_provider(self) -> RedirectLoginProvider | None:
+        """The sole enabled provider, when it is a redirect provider.
+
+        Two providers, or a single form provider, keep the consent page: that
+        page is where the person chooses, or types a key.
+        """
+        providers = list(self._providers.values())
+        if len(providers) != 1:
+            return None
+        provider = providers[0]
+        if not isinstance(provider, RedirectLoginProvider):
+            return None
+        return provider
+
+    async def _start_first_party_redirect(
+        self,
+        request: Request,
+        lang: str,
+        txn_id: str,
+        provider: RedirectLoginProvider,
+        client_id: str,
+    ) -> Response:
+        """Start the only redirect provider without a consent-page POST.
+
+        This is a browser navigation (``GET /login``), not a form, so the
+        cross-site ``Origin`` check does not apply. A fresh CSRF cookie is
+        set on the 302; its hash is what ``handle_login_callback`` checks.
+        """
+        allowed_ip, retry_ip = await self._login_throttle.acheck_ip(peer_host(request))
+        if not allowed_ip:
+            return login_throttle_response(retry_ip)
+
+        csrf_token = secrets.token_urlsafe(32)
+        response = await self._begin_redirect_attempt(
+            request,
+            lang,
+            name=provider.name,
+            provider=provider,
+            txn_id=txn_id,
+            csrf_cookie=csrf_token,
+        )
+        if response.status_code != 302:
+            return response
+        response.set_cookie(
+            self._csrf_cookie_name(),
+            csrf_token,
+            max_age=self._settings.login_pending_txn_ttl_seconds,
+            path=self._csrf_cookie_path(),
+            httponly=True,
+            samesite="lax",
+            secure=_is_https(self._settings.base_url),
+        )
+        logger.info("login consent skipped for first-party client client_id=%s", client_id)
+        return response
+
+    async def _begin_redirect_attempt(
+        self,
+        request: Request,
+        lang: str,
+        *,
+        name: str,
+        provider: RedirectLoginProvider,
+        txn_id: str,
+        csrf_cookie: str,
+    ) -> Response:
+        """``begin``, stash the attempt with a CSRF hash, and 302 to the provider.
+
+        Shared by the consent-screen button and the first-party skip. The
+        caller supplies the cookie value; only a hash of it is stored.
+        """
         state = secrets.token_urlsafe(24)
         # Binds this round trip to the browser that started it (browser binding,
         # 0.4.0 consent and redirect hardening): only a hash travels through the external provider,

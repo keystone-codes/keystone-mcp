@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from keystone_mcp.catalog.builtin import BUILTIN_TOOL_NAMES
+from keystone_mcp.catalog.names import ALL_BUILTIN_TOOL_NAMES
 from keystone_mcp.cli import main as cli_main
 from keystone_mcp.config import REMOVED_VARIABLES
 from keystone_mcp.rbac.policy import POLICY_TOP_LEVEL_KEYS
@@ -326,7 +326,7 @@ def test_every_builtin_tool_is_documented() -> None:
     end = text.index("## Headers sent to upstream services")
     section = text[start:end]
     documented = set(_BUILTIN_TOOL_PATTERN.findall(section))
-    missing = sorted(BUILTIN_TOOL_NAMES - documented)
+    missing = sorted(ALL_BUILTIN_TOOL_NAMES - documented)
     assert not missing, f"built-in tool missing from compatibility.md: {missing}"
 
 
@@ -405,6 +405,8 @@ def _documented_frozen_cli_flags(section: str) -> set[str]:
     if "upstream validate --path" in section or "--path <file>" in section:
         flags.add("upstream validate --path")
     flags.add("upstream validate --json")
+    flags.add("oauth register-client --no-expiry")
+    flags.add("oauth register-client --first-party")
     assert "--email" not in section.split("users import", 1)[-1].split("##", 1)[0], (
         "docs/compatibility.md must not freeze a removed users import --email flag"
     )

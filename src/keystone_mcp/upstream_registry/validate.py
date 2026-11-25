@@ -171,7 +171,7 @@ def _classify_namespace_errors(
     namespace_to_entry: dict[str, str | None],
 ) -> list[UpstreamProblem]:
     """Structured equivalent of :func:`namespace_errors`, same three checks."""
-    from keystone_mcp.catalog.builtin import BUILTIN_TOOL_NAMES
+    from keystone_mcp.catalog.names import ALL_BUILTIN_TOOL_NAMES
 
     problems: list[UpstreamProblem] = []
 
@@ -191,7 +191,7 @@ def _classify_namespace_errors(
 
     for ns in namespaces:
         prefix = f"{ns}_"
-        for builtin_name in sorted(BUILTIN_TOOL_NAMES):
+        for builtin_name in sorted(ALL_BUILTIN_TOOL_NAMES):
             if builtin_name.startswith(prefix):
                 problems.append(
                     UpstreamProblem(
@@ -663,7 +663,7 @@ def namespace_errors(namespaces: Sequence[str]) -> list[str]:
       ``^[A-Za-z0-9](?:[A-Za-z0-9_-]{0,62}[A-Za-z0-9])?$``.
     - **Built-in collisions.** A namespace is rejected if it is a prefix
       (``namespace + "_"``) of any built-in tool name
-      (:data:`keystone_mcp.catalog.builtin.BUILTIN_TOOL_NAMES`), since that
+      (:data:`keystone_mcp.catalog.names.ALL_BUILTIN_TOOL_NAMES`), since that
       would make the proxied and built-in tool publish the same name.
     - **Namespace-pair collisions.** For a pair of distinct namespaces ``A``
       and ``B``, ``B`` is rejected if it starts with ``A + "_"`` — upstream
@@ -674,7 +674,7 @@ def namespace_errors(namespaces: Sequence[str]) -> list[str]:
     # Import here, not at module level: keeps the catalog module (which pulls
     # in adapters and Settings) out of the upstream_registry import graph
     # unless namespace validation actually runs.
-    from keystone_mcp.catalog.builtin import BUILTIN_TOOL_NAMES
+    from keystone_mcp.catalog.names import ALL_BUILTIN_TOOL_NAMES
 
     errors: list[str] = []
 
@@ -687,7 +687,7 @@ def namespace_errors(namespaces: Sequence[str]) -> list[str]:
 
     for ns in namespaces:
         prefix = f"{ns}_"
-        for builtin_name in sorted(BUILTIN_TOOL_NAMES):
+        for builtin_name in sorted(ALL_BUILTIN_TOOL_NAMES):
             if builtin_name.startswith(prefix):
                 errors.append(
                     f"namespace {ns!r} is reserved: published names {ns}_* can "

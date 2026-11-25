@@ -51,6 +51,23 @@ def add_oauth_commands(subparsers: argparse._SubParsersAction) -> None:
         default=None,
         help="Display name (defaults to client id)",
     )
+    register_cmd.add_argument(
+        "--no-expiry",
+        action="store_true",
+        help=(
+            "Keep this client until it is registered again without the flag "
+            "(for a fixed first-party application)"
+        ),
+    )
+    register_cmd.add_argument(
+        "--first-party",
+        action="store_true",
+        help=(
+            "Skip the consent screen when this client's redirect URI matches "
+            "a registered one on an allowed host and exactly one redirect "
+            "login provider is enabled"
+        ),
+    )
     register_cmd.set_defaults(handler=_cmd_register_client)
 
 
@@ -97,6 +114,14 @@ def _cmd_register_client(args: argparse.Namespace) -> int:
         )
         return EXIT_USAGE
 
+    if args.first_party and not settings.oauth_allowed_redirect_hosts:
+        print(
+            "--first-party needs KEYSTONE_MCP_OAUTH_ALLOWED_REDIRECT_HOSTS: "
+            "the redirect URI must be on an allowed host",
+            file=sys.stderr,
+        )
+        return EXIT_USAGE
+
     for uri in redirect_uris:
         if not _redirect_uri_allowed(
             uri,
@@ -123,6 +148,13 @@ def _cmd_register_client(args: argparse.Namespace) -> int:
     async def _run() -> bool:
         try:
             existed = await store.get_client(client_id) is not None
+            # Flags first: put_client reads them and, for --no-expiry, writes
+            # the client record with no TTL.
+            await store.set_client_flags(
+                client_id,
+                no_expiry=bool(args.no_expiry),
+                first_party=bool(args.first_party),
+            )
             await store.put_client(client)
             await store.touch_client(client_id)
             return existed
@@ -136,14 +168,19 @@ def _cmd_register_client(args: argparse.Namespace) -> int:
         return EXIT_STORE
 
     verb = "updated" if existed else "registered"
-    days = client_ttl_seconds(settings) // 86400
     print(f"{verb} client {client_id}")
-    print(f"expires after {days} days without use; signing in renews it")
+    if args.no_expiry:
+        print("does not expire; re-run without --no-expiry to give it the usual lifetime")
+    else:
+        days = client_ttl_seconds(settings) // 86400
+        print(f"expires after {days} days without use; signing in renews it")
 
     redirect_hosts = sorted({urlparse(uri).hostname or "" for uri in redirect_uris})
     logger.info(
-        "oauth client registered by CLI client_id=%s redirect_hosts=%s",
+        "oauth client registered by CLI client_id=%s redirect_hosts=%s no_expiry=%s first_party=%s",
         client_id,
         redirect_hosts,
+        bool(args.no_expiry),
+        bool(args.first_party),
     )
     return EXIT_OK
