@@ -139,35 +139,42 @@ class CachedUserDirectoryResolver:
                 code="circuit_open",
             )
 
-        with traced(
-            "keystone.directory.resolve",
-            keystone_directory_backend=self._backend_label,
-            keystone_directory_cache_hit=False,
-            keystone_subject=subject_pseudonym(normalized),
-        ):
-            try:
-                result = await self._backend.resolve_user(normalized)
-            except UserDirectoryUnavailableError:
-                self._circuit.record_failure()
-                raise
-            except (httpx.HTTPError, OSError) as exc:
-                self._circuit.record_failure()
-                raise UserDirectoryUnavailableError(
-                    "users directory is unavailable",
-                    code="catalog_unavailable",
-                ) from exc
+        try:
+            with traced(
+                "keystone.directory.resolve",
+                keystone_directory_backend=self._backend_label,
+                keystone_directory_cache_hit=False,
+                keystone_subject=subject_pseudonym(normalized),
+            ):
+                try:
+                    result = await self._backend.resolve_user(normalized)
+                except UserDirectoryUnavailableError:
+                    self._circuit.record_failure()
+                    raise
+                except (httpx.HTTPError, OSError) as exc:
+                    self._circuit.record_failure()
+                    raise UserDirectoryUnavailableError(
+                        "users directory is unavailable",
+                        code="catalog_unavailable",
+                    ) from exc
+                except BaseException:
+                    self._circuit.release_half_open_probe()
+                    raise
 
-            self._circuit.record_success()
-            fresh = UserResolveResult(
-                exists=result.exists,
-                roles=result.roles,
-                is_blocked=result.is_blocked,
-                subject_type=result.subject_type,
-                from_cache=False,
-                revision=revision,
-            )
-            self._cache.put(normalized, fresh, revision=revision)
-            return fresh
+                self._circuit.record_success()
+                fresh = UserResolveResult(
+                    exists=result.exists,
+                    roles=result.roles,
+                    is_blocked=result.is_blocked,
+                    subject_type=result.subject_type,
+                    from_cache=False,
+                    revision=revision,
+                )
+                self._cache.put(normalized, fresh, revision=revision)
+                return fresh
+        except BaseException:
+            self._circuit.release_half_open_probe()
+            raise
 
     async def _sync_revision(self, revision: int) -> None:
         if self._seen_revision is None:
@@ -337,6 +344,9 @@ class CachedUserDirectoryResolver:
                 "users directory is unavailable",
                 code="catalog_unavailable",
             ) from exc
+        except BaseException:
+            self._circuit.release_half_open_probe()
+            raise
 
         self._circuit.record_success()
         if result is not None:

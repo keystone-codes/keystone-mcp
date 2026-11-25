@@ -138,3 +138,66 @@ async def test_half_open_non_upstream_tool_error_releases_probe() -> None:
 
     assert breaker.state() == "half_open"
     assert breaker.allow_request() is True
+
+
+class _BlockingSemaphore(asyncio.Semaphore):
+    """Never grants a permit; counts callers that have reached acquire."""
+
+    def __init__(self) -> None:
+        super().__init__(0)
+        self.started = 0
+
+    async def acquire(self) -> bool:
+        self.started += 1
+        return await super().acquire()
+
+
+@pytest.mark.asyncio
+async def test_closed_call_cancelled_on_semaphore_keeps_other_probe_slot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(
+        "keystone_mcp.user_directory.circuit_breaker.time.monotonic",
+        lambda: clock["t"],
+    )
+    breaker = CircuitBreaker(failure_threshold=1, recovery_seconds=30.0)
+    limits = UpstreamLimits(concurrency=1, breaker_failures=1, breaker_recovery_seconds=30)
+    guard = UpstreamGuard("ns", limits, window=InMemorySlidingWindow(), observability=None)
+    guard._breaker = breaker
+    semaphore = _BlockingSemaphore()
+    guard._semaphore = semaphore
+
+    async def enter_call() -> None:
+        async with guard.call(timeout=30.0, slot_wait_timeout=30.0):
+            pass
+
+    assert breaker.state() == "closed"
+    closed_task = asyncio.create_task(enter_call())
+    for _ in range(50):
+        if semaphore.started >= 1:
+            break
+        await asyncio.sleep(0)
+    assert semaphore.started == 1
+
+    breaker.record_failure()
+    clock["t"] += 30.0
+    assert breaker.state() == "half_open"
+
+    probe_task = asyncio.create_task(enter_call())
+    for _ in range(50):
+        if semaphore.started >= 2:
+            break
+        await asyncio.sleep(0)
+    assert semaphore.started == 2
+    assert breaker.allow_request() is False
+
+    closed_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await closed_task
+
+    assert breaker.allow_request() is False
+
+    probe_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await probe_task

@@ -16,7 +16,8 @@ class CircuitBreaker:
         self._recovery_seconds = recovery_seconds
         self._consecutive_failures = 0
         self._opened_at: float | None = None
-        self._probe_started_at: float | None = None
+        # one half-open probe at a time: the slot is closed by the call finishing, never by a timer
+        self._probe_in_flight = False
         self._lock = threading.Lock()
 
     def is_open(self) -> bool:
@@ -45,43 +46,37 @@ class CircuitBreaker:
         elapsed = time.monotonic() - self._opened_at
         return elapsed >= self._recovery_seconds
 
-    def _probe_slot_taken_locked(self) -> bool:
-        if self._probe_started_at is None:
-            return False
-        return time.monotonic() - self._probe_started_at < self._recovery_seconds
-
     def allow_request(self) -> bool:
         """Whether a new upstream call may start (half-open allows one probe)."""
         with self._lock:
             if self._opened_at is None:
                 return True
-            elapsed = time.monotonic() - self._opened_at
-            if elapsed < self._recovery_seconds:
+            if time.monotonic() - self._opened_at < self._recovery_seconds:
                 return False
-            if self._probe_slot_taken_locked():
+            if self._probe_in_flight:
                 return False
-            self._probe_started_at = time.monotonic()
+            self._probe_in_flight = True
             return True
 
     def record_success(self) -> None:
         with self._lock:
             self._consecutive_failures = 0
             self._opened_at = None
-            self._probe_started_at = None
+            self._probe_in_flight = False
 
     def release_half_open_probe(self) -> None:
         """Drop a taken half-open probe without changing open/recovery state."""
         with self._lock:
             if self._half_open_locked():
-                self._probe_started_at = None
+                self._probe_in_flight = False
 
     def record_failure(self) -> None:
         with self._lock:
             if self._half_open_locked():
-                self._probe_started_at = None
+                self._probe_in_flight = False
                 self._opened_at = time.monotonic()
                 return
-            self._probe_started_at = None
+            self._probe_in_flight = False
             self._consecutive_failures += 1
             if self._consecutive_failures >= self._failure_threshold:
                 self._opened_at = time.monotonic()
@@ -90,4 +85,4 @@ class CircuitBreaker:
         with self._lock:
             self._consecutive_failures = 0
             self._opened_at = None
-            self._probe_started_at = None
+            self._probe_in_flight = False

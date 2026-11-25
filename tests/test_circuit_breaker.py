@@ -40,15 +40,53 @@ def test_probe_failure_reopens_for_full_pause() -> None:
     assert breaker.allow_request() is False
 
 
-def test_stale_probe_slot_is_released_after_recovery_seconds() -> None:
-    breaker = CircuitBreaker(failure_threshold=1, recovery_seconds=0.05)
+def test_probe_slot_is_not_released_by_the_clock(monkeypatch) -> None:
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(
+        "keystone_mcp.user_directory.circuit_breaker.time.monotonic",
+        lambda: clock["t"],
+    )
+    breaker = CircuitBreaker(failure_threshold=1, recovery_seconds=5.0)
     breaker.record_failure()
-    time.sleep(0.06)
+
+    clock["t"] = 1005.0
     assert breaker.allow_request() is True
+    clock["t"] = 1006.0
+    assert breaker.allow_request() is False
+    clock["t"] = 1060.0
     assert breaker.allow_request() is False
 
-    time.sleep(0.06)
+    breaker.record_success()
+    assert breaker.state() == "closed"
+
+    breaker.record_failure()
+    clock["t"] += 5.0
     assert breaker.allow_request() is True
+    breaker.record_failure()
+    assert breaker.is_open() is True
+    assert breaker.state() == "open"
+    clock["t"] += 5.0
+    assert breaker.allow_request() is True
+
+    breaker.release_half_open_probe()
+    assert breaker.allow_request() is True
+
+
+def test_hanging_probe_blocks_second_probe_past_recovery_window(monkeypatch) -> None:
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(
+        "keystone_mcp.user_directory.circuit_breaker.time.monotonic",
+        lambda: clock["t"],
+    )
+    breaker = CircuitBreaker(failure_threshold=1, recovery_seconds=5.0)
+    assert breaker.allow_request() is True
+    breaker.record_failure()
+    clock["t"] += 5.0
+    assert breaker.allow_request() is True
+    clock["t"] += 1.0
+    assert breaker.allow_request() is False
+    clock["t"] += 5.0
+    assert breaker.allow_request() is False
 
 
 def test_is_open_kept_for_compatibility() -> None:

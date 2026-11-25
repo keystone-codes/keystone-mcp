@@ -6,6 +6,25 @@ this project uses [Semantic Versioning](https://semver.org/).
 
 Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatibility.md).
 
+## [0.6.6] - 2026-11-25
+
+### Security
+
+- `opentelemetry-api` 1.45.2 (and the other `opentelemetry-*` packages) in `uv.lock` and the image: fixes [GHSA-mf5v-w3w3-f6cg](https://github.com/advisories/GHSA-mf5v-w3w3-f6cg) (quadratic `traceparent` parsing; reachable when `KEYSTONE_MCP_OTEL_ENABLED=true`).
+- `dnspython` 2.9.2 in `uv.lock` and the image (transitive, via `email-validator`): fixes [GHSA-vvf4-9x63-8xvv](https://github.com/advisories/GHSA-vvf4-9x63-8xvv).
+
+### Fixed
+
+- Circuit breaker: the half-open state lets only one probe call through until that call finishes, however long it hangs (before, a second probe was let through after `breaker_recovery_seconds`). Users-directory calls release the probe slot on cancellation and unexpected errors.
+
+### Added
+
+- Startup warning when the RBAC policy has no full-administrator role or no management role (no new settings).
+
+### Documentation
+
+- Per-process circuit breaker and concurrency limit in the replica table; two metrics added to the observability table; version, Python badge and gitleaks notes corrected.
+
 ## [0.6.5] - 2026-11-11
 
 ### Security

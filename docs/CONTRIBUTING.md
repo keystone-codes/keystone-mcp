@@ -169,6 +169,8 @@ CI runs a dependency audit (`uv audit`, OSV database) on every pull request
 and weekly, and a container image scan (Trivy) on every pull request and
 before every release. Both are blocking: a fixable CRITICAL or HIGH
 vulnerability fails the build. See [`SECURITY.md`](../SECURITY.md).
+`.gitleaks.toml` configures gitleaks for scans you run by hand or as a
+pre-commit hook (`gitleaks detect --config .gitleaks.toml`); CI does not run it.
 
 Image scan blocks the pull request. To accept a finding temporarily, add it
 to `.trivyignore` with a reason and a review date.

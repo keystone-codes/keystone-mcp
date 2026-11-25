@@ -8,7 +8,7 @@ that path; only the packaging differs.
 From the published OCI chart (replace the version with yours):
 
 ```bash
-helm install keystone oci://ghcr.io/keystone-codes/charts/keystone-mcp --version 0.6.5 -f my-values.yaml
+helm install keystone oci://ghcr.io/keystone-codes/charts/keystone-mcp --version 0.6.6 -f my-values.yaml
 ```
 
 From a checkout of this repository:
@@ -82,7 +82,7 @@ templating in this example.
 | `namespace.yaml` | Creates the `keystone` namespace. |
 | `configmap.yaml` | `rbac-policy.yaml`, `login-providers.yaml`, and `upstreams.yaml`, aligned with [`examples/production/`](../../examples/production/). |
 | `pdb.yaml` | `PodDisruptionBudget` with `minAvailable: 1` during voluntary disruptions. |
-| `deployment.yaml` | Two replicas of the pinned `0.6.0` image, probes, resource limits. |
+| `deployment.yaml` | Two replicas of the pinned image (the tag is in `deployment.yaml`), probes, resource limits. |
 | `service.yaml` | ClusterIP on port 8080. |
 | `secret.example.yaml` | Template for the Secret below — not applied by `kustomization.yaml`. |
 | `ingress.example.yaml` | ingress-nginx example with TLS — not applied by `kustomization.yaml`. |

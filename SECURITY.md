@@ -26,6 +26,7 @@ Dependencies are audited on every PR and weekly (`uv audit`); release images
 are scanned by digest for `linux/amd64` and `linux/arm64` before they are
 tagged; pull-request image scans use the same Trivy gate on amd64. A
 fixable HIGH or CRITICAL finding blocks the pull request and the release.
+`.gitleaks.toml` configures [gitleaks](https://github.com/gitleaks/gitleaks) for scans you run by hand or as a pre-commit hook; CI does not run it.
 
 ## Security documentation
 

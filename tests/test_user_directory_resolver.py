@@ -491,7 +491,7 @@ async def test_resolver_sends_one_request_after_recovery() -> None:
 
 
 @pytest.mark.asyncio
-async def test_cancelled_probe_counts_as_failure() -> None:
+async def test_cancelled_probe_releases_the_slot() -> None:
     resolver, backend, _ = build_in_memory_user_directory_resolver(
         failure_threshold=1,
         recovery_seconds=0.05,
@@ -519,6 +519,147 @@ async def test_cancelled_probe_counts_as_failure() -> None:
         await task
 
     assert resolver._circuit.is_open() is False  # noqa: SLF001
-    assert resolver._circuit.allow_request() is False
-    await asyncio.sleep(0.06)
-    assert resolver._circuit.allow_request() is True
+    assert resolver._circuit.state() == "half_open"  # noqa: SLF001
+    assert resolver._circuit.allow_request() is True  # noqa: SLF001
+
+
+_VALID_API_KEY = "ksk_" + "0123456789ab" + "_" + ("A" * 43)
+
+
+class _ExplodingDirectory:
+    """Directory double whose calls raise a chosen exception."""
+
+    name = "exploding"
+
+    def __init__(self, exc_type: type[BaseException]) -> None:
+        self._exc_type = exc_type
+
+    @property
+    def capabilities(self) -> frozenset[str]:
+        return frozenset({"api_keys"})
+
+    async def resolve_user(self, subject: str) -> UserResolveResult:
+        raise self._exc_type("directory exploded")
+
+    async def list_users(self, **_kwargs: object) -> list[object]:
+        return []
+
+    async def ping(self) -> None:
+        return None
+
+    async def aclose(self) -> None:
+        return None
+
+    async def issue_api_key(self, **_kwargs: object) -> object:
+        raise NotImplementedError
+
+    async def list_api_keys(self, **_kwargs: object) -> list[object]:
+        return []
+
+    async def revoke_api_key(self, **_kwargs: object) -> object:
+        raise NotImplementedError
+
+    async def verify_api_key(self, key: str) -> None:
+        raise self._exc_type("directory exploded")
+
+
+class _HangingDirectory(_ExplodingDirectory):
+    def __init__(self, started: asyncio.Event) -> None:
+        super().__init__(ValueError)
+        self._started = started
+
+    async def resolve_user(self, subject: str) -> UserResolveResult:
+        self._started.set()
+        await asyncio.Event().wait()
+        raise AssertionError("hang should have been cancelled")
+
+    async def verify_api_key(self, key: str) -> None:
+        self._started.set()
+        await asyncio.Event().wait()
+        raise AssertionError("hang should have been cancelled")
+
+
+def _half_open_resolver(
+    monkeypatch: pytest.MonkeyPatch,
+    backend: _ExplodingDirectory,
+) -> tuple[CachedUserDirectoryResolver, CircuitBreaker]:
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(
+        "keystone_mcp.user_directory.circuit_breaker.time.monotonic",
+        lambda: clock["t"],
+    )
+    breaker = CircuitBreaker(failure_threshold=1, recovery_seconds=30.0)
+    breaker.record_failure()
+    clock["t"] += 30.0
+    assert breaker.state() == "half_open"
+    resolver = CachedUserDirectoryResolver(
+        backend,
+        revision_reader=InMemoryRevisionReader(),
+        cache=ResolutionCache(allow_ttl_seconds=60, deny_ttl_seconds=30),
+        circuit_breaker=breaker,
+    )
+    return resolver, breaker
+
+
+@pytest.mark.parametrize("exc_type", [ValueError, asyncio.CancelledError])
+@pytest.mark.asyncio
+async def test_resolve_unexpected_error_releases_half_open_probe(
+    monkeypatch: pytest.MonkeyPatch,
+    exc_type: type[BaseException],
+) -> None:
+    resolver, breaker = _half_open_resolver(monkeypatch, _ExplodingDirectory(exc_type))
+
+    with pytest.raises(exc_type):
+        await resolver.resolve("user@example.com")
+
+    assert breaker.state() == "half_open"
+    assert breaker.allow_request() is True
+
+
+@pytest.mark.parametrize("exc_type", [ValueError, asyncio.CancelledError])
+@pytest.mark.asyncio
+async def test_verify_api_key_unexpected_error_releases_half_open_probe(
+    monkeypatch: pytest.MonkeyPatch,
+    exc_type: type[BaseException],
+) -> None:
+    resolver, breaker = _half_open_resolver(monkeypatch, _ExplodingDirectory(exc_type))
+
+    with pytest.raises(exc_type):
+        await resolver.verify_api_key(_VALID_API_KEY)
+
+    assert breaker.state() == "half_open"
+    assert breaker.allow_request() is True
+
+
+@pytest.mark.asyncio
+async def test_resolve_task_cancel_releases_half_open_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    started = asyncio.Event()
+    resolver, breaker = _half_open_resolver(monkeypatch, _HangingDirectory(started))
+    task = asyncio.create_task(resolver.resolve("user@example.com"))
+    await asyncio.wait_for(started.wait(), timeout=2)
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert breaker.state() == "half_open"
+    assert breaker.allow_request() is True
+
+
+@pytest.mark.asyncio
+async def test_verify_api_key_task_cancel_releases_half_open_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    started = asyncio.Event()
+    resolver, breaker = _half_open_resolver(monkeypatch, _HangingDirectory(started))
+    task = asyncio.create_task(resolver.verify_api_key(_VALID_API_KEY))
+    await asyncio.wait_for(started.wait(), timeout=2)
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert breaker.state() == "half_open"
+    assert breaker.allow_request() is True
