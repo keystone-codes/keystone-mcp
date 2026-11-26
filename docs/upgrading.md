@@ -70,6 +70,14 @@ code.
 | 0.4.0 | `0001_initial` |
 | 0.5.0 | `0003_api_keys` |
 | 0.6.0 | `0004_identity_binding` |
+| 0.7.0 | `0004_identity_binding` |
+
+**0.6.x → 0.7.0** — No database migration: the revision stays
+`0004_identity_binding`, so 0.6.x and 0.7.0 replicas can share one
+database. `POST /auth/delegate` exists only on 0.7.0, and only while
+`KEYSTONE_MCP_DELEGATION_ENABLED` is on. `jti` keys in Redis do not affect
+older replicas. There is no schema rollback, because this release adds no
+revision.
 
 **0.4.x → 0.5.0** — Move Google and OIDC settings into
 `KEYSTONE_MCP_LOGIN_PROVIDERS_PATH`; rename `KEYSTONE_MCP_RBAC_ENABLED` to
@@ -79,7 +87,7 @@ arrive with migration `0003_api_keys`. See [CHANGELOG.md](../CHANGELOG.md)
 `[0.5.0]` `### Migration`.
 
 **0.5.x → 0.6.0** — See the dedicated section below and [CHANGELOG.md](../CHANGELOG.md)
-`[Unreleased]` / `[0.6.0]` `### Migration`.
+`[0.6.0]` `### Migration`.
 
 ## 0.5.x → 0.6.0
 

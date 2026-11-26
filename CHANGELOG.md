@@ -6,7 +6,7 @@ this project uses [Semantic Versioning](https://semver.org/).
 
 Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatibility.md).
 
-## [Unreleased]
+## [0.7.0] - 2026-11-26
 
 ### Added
 
@@ -16,6 +16,14 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 - `keystone-mcp oauth register-client --no-expiry`: a manually registered client that never expires.
 - `keystone-mcp oauth register-client --first-party`: sign-in skips the consent screen for this client when the redirect URI matches its registered one on an allowed host and exactly one redirect login provider is enabled.
 - Example policy for keystone: `examples/keystone-platform/rbac-policy.yaml`.
+- Contrib webhook adapter sends `X-Keystone-Identity` (ES256, `aud` `keystone`) next to `X-Author-Email` when `KEYSTONE_MCP_IDENTITY_SIGNING_KEY` is set. The header is omitted when the key is unset.
+
+### Migration
+
+- The users directory schema does not change; the revision stays `0004_identity_binding`.
+- `POST /auth/delegate` stays off until the operator sets `KEYSTONE_MCP_DELEGATION_ENABLED`.
+- Access tokens issued before this release keep working.
+- `X-Keystone-Identity` may include optional `act` and `requested_by`. A verifier that does not know those names ignores them.
 
 ## [0.6.6] - 2026-11-25
 

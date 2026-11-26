@@ -48,3 +48,5 @@
       reason: "Built-in person deletion landed in 0.6.0."
     - name: users_export
       reason: "Built-in personal-data export for administrators landed in 0.6.0."
+    - name: whoami
+      reason: "Built-in whoami landed in 0.7.0."

@@ -6,7 +6,9 @@ against the tasks registry. Flow per call:
   1. peek  GET  {base}/tasks/{task_id}/result  -> if done/error, short-circuit
      (the webhook is NOT sent and the handler is not re-run).
   2. submit POST {base}/api/v1/webhooks/{client}/{project} with the built payload,
-     carrying the verified identity as ``X-Author-Email`` and the service api_token.
+     carrying the verified identity as ``X-Author-Email`` and, when the
+     gateway signing key is set, a signed ``X-Keystone-Identity``, plus the
+     service api_token.
   3. long-poll GET {base}/tasks/{task_id}/result until done/error or timeout.
 
 The ``transform`` callable owns the payload-build business logic; without one
@@ -15,14 +17,16 @@ and have no default, so a fork that registers a webhook route must name its
 own target.
 
 This is reference code for forks: Keystone-MCP never registers this adapter
-itself, and it is not covered by ``docs/compatibility.md``. Its settings are
-read from ``KEYSTONE_MCP_CONTRIB_WEBHOOK_*`` environment variables, only by
+itself. The ``X-Keystone-Identity`` JWT it attaches is the ES256 assertion
+described in ``docs/compatibility.md``. Its settings are read from
+``KEYSTONE_MCP_CONTRIB_WEBHOOK_*`` environment variables, only by
 ``WebhookSettings.from_env()``, and only when a fork constructs the adapter —
 see ``docs/contrib/adapters.md``.
 """
 
 from __future__ import annotations
 
+import logging
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -32,6 +36,18 @@ import httpx
 
 from keystone_mcp.adapters.base import http_error_result
 from keystone_mcp.identity import AUTHOR_EMAIL_HEADER
+from keystone_mcp.identity_assertion import (
+    IDENTITY_HEADER,
+    IdentityAssertionSigner,
+    ec_public_key_jwk_thumbprint,
+    load_ec_p256_private_key,
+)
+
+logger = logging.getLogger(__name__)
+
+#: Audience of the webhook assertion. Keystone is not an upstream registry
+#: entry, and the webhook URL may be an internal name the verifier cannot use.
+_WEBHOOK_IDENTITY_AUDIENCE = "keystone"
 
 if TYPE_CHECKING:
     from keystone_mcp.router.context import RouteContext
@@ -144,6 +160,10 @@ class WebhookAdapter:
             headers[AUTHOR_EMAIL_HEADER] = ctx.verified_identity.email
         if cfg.api_token:
             headers["Authorization"] = cfg.api_token
+        # Applied last: the adapter owns this header, so a caller cannot replace it.
+        signed_identity = self._signed_identity_header(route, ctx)
+        if signed_identity is not None:
+            headers[IDENTITY_HEADER] = signed_identity
 
         result_path = f"/tasks/{ctx.task_id}/result"
         webhook_path = f"/api/v1/webhooks/{client_id}/{project_id}"
@@ -176,6 +196,41 @@ class WebhookAdapter:
             return http_error_result(route, ctx, exc)
         finally:
             await client.aclose()
+
+    def _signed_identity_header(self, route: "Route", ctx: "RouteContext") -> str | None:
+        """ES256 assertion for keystone, or ``None`` when signing is off.
+
+        An empty key omits the header and is not an error. A non-empty key
+        that is not a P-256 PEM is logged once, without the PEM, and the
+        webhook still goes out unsigned.
+        """
+        pem = ctx.settings.identity_signing_key.strip()
+        if not pem:
+            return None
+        try:
+            private_key = load_ec_p256_private_key(pem)
+        except ValueError:
+            logger.warning("omitting X-Keystone-Identity: signing key is not a usable P-256 PEM")
+            return None
+        signer = IdentityAssertionSigner(
+            audience=_WEBHOOK_IDENTITY_AUDIENCE,
+            issuer=ctx.settings.base_url.rstrip("/"),
+            private_key=private_key,
+            kid=ec_public_key_jwk_thumbprint(private_key.public_key()),
+        )
+        try:
+            return signer.sign(
+                identity=ctx.verified_identity,
+                task_id=ctx.task_id,
+                mcp_method="tools/call",
+                mcp_target=route.name,
+                # The poll budget already bounds this call; no new setting.
+                timeout_seconds=float(self._settings.long_poll_seconds),
+                rbac_mode=ctx.settings.rbac_mode,
+            )
+        except Exception:
+            logger.warning("omitting X-Keystone-Identity: assertion could not be signed")
+            return None
 
     @staticmethod
     def _normalize(body: dict[str, Any], ctx: "RouteContext") -> dict[str, Any]:
