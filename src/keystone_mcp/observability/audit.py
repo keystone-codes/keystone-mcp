@@ -8,6 +8,7 @@ import random
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from keystone_mcp.identity import resolve_verified_identity
 from keystone_mcp.observability.logging.context import get_request_id
 from keystone_mcp.observability.subject import hash_subject, roles_label
 from keystone_mcp.observability.tool_family import tool_family
@@ -117,6 +118,71 @@ class AuthzAuditRecorder:
             "subject_type": subject_type,
             "task_id": task_id,
         }
+        try:
+            event.update(self._delegation_fields())
+        except Exception:
+            logger.warning("delegation fields for rbac audit failed", exc_info=True)
+        self._emit(event)
+
+    def _delegation_fields(self) -> dict[str, Any]:
+        """Actor and requester from a delegated token. Absent keys stay absent."""
+        identity = resolve_verified_identity()
+        if identity is None:
+            return {}
+        claims = identity.claims or {}
+        extra: dict[str, Any] = {}
+        act = claims.get("act")
+        if isinstance(act, dict) and isinstance(act.get("sub"), str) and act["sub"]:
+            hashed = hash_subject(act["sub"], salt=self._subject_salt)
+            if hashed is not None:
+                extra["actor"] = hashed
+        requested_by = claims.get("requested_by")
+        if isinstance(requested_by, str) and requested_by:
+            hashed = hash_subject(requested_by, salt=self._subject_salt)
+            if hashed is not None:
+                extra["requested_by"] = hashed
+        delegation_jti = claims.get("delegation_jti")
+        if isinstance(delegation_jti, str) and delegation_jti:
+            extra["delegation_jti"] = delegation_jti
+        return extra
+
+    def record_delegation_exchange(
+        self,
+        *,
+        outcome: str,
+        reason: str | None,
+        mode: str | None,
+        delegation_jti: str | None,
+        resource: str | None,
+        requested_by_verified: bool | None,
+        subject: str | None,
+        actor: str | None,
+        requested_by: str | None,
+        kst_client: str | None = None,
+        kst_project: str | None = None,
+        kst_session: str | None = None,
+    ) -> None:
+        """One ``delegation_exchange`` line. Addresses and keys are already hashed."""
+        if not self._enabled:
+            return
+        event: dict[str, Any] = {
+            "event": "delegation_exchange",
+            "outcome": outcome,
+            "reason": reason,
+            "mode": mode,
+            "delegation_jti": delegation_jti,
+            "resource": resource,
+            "requested_by_verified": requested_by_verified,
+            "subject": hash_subject(subject, salt=self._subject_salt),
+            "actor": hash_subject(actor, salt=self._subject_salt),
+            "requested_by": hash_subject(requested_by, salt=self._subject_salt),
+        }
+        if kst_client is not None:
+            event["kst_client"] = kst_client
+        if kst_project is not None:
+            event["kst_project"] = kst_project
+        if kst_session is not None:
+            event["kst_session"] = kst_session
         self._emit(event)
 
     def _emit(self, event: dict[str, Any]) -> None:

@@ -524,6 +524,33 @@ def build_server(
     async def _login_redirect_not_allowed(request):  # noqa: ANN001
         return await oauth.render_redirect_not_allowed(request)
 
+    # Registered only while the flag is on. A disabled flag leaves no route,
+    # so the caller gets Starlette's 404 rather than a delegation error.
+    if settings.delegation_enabled:
+        from keystone_mcp.auth.delegation import DelegationExchange, load_delegation_issuers
+
+        try:
+            delegation_issuers = load_delegation_issuers(settings.delegation_issuers_file)
+        except ValueError as exc:
+            raise ConfigError(str(exc)) from None
+        delegation_redis = getattr(store, "redis", None)
+        if settings.redis_url.strip() and delegation_redis is None:
+            from keystone_mcp.redis_client import redis_from_url
+
+            delegation_redis = redis_from_url(settings.redis_url)
+        delegation_exchange = DelegationExchange(
+            settings=settings,
+            issuers=delegation_issuers,
+            store=store,
+            resolver=directory_resolver,
+            redis=delegation_redis if settings.redis_url.strip() else None,
+            observability=rbac_observability,
+        )
+
+        @mcp.custom_route("/auth/delegate", methods=["POST"])
+        async def _auth_delegate(request):  # noqa: ANN001
+            return await delegation_exchange.handle(request)
+
     throttle = PerIdentityThrottle(
         settings.throttle_max_requests,
         settings.throttle_window_seconds,

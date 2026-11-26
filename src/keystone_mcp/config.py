@@ -102,6 +102,7 @@ _FALSE_BOOL = frozenset({"0", "false", "no", "off"})
 _HEADER_NAME_RE = re.compile(r"^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$")
 
 BOOL_VARIABLES: tuple[str, ...] = (
+    "KEYSTONE_MCP_DELEGATION_ENABLED",
     "KEYSTONE_MCP_OAUTH_DCR_ENABLED",
     "KEYSTONE_MCP_LOG_REDACT",
     "KEYSTONE_MCP_LOG_ACCESS_ENABLED",
@@ -1357,6 +1358,16 @@ class Settings:
         default_factory=lambda: _env_secret("KEYSTONE_MCP_IDENTITY_SIGNING_KEY_PREVIOUS", ""),
         repr=False,
     )
+    # Off by default: the route is not registered, and the issuers file is not read.
+    delegation_enabled: bool = field(
+        default_factory=lambda: _env_bool("KEYSTONE_MCP_DELEGATION_ENABLED", False)
+    )
+    delegation_issuers_file: str = field(
+        default_factory=lambda: _env("KEYSTONE_MCP_DELEGATION_ISSUERS_FILE", "")
+    )
+    delegation_token_ttl_seconds: int = field(
+        default_factory=lambda: _env_int("KEYSTONE_MCP_DELEGATION_TOKEN_TTL_SECONDS", 300)
+    )
 
     @property
     def http_path(self) -> str:
@@ -1521,6 +1532,33 @@ def _settings_refusals(settings: Settings) -> list[str]:
         problems.append(metrics_problem)
     if not settings.redis_url.strip():
         problems.append("KEYSTONE_MCP_REDIS_URL is required (OAuth sessions are stored in Redis)")
+    problems.extend(_delegation_refusals(settings))
+    return problems
+
+
+def _delegation_refusals(settings: Settings) -> list[str]:
+    """Delegation flag, token TTL, and issuers file. PEM material is never included."""
+    problems: list[str] = []
+    ttl = settings.delegation_token_ttl_seconds
+    if ttl < 1 or ttl > 900:
+        problems.append(
+            f"KEYSTONE_MCP_DELEGATION_TOKEN_TTL_SECONDS must be between 1 and 900 (got {ttl})"
+        )
+    if not settings.delegation_enabled:
+        return problems
+    path = settings.delegation_issuers_file.strip()
+    if not path:
+        problems.append(
+            "KEYSTONE_MCP_DELEGATION_ISSUERS_FILE is empty while "
+            "KEYSTONE_MCP_DELEGATION_ENABLED=true"
+        )
+        return problems
+    from keystone_mcp.auth.delegation import load_delegation_issuers
+
+    try:
+        load_delegation_issuers(path)
+    except ValueError as exc:
+        problems.append(str(exc))
     return problems
 
 

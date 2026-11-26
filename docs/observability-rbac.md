@@ -51,7 +51,9 @@ route (same value as in `X-Keystone-Identity` and mutation audit events).
 Includes `policy_version`, `policy_content_hash`, `reason`, `cache_hit`,
 `operation`, `login_provider` (the sign-in method's name, e.g. `google` or
 `api_key` — lets a `human_identity_required` denial be read without a separate
-token lookup).
+token lookup). A delegated token also adds `actor` and `requested_by`
+(the same `sub_<16 hex>` pseudonym) and `delegation_jti`. Those keys are
+omitted for an ordinary sign-in and for a service API key.
 
 ### `rbac_users_mutation`
 
@@ -79,6 +81,18 @@ still proceeds but the tool may warn that pseudonyms are reversible.
 Emitted for every `policy_*` admin tool attempt. Includes `actor_subject_type`
 when the verified identity carries a subject type (for example `service` on a
 refusal).
+
+### `delegation_exchange`
+
+Emitted for every `POST /auth/delegate` attempt (issued, denied, or
+unavailable). Fields: `outcome` (`issued`, `denied`, `unavailable`), `reason`
+(the error code, or null when a token was issued), `mode`, `delegation_jti`,
+`resource` (the address from the form, not a copy of the gateway resource),
+`requested_by_verified`. The person's address, the service actor, and
+`requested_by` are stored only as `subject`, `actor`, and `requested_by`
+pseudonyms (`sub_<16 hex>`, same salt as the other audit events). `kst_client`,
+`kst_project`, and `kst_session` are copied when the assertion had them. The
+raw assertion, API key, and access token are not written.
 
 ### `oauth_session`
 
@@ -122,6 +136,7 @@ OAuth rotation and replay events. Fields: `action` (`grace_reissue`,
 | `keystone_mcp_oauth_client_registrations_total` | `outcome` | `POST /register` outcomes (`created`, `rejected_limit`, `rejected_redirect_host`, `rejected_metadata`) |
 | `keystone_mcp_oauth_client_evictions_total` | (counter) | Unused OAuth clients evicted to admit a new registration at `KEYSTONE_MCP_OAUTH_MAX_CLIENTS` |
 | `keystone_mcp_oauth_token_exchange_total` | `grant_type`, `outcome` | OAuth `/token` exchanges (`issued`, `grace_reissue`, `replay_revoked`, `code_replay`, `session_expired`, `key_revoked`, `key_expired`, `user_denied`, `directory_unavailable`, …) |
+| `keystone_mcp_delegation_exchanges_total` | `result`, `reason` | `POST /auth/delegate` exchanges. `result` is `issued`, `denied`, or `unavailable`. `reason` is the error code, or `none` when a token was issued. No address and no `jti` label. |
 | `keystone_mcp_login_identity_binding_total` | `outcome` | OIDC login identity binding (`bound`, `matched`, `mismatch`, `conflict`) |
 | `keystone_mcp_oauth_token_keys_migrated_total` | `kind`, `direction` | Legacy OAuth token keys moved to the hashed layout on first use (`kind` is `access` or `refresh`; `direction` is `to_hashed`) |
 | `keystone_mcp_oauth_clients` | (gauge) | Live registered OAuth clients, refreshed on every registration attempt on this replica |

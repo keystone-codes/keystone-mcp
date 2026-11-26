@@ -175,9 +175,10 @@ def build_identity_claims(
     """Build the claim set for ``X-Keystone-Identity``, per the 0.5.0 contract.
 
     Pure function (no signing, no I/O) so the claim shape can be tested
-    without a secret. Only the fields in the 0.5.0 contract are ever present:
-    ``email`` is included only for a human subject, ``client_id`` only when
-    the identity carries one.
+    without a secret. ``email`` is included only for a human subject,
+    ``client_id`` only when the identity carries one. ``act``,
+    ``requested_by`` and ``requested_by_verified`` are included only when
+    the token claims already carry them (a delegated call).
     """
     # Local import: keystone_mcp.rbac re-exports keystone_mcp.rbac.loader,
     # which imports keystone_mcp.router.registry -- and this module is
@@ -227,6 +228,16 @@ def build_identity_claims(
 
     if rbac_decision is not None:
         claims["rbac_decision"] = rbac_decision
+
+    token_claims = identity.claims or {}
+    act = token_claims.get("act")
+    if isinstance(act, dict) and isinstance(act.get("sub"), str) and act["sub"]:
+        claims["act"] = {"sub": act["sub"]}
+    requested_by = token_claims.get("requested_by")
+    if isinstance(requested_by, str) and requested_by:
+        claims["requested_by"] = requested_by
+    if isinstance(token_claims.get("requested_by_verified"), bool):
+        claims["requested_by_verified"] = token_claims["requested_by_verified"]
 
     return claims
 

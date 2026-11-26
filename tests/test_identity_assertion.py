@@ -271,3 +271,28 @@ def test_signing_uses_current_key_only():
     jwks = build_identity_jwks(current, previous_key=previous)
     current_jwk = jwt.PyJWK.from_dict(jwks["keys"][0])
     jwt.decode(token, current_jwk.key, algorithms=["ES256"], audience=AUDIENCE, issuer=ISSUER)
+
+
+def test_delegation_claims_appear_only_with_the_token():
+    plain = _claims(identity=HUMAN)
+    assert "act" not in plain
+    assert "requested_by" not in plain
+    assert "requested_by_verified" not in plain
+    assert set(plain) == _EXPECTED_REQUIRED_FIELDS | {"email"}
+
+    delegated = VerifiedIdentity(
+        email="ann@example.com",
+        claims={
+            "auth_method": "delegation",
+            "act": {"sub": "svc:demo"},
+            "requested_by": "owner@example.com",
+            "requested_by_verified": False,
+        },
+    )
+    claims = _claims(identity=delegated)
+    assert claims["act"] == {"sub": "svc:demo"}
+    assert claims["requested_by"] == "owner@example.com"
+    assert claims["requested_by_verified"] is False
+    assert _EXPECTED_REQUIRED_FIELDS <= set(claims)
+    assert claims["sub"] == "ann@example.com"
+    assert claims["email"] == "ann@example.com"
