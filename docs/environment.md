@@ -331,6 +331,44 @@ every limit change — see
 [Rate limits, reverse proxies and replicas](#rate-limits-reverse-proxies-and-replicas)
 below.
 
+### Delegation
+
+Off unless `KEYSTONE_MCP_DELEGATION_ENABLED=true`. While the flag is false the
+issuers file is not read and `POST /auth/delegate` is not registered (the
+response is `404`).
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `KEYSTONE_MCP_DELEGATION_ENABLED` | `false` | Register `POST /auth/delegate`. |
+| `KEYSTONE_MCP_DELEGATION_ISSUERS_FILE` | `` (empty) | YAML file of issuers, read once at startup when the flag is on. Empty, unreadable, or invalid refuses startup. Ignored when the flag is off. |
+| `KEYSTONE_MCP_DELEGATION_TOKEN_TTL_SECONDS` | `300` | Lifetime of the delegated access token, seconds. Must be 1–900 or startup refuses. There is no refresh token. |
+
+The file the delivery writes looks like this (paths are whatever the variables
+say; the gateway does not hard-code them):
+
+```yaml
+version: 1
+issuers:
+  keystone-platform:
+    public_key_file: /etc/keystone-mcp/delegation/keystone-platform.pub.pem
+    actors: []            # for example svc:project-a
+    modes: [person, service]
+```
+
+`version` must be `1`. Each issuer's `public_key_file` is a PEM EC P-256 public
+key (`openssl pkey -pubout`). `actors` lists service subjects (`svc:<name>`);
+an empty list is valid and then every exchange fails `unknown_actor` until an
+operator adds accounts. `modes` is optional: when the key is absent both
+`person` and `service` are allowed. An unknown mode or any other key on the
+issuer refuses startup. The public key is kept in memory and is not written to
+logs or to `Settings`'s repr.
+
+The assertion's `jti` is remembered until the assertion expires. With Redis
+configured the key is `<KEYSTONE_MCP_REDIS_KEY_PREFIX>deleg:jti:<jti>` and is
+shared by every replica. Without Redis only this process remembers it (see the
+replica table below). A delegated access token lives for
+`KEYSTONE_MCP_DELEGATION_TOKEN_TTL_SECONDS` and cannot be refreshed.
+
 ## Rate limits, reverse proxies and replicas
 
 This section is about the limits in the table above, plus what changes once
@@ -411,6 +449,7 @@ Redis-backed state is shared across replicas:
 | Circuit breaker for the users directory | — |
 | Circuit breaker and concurrency limit for upstream `limits` (upstream registry): opens after `breaker_failures` failures on this replica, each replica recovers on its own | — |
 | Live upstream tool catalog | — |
+| Delegation assertion `jti` values when `KEYSTONE_MCP_REDIS_URL` is empty (this replica only, until the assertion's `exp`) | Delegation assertion `jti` values when Redis is configured (`<prefix>deleg:jti:<jti>` under `KEYSTONE_MCP_REDIS_KEY_PREFIX`) |
 
 Consequences:
 

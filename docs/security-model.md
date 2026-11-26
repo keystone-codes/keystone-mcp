@@ -358,6 +358,17 @@ their tokens. A wrong `client_id` or an unknown token still returns `200`
 (the handler does not reveal whether a token existed). The route is behind
 the same Host/Origin guard and OAuth IP throttle as `/token`.
 
+## Delegated access
+
+`POST /auth/delegate` (only when `KEYSTONE_MCP_DELEGATION_ENABLED=true`)
+accepts an ES256 assertion from an issuer in
+`KEYSTONE_MCP_DELEGATION_ISSUERS_FILE`. Any other algorithm, including
+`none`, is refused. A person's API key cannot be the actor; the actor is a
+service account listed for that issuer. The access token is not an interactive
+login (`interactive` is false). The assertion is valid for at most 60 seconds
+and is single-use by `jti`. `aud` is the public gateway address
+(`KEYSTONE_MCP_BASE_URL`), not the internal address the request arrived on.
+
 ## What is protected by default
 
 - Every HTTP route — every OAuth endpoint, discovery metadata, and `/mcp`

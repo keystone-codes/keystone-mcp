@@ -15,7 +15,10 @@ from keystone_mcp.observability.subject import normalize_subject, subject_pseudo
 from keystone_mcp.observability.tracing import traced
 from keystone_mcp.user_directory.cache import ApiKeyVerificationCache, ResolutionCache
 from keystone_mcp.user_directory.circuit_breaker import CircuitBreaker
-from keystone_mcp.user_directory.errors import UserDirectoryUnavailableError
+from keystone_mcp.user_directory.errors import (
+    UserDirectoryUnavailableError,
+    UsersStoreUnavailableError,
+)
 from keystone_mcp.user_directory.protocol import (
     ApiKeyDirectory,
     ApiKeyIdIndex,
@@ -230,7 +233,7 @@ class CachedUserDirectoryResolver:
             except UserDirectoryUnavailableError:
                 self._circuit.record_failure()
                 raise
-            except (httpx.HTTPError, OSError) as exc:
+            except (httpx.HTTPError, OSError, UsersStoreUnavailableError) as exc:
                 self._circuit.record_failure()
                 raise UserDirectoryUnavailableError(
                     "users directory is unavailable",
@@ -337,7 +340,7 @@ class CachedUserDirectoryResolver:
             self._circuit.record_failure()
             self._record_outcome("unavailable")
             raise
-        except (httpx.HTTPError, OSError) as exc:
+        except (httpx.HTTPError, OSError, UsersStoreUnavailableError) as exc:
             self._circuit.record_failure()
             self._record_outcome("unavailable")
             raise UserDirectoryUnavailableError(

@@ -11,6 +11,8 @@ Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatib
 ### Added
 
 - Built-in tool `whoami`: the caller's subject, e-mail, full name, roles and subject type. Published whenever a users directory is configured, in every RBAC mode; not an administration tool.
+- `POST /auth/delegate` when `KEYSTONE_MCP_DELEGATION_ENABLED=true`: exchanges a signed platform assertion plus a service API key for a short access token (no refresh). Off by default, and the route is not registered then.
+- Delegated tokens carry `act` and, in service mode, `requested_by`. `X-Keystone-Identity` gains those claims only when the token has them.
 - `keystone-mcp oauth register-client --no-expiry`: a manually registered client that never expires.
 - `keystone-mcp oauth register-client --first-party`: sign-in skips the consent screen for this client when the redirect URI matches its registered one on an allowed host and exactly one redirect login provider is enabled.
 - Example policy for keystone: `examples/keystone-platform/rbac-policy.yaml`.

@@ -168,6 +168,11 @@ _OAUTH_TOKEN_EXCHANGE = Counter(
     "OAuth /token exchanges by grant type and outcome",
     ["grant_type", "outcome"],
 )
+_DELEGATION_EXCHANGES = Counter(
+    "keystone_mcp_delegation_exchanges_total",
+    "POST /auth/delegate exchanges by result and reason",
+    ["result", "reason"],
+)
 _LOGIN_IDENTITY_BINDING = Counter(
     "keystone_mcp_login_identity_binding_total",
     "OIDC login identity binding outcomes",
@@ -413,6 +418,11 @@ class RbacMetrics:
         if not self._enabled:
             return
         _OAUTH_TOKEN_EXCHANGE.labels(grant_type=grant_type, outcome=outcome).inc()
+
+    def record_delegation_exchange(self, *, result: str, reason: str) -> None:
+        if not self._enabled:
+            return
+        _DELEGATION_EXCHANGES.labels(result=result, reason=reason).inc()
 
     def record_login_identity_binding(self, *, outcome: str) -> None:
         if not self._enabled:

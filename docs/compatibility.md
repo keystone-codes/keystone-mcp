@@ -22,6 +22,9 @@ without `/` or equal to the MCP path) are refused at startup.
 | `KEYSTONE_MCP_AUTH_CODE_TTL` | 0.5.0 | stable |
 | `KEYSTONE_MCP_BASE_URL` | 0.5.0 | stable |
 | `KEYSTONE_MCP_DEPLOYMENT_PROFILE` | 0.5.0 | stable |
+| `KEYSTONE_MCP_DELEGATION_ENABLED` | 0.7.0 | stable |
+| `KEYSTONE_MCP_DELEGATION_ISSUERS_FILE` | 0.7.0 | stable |
+| `KEYSTONE_MCP_DELEGATION_TOKEN_TTL_SECONDS` | 0.7.0 | stable |
 | `KEYSTONE_MCP_DEV_TOKENS` | 0.5.0 | stable |
 | `KEYSTONE_MCP_DEV_TOKENS_FILE` | 0.6.0 | stable |
 | `KEYSTONE_MCP_ENABLED_LOGIN_METHODS` | 0.5.0 | deprecated (since 0.5.0, use KEYSTONE_MCP_LOGIN_PROVIDERS_PATH) |
@@ -303,7 +306,7 @@ Frozen since 0.5.0.
 | `X-Author-Email` | Verified person email (lower-case); **deprecated (since 0.5.0, use X-Keystone-Identity)**; sent only for human subjects; removed in 2.0 |
 | `traceparent` / `tracestate` | W3C trace context; sent when `KEYSTONE_MCP_OTEL_ENABLED=true` (and accepted from clients on inbound HTTP) |
 | `Authorization: Bearer <value>` | When the registry entry sets `auth.bearer_env` and the named variable is non-empty (HTTP upstreams only) |
-| `X-Keystone-Identity` | Signed JWT (`typ: keystone-identity+jwt`). **HS256** with the secret named by `auth.identity_secret_env` (per-upstream secret, at least 32 bytes), or **ES256** with `KEYSTONE_MCP_IDENTITY_SIGNING_KEY` when `auth.identity_alg: ES256`. **Audience** (`aud`) is the registry entry `name`. **Issuer** (`iss`) is `KEYSTONE_MCP_BASE_URL` without a trailing slash. **Expiry** (`exp`) is the tool-call timeout (seconds, rounded up) plus 60 seconds. **Roles** (`roles`) are those RBAC used to allow the call (empty when denied). Claims include `sub`, `sub_type`, `rbac`, optional `rbac_decision` (`allow`/`deny` when RBAC is active), `auth_method`, `interactive`, `task_id`, `mcp_method`, `mcp_target`, `iat`, `jti`, and for humans `email` when present; `client_id` when the OAuth client is known. ES256 JWKS may list up to two public keys during rotation (`KEYSTONE_MCP_IDENTITY_SIGNING_KEY_PREVIOUS`). Stdio upstreams carry the same assertion in `params._meta["keystone-mcp/identity"]` instead of an HTTP header. |
+| `X-Keystone-Identity` | Signed JWT (`typ: keystone-identity+jwt`). **HS256** with the secret named by `auth.identity_secret_env` (per-upstream secret, at least 32 bytes), or **ES256** with `KEYSTONE_MCP_IDENTITY_SIGNING_KEY` when `auth.identity_alg: ES256`. **Audience** (`aud`) is the registry entry `name`. **Issuer** (`iss`) is `KEYSTONE_MCP_BASE_URL` without a trailing slash. **Expiry** (`exp`) is the tool-call timeout (seconds, rounded up) plus 60 seconds. **Roles** (`roles`) are those RBAC used to allow the call (empty when denied). Claims include `sub`, `sub_type`, `rbac`, optional `rbac_decision` (`allow`/`deny` when RBAC is active), `auth_method`, `interactive`, `task_id`, `mcp_method`, `mcp_target`, `iat`, `jti`, and for humans `email` when present; `client_id` when the OAuth client is known. ES256 JWKS may list up to two public keys during rotation (`KEYSTONE_MCP_IDENTITY_SIGNING_KEY_PREVIOUS`). Stdio upstreams carry the same assertion in `params._meta["keystone-mcp/identity"]` instead of an HTTP header. Claims `act`, `requested_by`, and `requested_by_verified` are added only when the call uses a delegated token; the claims above stay the same. |
 
 ## HTTP routes
 
@@ -325,6 +328,7 @@ an IP-literal `Host` is also accepted. Wrong `Host` → `421`; wrong `Origin` �
 | `/.well-known/keystone-identity-jwks.json` | GET | ES256 JWKS when `KEYSTONE_MCP_IDENTITY_SIGNING_KEY` is set |
 | `/authorize` | GET | Authorization endpoint |
 | `/token` | POST | Token endpoint |
+| `/auth/delegate` | POST | Present only when `KEYSTONE_MCP_DELEGATION_ENABLED=true`. When the flag is off the route is not registered and the response is `404`. |
 | `/register` | POST | Dynamic client registration when `KEYSTONE_MCP_OAUTH_DCR_ENABLED=true` |
 | `/revoke` | POST | Token revocation (RFC 7009) |
 | `/login` | GET, POST | Sign-in page |
@@ -584,6 +588,7 @@ Frozen since 0.5.0. Metric names and label keys (not log message text):
 | `keystone_mcp_oauth_client_registrations_total` | `outcome` |
 | `keystone_mcp_oauth_client_evictions_total` | (counter, no labels) |
 | `keystone_mcp_oauth_token_exchange_total` | `grant_type`, `outcome` |
+| `keystone_mcp_delegation_exchanges_total` | `result`, `reason` |
 | `keystone_mcp_login_identity_binding_total` | `outcome` |
 | `keystone_mcp_oauth_token_keys_migrated_total` | `kind`, `direction` |
 | `keystone_mcp_oauth_clients` | (gauge, no labels) |
@@ -598,7 +603,8 @@ Label value `unknown` is reserved for names that are not published.
 
 Audit event types and field names (values are not frozen): optional `trace_id`
 on audit payloads when tracing is enabled; `rbac_authz_decision`,
-`rbac_users_mutation`, `rbac_policy_mutation`, `oauth_session` — see
+`rbac_users_mutation`, `rbac_policy_mutation`, `oauth_session`,
+`delegation_exchange` — see
 [observability-rbac.md](observability-rbac.md) and `src/keystone_mcp/observability/audit.py`.
 NDJSON access-log field names (including `trace_id` and `span_id` when tracing
 is enabled) are in [observability-logging.md](observability-logging.md).
