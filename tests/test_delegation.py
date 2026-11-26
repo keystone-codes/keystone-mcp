@@ -35,6 +35,7 @@ from keystone_mcp.observability.subject import hash_subject
 from keystone_mcp.server import bootstrap_rbac_policy, build_server
 from keystone_mcp.user_directory.cache import ApiKeyVerificationCache, ResolutionCache
 from keystone_mcp.user_directory.circuit_breaker import CircuitBreaker
+from keystone_mcp.user_directory.errors import UsersStoreUnavailableError
 from keystone_mcp.user_directory.memory import InMemoryUserDirectory
 from keystone_mcp.user_directory.resolver import CachedUserDirectoryResolver
 from keystone_mcp.user_directory.revision import InMemoryRevisionReader
@@ -301,7 +302,7 @@ class KeyedMemoryDirectory(InMemoryUserDirectory):
 
     async def verify_api_key(self, key: str) -> ApiKeyVerification | None:
         if self.unavailable:
-            raise OSError("users directory unavailable")
+            raise UsersStoreUnavailableError("users directory unavailable")
         return self._keys.get(key)
 
 
