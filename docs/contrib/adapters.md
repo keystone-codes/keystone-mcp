@@ -38,7 +38,12 @@ against a task-result endpoint:
 Every request carries the verified identity as `X-Author-Email` (the same
 header the rest of Keystone-MCP uses) and, when set, `api_token` as a raw
 `Authorization` header — the adapter does not know or care what scheme the
-target expects.
+target expects. When `KEYSTONE_MCP_IDENTITY_SIGNING_KEY` is set, each of
+these requests also carries `X-Keystone-Identity` (ES256, `typ` =
+`keystone-identity+jwt`, `iss` is `KEYSTONE_MCP_BASE_URL` without a trailing
+slash, `aud` is `keystone`). Without that key the header is absent and
+`X-Author-Email` remains. The e-mail inside the JWT is the `email` claim,
+and only for a person.
 
 ### Settings
 

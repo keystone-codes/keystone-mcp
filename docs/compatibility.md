@@ -306,7 +306,7 @@ Frozen since 0.5.0.
 | `X-Author-Email` | Verified person email (lower-case); **deprecated (since 0.5.0, use X-Keystone-Identity)**; sent only for human subjects; removed in 2.0 |
 | `traceparent` / `tracestate` | W3C trace context; sent when `KEYSTONE_MCP_OTEL_ENABLED=true` (and accepted from clients on inbound HTTP) |
 | `Authorization: Bearer <value>` | When the registry entry sets `auth.bearer_env` and the named variable is non-empty (HTTP upstreams only) |
-| `X-Keystone-Identity` | Signed JWT (`typ: keystone-identity+jwt`). **HS256** with the secret named by `auth.identity_secret_env` (per-upstream secret, at least 32 bytes), or **ES256** with `KEYSTONE_MCP_IDENTITY_SIGNING_KEY` when `auth.identity_alg: ES256`. **Audience** (`aud`) is the registry entry `name`. **Issuer** (`iss`) is `KEYSTONE_MCP_BASE_URL` without a trailing slash. **Expiry** (`exp`) is the tool-call timeout (seconds, rounded up) plus 60 seconds. **Roles** (`roles`) are those RBAC used to allow the call (empty when denied). Claims include `sub`, `sub_type`, `rbac`, optional `rbac_decision` (`allow`/`deny` when RBAC is active), `auth_method`, `interactive`, `task_id`, `mcp_method`, `mcp_target`, `iat`, `jti`, and for humans `email` when present; `client_id` when the OAuth client is known. ES256 JWKS may list up to two public keys during rotation (`KEYSTONE_MCP_IDENTITY_SIGNING_KEY_PREVIOUS`). Stdio upstreams carry the same assertion in `params._meta["keystone-mcp/identity"]` instead of an HTTP header. Claims `act`, `requested_by`, and `requested_by_verified` are added only when the call uses a delegated token; the claims above stay the same. |
+| `X-Keystone-Identity` | Signed JWT (`typ: keystone-identity+jwt`). **HS256** with the secret named by `auth.identity_secret_env` (per-upstream secret, at least 32 bytes), or **ES256** with `KEYSTONE_MCP_IDENTITY_SIGNING_KEY` when `auth.identity_alg: ES256`. **Audience** (`aud`) is the registry entry `name`. **Issuer** (`iss`) is `KEYSTONE_MCP_BASE_URL` without a trailing slash. **Expiry** (`exp`) is the tool-call timeout (seconds, rounded up) plus 60 seconds. **Roles** (`roles`) are those RBAC used to allow the call (empty when denied). Claims include `sub`, `sub_type`, `rbac`, optional `rbac_decision` (`allow`/`deny` when RBAC is active), `auth_method`, `interactive`, `task_id`, `mcp_method`, `mcp_target`, `iat`, `jti`, and for humans `email` when present; `client_id` when the OAuth client is known. ES256 JWKS may list up to two public keys during rotation (`KEYSTONE_MCP_IDENTITY_SIGNING_KEY_PREVIOUS`). Stdio upstreams carry the same assertion in `params._meta["keystone-mcp/identity"]` instead of an HTTP header. Claims `act`, `requested_by`, and `requested_by_verified` are added only when the call uses a delegated token; the claims above stay the same. The contrib adapter `contrib/adapters/webhook.py` sends the same ES256 assertion signed with `KEYSTONE_MCP_IDENTITY_SIGNING_KEY`; `aud` is `keystone`; `iss` is the gateway's public address without a trailing `/`; a person's `email` claim is present and matches `X-Author-Email`. |
 
 ## HTTP routes
 
@@ -441,7 +441,7 @@ database; it prints this version's built-in tool names. Frozen JSON shape:
 ```json
 {
   "schema_version": 1,
-  "keystone_mcp_version": "0.6.6",
+  "keystone_mcp_version": "0.7.0",
   "tools": ["api_keys_issue", "api_keys_list", "policy_read", "users_list"],
   "registry": {
     "max_entries": 64,

@@ -201,7 +201,9 @@ only once the stronger ones configured for it have passed.
    the tool called. Set only when the registry entry's
    `auth.identity_secret_env` names the signing secret; see
    [Connecting services](connecting-services.md#who-is-calling-x-keystone-identity)
-   for the field list and how to verify it.
+   for the field list and how to verify it. A keystone webhook can verify
+   the same signature against the gateway's JWKS. The header does not
+   replace the adapter's `Authorization`.
 3. **`X-Author-Email`** — the verified email of the signed-in person,
    lower-cased, always sent. Unsigned: by itself it only proves a sender
    knows the right string, so an upstream should trust it only on a network
