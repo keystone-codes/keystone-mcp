@@ -27,11 +27,14 @@ FROM python:3.12-slim-bookworm@sha256:935c3c5b12357a7e10caa9c1e6ca5692344d97cf22
 LABEL org.opencontainers.image.source="https://github.com/keystone-codes/keystone-mcp" \
       org.opencontainers.image.licenses="Apache-2.0"
 
-# CVE-2026-84782: the base image ships openssl 3.0.22-1~deb12u1; the fix
-# (3.0.22-1~deb12u2) is only in bookworm-security. Remove this layer once
-# python:3.12-slim-bookworm is published with deb12u2 or later.
+# The pinned python:3.12-slim-bookworm digest still lags bookworm-security.
+# CVE-2026-84782: openssl 3.0.22-1~deb12u1, fixed in deb12u2.
+# CVE-2025-6020: libpam 1.5.2-6+deb12u2, fixed in deb12u3.
+# Remove a package from this layer once the pinned base ships that fix.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends --only-upgrade libssl3 openssl apt \
+    && apt-get install -y --no-install-recommends --only-upgrade \
+        libssl3 openssl apt \
+        libpam0g libpam-modules libpam-modules-bin libpam-runtime \
     && rm -rf /var/lib/apt/lists/*
 
 ARG APP_UID=10001

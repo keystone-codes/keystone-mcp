@@ -5,7 +5,7 @@
   &nbsp;&nbsp;&nbsp;&nbsp;
   <a href="pyproject.toml"><img alt="Python 3.11–3.14" src="https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-3776AB?logo=python&logoColor=white"></a>
   &nbsp;&nbsp;&nbsp;&nbsp;
-  <a href="CHANGELOG.md"><img alt="version 0.7.0" src="https://img.shields.io/badge/version-0.7.0-0f172a"></a>
+  <a href="CHANGELOG.md"><img alt="version 0.7.1" src="https://img.shields.io/badge/version-0.7.1-0f172a"></a>
   &nbsp;&nbsp;&nbsp;&nbsp;
   <a href="https://github.com/jlowin/fastmcp"><img alt="FastMCP 4.1" src="https://img.shields.io/badge/FastMCP-4.1-059669"></a>
   &nbsp;&nbsp;&nbsp;&nbsp;

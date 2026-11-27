@@ -6,6 +6,16 @@ this project uses [Semantic Versioning](https://semver.org/).
 
 Public contracts and the deprecation rule: [docs/compatibility.md](docs/compatibility.md).
 
+## [0.7.1] - 2026-11-27
+
+### Security
+
+- The release image upgrades `libpam0g`, `libpam-modules`, `libpam-modules-bin` and `libpam-runtime` to 1.5.2-6+deb12u3 from Debian bookworm-security. The pinned `python:3.12-slim-bookworm` digest still ships 1.5.2-6+deb12u2 ([CVE-2025-6020](https://security-tracker.debian.org/tracker/CVE-2025-6020)).
+
+### Migration
+
+- No database migration. The revision stays `0004_identity_binding`.
+
 ## [0.7.0] - 2026-11-26
 
 ### Added
